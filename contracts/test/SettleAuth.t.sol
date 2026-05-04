@@ -662,7 +662,7 @@ contract SettleAuthTest is Test {
         // Fund makerRelayer and register; takerRelayer stays unregistered.
         vm.deal(makerRelayer, 1 ether);
         vm.prank(makerRelayer);
-        registry.register{value: 0}("https://maker.example", 10, 0);
+        registry.register{value: 0}("https://maker.example", "Maker", 10, 0);
 
         settlement.setRelayerRegistry(address(registry));
 

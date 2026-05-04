@@ -54,6 +54,10 @@ export interface BuildRunRecordInput {
    *  `RecipientRow.ephemeralPubKey` so a re-issued claim link still
    *  carries the right value. */
   ephPubByAddress?: Record<string, string>;
+  /** Token-units (decimal-string) of relayer fee actually paid. Sum
+   *  across batches for a multi-batch run. Optional — stays undefined
+   *  for the env-not-configured demo path. */
+  relayerFee?: string;
 }
 
 /** Construct a `RunRecord` from the wizard's parsed state. The record
@@ -116,6 +120,7 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
     tokenSymbol: input.token,
     tokenAddress: input.tokenAddress ?? "",
     totalAmount: formatTotal(input.total),
+    ...(input.relayerFee ? { relayerFee: input.relayerFee } : {}),
     recipients,
     notifications: [],
   };

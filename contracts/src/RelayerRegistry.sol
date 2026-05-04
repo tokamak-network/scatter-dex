@@ -27,6 +27,11 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
     struct Relayer {
         string url;
+        // Operator-set display name — distinguishes co-running relayers
+        // (e.g. "Relayer-A" / "Relayer-B" in the dev stack) without
+        // forcing UIs to round-trip an off-chain `/api/info` probe just
+        // to render a label.
+        string name;
         uint256 fee; // basis points
         uint256 bond; // staked amount
         uint256 registeredAt;
@@ -48,8 +53,8 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     address[] public relayerList;
 
     // ─── Events ──────────────────────────────────────────────────
-    event RelayerRegistered(address indexed relayer, string url, uint256 fee, uint256 bond);
-    event RelayerUpdated(address indexed relayer, string url, uint256 fee);
+    event RelayerRegistered(address indexed relayer, string url, string name, uint256 fee, uint256 bond);
+    event RelayerUpdated(address indexed relayer, string url, string name, uint256 fee);
     event ExitRequested(address indexed relayer, uint256 exitAfter);
     event RelayerExited(address indexed relayer, uint256 bondReturned);
     event BondAdded(address indexed relayer, uint256 amount);
@@ -96,7 +101,7 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
 
     /// @param bondAmount In ERC20 mode, the amount to pull via `transferFrom` (caller must `approve` first).
     ///                   In native mode, MUST be 0 — bond is taken from `msg.value`.
-    function register(string calldata url, uint256 fee, uint256 bondAmount) external payable nonReentrant {
+    function register(string calldata url, string calldata name, uint256 fee, uint256 bondAmount) external payable nonReentrant {
         if (relayers[msg.sender].active) revert AlreadyRegistered();
         if (fee > MAX_FEE) revert FeeTooHigh();
         if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();
@@ -106,6 +111,7 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
 
         relayers[msg.sender] = Relayer({
             url: url,
+            name: name,
             fee: fee,
             bond: bond,
             registeredAt: block.timestamp,
@@ -119,7 +125,7 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
             inList[msg.sender] = true;
         }
 
-        emit RelayerRegistered(msg.sender, url, fee, bond);
+        emit RelayerRegistered(msg.sender, url, name, fee, bond);
     }
 
     /// @param bondAmount In ERC20 mode, the amount to pull. In native mode, MUST be 0.
@@ -137,16 +143,17 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
         emit BondAdded(msg.sender, bond);
     }
 
-    function updateInfo(string calldata url, uint256 fee) external {
+    function updateInfo(string calldata url, string calldata name, uint256 fee) external {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
         if (r.exitRequestedAt > 0) revert AlreadyExiting();
         if (fee > MAX_FEE) revert FeeTooHigh();
 
         r.url = url;
+        r.name = name;
         r.fee = fee;
 
-        emit RelayerUpdated(msg.sender, url, fee);
+        emit RelayerUpdated(msg.sender, url, name, fee);
     }
 
     // ─── Exit ────────────────────────────────────────────────────

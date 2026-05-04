@@ -1380,6 +1380,7 @@ export class PrivateOrderDB {
     this.markAuthFailed.run([truncErr(error), Date.now(), nullifier]);
   }
 
+
   markAuthorizeOrderDeadLetter(nullifier: string, error: string): void {
     this.markAuthDeadLetter.run([truncErr(error), Date.now(), nullifier]);
   }

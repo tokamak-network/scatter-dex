@@ -86,6 +86,9 @@ export async function loadRegistrationStatus(
 
 export interface RegisterRelayerParams {
   url: string;
+  /** On-chain display name surfaced via `relayers()` and consumed by
+   *  Pay/Operators UIs. Optional — defaults to empty when omitted. */
+  name?: string;
   feeBps: number;
   /** Bond as a decimal string (e.g. `"0.1"`). 18 decimals assumed
    *  (matches native ETH/TON and standard ERC20 TON). Parsed internally
@@ -97,7 +100,7 @@ export interface RegisterRelayerParams {
   bondToken?: string;
 }
 
-/** Submit `register(url, fee, bondAmount)`.
+/** Submit `register(url, name, fee, bondAmount)`.
  *  - Native mode (`bondToken` omitted or zero): bond paid via `msg.value`.
  *  - ERC20 mode: caller MUST `approve` the registry for at least
  *    `bondAmount` first (see `approveBondToken`); this helper just
@@ -123,11 +126,12 @@ export async function registerRelayer(
 
   const isErc20 = !!params.bondToken && params.bondToken !== NATIVE_BOND_TOKEN;
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, signer);
+  const name = params.name ?? "";
   if (isErc20) {
-    return registry.register(params.url, BigInt(params.feeBps), bond) as Promise<ethers.TransactionResponse>;
+    return registry.register(params.url, name, BigInt(params.feeBps), bond) as Promise<ethers.TransactionResponse>;
   }
   // Native: bondAmount param MUST be 0; bond comes from msg.value.
-  return registry.register(params.url, BigInt(params.feeBps), 0n, { value: bond }) as Promise<ethers.TransactionResponse>;
+  return registry.register(params.url, name, BigInt(params.feeBps), 0n, { value: bond }) as Promise<ethers.TransactionResponse>;
 }
 
 /** True when the registry is in ERC20 mode AND the operator's

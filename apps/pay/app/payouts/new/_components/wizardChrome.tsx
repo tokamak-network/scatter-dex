@@ -51,13 +51,37 @@ export function Toggle({
 }
 
 /** Two-cell DL row used by the Review step. Renders as `<dt>` + `<dd>`
- *  inside a parent `<dl>` so a fragment is the right wrapper. */
-export function ReviewRow({ k, v }: { k: string; v: string }) {
+ *  inside a parent `<dl>` so a fragment is the right wrapper. `v`
+ *  accepts ReactNode so callers can drop in inline editors (e.g. a
+ *  re-pick datetime input when the claim time slips into the buffer
+ *  zone). */
+export function ReviewRow({ k, v }: { k: string; v: React.ReactNode }) {
   return (
     <>
       <dt className="py-2 text-[var(--color-text-muted)]">{k}</dt>
       <dd className="py-2 text-right font-medium">{v}</dd>
     </>
+  );
+}
+
+/** Bordered card grouping a set of `ReviewRow`s under a heading. The
+ *  Review step has run-level details, schedule, and settlement
+ *  details — visually splitting them keeps the eye from scanning one
+ *  long stripe. */
+export function ReviewSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <h3 className="mb-2 text-sm font-semibold text-[var(--color-text-muted)]">{title}</h3>
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
+        {children}
+      </dl>
+    </section>
   );
 }
 

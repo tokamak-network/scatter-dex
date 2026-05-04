@@ -1,6 +1,7 @@
 "use client";
 
 import { ethers } from "ethers";
+import type { VaultNote } from "@zkscatter/sdk/react";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 import {
   type PerBatchPick,
@@ -104,6 +105,9 @@ export interface FundsStepProps {
     sourcePick: SourceNotesPick;
     batchCount: number;
     multiBatchFit: PerBatchPick | null;
+    tokenNotes: readonly VaultNote[];
+    selectedIds: ReadonlySet<string>;
+    onToggle: (id: string) => void;
   };
   /** Gates the source-notes panel — until the vault has loaded,
    *  "your notes" would flicker between empty and populated. */
@@ -124,7 +128,7 @@ export interface FundsStepProps {
 
 export function FundsStep({ funds, pick, wallet, relayer, onDeposit }: FundsStepProps) {
   const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, pendingRaw, shortfallRaw } = funds;
-  const { sourcePick, batchCount, multiBatchFit } = pick;
+  const { sourcePick, batchCount, multiBatchFit, tokenNotes, selectedIds, onToggle } = pick;
   const { account, vaultLoaded } = wallet;
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
   const configured = isNetworkConfigured(getNetworkConfig());
@@ -162,29 +166,14 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit }: FundsStep
         vaultLoaded={vaultLoaded}
         availableRaw={availableRaw}
         pendingRaw={pendingRaw}
+        shortfallRaw={shortfallRaw}
+        tokenNotes={tokenNotes}
         sourcePick={sourcePick}
+        selectedIds={selectedIds}
+        onToggle={onToggle}
+        onDeposit={onDeposit}
+        depositConfigured={configured}
       />
-
-      {shortfallRaw > 0n && (
-        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
-          <div className="mb-1">
-            Shortfall: <strong>{fmt(shortfallRaw)} {token}</strong>. Top up before
-            advancing to Review.
-          </div>
-          {pendingRaw >= shortfallRaw && (
-            <div className="mb-1 text-[var(--color-text-muted)]">
-              {fmt(pendingRaw)} {token} is pending confirmation — waiting one
-              block clears the shortfall without another deposit.
-            </div>
-          )}
-          <DepositButton
-            account={account}
-            configured={configured}
-            label={`Deposit ${fmt(shortfallRaw)} ${token}`}
-            onClick={onDeposit}
-          />
-        </div>
-      )}
 
       <BatchFitWarning
         batchCount={batchCount}

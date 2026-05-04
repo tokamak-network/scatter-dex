@@ -27,10 +27,10 @@ contract RelayerRegistryTest is Test {
 
     function test_register() public {
         vm.prank(relayer1);
-        registry.register{value: 0.5 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.5 ether}("http://relay1.com", "Relayer-test", 30, 0);
 
         assertTrue(registry.isActiveRelayer(relayer1));
-        (string memory url, uint256 fee, uint256 bond,, uint256 exitAt, bool active) = registry.relayers(relayer1);
+        (string memory url,, uint256 fee, uint256 bond,, uint256 exitAt, bool active) = registry.relayers(relayer1);
         assertEq(url, "http://relay1.com");
         assertEq(fee, 30);
         assertEq(bond, 0.5 ether);
@@ -42,7 +42,7 @@ contract RelayerRegistryTest is Test {
     function test_register_zero_bond_when_optional() public {
         // Default minBond = 0 → bond is optional
         vm.prank(relayer1);
-        registry.register("http://relay1.com", 30, 0);
+        registry.register("http://relay1.com", "Relayer-test", 30, 0);
         assertTrue(registry.isActiveRelayer(relayer1));
     }
 
@@ -50,7 +50,7 @@ contract RelayerRegistryTest is Test {
         registry.setMinBond(0.1 ether);
         vm.prank(relayer1);
         vm.expectRevert(RelayerRegistry.InsufficientBond.selector);
-        registry.register{value: 0.05 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.05 ether}("http://relay1.com", "Relayer-test", 30, 0);
     }
 
     function test_setMinBond() public {
@@ -66,45 +66,45 @@ contract RelayerRegistryTest is Test {
 
     function test_register_already_registered_reverts() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
 
         vm.prank(relayer1);
         vm.expectRevert(RelayerRegistry.AlreadyRegistered.selector);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
     }
 
     // ─── Update ──────────────────────────────────────────────────
 
     function test_updateInfo() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://old.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://old.com", "Relayer-test", 30, 0);
 
         vm.prank(relayer1);
-        registry.updateInfo("http://new.com", 20);
+        registry.updateInfo("http://new.com", "Relayer-test", 20);
 
-        (string memory url, uint256 fee,,,,) = registry.relayers(relayer1);
+        (string memory url,, uint256 fee,,,,) = registry.relayers(relayer1);
         assertEq(url, "http://new.com");
         assertEq(fee, 20);
     }
 
     function test_updateInfo_while_exiting_reverts() public {
         vm.startPrank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         registry.requestExit();
 
         vm.expectRevert(RelayerRegistry.AlreadyExiting.selector);
-        registry.updateInfo("http://new.com", 20);
+        registry.updateInfo("http://new.com", "Relayer-test", 20);
         vm.stopPrank();
     }
 
     function test_addBond() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
 
         vm.prank(relayer1);
         registry.addBond{value: 0.5 ether}(0);
 
-        (,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,) = registry.relayers(relayer1);
         assertEq(bond, 0.6 ether);
     }
 
@@ -112,7 +112,7 @@ contract RelayerRegistryTest is Test {
 
     function test_exit_flow() public {
         vm.prank(relayer1);
-        registry.register{value: 1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 1 ether}("http://relay1.com", "Relayer-test", 30, 0);
 
         // Request exit
         vm.prank(relayer1);
@@ -145,7 +145,7 @@ contract RelayerRegistryTest is Test {
 
     function test_requestExit_already_exiting_reverts() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
 
         vm.prank(relayer1);
         registry.requestExit();
@@ -159,9 +159,9 @@ contract RelayerRegistryTest is Test {
 
     function test_getActiveRelayers() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         vm.prank(relayer2);
-        registry.register{value: 0.1 ether}("http://relay2.com", 20, 0);
+        registry.register{value: 0.1 ether}("http://relay2.com", "Relayer-test", 20, 0);
 
         address[] memory active = registry.getActiveRelayers();
         assertEq(active.length, 2);
@@ -205,47 +205,47 @@ contract RelayerRegistryTest is Test {
         // NOT calling identityRegistry.setVerified(unverified, true)
         vm.prank(unverified);
         vm.expectRevert(RelayerRegistry.NotVerified.selector);
-        registry.register{value: 0.1 ether}("http://unverified.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://unverified.com", "Relayer-test", 30, 0);
     }
 
     function test_register_fee_too_high_reverts() public {
         vm.prank(relayer1);
         vm.expectRevert(RelayerRegistry.FeeTooHigh.selector);
-        registry.register{value: 0.1 ether}("http://example.com", 501, 0);
+        registry.register{value: 0.1 ether}("http://example.com", "Relayer-test", 501, 0);
     }
 
     function test_register_fee_at_max_succeeds() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://example.com", 500, 0);
+        registry.register{value: 0.1 ether}("http://example.com", "Relayer-test", 500, 0);
         assertTrue(registry.isActiveRelayer(relayer1));
     }
 
     function test_updateInfo_fee_too_high_reverts() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         vm.prank(relayer1);
         vm.expectRevert(RelayerRegistry.FeeTooHigh.selector);
-        registry.updateInfo("http://new.url", 501);
+        registry.updateInfo("http://new.url", "Relayer-test", 501);
     }
 
     function test_updateInfo_fee_at_max_succeeds() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         vm.prank(relayer1);
-        registry.updateInfo("http://new.url", 500);
-        (,uint256 fee,,,,) = registry.relayers(relayer1);
+        registry.updateInfo("http://new.url", "Relayer-test", 500);
+        (,,uint256 fee,,,,) = registry.relayers(relayer1);
         assertEq(fee, 500);
     }
 
     function test_getFee() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         assertEq(registry.getFee(relayer1), 30);
     }
 
     function test_addBond_zero_reverts() public {
         vm.prank(relayer1);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         vm.prank(relayer1);
         vm.expectRevert(RelayerRegistry.InsufficientBond.selector);
         registry.addBond{value: 0}(0);
@@ -308,7 +308,7 @@ contract ReentrantRelayer {
     }
 
     function registerAndRequestExit() external {
-        registry.register{value: 1 ether}("http://attacker.com", 10, 0);
+        registry.register{value: 1 ether}("http://attacker.com", "Relayer-test", 10, 0);
         registry.requestExit();
     }
 
@@ -321,7 +321,7 @@ contract ReentrantRelayer {
         if (attacking) {
             attacking = false;
             // Re-register to exploit the freed active slot — blocked by nonReentrant
-            registry.register{value: msg.value}("http://attacker.com", 10, 0);
+            registry.register{value: msg.value}("http://attacker.com", "Relayer-test", 10, 0);
         }
     }
 }
@@ -353,10 +353,10 @@ contract RelayerRegistryERC20Test is Test {
     function test_register_pulls_erc20_bond() public {
         vm.startPrank(relayer1);
         ton.approve(address(registry), 0.5 ether);
-        registry.register("http://relay1.com", 30, 0.5 ether);
+        registry.register("http://relay1.com", "Relayer-test", 30, 0.5 ether);
         vm.stopPrank();
 
-        (,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,) = registry.relayers(relayer1);
         assertEq(bond, 0.5 ether);
         assertEq(ton.balanceOf(address(registry)), 0.5 ether);
         assertEq(ton.balanceOf(relayer1), 9.5 ether);
@@ -366,14 +366,14 @@ contract RelayerRegistryERC20Test is Test {
         vm.deal(relayer1, 1 ether);
         vm.prank(relayer1);
         vm.expectRevert(RelayerRegistry.WrongPaymentMode.selector);
-        registry.register{value: 0.1 ether}("http://relay1.com", 30, 0);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
     }
 
     function test_register_zero_bond_when_optional_in_erc20_mode() public {
         vm.prank(relayer1);
-        registry.register("http://relay1.com", 30, 0);
+        registry.register("http://relay1.com", "Relayer-test", 30, 0);
         assertTrue(registry.isActiveRelayer(relayer1));
-        (,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,) = registry.relayers(relayer1);
         assertEq(bond, 0);
     }
 
@@ -382,27 +382,27 @@ contract RelayerRegistryERC20Test is Test {
         vm.startPrank(relayer1);
         ton.approve(address(registry), 0.1 ether);
         vm.expectRevert(RelayerRegistry.InsufficientBond.selector);
-        registry.register("http://relay1.com", 30, 0.1 ether);
+        registry.register("http://relay1.com", "Relayer-test", 30, 0.1 ether);
         vm.stopPrank();
     }
 
     function test_addBond_pulls_erc20() public {
         vm.startPrank(relayer1);
         ton.approve(address(registry), 0.5 ether);
-        registry.register("http://relay1.com", 30, 0.5 ether);
+        registry.register("http://relay1.com", "Relayer-test", 30, 0.5 ether);
 
         ton.approve(address(registry), 0.3 ether);
         registry.addBond(0.3 ether);
         vm.stopPrank();
 
-        (,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,) = registry.relayers(relayer1);
         assertEq(bond, 0.8 ether);
     }
 
     function test_addBond_with_native_value_reverts_in_erc20_mode() public {
         vm.startPrank(relayer1);
         ton.approve(address(registry), 0.5 ether);
-        registry.register("http://relay1.com", 30, 0.5 ether);
+        registry.register("http://relay1.com", "Relayer-test", 30, 0.5 ether);
         vm.stopPrank();
 
         vm.deal(relayer1, 1 ether);
@@ -414,7 +414,7 @@ contract RelayerRegistryERC20Test is Test {
     function test_executeExit_returns_erc20_bond() public {
         vm.startPrank(relayer1);
         ton.approve(address(registry), 0.5 ether);
-        registry.register("http://relay1.com", 30, 0.5 ether);
+        registry.register("http://relay1.com", "Relayer-test", 30, 0.5 ether);
         registry.requestExit();
         vm.warp(block.timestamp + 7 days + 1);
         registry.executeExit();
@@ -422,7 +422,7 @@ contract RelayerRegistryERC20Test is Test {
 
         assertEq(ton.balanceOf(relayer1), 10 ether);
         assertEq(ton.balanceOf(address(registry)), 0);
-        (,, uint256 bond,,, bool active) = registry.relayers(relayer1);
+        (,,, uint256 bond,,, bool active) = registry.relayers(relayer1);
         assertEq(bond, 0);
         assertFalse(active);
     }

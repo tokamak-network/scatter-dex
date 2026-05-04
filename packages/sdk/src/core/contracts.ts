@@ -1,15 +1,15 @@
 import { ethers } from "ethers";
 
 export const RELAYER_REGISTRY_ABI = [
-  "function register(string url, uint256 fee, uint256 bondAmount) external payable",
+  "function register(string url, string name, uint256 fee, uint256 bondAmount) external payable",
   "function requestExit() external",
   "function executeExit() external",
-  "function updateInfo(string url, uint256 fee) external",
+  "function updateInfo(string url, string name, uint256 fee) external",
   "function addBond(uint256 bondAmount) external payable",
   "function isActiveRelayer(address relayer) external view returns (bool)",
   "function getActiveRelayers() external view returns (address[])",
   "function getRelayerCount() external view returns (uint256)",
-  "function relayers(address) external view returns (string url, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active)",
+  "function relayers(address) external view returns (string url, string name, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active)",
   "function treasury() external view returns (address)",
   "function minBond() external view returns (uint256)",
   "function identityRegistry() external view returns (address)",

@@ -28,6 +28,7 @@ export default function RegisterPage() {
   const { account, signer, chainId, readProvider, connect, connectError } = useWallet();
 
   const [url, setUrl] = useState("https://relayer.example.com");
+  const [name, setName] = useState("");
   const [feeBps, setFeeBps] = useState("30");
   const [bondEth, setBondEth] = useState("0.1");
 
@@ -84,7 +85,7 @@ export default function RegisterPage() {
       setPhase("submitting");
       const tx = await registerRelayer(
         DEMO_NETWORK.contracts.relayerRegistry,
-        { url, feeBps: Number(feeBps), bondEth, bondToken: status.bondToken },
+        { url, name, feeBps: Number(feeBps), bondEth, bondToken: status.bondToken },
         signer,
       );
       const receipt = await tx.wait();
@@ -151,6 +152,17 @@ export default function RegisterPage() {
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://relayer.example.com"
               className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-mono"
+            />
+          </Field>
+
+          <Field label="Display name" hint="Shown to Pay/Pro users alongside your endpoint. Leave blank to skip.">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Acme Relayer"
+              maxLength={64}
+              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
             />
           </Field>
 

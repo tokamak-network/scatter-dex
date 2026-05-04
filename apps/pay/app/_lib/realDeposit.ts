@@ -145,7 +145,12 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   if (!isNetworkConfigured(cfg)) {
     throw new Error("Network not configured — set the Pay contract envs to enable deposits.");
   }
-  const tokenInfo = LAUNCH_TOKENS[tokenSymbol];
+  // Pull the token from `cfg.tokens` rather than `LAUNCH_TOKENS`
+  // directly — `getNetworkConfig` overlays the env-driven contract
+  // addresses, so this resolves to the on-chain token deployed on
+  // the active chain (LAUNCH_TOKENS' `address` is a ZERO sentinel).
+  const tokenInfo =
+    cfg.tokens.find((t) => t.symbol === tokenSymbol) ?? LAUNCH_TOKENS[tokenSymbol];
   if (!tokenInfo) {
     throw new Error(`Token ${tokenSymbol} is not in LAUNCH_TOKENS — wire it before depositing.`);
   }

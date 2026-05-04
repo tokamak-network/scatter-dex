@@ -325,6 +325,8 @@ if [ "$MOCK_MODE" = true ]; then
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep "^  RelayerRegistry:" | awk '{print $NF}')
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
+  USDT=$(echo "$DEPLOY_OUTPUT" | grep "^  USDT:" | awk '{print $NF}')
+  TON=$(echo "$DEPLOY_OUTPUT" | grep "^  TON:" | awk '{print $NF}')
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep "^  CommitmentPool:" | awk '{print $NF}')
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep "^  PrivateSettlement:" | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^  IdentityGate:" | awk '{print $NF}')
@@ -447,8 +449,17 @@ if [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ]; then
 fi
 
 # TOKEN_LIST is empty in integration mode (no test tokens deployed).
+# Mock-mode adds USDT (6 dec) and TON (18 dec) so the wizard's
+# whitelist (LAUNCH_TOKENS) is fully exercisable; fork mode keeps
+# real WTON (27 dec) instead of TON.
 if [ -n "$WETH" ] && [ -n "$USDC" ]; then
-  TOKEN_LIST="$WETH:WETH:18,$USDC:USDC:18"
+  TOKEN_LIST="$WETH:WETH:18,$USDC:USDC:6"
+  if [ -n "$USDT" ]; then
+    TOKEN_LIST="$TOKEN_LIST,$USDT:USDT:6"
+  fi
+  if [ -n "$TON" ]; then
+    TOKEN_LIST="$TOKEN_LIST,$TON:TON:18"
+  fi
 else
   TOKEN_LIST=""
 fi
@@ -496,6 +507,7 @@ SHARED_ORDERBOOK_URL=http://localhost:4000
 RELAYER_PUBLIC_URL=http://localhost:3002
 RELAYER_NAME=Relayer-A
 DB_PATH=$ROOT_DIR/zk-relayer/zk-relayer.db
+CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003
 EOF
 echo "  Admin API key: $ADMIN_KEY"
 
@@ -527,6 +539,7 @@ SHARED_ORDERBOOK_URL=http://localhost:4000 \
 RELAYER_PUBLIC_URL=http://localhost:3003 \
 RELAYER_NAME=Relayer-B \
 DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
+CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003 \
 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
@@ -538,8 +551,8 @@ fi
 echo "  Relayer B running on http://localhost:3003 (PID $last_pid)"
 
 # Register Relayer B on-chain (DeployLocal.s.sol only registers Relayer A).
-if cast send "$RELAYER_REGISTRY" "register(string,uint256)" \
-    "http://localhost:3003" "$RELAYER_FEE_BPS" \
+if cast send "$RELAYER_REGISTRY" "register(string,string,uint256,uint256)" \
+    "http://localhost:3003" "Relayer-B" "$RELAYER_FEE_BPS" 0 \
     --private-key "$RELAYER_B_KEY" --rpc-url "$RPC_URL" \
     > /dev/null 2>&1; then
   echo "  Relayer B registered on RelayerRegistry (fee=$RELAYER_FEE_BPS bps)"
@@ -557,11 +570,21 @@ fi
 # ── 6. Start frontend (or selected apps via --apps) ────────
 echo ""
 TOKENS=""
-[ -n "$WETH" ] && [ -n "$USDC" ] && TOKENS="$WETH:WETH:18,$USDC:USDC:18"
+if [ -n "$WETH" ] && [ -n "$USDC" ]; then
+  TOKENS="$WETH:WETH:18,$USDC:USDC:6"
+  [ -n "$USDT" ] && TOKENS="$TOKENS,$USDT:USDT:6"
+  [ -n "$TON" ] && TOKENS="$TOKENS,$TON:TON:18"
+fi
 
 # Write the same NEXT_PUBLIC_* env file to a target dir. Used for both
 # `frontend/` (legacy default) and `apps/*` (new --apps mode) so all
 # clients see the same deployment without diverging by hand.
+#
+# `apps/pay` reads its own NEXT_PUBLIC_PAY_* prefix (its `network.ts`
+# inlines those keys statically so the chain pill renders during SSR).
+# Emit both shapes when targeting `apps/pay` so the wizard picks up
+# the relayer registry, contract addresses, and RPC without the
+# operator hand-editing .env.local after each redeploy.
 write_app_env() {
   local target_dir="$1"
   # Preserve user-provided secrets (non-deployment env vars) across regeneration.
@@ -569,7 +592,7 @@ write_app_env() {
   # like ONEINCH_API_KEY belong to the developer, not the deployment.
   local preserved=""
   if [ -f "$target_dir/.env.local" ]; then
-    preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC)=' "$target_dir/.env.local" || true)
+    preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL)=' "$target_dir/.env.local" || true)
   fi
   cat > "$target_dir/.env.local" << EOF
 NEXT_PUBLIC_RPC_URL=$RPC_URL
@@ -585,6 +608,24 @@ NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 EOF
+  case "$target_dir" in
+    */apps/pay)
+      cat >> "$target_dir/.env.local" << EOF
+NEXT_PUBLIC_PAY_CHAIN_ID=31337
+NEXT_PUBLIC_PAY_RPC_URL=$RPC_URL
+NEXT_PUBLIC_PAY_PRIVATE_SETTLEMENT=$PRIVATE_SETTLEMENT
+NEXT_PUBLIC_PAY_COMMITMENT_POOL=$COMMITMENT_POOL
+NEXT_PUBLIC_PAY_IDENTITY_GATE=$IDENTITY_GATE
+NEXT_PUBLIC_PAY_RELAYER_REGISTRY=$RELAYER_REGISTRY
+NEXT_PUBLIC_PAY_WETH=$WETH
+NEXT_PUBLIC_PAY_USDC=$USDC
+NEXT_PUBLIC_PAY_USDT=$USDT
+NEXT_PUBLIC_PAY_TON=$TON
+NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
+NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$INDEX_FROM
+EOF
+      ;;
+  esac
   if [ -n "$preserved" ]; then
     echo "$preserved" >> "$target_dir/.env.local"
   fi

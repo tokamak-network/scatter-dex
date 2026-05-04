@@ -316,16 +316,24 @@ export class AuthorizeSubmitter {
    */
   async submitScatterDirectAuth(
     order: AuthorizeOrderFile,
-    feeBps: bigint = 0n,
+    // Kept in the signature so the settlement-worker dispatch site
+    // doesn't need a coordinated change; the relayer-side floor was
+    // removed when fee became the order's signed value.
+    _feeBps: bigint = 0n,
   ): Promise<string> {
     const ps = order.publicSignals;
-    // Scatter (same-token): on-chain cap is sellAmount × maxFee, not buyAmount
-    // × maxFee, so don't route through computeSideFee which targets the
-    // two-sided settle path.
+    // Charge exactly the fee the sender signed (sellAmount − totalLocked).
+    // Pre-checking the bps cap lets us reject early with a clearer error
+    // than the contract's `FeeExceedsMax` revert.
     const sellAmount = BigInt(ps.sellAmount);
+    const totalLocked = BigInt(ps.totalLocked);
+    const fee = sellAmount > totalLocked ? sellAmount - totalLocked : 0n;
     const sideMaxFee = BigInt(ps.maxFee);
-    const effectiveBps = feeBps < sideMaxFee ? feeBps : sideMaxFee;
-    const fee = (sellAmount * effectiveBps) / FEE_BPS_DENOMINATOR;
+    if (fee * FEE_BPS_DENOMINATOR > sellAmount * sideMaxFee) {
+      throw new Error(
+        `order fee ${fee} exceeds bps cap (sellAmount=${sellAmount}, maxFee=${sideMaxFee})`,
+      );
+    }
 
     const params = {
       proof: this.buildAuthProofStruct(order),

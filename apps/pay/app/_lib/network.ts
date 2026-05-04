@@ -31,6 +31,18 @@ function pick(value: string | undefined, fallback = ""): string {
 // server and the wrong-chain banner rendered on the client agreeing
 // on the same chain.
 export function getNetworkConfig(): NetworkConfig {
+  // Overlay env-provided contract addresses onto the LAUNCH_TOKENS
+  // metadata so non-native lookups resolve to the deployed contract
+  // (LAUNCH_TOKENS' address field is a ZERO sentinel).
+  const overlay: Record<string, string> = {
+    USDC: pick(process.env.NEXT_PUBLIC_PAY_USDC, ZERO),
+    USDT: pick(process.env.NEXT_PUBLIC_PAY_USDT, ZERO),
+    TON: pick(process.env.NEXT_PUBLIC_PAY_TON, ZERO),
+  };
+  const tokens = Object.values(LAUNCH_TOKENS).map((t) => {
+    const addr = overlay[t.symbol];
+    return addr && addr !== ZERO ? { ...t, address: addr } : t;
+  });
   return {
     chainId: Number(pick(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, "31337")),
     rpcUrl: pick(process.env.NEXT_PUBLIC_PAY_RPC_URL, "http://127.0.0.1:8545"),
@@ -42,7 +54,7 @@ export function getNetworkConfig(): NetworkConfig {
       relayerRegistry: pick(process.env.NEXT_PUBLIC_PAY_RELAYER_REGISTRY, ZERO),
       weth: pick(process.env.NEXT_PUBLIC_PAY_WETH, ZERO),
     },
-    tokens: Object.values(LAUNCH_TOKENS),
+    tokens,
     relayer: process.env.NEXT_PUBLIC_PAY_RELAYER_URL
       ? { url: process.env.NEXT_PUBLIC_PAY_RELAYER_URL }
       : undefined,

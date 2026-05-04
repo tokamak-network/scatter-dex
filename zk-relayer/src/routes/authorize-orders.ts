@@ -271,26 +271,32 @@ export function createAuthorizeOrderRoutes(
       const pollUrl = `/api/authorize-orders/${nullifier}`;
 
       // ── 3. Idempotency — same nullifier maps to one outcome forever.
-      // Read the DB row (durable across restarts; the in-memory map is a
-      // cache). Re-verifying the proof on every retry would let an attacker
-      // force CPU work just by replaying old payloads — design §2.4.
+      // Failed orders are retryable (nullifier not consumed on a pre-
+      // broadcast revert); other terminal states stay sticky. Re-
+      // verifying the proof on every retry would let an attacker
+      // force CPU work just by replaying — design §2.4.
       const existing = _db?.getAuthorizeOrder(nullifier) ?? null;
       if (existing) {
-        // A replayed POST may carry a different `order` body than the one
-        // originally persisted (same nullifier is the only invariant).
-        // Deriving expiresAt from the stored blob keeps the idempotent
-        // response faithful to the persisted contract; fall back to the
-        // just-validated request value only if the blob can't be parsed.
-        const persistedOrder = safeParseOrder(existing.orderJson);
-        const reply = buildStatusReply(existing, persistedOrder ?? order);
-        const code = idempotencyHttpCode(existing.status);
-        res.status(code).json({ ...reply, nullifier, pollUrl });
-        return;
+        if (existing.status === "failed") {
+          _db?.deleteAuthorizeOrder(nullifier);
+          authorizeOrders.delete(nullifier);
+        } else {
+          // A replayed POST may carry a different `order` body than the one
+          // originally persisted (same nullifier is the only invariant).
+          // Deriving expiresAt from the stored blob keeps the idempotent
+          // response faithful to the persisted contract; fall back to the
+          // just-validated request value only if the blob can't be parsed.
+          const persistedOrder = safeParseOrder(existing.orderJson);
+          const reply = buildStatusReply(existing, persistedOrder ?? order);
+          const code = idempotencyHttpCode(existing.status);
+          res.status(code).json({ ...reply, nullifier, pollUrl });
+          return;
+        }
       }
       // In-memory fallback for setups without a DB. Status is whatever the
       // worker last set; the in-memory record always has at least 'pending'.
       const cached = authorizeOrders.get(nullifier);
-      if (cached) {
+      if (cached && cached.status !== "failed") {
         // `cached.submittedAt` is epoch-ms under the async FSM (the
         // seconds-based legacy path is gone below). Reply in the same
         // unit as the DB-backed path above.

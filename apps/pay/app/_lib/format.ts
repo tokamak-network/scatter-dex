@@ -52,6 +52,34 @@ export function formatUtcStamp(unixSec: number | undefined): string {
   return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 }
 
+/** Local-timezone `YYYY-MM-DD HH:mm` stamp. Used for user-facing
+ *  moments (claim time, etc.) where the operator expects to see their
+ *  own clock, not UTC. Reads `Date` directly — when the input depends
+ *  on the current wall clock (e.g. `Date.now()`), gate the call behind
+ *  a mounted/`useEffect` flag so server-rendered HTML matches the
+ *  client. Stamps derived from stable inputs (record timestamps) are
+ *  safe to render in SSR. */
+export function formatLocalStamp(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const d = new Date(unixSec * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+/** "5m ago" / "2h ago" relative-time formatter. */
+export function formatRelativeAgo(unixSec: number): string {
+  const diff = Math.floor(Date.now() / 1000) - unixSec;
+  if (diff < 5) return "just now";
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  return `${Math.floor(diff / 86400)}d ago`;
+}
+
 /** Parse a free-form amount string into a JS number. Strips commas,
  *  underscores, and whitespace (all common in spreadsheet exports);
  *  returns NaN on anything that isn't a plain decimal so the caller

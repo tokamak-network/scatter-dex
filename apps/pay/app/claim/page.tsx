@@ -233,7 +233,12 @@ function ClaimInner() {
         </div>
 
         <div className="mx-auto mt-5 inline-block w-full rounded-md bg-[var(--color-primary-soft)] p-2 text-center text-xs text-[var(--color-primary)]">
-          🔒 Funds can only go to {parsed ? shortAddr(parsed.pkg.recipient) : "you"}.
+          🔒 Funds can only go to{" "}
+          {parsed ? (
+            <span className="break-all font-mono">{parsed.pkg.recipient}</span>
+          ) : (
+            "you"
+          )}.
           <span className="mt-0.5 block text-[10px] text-[var(--color-text-muted)]">
             Claim anytime — no expiry.
           </span>

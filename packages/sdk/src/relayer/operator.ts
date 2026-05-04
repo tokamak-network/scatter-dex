@@ -11,6 +11,8 @@ export type OperatorStatus = "active" | "cooldown" | "offline" | "unregistered";
 
 export interface OperatorRow {
   url: string;
+  /** On-chain display name (may be empty for legacy registrations). */
+  name: string;
   feeBps: number;
   bond: bigint;
   bondEth: string;
@@ -80,6 +82,7 @@ export async function loadOperatorRow(
   const bond = r.bond as bigint;
   return {
     url: r.url as string,
+    name: (r.name as string) ?? "",
     feeBps: Number(r.fee),
     bond,
     bondEth: ethers.formatEther(bond),

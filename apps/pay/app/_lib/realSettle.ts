@@ -12,8 +12,8 @@ import {
   type CommitmentNote,
   type PayoutBatch,
 } from "@zkscatter/sdk/zk";
-import { callScatterDirectAuth, type SettleAuthSide } from "@zkscatter/sdk/contracts";
-import type { RelayerInfo } from "@zkscatter/sdk/relayer";
+import { type SettleAuthSide } from "@zkscatter/sdk/contracts";
+import { RelayerClient, type AuthorizeOrderBody, type RelayerInfo } from "@zkscatter/sdk/relayer";
 import type { ClaimPackage } from "@zkscatter/sdk/notes";
 import { authorizeProver } from "./authorizeProver";
 import type { CommitmentTreeState } from "./commitmentTree";
@@ -37,6 +37,10 @@ export interface RealSettleArgs {
    *  proof so the relayer can't claim more later. */
   maxFeeBps: number;
   eddsaPrivateKey: Uint8Array;
+  /** Public key matching `eddsaPrivateKey` (BabyJub `[ax, ay]`).
+   *  Surfaced to the wire body so the relayer can re-verify the
+   *  proof's `pubKeyBind` without rederiving from the secret. */
+  eddsaPublicKey: readonly [bigint, bigint];
   tree: CommitmentTreeState;
   /** Optional sender / run labels echoed into each ClaimPackage so
    *  recipients see who sent it and which run it belongs to. */
@@ -60,6 +64,11 @@ export interface RealSettleResult {
    *  these (link, QR, email) so each recipient can claim against
    *  the on-chain claimsGroup. Index matches `batch.claims`. */
   claimPackages: ClaimPackage[];
+  /** Token-units (raw bigint, formatted at the call site). The fee
+   *  the relayer actually charged for this batch — equals
+   *  `sellAmount − totalLocked` from the authorize proof. Surface in
+   *  the operator's RunRecord so the detail page can show it. */
+  relayerFee: bigint;
 }
 
 /** Output of {@link prepareRealSettle}: everything needed to submit
@@ -76,8 +85,12 @@ export interface PreparedSettle {
 export interface FinalizeContext {
   authResult: ReturnType<typeof assembleAuthorizeProofResult>;
   /** Source note (with leafIndex + commitment); the inner
-   *  `note.amount` minus `batch.totalAmount` is the change UTXO. */
+   *  `note.amount` minus `sellAmount` is the change UTXO. */
   source: PickedNote["note"];
+  /** Bonded into the authorize proof — the circuit emits the change
+   *  commitment as `note.amount - sellAmount`, so finalize must
+   *  rebuild the same value or the change UTXO will be unspendable. */
+  sellAmount: bigint;
   newSalt: bigint;
   tokenAddress: string;
   tokenSymbol: string;
@@ -88,6 +101,10 @@ export interface FinalizeContext {
   labels?: { sender?: string; run?: string };
   relayerUrl?: string;
   ephPubByAddress?: Record<string, string>;
+  /** EdDSA pubkey the proof was bound to (Poseidon(ax, ay) == pubKeyBind).
+   *  Submitted alongside the proof so the relayer can revalidate the
+   *  bind without re-deriving from the private key. */
+  pubKey: { ax: bigint; ay: bigint };
 }
 
 /** Phase 1 — validate inputs, build the merkle proof, prove off-thread,
@@ -103,6 +120,7 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     tokenDecimals,
     source,
     relayer,
+    eddsaPublicKey,
     chain,
     maxFeeBps,
     eddsaPrivateKey,
@@ -121,15 +139,8 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
       "Source note isn't in the on-chain commitment tree yet — try again once the tree finishes syncing.",
     );
   }
-  // Source note must at least cover the run total. The picker enforces
-  // this at the UI layer, but keep a defensive check here so a stale
-  // sourcePick (e.g. note removed after the user advanced past Funds)
-  // can't slip a too-small note into the proof.
-  if (stored.note.amount < batch.totalAmount) {
-    throw new Error(
-      `Source note (${stored.note.amount}) is smaller than the run total (${batch.totalAmount}).`,
-    );
-  }
+  // Source note must cover sellAmount = totalLocked + max-fee cushion
+  // (computed below). We re-check after deriving sellAmount.
   // Solidity encodes maxFee as uint16 and the circuit reads it as bps;
   // clamp before proving so a stale UI input can't (a) authorize a
   // >100% fee or (b) overflow the ABI encoder.
@@ -137,17 +148,23 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     throw new Error(`maxFeeBps must be an integer in [0, 10000]; got ${maxFeeBps}`);
   }
 
-  // self-pay invariant: sellToken == buyToken, sellAmount == buyAmount
-  const sellAmount = batch.totalAmount;
-  const buyAmount = batch.totalAmount;
-  // 2h window covers multi-batch pipelines where all proves are
-  // queued up front — the last batch's expiry is set when the first
-  // prepare runs, so the operator has the full window minus the
-  // time spent prove-queueing + signing earlier batches before the
-  // tail submits. Settlement reverts on `block.timestamp >= expiry`,
-  // and a stale UI input can't authorize a longer-than-allowed window
-  // because the circuit hashes `expiry` into the signed proof.
-  const expiry = BigInt(Math.floor(Date.now() / 1000) + 2 * 60 * 60);
+  // sellAmount = totalLocked + fee. The relayer charges exactly
+  // `sellAmount − totalLocked`, so this lands as a clean token amount.
+  const feeRaw = (batch.totalAmount * BigInt(maxFeeBps)) / 10_000n;
+  const sellAmount = batch.totalAmount + feeRaw;
+  const buyAmount = sellAmount;
+  if (stored.note.amount < sellAmount) {
+    throw new Error(
+      `Source note (${stored.note.amount}) is smaller than sell amount (${sellAmount}).`,
+    );
+  }
+  // Settle must land before the earliest releaseTime — claim leaves
+  // become valid then. `block.timestamp > expiry` reverts OrderExpired.
+  const minReleaseTime = batch.claims.reduce(
+    (m, c) => (c.releaseTime < m ? c.releaseTime : m),
+    batch.claims[0]!.releaseTime,
+  );
+  const expiry = minReleaseTime;
   const nonce = randomFieldElement();
   const newSalt = randomFieldElement();
 
@@ -186,6 +203,7 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
   const ctx: FinalizeContext = {
     authResult,
     source: stored,
+    sellAmount,
     newSalt,
     tokenAddress,
     tokenSymbol,
@@ -196,6 +214,7 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     labels: args.labels,
     relayerUrl: relayer.url,
     ephPubByAddress: args.ephPubByAddress,
+    pubKey: { ax: eddsaPublicKey[0], ay: eddsaPublicKey[1] },
   };
   return { side, ctx };
 }
@@ -206,38 +225,128 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
  *  the EOA's nonce monotonic. The settlement address comes from the
  *  prepared context — submitting against a different address would
  *  point at a settlement the proof's commitments don't apply to. */
+/** Result of {@link submitRealSettle} — the relayer-dispatched path
+ *  no longer hands back a wallet `TransactionResponse`. The wizard
+ *  only needs the tx hash + the receipt to extract events, both of
+ *  which we surface here. */
+export interface SubmittedSettle {
+  txHash: string;
+  ctx: FinalizeContext;
+}
+
+/** Phase 2 — submit the prepared proof to the chosen relayer's
+ *  `/api/authorize-orders` endpoint and poll until it dispatches
+ *  the `scatterDirectAuth` tx. The relayer is the contract-side
+ *  caller (`msg.sender == side.relayer`); the operator's wallet
+ *  is never used to send the settle tx, only to EdDSA-sign the
+ *  authorize proof inside `prepareRealSettle`.
+ *
+ *  The poll loop keeps trying until either `settleTxHash` lands or
+ *  the relayer reports a terminal `failed` status — `pending` /
+ *  `matched` / `submitted` are intermediate. */
 export async function submitRealSettle(
   prep: PreparedSettle,
-  signer: ethers.Signer,
-): Promise<{ tx: ethers.TransactionResponse; ctx: FinalizeContext }> {
-  const tx = await callScatterDirectAuth(
-    signer,
-    prep.ctx.settlementAddress,
-    prep.side,
-    0n,
+  relayerUrl: string,
+  options: { pollIntervalMs?: number; timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<SubmittedSettle> {
+  const { pollIntervalMs = 1500, timeoutMs = 120_000, signal } = options;
+  const body = buildAuthorizeOrderBody(prep);
+  const client = new RelayerClient(relayerUrl);
+  const initial = await client.submitAuthorizeOrder(body, signal);
+  if (initial.status === "failed") {
+    throw new Error(initial.error ?? "Relayer rejected the authorize order");
+  }
+  const nullifier = initial.nullifier ?? body.publicSignals.nullifier;
+  if (initial.settleTxHash) {
+    return { txHash: initial.settleTxHash, ctx: prep.ctx };
+  }
+  const deadline = Date.now() + timeoutMs;
+  // Bounded poll — relayer dispatch usually lands within a couple of
+  // seconds on a healthy stack; the longer ceiling absorbs blocked
+  // mempools. `signal` from the caller fast-paths cancellation.
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("submitRealSettle aborted by caller");
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+    const status = await client.pollAuthorizeOrder(nullifier, signal);
+    if (status.settleTxHash) {
+      return { txHash: status.settleTxHash, ctx: prep.ctx };
+    }
+    if (status.status === "failed") {
+      throw new Error(status.error ?? "Relayer dispatch failed");
+    }
+  }
+  throw new Error(
+    `Relayer did not dispatch within ${Math.round(timeoutMs / 1000)}s — order ${nullifier} is still ${initial.status}`,
   );
-  return { tx, ctx: prep.ctx };
+}
+
+/** Build the wire body the relayer's `POST /api/authorize-orders`
+ *  endpoint expects. The named `publicSignals` view mirrors the
+ *  zero-indexed `publicSignalsArray` so a server-side replay can
+ *  re-derive every field without re-deriving from circom. */
+function buildAuthorizeOrderBody(prep: PreparedSettle): AuthorizeOrderBody {
+  const { authResult } = prep.ctx;
+  const ar = authResult.publicSignals;
+  // Position-based mapping mirrors authorize.circom's public-signal
+  // ordering (see the named result fields on AuthorizeProofResult);
+  // the relayer reads both shapes as a defence-in-depth check.
+  return {
+    proof: {
+      a: [authResult.proof.a[0].toString(), authResult.proof.a[1].toString()],
+      b: [
+        [authResult.proof.b[0][0].toString(), authResult.proof.b[0][1].toString()],
+        [authResult.proof.b[1][0].toString(), authResult.proof.b[1][1].toString()],
+      ],
+      c: [authResult.proof.c[0].toString(), authResult.proof.c[1].toString()],
+    },
+    publicSignals: {
+      pubKeyBind: ar[0]!.toString(),
+      commitmentRoot: ar[1]!.toString(),
+      nullifier: ar[2]!.toString(),
+      nonceNullifier: ar[3]!.toString(),
+      newCommitment: ar[4]!.toString(),
+      sellToken: ar[5]!.toString(),
+      buyToken: ar[6]!.toString(),
+      sellAmount: ar[7]!.toString(),
+      buyAmount: ar[8]!.toString(),
+      maxFee: ar[9]!.toString(),
+      expiry: ar[10]!.toString(),
+      claimsRoot: ar[11]!.toString(),
+      totalLocked: ar[12]!.toString(),
+      relayer: ar[13]!.toString(),
+      orderHash: ar[14]!.toString(),
+    },
+    publicSignalsArray: ar.map((s) => s.toString()),
+    tier: prep.side.tier,
+    pubKeyAx: prep.ctx.pubKey.ax.toString(),
+    pubKeyAy: prep.ctx.pubKey.ay.toString(),
+  };
 }
 
 /** Phase 3 — wait for the receipt, then reconstruct the change UTXO
  *  and the per-recipient claim packages. Safe to run for many batches
  *  in parallel; the caller is responsible for ordering vault updates
  *  by batch index so a later success can't re-spend a note an earlier
- *  failure logically forfeited. */
+ *  failure logically forfeited.
+ *
+ *  Now reads the receipt from the chain via the supplied provider —
+ *  the relayer-dispatch path doesn't hand back a wallet
+ *  `TransactionResponse`, only the tx hash. */
 export async function finalizeRealSettle(
-  tx: ethers.TransactionResponse,
+  txHash: string,
   ctx: FinalizeContext,
+  provider: ethers.Provider,
 ): Promise<RealSettleResult> {
-  const receipt = await tx.wait();
+  const receipt = await provider.waitForTransaction(txHash);
   if (!receipt || receipt.status !== 1) {
-    throw new Error(`scatterDirectAuth tx failed: ${tx.hash}`);
+    throw new Error(`scatterDirectAuth tx failed: ${txHash}`);
   }
   // Reconstruct the change-UTXO preimage so the caller can persist it
   // as a new vault note. The on-chain `newCommitment` we just verified
   // must match the locally-recomputed value (otherwise the change would
   // be unspendable).
   const sourceNote = ctx.source.note;
-  const changeAmount = sourceNote.amount - ctx.batch.totalAmount;
+  const changeAmount = sourceNote.amount - ctx.sellAmount;
   let change: RealSettleResult["change"] = null;
   if (changeAmount > 0n) {
     const changeNote: CommitmentNote = {
@@ -294,12 +403,16 @@ export async function finalizeRealSettle(
     };
   });
 
+  const relayerFee = ctx.sellAmount > ctx.batch.totalAmount
+    ? ctx.sellAmount - ctx.batch.totalAmount
+    : 0n;
   return {
-    txHash: tx.hash,
+    txHash,
     nullifier: ctx.authResult.nullifier,
     claimsRoot: ctx.authResult.claimsRoot,
     change,
     claimPackages,
+    relayerFee,
   };
 }
 
@@ -313,6 +426,10 @@ export async function finalizeRealSettle(
  *  pipeline across batches. */
 export async function realSettle(args: RealSettleArgs): Promise<RealSettleResult> {
   const prep = await prepareRealSettle(args);
-  const { tx, ctx } = await submitRealSettle(prep, args.chain.signer);
-  return finalizeRealSettle(tx, ctx);
+  const { txHash, ctx } = await submitRealSettle(prep, args.relayer.url);
+  const provider = args.chain.signer.provider;
+  if (!provider) {
+    throw new Error("realSettle: signer has no provider for receipt poll");
+  }
+  return finalizeRealSettle(txHash, ctx, provider);
 }
