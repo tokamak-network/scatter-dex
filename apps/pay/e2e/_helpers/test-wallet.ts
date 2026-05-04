@@ -182,10 +182,38 @@ export async function installTestWallet(
       __testWalletSign(kind: string, payload: unknown): Promise<string>;
     };
 
-    function makeUnsupported(method: string): Error {
+    /** Error for a method that *would* work if the install passed
+     *  a `privateKey`. The error names the option so a test author
+     *  who forgot it gets a one-line fix. */
+    function makeNeedsKey(method: string): Error {
       return new Error(
-        `[test-wallet] ${method} not supported — install with { privateKey } to enable, or see apps/pay/e2e/README.md "What this harness does NOT cover (yet)".`,
+        `[test-wallet] ${method} not supported — install with { privateKey } to enable. See apps/pay/e2e/README.md.`,
       );
+    }
+
+    /** Error for a method that's permanently rejected even with a
+     *  privateKey (`eth_signTransaction`, raw `eth_sign`). The
+     *  error makes clear there's no install option that turns it
+     *  on so a test author doesn't waste time looking. */
+    function makePermanentlyUnsupported(method: string): Error {
+      return new Error(
+        `[test-wallet] ${method} is permanently unsupported (deprecated / dangerous). Pay doesn't use it; see apps/pay/e2e/README.md "Permanently unsupported".`,
+      );
+    }
+
+    /** Throw if the dapp's per-call `address` parameter (EIP-1474
+     *  for personal_sign, EIP-712 spec for typed-data) doesn't match
+     *  the configured account. MetaMask/Rabby surface this as the
+     *  "unauthorized account" rejection; matching that behaviour in
+     *  tests catches a regression where the dapp signs with the
+     *  wrong account before the recovery check would. */
+    function assertAddressParamMatches(method: string, supplied: string | undefined): void {
+      if (typeof supplied !== "string" || !supplied.startsWith("0x")) return; // empty/missing — let the signer decide
+      if (supplied.toLowerCase() !== account) {
+        throw new Error(
+          `[test-wallet] ${method}: dapp asked to sign with ${supplied} but the bridge is bound to ${account}.`,
+        );
+      }
     }
 
     async function rpcPassthrough(method: string, params: unknown): Promise<unknown> {
@@ -250,33 +278,40 @@ export async function installTestWallet(
           // Without a privateKey, throw the same loud "not supported"
           // error so read-only tests still fail clearly.
           case "eth_sendTransaction": {
-            if (!cfg.canSign) throw makeUnsupported(method);
-            const tx = (params as Array<unknown> | undefined)?.[0];
+            if (!cfg.canSign) throw makeNeedsKey(method);
+            const tx = (params as Array<{ from?: string }> | undefined)?.[0];
+            assertAddressParamMatches(method, tx?.from);
             return (window as unknown as TestSignWindow).__testWalletSign(
               "eth_sendTransaction",
               tx,
             );
           }
           case "personal_sign": {
-            if (!cfg.canSign) throw makeUnsupported(method);
+            if (!cfg.canSign) throw makeNeedsKey(method);
             // EIP-1474 wire format: `[message, address]`. Earlier
             // drafts swapped them, but every modern wallet (MetaMask,
             // Rabby, Coinbase, WalletConnect) emits the EIP-1474
             // order — and a heuristic to "auto-detect" doesn't
             // actually work, since both args are 0x-prefixed. Pick
             // index 0 verbatim and let any test that hits a swapped
-            // dapp fail loudly.
+            // dapp fail loudly. Validate `address` (params[1]) so a
+            // dapp signing with the wrong account fails the way
+            // MetaMask would.
             const arr = params as [string, string] | undefined;
+            assertAddressParamMatches(method, arr?.[1]);
             return (window as unknown as TestSignWindow).__testWalletSign(
               "personal_sign",
               arr?.[0],
             );
           }
-          case "eth_signTypedData_v4":
-          case "eth_signTypedData_v3": {
-            if (!cfg.canSign) throw makeUnsupported(method);
+          case "eth_signTypedData_v4": {
+            if (!cfg.canSign) throw makeNeedsKey(method);
             // EIP-712 v4 wire format: `[address, jsonString]`.
+            // Validate `address` (params[0]) the same way MetaMask
+            // does so a dapp signing with the wrong account is
+            // caught at bridge level.
             const arr = params as [string, string] | undefined;
+            assertAddressParamMatches(method, arr?.[0]);
             const json = arr?.[1];
             const parsed = json ? JSON.parse(json) : null;
             return (window as unknown as TestSignWindow).__testWalletSign(
@@ -284,12 +319,20 @@ export async function installTestWallet(
               parsed,
             );
           }
+          case "eth_signTypedData_v3":
+            // v3 and v4 are not interchangeable — v4 added array /
+            // recursive struct support that changes the encoding for
+            // domains that use them. Pay only signs v4, so don't
+            // pretend to handle v3; surface a permanent reject so a
+            // dapp asking for v3 has to migrate to v4 (or extend the
+            // bridge with a real v3 implementation).
+            throw makePermanentlyUnsupported(method);
           case "eth_signTransaction":
           case "eth_sign":
             // Deprecated / dangerous methods — never wire them, even
             // when canSign is true. dapps that hit them should fail
             // loudly so they migrate.
-            throw makeUnsupported(method);
+            throw makePermanentlyUnsupported(method);
 
           // Chain switch — pretend success when the target is the
           // already-active chain; reject otherwise so a test that

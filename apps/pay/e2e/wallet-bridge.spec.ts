@@ -77,7 +77,7 @@ test.describe("Wallet bridge", () => {
     // wired the node-side ethers signer correctly. Anchoring on
     // recovery (not the bytes themselves) keeps the test stable
     // across ethers patch versions that might tweak v normalisation.
-    const result = await page.evaluate(async () => {
+    const result = await page.evaluate(async (account) => {
       const eth = (window as unknown as {
         ethereum: { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> };
       }).ethereum;
@@ -87,10 +87,10 @@ test.describe("Wallet bridge", () => {
           .join("");
       const sig = (await eth.request({
         method: "personal_sign",
-        params: [messageHex, "0x0"],
+        params: [messageHex, account],
       })) as string;
       return { sig, messageHex };
-    });
+    }, ANVIL_DEFAULT.account);
 
     expect(result.sig).toMatch(/^0x[0-9a-f]{130}$/i);
     const { ethers } = await import("ethers");
@@ -141,7 +141,7 @@ test.describe("Wallet bridge", () => {
       }).ethereum;
       return (await eth.request({
         method: "eth_signTypedData_v4",
-        params: ["0x0", JSON.stringify(td)],
+        params: [td.message.wallet, JSON.stringify(td)],
       })) as string;
     }, typedData);
 
@@ -154,4 +154,56 @@ test.describe("Wallet bridge", () => {
     );
     expect(recovered.toLowerCase()).toBe(ANVIL_DEFAULT.account.toLowerCase());
   });
+
+  test("eth_sendTransaction broadcasts via the configured RPC", async ({ page }) => {
+    // Live anvil only — the broadcast path needs a real chain to
+    // produce a tx hash. Skip when no anvil is reachable so the
+    // test is opt-in (`bash scripts/dev.sh --apps pay --mock` puts
+    // it on 127.0.0.1:8545); a hard requirement would make the
+    // suite flaky on machines that don't have the stack up.
+    test.skip(
+      !(await isAnvilReachable("http://127.0.0.1:8545")),
+      "anvil not reachable — start with `bash scripts/dev.sh --apps pay --mock`",
+    );
+
+    await installTestWallet(page, {
+      account: ANVIL_DEFAULT.account,
+      chainId: ANVIL_DEFAULT.chainId,
+      privateKey: ANVIL_DEFAULT.privateKey,
+    });
+    await page.goto("/");
+
+    const txHash = (await page.evaluate(async (from) => {
+      const eth = (window as unknown as {
+        ethereum: { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> };
+      }).ethereum;
+      // Self-send 1 wei — minimal, no token approvals, no
+      // gas-payer mismatch. The bridge populates nonce + fees from
+      // anvil; we only assert we get a real tx hash back.
+      return await eth.request({
+        method: "eth_sendTransaction",
+        params: [{ from, to: from, value: "0x1" }],
+      });
+    }, ANVIL_DEFAULT.account)) as string;
+
+    expect(txHash).toMatch(/^0x[0-9a-f]{64}$/i);
+  });
 });
+
+/** Cheap reachability check: a single `eth_chainId` post. Returns
+ *  true on any 200 with a JSON-RPC result, false on connect /
+ *  HTTP / parse failure. */
+async function isAnvilReachable(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method: "eth_chainId", params: [], id: 1 }),
+    });
+    if (!res.ok) return false;
+    const json = await res.json();
+    return typeof json?.result === "string";
+  } catch {
+    return false;
+  }
+}
