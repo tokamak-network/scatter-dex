@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { ethers } from "ethers";
 
 /**
  * Minimal test-only EIP-1193 provider injected at `window.ethereum`
@@ -30,10 +31,21 @@ export interface TestWalletOptions {
    *  config Pay reads at runtime (`getNetworkConfig().chainId`),
    *  otherwise Pay surfaces a "wrong chain" banner and gates writes. */
   chainId: number;
-  /** RPC URL all unhandled JSON-RPC methods passthrough to. Defaults
-   *  to anvil's standard `http://127.0.0.1:8545` so a developer
-   *  running `dev.sh --apps pay --mock` doesn't have to thread the
-   *  URL through every test. */
+  /** Optional private key (`0x…` 32 bytes). When set, the bridge
+   *  enables `personal_sign` / `eth_signTypedData_v4` /
+   *  `eth_sendTransaction` — every signing call is forwarded to a
+   *  node-side `ethers.Wallet(privateKey)` via Playwright's
+   *  `page.exposeFunction`, so the browser stub stays free of any
+   *  signing crypto bundle. Omit for read-only tests; the signing
+   *  methods then keep their loud "not supported" throw. The key's
+   *  derived address must equal `account`. */
+  privateKey?: string;
+  /** RPC URL all unhandled JSON-RPC methods passthrough to. Also
+   *  used by the node-side signer to populate + broadcast
+   *  `eth_sendTransaction`. Defaults to anvil's standard
+   *  `http://127.0.0.1:8545` so a developer running
+   *  `dev.sh --apps pay --mock` doesn't have to thread the URL
+   *  through every test. */
   rpcUrl?: string;
   /** Vendor flag echoed via `isMetaMask` so `detectWalletName`
    *  doesn't fall through to the generic "Browser Wallet" label.
@@ -69,12 +81,83 @@ export async function installTestWallet(
   page: Page,
   options: TestWalletOptions,
 ): Promise<TestWalletHandle> {
-  const opts: Required<TestWalletOptions> = {
+  const opts = {
     account: options.account,
     chainId: options.chainId,
     rpcUrl: options.rpcUrl ?? "http://127.0.0.1:8545",
     isMetaMask: options.isMetaMask ?? true,
+    canSign: !!options.privateKey,
   };
+
+  if (options.privateKey) {
+    // Node-side signer. Lives in the test runner's process; the
+    // browser stub forwards signing requests through
+    // `page.exposeFunction` (which Playwright surfaces as a global
+    // function on the page). This keeps the browser-side init
+    // script free of any secp256k1 / RLP bundle — ethers does the
+    // crypto where it already lives.
+    const wallet = new ethers.Wallet(options.privateKey);
+    if (wallet.address.toLowerCase() !== options.account.toLowerCase()) {
+      throw new Error(
+        `[test-wallet] privateKey derives ${wallet.address} but options.account is ${options.account} — fix one or the other before installing the bridge.`,
+      );
+    }
+    // Lazy-initialise the broadcast-capable signer. Sign-only tests
+    // (`personal_sign`, `eth_signTypedData_v4`) don't need an RPC
+    // connection at all; opening one at install time would burn a
+    // keepalive socket against an anvil that may not even be running.
+    let connected: ethers.Wallet | null = null;
+    function getConnected(): ethers.Wallet {
+      if (!connected) {
+        const signerProvider = new ethers.JsonRpcProvider(opts.rpcUrl);
+        connected = wallet.connect(signerProvider);
+      }
+      return connected;
+    }
+
+    await page.exposeFunction(
+      "__testWalletSign",
+      async (kind: string, payload: unknown): Promise<string> => {
+        switch (kind) {
+          case "personal_sign": {
+            // EIP-191 — payload is the message bytes, hex-encoded.
+            // ethers' `signMessage` re-applies the personal-prefix
+            // wrapper that the EIP-191 spec mandates, so the value
+            // we feed it is just the underlying bytes.
+            const bytes = ethers.getBytes(payload as string);
+            return wallet.signMessage(bytes);
+          }
+          case "eth_signTypedData_v4": {
+            // EIP-712 — payload is the parsed typed-data object the
+            // browser stub built from the JSON the dapp passed.
+            // ethers' signTypedData adds `EIP712Domain` automatically,
+            // so we strip it from the inbound `types` if present.
+            const td = payload as {
+              domain: ethers.TypedDataDomain;
+              types: Record<string, ethers.TypedDataField[]> & { EIP712Domain?: unknown };
+              message: Record<string, unknown>;
+            };
+            const types = { ...td.types };
+            delete types.EIP712Domain;
+            return wallet.signTypedData(td.domain, types, td.message);
+          }
+          case "eth_sendTransaction": {
+            // Sign + broadcast in one shot. ethers populates
+            // missing fields (nonce, gas, fees) from the connected
+            // RPC. Returns the broadcast tx hash to the caller —
+            // matches what `eth_sendTransaction` is contractually
+            // supposed to return.
+            const tx = await getConnected().sendTransaction(
+              payload as ethers.TransactionRequest,
+            );
+            return tx.hash;
+          }
+          default:
+            throw new Error(`[test-wallet] unknown sign kind: ${kind}`);
+        }
+      },
+    );
+  }
 
   await page.addInitScript((cfg) => {
     // ----- Inside the browser context from here. No imports allowed -----
@@ -89,6 +172,49 @@ export async function installTestWallet(
     // React render that fans out `eth_call` + `eth_chainId` from
     // multiple effects in one tick).
     let nextRpcId = 1;
+
+    // Shape of the bridge between the in-page provider and the
+    // node-side ethers signer (set by `page.exposeFunction` when the
+    // install includes a privateKey). Declared here rather than as a
+    // top-level type because the init script is its own scope —
+    // names from outside the closure aren't visible.
+    type TestSignWindow = Window & {
+      __testWalletSign(kind: string, payload: unknown): Promise<string>;
+    };
+
+    /** Error for a method that *would* work if the install passed
+     *  a `privateKey`. The error names the option so a test author
+     *  who forgot it gets a one-line fix. */
+    function makeNeedsKey(method: string): Error {
+      return new Error(
+        `[test-wallet] ${method} not supported — install with { privateKey } to enable. See apps/pay/e2e/README.md.`,
+      );
+    }
+
+    /** Error for a method that's permanently rejected even with a
+     *  privateKey (`eth_signTransaction`, raw `eth_sign`). The
+     *  error makes clear there's no install option that turns it
+     *  on so a test author doesn't waste time looking. */
+    function makePermanentlyUnsupported(method: string): Error {
+      return new Error(
+        `[test-wallet] ${method} is permanently unsupported (deprecated / dangerous). Pay doesn't use it; see apps/pay/e2e/README.md "Permanently unsupported".`,
+      );
+    }
+
+    /** Throw if the dapp's per-call `address` parameter (EIP-1474
+     *  for personal_sign, EIP-712 spec for typed-data) doesn't match
+     *  the configured account. MetaMask/Rabby surface this as the
+     *  "unauthorized account" rejection; matching that behaviour in
+     *  tests catches a regression where the dapp signs with the
+     *  wrong account before the recovery check would. */
+    function assertAddressParamMatches(method: string, supplied: string | undefined): void {
+      if (typeof supplied !== "string" || !supplied.startsWith("0x")) return; // empty/missing — let the signer decide
+      if (supplied.toLowerCase() !== account) {
+        throw new Error(
+          `[test-wallet] ${method}: dapp asked to sign with ${supplied} but the bridge is bound to ${account}.`,
+        );
+      }
+    }
 
     async function rpcPassthrough(method: string, params: unknown): Promise<unknown> {
       // Forward the method to the configured RPC. Read-side methods
@@ -147,19 +273,66 @@ export async function installTestWallet(
           case "net_version":
             return String(cfg.chainId);
 
-          // Sign / send — explicitly unsupported in this iteration.
-          // Throw with a recognisable message so a test that needs
-          // them gets a clear "add the next-iteration signer" error
-          // rather than the opaque RPC failure.
-          case "eth_sendTransaction":
-          case "eth_signTransaction":
-          case "personal_sign":
-          case "eth_signTypedData_v4":
-          case "eth_signTypedData_v3":
-          case "eth_sign":
-            throw new Error(
-              `[test-wallet] ${method} not supported yet — see apps/pay/e2e/README.md "What this harness does NOT cover (yet)" + apps/pay/e2e/_helpers/test-wallet.ts (signing follow-up).`,
+          // Sign / send — when the install was given a privateKey,
+          // forward to the node-side signer via the exposed function.
+          // Without a privateKey, throw the same loud "not supported"
+          // error so read-only tests still fail clearly.
+          case "eth_sendTransaction": {
+            if (!cfg.canSign) throw makeNeedsKey(method);
+            const tx = (params as Array<{ from?: string }> | undefined)?.[0];
+            assertAddressParamMatches(method, tx?.from);
+            return (window as unknown as TestSignWindow).__testWalletSign(
+              "eth_sendTransaction",
+              tx,
             );
+          }
+          case "personal_sign": {
+            if (!cfg.canSign) throw makeNeedsKey(method);
+            // EIP-1474 wire format: `[message, address]`. Earlier
+            // drafts swapped them, but every modern wallet (MetaMask,
+            // Rabby, Coinbase, WalletConnect) emits the EIP-1474
+            // order — and a heuristic to "auto-detect" doesn't
+            // actually work, since both args are 0x-prefixed. Pick
+            // index 0 verbatim and let any test that hits a swapped
+            // dapp fail loudly. Validate `address` (params[1]) so a
+            // dapp signing with the wrong account fails the way
+            // MetaMask would.
+            const arr = params as [string, string] | undefined;
+            assertAddressParamMatches(method, arr?.[1]);
+            return (window as unknown as TestSignWindow).__testWalletSign(
+              "personal_sign",
+              arr?.[0],
+            );
+          }
+          case "eth_signTypedData_v4": {
+            if (!cfg.canSign) throw makeNeedsKey(method);
+            // EIP-712 v4 wire format: `[address, jsonString]`.
+            // Validate `address` (params[0]) the same way MetaMask
+            // does so a dapp signing with the wrong account is
+            // caught at bridge level.
+            const arr = params as [string, string] | undefined;
+            assertAddressParamMatches(method, arr?.[0]);
+            const json = arr?.[1];
+            const parsed = json ? JSON.parse(json) : null;
+            return (window as unknown as TestSignWindow).__testWalletSign(
+              "eth_signTypedData_v4",
+              parsed,
+            );
+          }
+          case "eth_signTypedData_v3":
+            // v3 and v4 are not interchangeable — v4 added array /
+            // recursive struct support that changes the encoding for
+            // domains that use them. Pay only signs v4, so don't
+            // pretend to handle v3; surface a permanent reject so a
+            // dapp asking for v3 has to migrate to v4 (or extend the
+            // bridge with a real v3 implementation).
+            throw makePermanentlyUnsupported(method);
+          case "eth_signTransaction":
+          case "eth_sign":
+            // Deprecated / dangerous methods — never wire them, even
+            // when canSign is true. dapps that hit them should fail
+            // loudly so they migrate.
+            throw makePermanentlyUnsupported(method);
 
           // Chain switch — pretend success when the target is the
           // already-active chain; reject otherwise so a test that
