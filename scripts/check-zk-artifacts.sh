@@ -44,10 +44,23 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 #
 # Separate predicates so `--verify` flags frontend-side withdraw drift
 # even though mobile has no corresponding file to compare.
-CIRCUITS=(deposit withdraw claim authorize cancel)
+CIRCUITS=(
+  deposit
+  withdraw
+  claim
+  claim_64
+  claim_128
+  authorize
+  authorize_64
+  authorize_128
+  cancel
+)
 
 mobile_copies() {
   case "$1" in
+    # Mobile only ships the tier-16 circuits today; tier-64 / tier-128
+    # zkeys are too large to bundle in an RN binary and are not exposed
+    # to mobile consumers yet (see mobile/scripts/copy-zk-assets.sh).
     deposit|claim|authorize|cancel) return 0 ;;
     *) return 1 ;;
   esac

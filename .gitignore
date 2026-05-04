@@ -37,8 +37,12 @@ apps/pay/public/zk/
 # InvalidProof() at runtime. Hand-written verifiers (interfaces,
 # BatchAuthorizeVerifier) stay tracked.
 contracts/src/zk/AuthorizeVerifier.sol
+contracts/src/zk/AuthorizeVerifier_64.sol
+contracts/src/zk/AuthorizeVerifier_128.sol
 contracts/src/zk/CancelVerifier.sol
 contracts/src/zk/ClaimVerifier.sol
+contracts/src/zk/ClaimVerifier_64.sol
+contracts/src/zk/ClaimVerifier_128.sol
 contracts/src/zk/DepositVerifier.sol
 contracts/src/zk/WithdrawVerifier.sol
 contracts/src/zk/SettleVerifier.sol
