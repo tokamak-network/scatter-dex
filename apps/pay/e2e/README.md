@@ -7,18 +7,35 @@ so a regression that only manifests after hydration (a `useWallet`
 throw at module load, a missing `<Suspense>` boundary, etc.) gets
 caught in CI rather than at user time.
 
+## What this harness covers today
+
+- **Static-page smoke** — `/`, `/dashboard`, `/payouts/new` mount
+  without a wallet (`landing.spec.ts`, `wizard.spec.ts`). Catches
+  hydration / `useWallet`-throw-at-module-load regressions.
+- **Wallet bridge** — `wallet-bridge.spec.ts` exercises a hand-rolled
+  EIP-1193 stub (`_helpers/test-wallet.ts`) that injects
+  `window.ethereum` before React mounts. The stub answers
+  `eth_accounts` / `eth_chainId` locally and forwards every other
+  method to a configured RPC URL (anvil by default), so any future
+  test that needs read-side on-chain state can lean on it without
+  Synpress.
+
 ## What this harness does NOT cover (yet)
 
-- **Wallet-driven flows** — connect, deposit, settle, claim,
-  transfer-out. These need a test-wallet bridge (Synpress or a
-  custom `injected` mock) plus a running anvil + zk-relayer; tracked
-  as a follow-up.
+- **Signing methods** — `eth_sendTransaction`, `personal_sign`,
+  `eth_signTypedData_v4` intentionally throw in the bridge today.
+  The stub locks the contract loudly (the test fails with a
+  message pointing at this README) so a flow that ships before
+  the signer add-on doesn't silently green-light.
+- **Settle / claim / transfer-out scenarios** — they require the
+  signer add-on above plus a running anvil + zk-relayer
+  (`bash scripts/dev.sh --apps pay --mock`). Tracked as a
+  follow-up.
 - **WETH end-to-end** — see the manual checklist at
   `docs/operations/qa-pay-weth-transferout.md`. That doc is the
   source of truth for the WETH stealth → claim → native-ETH
-  transfer-out path until the wallet bridge lands here.
-- **Multi-tier proving** — exercising tier 64 / tier 128 needs the
-  same wallet bridge plus a 17 / 65-recipient run; same follow-up.
+  transfer-out path until the signer add-on lands.
+- **Multi-tier proving** — same gating (signer + dev.sh stack).
 
 ## Setup
 
@@ -50,11 +67,15 @@ running in another terminal, the runner reuses it (`reuseExistingServer:
 
 ```
 apps/pay/
-├── playwright.config.ts      # browser projects + webServer
+├── playwright.config.ts          # browser projects + webServer
 └── e2e/
-    ├── README.md             # this file
-    ├── landing.spec.ts       # `/`, `/dashboard` smoke
-    └── wizard.spec.ts        # `/payouts/new` entry-screen smoke
+    ├── README.md                 # this file
+    ├── _helpers/
+    │   └── test-wallet.ts        # injected EIP-1193 bridge for
+    │                             # wallet-driven specs
+    ├── landing.spec.ts           # `/`, `/dashboard` smoke
+    ├── wallet-bridge.spec.ts     # auto-connect via the test wallet
+    └── wizard.spec.ts            # `/payouts/new` entry-screen smoke
 ```
 
 `fullyParallel: true` parallelises both **across** spec files AND
@@ -69,10 +90,15 @@ or vault is reused), so the default is correct as-is.
 - **Wallet-less**: lean on the existing static pages — landing,
   payslip print route (with seeded query params), claim page (the
   link generator can produce a deterministic stealth address).
-- **Wallet-needed**: hold off until the bridge lands. When you write
-  the bridge, the natural seam is `useWallet`'s underlying
-  `WalletContext` — replace the injected provider with a deterministic
-  `ethers.Wallet` for the test session.
+- **Wallet-needed (read-only)**: import `installTestWallet` from
+  `_helpers/test-wallet.ts` and call it before `page.goto(...)`.
+  Pay's `useWallet` boots into the connected state on
+  `eth_accounts`; chain id is mocked locally; everything else
+  forwards to the RPC URL you pass (defaults to `127.0.0.1:8545`,
+  i.e. `dev.sh --mock`'s anvil).
+- **Wallet-needed (signing)**: not yet — see "does NOT cover" above.
+  When the signer follow-up lands, extend `test-wallet.ts` rather
+  than introducing a parallel bridge.
 
 ## CI
 
