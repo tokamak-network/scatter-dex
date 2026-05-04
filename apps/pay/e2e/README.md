@@ -25,6 +25,15 @@ caught in CI rather than at user time.
   signing crypto bundle. `wallet-bridge.spec.ts` recovers the
   signer for both `personal_sign` and `eth_signTypedData_v4` to
   prove the round-trip works.
+- **Live-stack scenarios** (`live/`) — gated on `isStackReachable()`
+  in `_helpers/stack.ts`. When dev.sh is up
+  (`bash scripts/dev.sh --apps pay --mock`), these specs run real
+  on-chain reads against anvil + zk-relayer. When it's not, they
+  `test.skip` so a fresh clone still has a green default suite.
+  Today: `live/connect.spec.ts` proves the bridge-↔-Pay-↔-anvil
+  integration seam (dashboard hydrates connected, no wrong-chain
+  banner). The settle / claim / transfer-out scenarios extend
+  the same pattern.
 
 ## What this harness does NOT cover (yet)
 
@@ -81,8 +90,12 @@ apps/pay/
 └── e2e/
     ├── README.md                 # this file
     ├── _helpers/
-    │   └── test-wallet.ts        # injected EIP-1193 bridge for
-    │                             # wallet-driven specs
+    │   ├── test-wallet.ts        # injected EIP-1193 bridge
+    │   └── stack.ts              # `isStackReachable()` gate for
+    │                             # live-anvil-required specs
+    ├── live/                     # dev.sh-required scenarios (skip
+    │   │                         # when stack isn't up)
+    │   └── connect.spec.ts       # bridge-↔-Pay-↔-anvil hydration
     ├── landing.spec.ts           # `/`, `/dashboard` smoke
     ├── wallet-bridge.spec.ts     # auto-connect via the test wallet
     └── wizard.spec.ts            # `/payouts/new` entry-screen smoke
