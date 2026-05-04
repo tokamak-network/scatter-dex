@@ -4,3 +4,8 @@ out
 .env*.local
 *.tsbuildinfo
 next-env.d.ts
+
+# Playwright e2e — generated artifacts.
+playwright-report/
+test-results/
+playwright/.cache/
