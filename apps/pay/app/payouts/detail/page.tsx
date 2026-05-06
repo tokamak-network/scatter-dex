@@ -36,7 +36,7 @@ import { formatLocalStamp, formatUtcStamp } from "../../_lib/format";
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
 
-type BusyKind = "send-all" | "resend" | "row" | "seed" | null;
+type BusyKind = "row" | "seed" | null;
 
 /** Pre-Next 16 the route was `/payouts/[id]`; Pay now ships as a
  *  static export (Firebase Hosting), which forbids dynamic route
@@ -162,7 +162,6 @@ function PayoutDetailInner() {
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
         closeMenu={closeMenu}
-        markSentBatch={run.markSentBatch}
         markSent={run.markSent}
         refresh={run.refresh}
         error={run.error}
@@ -178,7 +177,6 @@ function PayoutBody({
   openMenu,
   setOpenMenu,
   closeMenu,
-  markSentBatch,
   markSent,
   refresh,
   error,
@@ -189,31 +187,11 @@ function PayoutBody({
   openMenu: number | null;
   setOpenMenu: Dispatch<SetStateAction<number | null>>;
   closeMenu: () => void;
-  markSentBatch: (entries: { rowIndex: number; channel: NotificationChannel; toAddress: string }[]) => Promise<boolean>;
   markSent: (input: { rowIndex: number; channel: NotificationChannel; toAddress: string }) => Promise<boolean>;
   refresh: () => Promise<void>;
   error: string | null;
 }) {
   const logsByRow = useMemo(() => indexLatestNotifications(record), [record]);
-
-  const sendBatch = useCallback(
-    async (kind: Exclude<BusyKind, null | "row" | "seed">, predicate: (r: RecipientRow) => boolean) => {
-      const entries = record.recipients
-        .filter((r) => !!r.email && predicate(r))
-        .map((r) => ({ rowIndex: r.rowIndex, channel: EMAIL, toAddress: r.email! }));
-      if (entries.length === 0) return;
-      setBusy(kind);
-      try {
-        await markSentBatch(entries);
-      } finally {
-        setBusy(null);
-      }
-    },
-    [record, markSentBatch, setBusy],
-  );
-
-  const onSendAll = () => sendBatch("send-all", (r) => !logsByRow.get(r.rowIndex)?.sentAt);
-  const onResendUnclaimed = () => sendBatch("resend", (r) => r.status !== "claimed");
 
   const onMarkSentRow = useCallback(
     async (row: RecipientRow) => {
@@ -234,13 +212,7 @@ function PayoutBody({
       <PayoutHeader record={record} />
       <SummaryStats record={record} logsByRow={logsByRow} />
       <MemoSection record={record} refresh={refresh} />
-      <NotificationsBar
-        record={record}
-        logsByRow={logsByRow}
-        busy={busy}
-        onSendAll={onSendAll}
-        onResendUnclaimed={onResendUnclaimed}
-      />
+      <NotificationsBar record={record} logsByRow={logsByRow} />
       <RecipientTable
         record={record}
         logsByRow={logsByRow}
@@ -256,9 +228,9 @@ function PayoutBody({
         </div>
       )}
       <p className="text-xs text-[var(--color-text-muted)]">
-        Email dispatch only stamps the local notification log — the actual send happens once the
-        Pay backend is wired in. Webhook fields (delivered / opened / clicked) are reserved in the
-        on-disk schema.
+        Pay opens each claim email in your OS mail client (Gmail, Apple Mail, Outlook…). After you
+        press send there, confirm to mark the row as Sent — Pay only records the local timestamp.
+        Delivery / opened / clicked webhook fields are reserved for a future ESP integration.
       </p>
     </div>
   );
@@ -506,59 +478,30 @@ function SummaryStats({
 function NotificationsBar({
   record,
   logsByRow,
-  busy,
-  onSendAll,
-  onResendUnclaimed,
 }: {
   record: RunRecord;
   logsByRow: Map<number, NotificationLog>;
-  busy: BusyKind;
-  onSendAll: () => void;
-  onResendUnclaimed: () => void;
 }) {
   const total = record.recipients.length;
   let sentCount = 0;
-  let unsentEmailable = 0;
   let unclaimed = 0;
   for (const r of record.recipients) {
-    const sent = !!logsByRow.get(r.rowIndex)?.sentAt;
-    if (sent) sentCount++;
-    if (r.email && !sent) unsentEmailable++;
+    if (logsByRow.get(r.rowIndex)?.sentAt) sentCount++;
     if (r.status !== "claimed" && r.email) unclaimed++;
   }
   const isFirstSend = sentCount === 0;
-  const anyBusy = busy !== null;
-  const sendAllLabel = isFirstSend
-    ? "Send to all recipients"
-    : `Send to unsent (${unsentEmailable})`;
 
   return (
     <section
       data-print="hide"
-      className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4"
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm"
     >
-      <div className="flex-1 text-sm">
-        <div className="font-semibold">📧 Claim emails</div>
-        <div className="text-xs text-[var(--color-text-muted)]">
-          {isFirstSend
-            ? `Send each recipient their tokenized claim link. ${total} total.`
-            : `${sentCount}/${total} sent. ${unclaimed} unclaimed have an email on file.`}
-        </div>
+      <div className="font-semibold">📧 Claim emails</div>
+      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+        {isFirstSend
+          ? `Use the row Actions menu to open each recipient's claim email in your mail client. ${total} total.`
+          : `${sentCount}/${total} sent. ${unclaimed} unclaimed have an email on file.`}
       </div>
-      <button
-        disabled={anyBusy || unsentEmailable === 0}
-        onClick={onSendAll}
-        className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
-      >
-        {busy === "send-all" ? "Sending…" : sendAllLabel}
-      </button>
-      <button
-        disabled={anyBusy || isFirstSend || unclaimed === 0}
-        onClick={onResendUnclaimed}
-        className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm disabled:opacity-40"
-      >
-        {busy === "resend" ? "Resending…" : `Resend to unclaimed (${unclaimed})`}
-      </button>
     </section>
   );
 }
@@ -633,10 +576,20 @@ function RecipientTable({
                           ``,
                           `The link is private to you and never expires.`,
                         ].join("\n");
-                        const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+                        // mailto: hands the draft to the OS-registered mail
+                        // client (Gmail desktop, Apple Mail, Outlook…). The
+                        // user still has to press send there, so we ask
+                        // before stamping the row as sent.
+                        const mailto = `mailto:${encodeURIComponent(
                           r.email,
-                        )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                        window.open(gmail, "_blank", "noopener,noreferrer");
+                        )}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                        window.location.href = mailto;
+                        const ok = window.confirm(
+                          `Mail client opened for ${r.name || r.email}.\n\n` +
+                            `Click OK after you've sent the email to mark this recipient as Sent.\n` +
+                            `Click Cancel if you didn't send it.`,
+                        );
+                        if (!ok) return;
                         onMarkSent(r).catch((err) =>
                           console.error("Failed to mark recipient as sent", err),
                         );
@@ -805,7 +758,7 @@ function RowMenu({
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
             title={!hasEmail ? "No email on file for this recipient" : undefined}
           >
-            {alreadySent ? "Resend via Gmail" : "Send via Gmail"}
+            {alreadySent ? "Resend via mail client" : "Send via mail client"}
           </button>
           <Link
             href={payslipHref}

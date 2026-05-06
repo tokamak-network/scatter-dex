@@ -5,7 +5,6 @@ import {
   loadRun,
   recordClaimedRecipients,
   recordSentNotification,
-  recordSentNotificationsBatch,
   RunRecordCorruptError,
   type ClaimedRecipientInput,
   type RunRecord,
@@ -22,7 +21,6 @@ interface RunRecordState {
   corrupt: RunRecordCorruptError | null;
   error: string | null;
   markSent(input: SendNotificationInput): Promise<boolean>;
-  markSentBatch(entries: SendNotificationInput[]): Promise<boolean>;
   /** Stamp one or more rows as claimed. The reconciler calls this
    *  with the rows it matched from `PrivateClaim` events. Returns
    *  the number of rows that actually flipped (already-claimed
@@ -91,22 +89,6 @@ export function useRunRecord(id: string | undefined): RunRecordState {
     [id],
   );
 
-  const markSentBatch = useCallback(
-    async (entries: SendNotificationInput[]) => {
-      if (!id || entries.length === 0) return entries.length === 0;
-      try {
-        const next = await recordSentNotificationsBatch({ runId: id, entries });
-        setRecord(next.record);
-        setError(null);
-        return true;
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to record notifications");
-        return false;
-      }
-    },
-    [id],
-  );
-
   const markClaimed = useCallback(
     async (entries: ClaimedRecipientInput[]) => {
       if (!id || entries.length === 0) return 0;
@@ -123,5 +105,5 @@ export function useRunRecord(id: string | undefined): RunRecordState {
     [id],
   );
 
-  return { record, loaded, corrupt, error, markSent, markSentBatch, markClaimed, refresh };
+  return { record, loaded, corrupt, error, markSent, markClaimed, refresh };
 }
