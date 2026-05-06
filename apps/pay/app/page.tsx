@@ -16,8 +16,8 @@ export default function Landing() {
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
           One-to-many private payouts for crypto-native companies and DAOs.
-          Send to up to 16 recipients in a single private settlement — each recipient sees only their own amount,
-          and you get an audit-ready accounting export. Larger circuits (64 / 128 recipients) are on the roadmap.
+          Send to up to 128 recipients in a single private settlement — each recipient sees only their own amount,
+          and you get an audit-ready accounting export.
         </p>
         <div className="mt-8 flex justify-center gap-3">
           <Link
