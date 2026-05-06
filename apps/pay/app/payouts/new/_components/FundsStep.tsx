@@ -124,9 +124,18 @@ export interface FundsStepProps {
     setMaxFeeBps: (bps: number) => void;
   };
   onDeposit: () => void;
+  /** Wired to `tree.refresh()` so the source-notes panel can poll the
+   *  pool for new `CommitmentInserted` events while a deposit is
+   *  still confirming. Without this the operator sees "Confirming"
+   *  indefinitely if the ethers contract subscription drops a poll. */
+  onRecheck?: () => void;
+  /** Block-explorer base used to link a deposit's `txHash` to the
+   *  network's explorer. `undefined` on networks without an
+   *  explorer (anvil) — the row falls back to a plain mono hash. */
+  explorerBase?: string;
 }
 
-export function FundsStep({ funds, pick, wallet, relayer, onDeposit }: FundsStepProps) {
+export function FundsStep({ funds, pick, wallet, relayer, onDeposit, onRecheck, explorerBase }: FundsStepProps) {
   const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, pendingRaw, shortfallRaw } = funds;
   const { sourcePick, batchCount, multiBatchFit, tokenNotes, selectedIds, onToggle } = pick;
   const { account, vaultLoaded } = wallet;
@@ -172,6 +181,8 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit }: FundsStep
         selectedIds={selectedIds}
         onToggle={onToggle}
         onDeposit={onDeposit}
+        onRecheck={onRecheck}
+        explorerBase={explorerBase}
         depositConfigured={configured}
       />
 

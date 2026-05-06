@@ -30,6 +30,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PRIVATE_SETTLEMENT_ABI = [
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
   "function claimNullifiers(bytes32) view returns (bool)",
+  // public mapping(bytes32 => ClaimsGroup) — ethers returns the
+  // struct as a tuple; field order matches SettleVerifyLib.ClaimsGroup
+  // (totalLocked, totalClaimed, token, tier). The tier field selects
+  // which per-tier claim verifier (claim_vkey / claim_64_vkey /
+  // claim_128_vkey) the relayer's off-chain pre-flight should use.
+  "function claimsGroups(bytes32) view returns (uint128 totalLocked, uint128 totalClaimed, address token, uint8 tier)",
 ];
 
 const COMMITMENT_POOL_ABI = [
@@ -205,22 +211,39 @@ export class PrivateSubmitter {
   }
 
 
-  private claimVkeyCache: any = null;
+  // One vkey per tier. The settle contract stores `tier` on each
+  // ClaimsGroup (set when registerClaimsGroup writes it from the
+  // authorize proof's tier), so the relayer can pick the matching
+  // verification key for any group's claims without an
+  // out-of-band hint from the recipient.
+  private claimVkeyByTier: Map<number, any> = new Map();
 
-  /** Verify a claim proof off-chain before spending gas. */
+  /** Verify a claim proof off-chain before spending gas. The on-chain
+   *  group's `tier` (queried by `claimsRoot`) selects the matching
+   *  vkey — without this, a tier-64 / tier-128 claim is rejected
+   *  here even though the contract would accept it via its own
+   *  per-tier verifier. */
   private async verifyClaimProof(
     proofA: [bigint, bigint],
     proofB: [[bigint, bigint], [bigint, bigint]],
     proofC: [bigint, bigint],
     publicSignals: string[],
+    claimsRoot: string,
   ): Promise<boolean> {
     const snarkjs = await import("snarkjs");
-    if (!this.claimVkeyCache) {
-      const vkeyPath = path.join(__dirname, "../../../circuits/build/claim_vkey.json");
+    const group = await this.settlement.claimsGroups(claimsRoot) as { tier: bigint };
+    const tier = Number(group.tier);
+    let vkey = this.claimVkeyByTier.get(tier);
+    if (!vkey) {
+      const suffix = tier === 16 ? "" : `_${tier}`;
+      const vkeyPath = path.join(
+        __dirname,
+        `../../../circuits/build/claim${suffix}_vkey.json`,
+      );
       const { readFileSync } = await import("fs");
-      this.claimVkeyCache = JSON.parse(readFileSync(vkeyPath, "utf8"));
+      vkey = JSON.parse(readFileSync(vkeyPath, "utf8"));
+      this.claimVkeyByTier.set(tier, vkey);
     }
-    const vkey = this.claimVkeyCache;
 
     const proof = {
       pi_a: [proofA[0].toString(), proofA[1].toString(), "1"],
@@ -263,7 +286,7 @@ export class PrivateSubmitter {
     const alreadySpent = await this.settlement.claimNullifiers(params.claimNullifier);
     if (alreadySpent) throw new Error("Claim nullifier already spent");
 
-    const valid = await this.verifyClaimProof(params.proofA, params.proofB, params.proofC, publicSignals);
+    const valid = await this.verifyClaimProof(params.proofA, params.proofB, params.proofC, publicSignals, params.claimsRoot);
     if (!valid) throw new Error("Invalid claim proof — rejected before on-chain submission");
 
     return this.withTxLock(async () => {

@@ -70,6 +70,21 @@ export function formatLocalStamp(unixSec: number | undefined): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
 
+/** Same as {@link formatLocalStamp} but with second-level precision —
+ *  for surfaces where the recipient needs to know the exact unlock
+ *  moment (claim screen) rather than a wall-clock-friendly minute. */
+export function formatLocalStampSec(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const d = new Date(unixSec * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
 /** "5m ago" / "2h ago" relative-time formatter. */
 export function formatRelativeAgo(unixSec: number): string {
   const diff = Math.floor(Date.now() / 1000) - unixSec;

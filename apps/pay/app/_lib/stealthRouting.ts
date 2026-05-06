@@ -16,6 +16,11 @@ export interface StealthRoutingResult {
    *  pubkey. Each stealth address is a fresh point so the map is
    *  always 1:1 with the routed rows. Empty when no row was routed. */
   ephPubByAddress: Record<string, string>;
+  /** Lower-cased stealth address → email pulled from the book entry
+   *  whose meta-address derived this stealth address. Lets the run
+   *  record carry the recipient's email even though the on-chain
+   *  address is a one-time stealth EOA the book doesn't index. */
+  emailByAddress: Record<string, string>;
 }
 
 /** Look each row's address up in the address book; if the entry has
@@ -36,21 +41,24 @@ export function applyStealthRouting(
   options: { stealth: boolean },
 ): StealthRoutingResult {
   if (!options.stealth || rows.length === 0) {
-    return { rows, ephPubByAddress: {} };
+    return { rows, ephPubByAddress: {}, emailByAddress: {} };
   }
   const bookByAddress = new Map<string, WalletEntry>();
   for (const e of walletBook) {
     if (e.address) bookByAddress.set(e.address.toLowerCase(), e);
   }
   const ephPubByAddress: Record<string, string> = {};
+  const emailByAddress: Record<string, string> = {};
   const nextRows = rows.map((r) => {
     const entry = bookByAddress.get(r.address.toLowerCase());
     if (!entry?.metaAddress) return r;
     const { stealthAddress, ephemeralPubKey } = generateStealthAddress(
       entry.metaAddress,
     );
-    ephPubByAddress[stealthAddress.toLowerCase()] = ephemeralPubKey;
+    const lower = stealthAddress.toLowerCase();
+    ephPubByAddress[lower] = ephemeralPubKey;
+    if (entry.email) emailByAddress[lower] = entry.email;
     return { ...r, address: stealthAddress };
   });
-  return { rows: nextRows, ephPubByAddress };
+  return { rows: nextRows, ephPubByAddress, emailByAddress };
 }

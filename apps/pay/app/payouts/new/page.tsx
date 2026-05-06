@@ -112,7 +112,7 @@ function today(): string {
  *  operator time to settle on-chain + the recipient time to receive
  *  the link before the claim window opens; without it users could
  *  pick "now" and the receiver would race the settle tx. */
-const CLAIM_FROM_BUFFER_MINUTES = 3;
+const CLAIM_FROM_BUFFER_MINUTES = 1;
 function claimFromMin(): string {
   return toIsoDateTimeSec(
     new Date(Date.now() + CLAIM_FROM_BUFFER_MINUTES * 60_000),
@@ -218,6 +218,13 @@ function NewPayout() {
   // a default address still go through the per-render lookup path,
   // so this map only carries the stealth-only pickups.
   const [pickerEphPubs, setPickerEphPubs] = useState<Record<string, string>>({});
+  // Mirror of pickerEphPubs but for email — captured at picker-time so a
+  // stealth-only book entry's email survives into the run record. Without
+  // it, `buildRunRecord`'s `bookByAddress` lookup misses the entry (it
+  // keys on `e.address`, undefined for stealth-only) and the recipient
+  // ends up with `email: undefined` — the detail page then disables
+  // "Send via email" even though the book has the address.
+  const [pickerEmails, setPickerEmails] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
   // Captured once on first render — used as the input's `min` so the
@@ -270,6 +277,7 @@ function NewPayout() {
   const [showBookPicker, setShowBookPicker] = useState(false);
   const draftLabelParam = searchParams?.get("label") ?? null;
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [draftJustSaved, setDraftJustSaved] = useState(false);
   const draftHydratedRef = useRef(false);
   // Tracks the label the draft was last persisted under. When the user
   // edits the label, the next save uses this to delete the old slot
@@ -311,43 +319,11 @@ function NewPayout() {
     });
   }, [folder.ready, resume.kind, draftLabelParam, account]);
 
-  // ── Draft save — debounced 400ms so a fast-typing user doesn't
-  // hammer the folder. Only saves once the hydration pass is done
-  // so an empty in-memory state doesn't blow away a stored draft on
-  // mount.
-  useEffect(() => {
-    if (!draftHydratedRef.current) return;
-    if (resume.kind === "ready") return;
-    if (!folder.ready) return;
-    const t = window.setTimeout(() => {
-      void saveWizardDraft(account, lastSavedLabelRef.current, {
-        step,
-        templateId,
-        label,
-        token,
-        csv,
-        reason,
-        claimFrom,
-        maxFeeBps,
-      }).then((saved) => {
-        setDraftSavedAt(saved.savedAt);
-        lastSavedLabelRef.current = saved.label;
-      });
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [
-    folder.ready,
-    account,
-    resume.kind,
-    step,
-    templateId,
-    label,
-    token,
-    csv,
-    reason,
-    claimFrom,
-    maxFeeBps,
-  ]);
+  // Draft save is now explicit — only the "Save draft" button writes
+  // to storage. Auto-save was creating ghost drafts the operator never
+  // intended (every wizard mount produced a "(untitled)" entry), and
+  // surprised users by silently mirroring URL state. Removed in favor
+  // of the explicit button which both saves and syncs `?label=`.
 
   const addressBookHint = !folder.ready
     ? "Pick a notes folder to load your address book."
@@ -443,6 +419,7 @@ function NewPayout() {
     let totalRelayerFeeRaw: bigint | undefined;
     let submittedRows: typeof rows | undefined;
     let submittedEphPubByAddress: Record<string, string> | undefined;
+    let submittedEmailByAddress: Record<string, string> | undefined;
     // Whether `persist(allowFailure: true)` succeeded on the partial
     // path. The helper swallows save errors and returns null, so a
     // partial banner promising "saved" must check this flag rather
@@ -499,6 +476,7 @@ function NewPayout() {
               txHash,
               claimPackages,
               ephPubByAddress: submittedEphPubByAddress,
+              emailByAddress: submittedEmailByAddress,
               ...(totalRelayerFeeRaw !== undefined
                 ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
                 : {}),
@@ -535,6 +513,13 @@ function NewPayout() {
         submittedEphPubByAddress = {
           ...pickerEphPubs,
           ...stealthRouted.ephPubByAddress,
+        };
+        // Same merge for email: picker captured emails for stealth-only
+        // book entries; stealthRouting captured emails for entries with
+        // both default address + metaAddress that got routed at submit.
+        submittedEmailByAddress = {
+          ...pickerEmails,
+          ...stealthRouted.emailByAddress,
         };
         // Rebuild batches for the actual settle path. Pre-flight
         // checks above (multiBatchFit / coverage) used the unrouted
@@ -757,6 +742,7 @@ function NewPayout() {
     const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
     const rowsToAdd: string[] = [];
     const newEphPubs: Record<string, string> = {};
+    const newEmails: Record<string, string> = {};
     for (const e of picked) {
       if (e.address) {
         // Regular path: a default EOA is in the book — use it
@@ -780,12 +766,16 @@ function NewPayout() {
         if (seen.has(lower)) continue;
         seen.add(lower);
         newEphPubs[lower] = ephemeralPubKey;
+        if (e.email) newEmails[lower] = e.email;
         rowsToAdd.push(`${csvSafeLabel(e.label)},${stealthAddress},`);
       }
     }
     if (rowsToAdd.length === 0) return;
     if (Object.keys(newEphPubs).length > 0) {
       setPickerEphPubs((prev) => ({ ...prev, ...newEphPubs }));
+    }
+    if (Object.keys(newEmails).length > 0) {
+      setPickerEmails((prev) => ({ ...prev, ...newEmails }));
     }
     const trimmed = csv.trimEnd();
     setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
@@ -1034,37 +1024,11 @@ function NewPayout() {
         <h2 className="text-lg font-semibold text-[var(--color-text-muted)]">
           {label || "(untitled)"}
         </h2>
-        {draftSavedAt && resume.kind !== "ready" && (
+        {resume.kind !== "ready" && draftSavedAt && (
           <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
             <span title={new Date(draftSavedAt * 1000).toLocaleString()}>
               Draft saved {formatRelativeAgo(draftSavedAt)}
             </span>
-            <button
-              type="button"
-              onClick={() => {
-                if (!window.confirm("Discard this draft and start over?")) return;
-                const labelToClear = lastSavedLabelRef.current;
-                if (labelToClear !== null) {
-                  clearWizardDraft(account, labelToClear).catch((err) =>
-                    console.error("Failed to clear wizard draft", err),
-                  );
-                }
-                lastSavedLabelRef.current = null;
-                setDraftSavedAt(null);
-                setStep(1);
-                setTemplateId("payroll");
-                const t = TEMPLATES.find((x) => x.id === "payroll")!;
-                setLabel(t.defaultLabel);
-                setToken(t.defaultToken);
-                setCsv(t.sampleCsv);
-                setReason("");
-                setClaimFrom(undefined);
-                setMaxFeeBps(DEFAULT_MAX_FEE_BPS);
-              }}
-              className="rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-bg)]"
-            >
-              Discard
-            </button>
           </div>
         )}
       </div>
@@ -1342,7 +1306,7 @@ function NewPayout() {
               <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
                 <div className="mb-1 font-semibold">Fix before continuing</div>
                 <ul className="list-disc space-y-0.5 pl-4">
-                  {validation.map((v) => <li key={v}>{v}</li>)}
+                  {validation.map((v, i) => <li key={`${i}:${v}`}>{v}</li>)}
                 </ul>
               </div>
             )}
@@ -1379,6 +1343,8 @@ function NewPayout() {
               maxFeeBps,
               setMaxFeeBps,
             }}
+            onRecheck={tree.refresh}
+            explorerBase={networkCfg.explorerBase}
             onDeposit={() => {
               // Synchronous lock first — state-based checks would
               // race a same-frame double-click and start two flows.
@@ -1678,7 +1644,7 @@ function NewPayout() {
               step === 4 &&
               (!relayer || !sourcePick.covered || !multiBatchFit?.covered);
             const blockNext = step3Block || step4Block;
-            const reason = step3Block
+            const nextDisableReason = step3Block
               ? rows.length === 0
                 ? "Add at least one recipient"
                 : !claimFrom
@@ -1694,24 +1660,62 @@ function NewPayout() {
                     : "Top up the shortfall before advancing to Review"
                 : undefined;
             return (
-              <button
-                onClick={() => setStep((s) => s + 1)}
-                disabled={blockNext}
-                title={reason}
-                className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
-              >
-                Next
-              </button>
+              <div className="flex items-center gap-2">
+                {resume.kind !== "ready" && (
+                  <button
+                    type="button"
+                    disabled={!account || !label.trim() || !folder.ready}
+                    title={
+                      !account
+                        ? "Connect a wallet to save drafts"
+                        : !label.trim()
+                        ? "Enter a label first"
+                        : !folder.ready
+                        ? "Pick a notes folder in the dashboard before saving drafts"
+                        : "Save now and sync the URL so refresh resumes this draft"
+                    }
+                    onClick={() => {
+                      if (!account || !label.trim()) return;
+                      void saveWizardDraft(account, lastSavedLabelRef.current, {
+                        step,
+                        templateId,
+                        label,
+                        token,
+                        csv,
+                        reason,
+                        claimFrom,
+                        maxFeeBps,
+                      }).then((saved) => {
+                        setDraftSavedAt(saved.savedAt);
+                        lastSavedLabelRef.current = saved.label;
+                        router.replace(
+                          `/payouts/new?label=${encodeURIComponent(saved.label)}`,
+                        );
+                        setDraftJustSaved(true);
+                        window.setTimeout(() => setDraftJustSaved(false), 1500);
+                      });
+                    }}
+                    className={`rounded-md border px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${
+                      draftJustSaved
+                        ? "border-[var(--color-success,green)] bg-[var(--color-success-soft,#e6f4ea)] text-[var(--color-success,green)]"
+                        : "border-[var(--color-border-strong)] hover:bg-[var(--color-bg)]"
+                    }`}
+                  >
+                    {draftJustSaved ? "Saved ✓" : "Save draft"}
+                  </button>
+                )}
+                <button
+                  onClick={() => setStep((s) => s + 1)}
+                  disabled={blockNext}
+                  title={nextDisableReason}
+                  className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
             );
           })()
-        ) : (
-          <Link
-            href="/payouts/detail?id=p_2026_04_payroll"
-            className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm"
-          >
-            View sample result →
-          </Link>
-        )}
+        ) : null}
       </div>
 
       {showConfirm && (
@@ -1772,7 +1776,9 @@ function DepositProgress({
     ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
     : isError
     ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
-    : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+    : isCancelled
+    ? "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+    : "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]";
   return (
     <div className={`flex items-start gap-3 rounded-md border p-3 text-xs ${tone}`}>
       <div className="flex-1">

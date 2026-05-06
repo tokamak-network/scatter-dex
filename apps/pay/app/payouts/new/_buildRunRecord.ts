@@ -54,6 +54,14 @@ export interface BuildRunRecordInput {
    *  `RecipientRow.ephemeralPubKey` so a re-issued claim link still
    *  carries the right value. */
   ephPubByAddress?: Record<string, string>;
+  /** Lower-cased recipient address → email captured at picker /
+   *  stealth-routing time. Used as a fallback when the address book
+   *  lookup misses (e.g. stealth-only entries whose `e.address` is
+   *  undefined, so `bookByAddress` doesn't index them). Without this,
+   *  stealth recipients lose their book email and the detail page
+   *  disables the "Send via email" action even though the operator
+   *  has the contact. */
+  emailByAddress?: Record<string, string>;
   /** Token-units (decimal-string) of relayer fee actually paid. Sum
    *  across batches for a multi-batch run. Optional — stays undefined
    *  for the env-not-configured demo path. */
@@ -85,6 +93,11 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
     const book = bookByAddress.get(lower);
     const pkg = input.claimPackages?.[i];
     const ephPub = input.ephPubByAddress?.[lower];
+    // Email resolution: prefer the book entry (carries telegram/kakao
+    // too), fall back to the picker/stealth-routing sideband for
+    // recipients whose address isn't in the book (stealth-only and
+    // stealth-routed cases).
+    const email = book?.email ?? input.emailByAddress?.[lower];
     return {
       rowIndex: i,
       name: r.name || book?.label || lower,
@@ -95,7 +108,7 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
       // wizard's claim-from is in the future.
       status: isFutureClaim ? "locked" : "available",
       ...(isFutureClaim ? { claimFrom: claimFromUnix! } : {}),
-      ...(book?.email ? { email: book.email } : {}),
+      ...(email ? { email } : {}),
       ...(book?.telegramHandle ? { telegramHandle: book.telegramHandle } : {}),
       ...(book?.kakaoId ? { kakaoId: book.kakaoId } : {}),
       ...(ephPub ? { ephemeralPubKey: ephPub } : {}),

@@ -31,7 +31,7 @@ import { getNetworkConfig } from "../../_lib/network";
 import { partialRunStats } from "../../_lib/resumeRun";
 import { downloadRunCsv } from "../../_lib/exportRun";
 import { buildClaimUrl } from "../../_lib/claimUrl";
-import { formatLocalStamp, formatUtcStamp } from "../../_lib/format";
+import { formatLocalStamp, formatLocalStampSec, formatUtcStamp } from "../../_lib/format";
 
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
@@ -538,26 +538,36 @@ function NotificationsBar({
       className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4"
     >
       <div className="flex-1 text-sm">
-        <div className="font-semibold">📧 Claim emails</div>
+        <div className="flex items-center gap-2 font-semibold">
+          📧 Claim emails
+          <span
+            title="Automated email delivery isn't wired yet — see SPEC.md §Notifications. Use Actions → Copy claim link per recipient meanwhile."
+            className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
+          >
+            Coming soon
+          </span>
+        </div>
         <div className="text-xs text-[var(--color-text-muted)]">
-          {isFirstSend
-            ? `Send each recipient their tokenized claim link. ${total} total.`
-            : `${sentCount}/${total} sent. ${unclaimed} unclaimed have an email on file.`}
+          Automated email send is not implemented yet. The buttons here only
+          mark rows as &quot;sent&quot; in your local log — no email actually
+          leaves the app. For now, use{" "}
+          <span className="font-medium">Actions → Copy claim link</span> on each
+          row and paste into your existing email tool.
         </div>
       </div>
       <button
-        disabled={anyBusy || unsentEmailable === 0}
-        onClick={onSendAll}
-        className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
+        disabled
+        title="Email delivery integration is on the roadmap — see SPEC.md §Notifications."
+        className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white opacity-40 cursor-not-allowed"
       >
-        {busy === "send-all" ? "Sending…" : sendAllLabel}
+        {sendAllLabel}
       </button>
       <button
-        disabled={anyBusy || isFirstSend || unclaimed === 0}
-        onClick={onResendUnclaimed}
-        className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm disabled:opacity-40"
+        disabled
+        title="Email delivery integration is on the roadmap — see SPEC.md §Notifications."
+        className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm opacity-40 cursor-not-allowed"
       >
-        {busy === "resend" ? "Resending…" : `Resend to unclaimed (${unclaimed})`}
+        {`Resend to unclaimed (${unclaimed})`}
       </button>
     </section>
   );
@@ -623,15 +633,25 @@ function RecipientTable({
                         if (!r.email) return;
                         const url = buildClaimUrl(window.location.origin, record.id, r);
                         const subject = `Your payment from ${record.label}`;
+                        const claimFromText = r.claimFrom
+                          ? `Available from: ${formatLocalStampSec(r.claimFrom)}`
+                          : `Available to claim now.`;
+                        // URL goes at the very end so the descriptive lines
+                        // above stay readable. Gmail auto-linkifies any
+                        // bare URL in plain-text body, so the recipient
+                        // can click the URL line to open the claim page.
+                        // (Body fields in the Gmail compose URL are
+                        // plain-text only — we can't wrap the URL in an
+                        // anchor without an HTML compose API.)
                         const body = [
-                          `Hi ${r.name || ""},`,
+                          `Hi ${r.name || "there"},`,
                           ``,
-                          `Your payment of ${r.amount} ${record.tokenSymbol} is ready.`,
+                          `You have a payment of ${r.amount} ${record.tokenSymbol} from "${record.label}".`,
+                          claimFromText,
+                          `The link below is private to you and never expires — keep it secret, it carries the spending key.`,
                           ``,
-                          `Claim it here:`,
+                          `Claim URL ↓`,
                           url,
-                          ``,
-                          `The link is private to you and never expires.`,
                         ].join("\n");
                         const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
                           r.email,

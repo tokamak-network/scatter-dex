@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import type { SourceNotesPick } from "../../../_lib/sourceNotes";
+import { formatLocalStampSec } from "../../../_lib/format";
 
 export interface SourceNotesPanelProps {
   token: string;
@@ -37,7 +39,22 @@ export interface SourceNotesPanelProps {
    *  but disabled with the same "env not configured" hint the
    *  shortfall banner uses. */
   depositConfigured?: boolean;
+  /** Re-fetch the on-chain commitment tree. The panel polls this
+   *  while `pendingRaw > 0` so a deposit's "Confirming → Ready"
+   *  transition no longer relies on the ethers contract subscription
+   *  catching the event in real time. */
+  onRecheck?: () => void;
+  /** Block-explorer base; when set each deposit row's `txHash`
+   *  becomes a clickable link that opens `${base}/tx/${hash}` in a
+   *  new tab. */
+  explorerBase?: string;
 }
+
+/** Poll interval (seconds) while a deposit is still confirming. 3 s
+ *  keeps the user-perceived stale window short without hammering the
+ *  RPC — under default ethers HTTP polling (~4 s) we'd often beat
+ *  the contract subscription anyway. */
+const RECHECK_SEC = 3;
 
 /** Read-only view of the auto-picked source notes for the run plus
  *  the pending/available split. Gated on wallet + vault load — until
@@ -57,7 +74,48 @@ export function SourceNotesPanel({
   onToggle,
   onDeposit,
   depositConfigured = true,
+  onRecheck,
+  explorerBase,
 }: SourceNotesPanelProps) {
+  // Auto-poll the tree while any deposit is still confirming. Stops
+  // once `pendingRaw` reaches 0 so a fully-reconciled vault doesn't
+  // keep hitting the RPC. The 1 s ticker drives the countdown text
+  // ("Re-checking in 2s…") and the just-became-ready transition
+  // detection that fires the "select to spend" prompt.
+  // Single 1 s ticker drives both the countdown text and the periodic
+  // `onRecheck()` invocation — invoking every `RECHECK_SEC` ticks
+  // avoids a second `setInterval` and the closure overhead that came
+  // with it.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (pendingRaw <= 0n) return;
+    const id = window.setInterval(() => {
+      setTick((n) => {
+        const next = n + 1;
+        if (onRecheck && next % RECHECK_SEC === 0) onRecheck();
+        return next;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [pendingRaw, onRecheck]);
+
+  // Edge-detect "had pending → fully ready" so we can flash a brief
+  // success banner inviting the operator to actually pick the
+  // newly-spendable note. `prevPendingRef` survives renders without
+  // forcing them.
+  const prevPendingRef = useRef(pendingRaw);
+  const [justBecameReady, setJustBecameReady] = useState(false);
+  useEffect(() => {
+    if (prevPendingRef.current > 0n && pendingRaw === 0n) {
+      setJustBecameReady(true);
+      const id = window.setTimeout(() => setJustBecameReady(false), 6000);
+      prevPendingRef.current = pendingRaw;
+      return () => window.clearTimeout(id);
+    }
+    prevPendingRef.current = pendingRaw;
+  }, [pendingRaw]);
+
+  const nextRecheckSec = onRecheck ? RECHECK_SEC - (tick % RECHECK_SEC) : null;
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
 
   if (!account) {
@@ -102,9 +160,28 @@ export function SourceNotesPanel({
         )}
       </div>
       {pendingRaw > 0n && (
-        <div className="mb-2 text-[var(--color-text-subtle)]">
-          Confirming deposits are on-chain but waiting for the next block —
-          they become spendable shortly.
+        <div className="mb-2 flex items-center justify-between gap-3 text-[var(--color-text-subtle)]">
+          <span>
+            Confirming on-chain — waiting for the next block.{" "}
+            {onRecheck && nextRecheckSec !== null && (
+              <span className="text-[var(--color-text-muted)]">
+                Auto-checking every {RECHECK_SEC}s · next in {nextRecheckSec}s.
+              </span>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => (onRecheck ? onRecheck() : window.location.reload())}
+            title="Re-fetch CommitmentInserted events from the pool to pick up the deposit"
+            className="shrink-0 rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-bg)]"
+          >
+            Check now
+          </button>
+        </div>
+      )}
+      {justBecameReady && (
+        <div className="mb-2 rounded-md border border-[var(--color-success,green)] bg-[var(--color-success-soft,#e6f4ea)] px-3 py-2 text-xs text-[var(--color-success,green)]">
+          ✓ Deposit confirmed — pick the newly-spendable note(s) below to fund this run.
         </div>
       )}
       {tokenNotes.length > 0 && (
@@ -152,10 +229,32 @@ export function SourceNotesPanel({
                       )}
                     </td>
                     <td className="py-1.5">
-                      <span className="font-mono">{n.label}</span>{" "}
-                      <span className="text-[var(--color-text-muted)]">
-                        · {new Date(n.createdAt).toISOString().slice(0, 10)}
-                      </span>
+                      <div>
+                        <span className="font-mono">{n.label}</span>{" "}
+                        <span className="text-[var(--color-text-muted)]">
+                          · {formatLocalStampSec(Math.floor(n.createdAt / 1000))}
+                        </span>
+                      </div>
+                      {n.txHash && (
+                        <div className="text-[10px] text-[var(--color-text-muted)]">
+                          tx:{" "}
+                          {explorerBase ? (
+                            <a
+                              href={`${explorerBase.replace(/\/$/, "")}/tx/${n.txHash}`}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="font-mono underline decoration-dotted hover:text-[var(--color-primary)]"
+                              title={n.txHash}
+                            >
+                              {n.txHash.slice(0, 10)}…{n.txHash.slice(-6)}
+                            </a>
+                          ) : (
+                            <span className="font-mono" title={n.txHash}>
+                              {n.txHash.slice(0, 10)}…{n.txHash.slice(-6)}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="py-1.5 text-right font-mono">
                       {fmt(n.note.amount)} {token}
