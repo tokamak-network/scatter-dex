@@ -562,38 +562,7 @@ function RecipientTable({
                       }
                       onClose={closeMenu}
                       onCopy={() => copyClaimLink(record, r)}
-                      onSend={() => {
-                        if (!r.email) return;
-                        const url = buildClaimUrl(window.location.origin, record.id, r);
-                        const subject = `Your payment from ${record.label}`;
-                        const body = [
-                          `Hi ${r.name || ""},`,
-                          ``,
-                          `Your payment of ${r.amount} ${record.tokenSymbol} is ready.`,
-                          ``,
-                          `Claim it here:`,
-                          url,
-                          ``,
-                          `The link is private to you and never expires.`,
-                        ].join("\n");
-                        // mailto: hands the draft to the OS-registered mail
-                        // client (Gmail desktop, Apple Mail, Outlook…). The
-                        // user still has to press send there, so we ask
-                        // before stamping the row as sent.
-                        const mailto = `mailto:${encodeURIComponent(
-                          r.email,
-                        )}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                        window.location.href = mailto;
-                        const ok = window.confirm(
-                          `Mail client opened for ${r.name || r.email}.\n\n` +
-                            `Click OK after you've sent the email to mark this recipient as Sent.\n` +
-                            `Click Cancel if you didn't send it.`,
-                        );
-                        if (!ok) return;
-                        onMarkSent(r).catch((err) =>
-                          console.error("Failed to mark recipient as sent", err),
-                        );
-                      }}
+                      onSend={() => openClaimMailDraftAndConfirm(record, r, onMarkSent)}
                       hasClaimPackage={!!r.claimPackage}
                       hasEmail={!!r.email}
                       alreadySent={!!log?.sentAt}
@@ -821,6 +790,50 @@ function copyClaimLink(record: RunRecord, row: RecipientRow): void {
   const url = buildClaimUrl(window.location.origin, record.id, row);
   if (!url) return;
   void navigator.clipboard.writeText(url);
+}
+
+/** Hand the row's claim email to the OS-registered mail client and
+ *  ask the operator to confirm they actually pressed Send before we
+ *  stamp the row. Anchor-click instead of `location.href = mailto:`
+ *  so a registered webmail handler (Chrome → Gmail web) opens in a
+ *  new tab without unloading this page mid-write — otherwise the
+ *  navigation queued behind the synchronous `confirm()` would race
+ *  the markSent IndexedDB write. */
+function openClaimMailDraftAndConfirm(
+  record: RunRecord,
+  row: RecipientRow,
+  onMarkSent: (row: RecipientRow) => Promise<void>,
+): void {
+  if (!row.email) return;
+  const url = buildClaimUrl(window.location.origin, record.id, row);
+  const subject = `Your payment from ${record.label}`;
+  const body = [
+    `Hi ${row.name || ""},`,
+    ``,
+    `Your payment of ${row.amount} ${record.tokenSymbol} is ready.`,
+    ``,
+    `Claim it here:`,
+    url,
+    ``,
+    `The link is private to you and never expires.`,
+  ].join("\n");
+  const mailto = `mailto:${encodeURIComponent(row.email)}?subject=${encodeURIComponent(
+    subject,
+  )}&body=${encodeURIComponent(body)}`;
+  const anchor = document.createElement("a");
+  anchor.href = mailto;
+  anchor.target = "_blank";
+  anchor.rel = "noopener noreferrer";
+  anchor.click();
+  const ok = window.confirm(
+    `Mail client opened for ${row.name || row.email}.\n\n` +
+      `Click OK after you've sent the email to mark this recipient as Sent.\n` +
+      `Click Cancel if you didn't send it.`,
+  );
+  if (!ok) return;
+  onMarkSent(row).catch((err) =>
+    console.error("Failed to mark recipient as sent", err),
+  );
 }
 
 function formatRelative(unixSec: number | undefined): string {
