@@ -39,20 +39,14 @@ import {
 } from "../../_lib/realDeposit";
 
 // Largest tier with a live verifier — caps each individual settlement
-// transaction's anonymity set. With multi-batch (Phase 1d-α) each
-// batch is one settlement. `splitPayout` chunks by the SDK's fixed
-// `MAX_CLAIMS_PER_SIDE` constant, which today equals this value
-// (`TIER_16.cap = 16`); the two will diverge once a larger live tier
-// ships and `splitPayout` is taught to chunk per the picked tier.
+// transaction's anonymity set.
 const MAX_TIER_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
-// Soft cap on batches per run. Each batch = one signed scatterDirectAuth
-// tx + one source note from the vault. 4 keeps proving wall-clock
-// reasonable (~5–9s mobile × 4 ≈ 20–36s) and the user signs four
-// times in sequence — beyond that the UX gets unwieldy without a
-// progress indicator + parallel proving. Not a contract / SDK limit;
-// bumping is purely a UX call.
-const MAX_BATCHES_PER_RUN = 4;
-// Effective per-run recipient cap: 4 batches × 16 = 64 recipients.
+// One payout = one commitment = one scatterDirectAuth tx. Multi-batch
+// would require multiple source notes (UTXO model: each commitment is
+// nullified atomically). Capping at one batch keeps the mental model
+// simple — recipients fit inside the largest live circuit.
+const MAX_BATCHES_PER_RUN = 1;
+// Effective per-run recipient cap: 1 batch × largest active tier.
 const MAX_RECIPIENTS_PER_RUN = MAX_TIER_CAP * MAX_BATCHES_PER_RUN;
 // Tiers known to the SDK but not yet wired on-chain — used to surface
 // the roadmap signal in user-facing validation messages without hard-
@@ -555,7 +549,7 @@ function NewPayout() {
             : batches;
         if (submitBatches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
-            `This run needs ${submitBatches.length} settlement transactions; Pay caps at ${MAX_BATCHES_PER_RUN} per payout. Split into multiple runs.`,
+            `This payout would need ${submitBatches.length} settlement transactions; Pay allows only one. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
           );
         }
         // Block signing when no notes folder is picked. The settle
@@ -928,13 +922,12 @@ function NewPayout() {
   const batches = useMemo<PayoutBatch[]>(() => {
     if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
     try {
-      const recipients = parseRecipientRows(rows, decimals, claimFrom);
-      // splitPayout defaults to `pickActiveTier(recipients.length)` —
-      // smallest active tier that covers the run, falling back to
-      // multi-batch on the largest active tier when no active tier
-      // covers (today: only TIER_16, so 17+ recipients chunk into
-      // multiple tier-16 batches; shipping TIER_64 / TIER_128 will
-      // collapse those into single batches automatically).
+      // Clamp before parsing so the displayed Tier / batch count
+      // matches `tier`, and a paste of 10k rows doesn't parse the
+      // overflow. Validation still flags the original row count and
+      // disables Sign — this clamp only affects the preview.
+      const cappedRows = rows.slice(0, MAX_RECIPIENTS_PER_RUN);
+      const recipients = parseRecipientRows(cappedRows, decimals, claimFrom);
       return splitPayout(recipients, { token: tokenAddress });
     } catch {
       return [];
@@ -973,7 +966,7 @@ function NewPayout() {
         ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — for now, split into multiple runs.`
         : "";
       issues.push(
-        `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (${MAX_BATCHES_PER_RUN} batches × ${MAX_TIER_CAP}).${roadmap}`,
+        `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (one settlement transaction, fits the largest live circuit).${roadmap}`,
       );
     }
     const seen = new Set<string>();
@@ -1319,7 +1312,15 @@ function NewPayout() {
                 </tbody>
               </table>
               <div className="mt-3 flex justify-between text-sm">
-                <span className="text-[var(--color-text-muted)]">{rows.length} recipients</span>
+                <span
+                  className={
+                    rows.length > MAX_RECIPIENTS_PER_RUN
+                      ? "font-semibold text-[var(--color-warning)]"
+                      : "text-[var(--color-text-muted)]"
+                  }
+                >
+                  {rows.length} / {MAX_RECIPIENTS_PER_RUN} recipients
+                </span>
                 <span className="font-semibold">{total.toLocaleString()} {token}</span>
               </div>
             </div>
