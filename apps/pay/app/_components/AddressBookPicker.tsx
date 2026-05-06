@@ -31,6 +31,9 @@ export function AddressBookPicker({
         e.label.toLowerCase().includes(q) ||
         (e.address?.includes(q) ?? false) ||
         (e.metaAddress?.toLowerCase().includes(q) ?? false) ||
+        (e.email?.toLowerCase().includes(q) ?? false) ||
+        (e.telegramHandle?.toLowerCase().includes(q) ?? false) ||
+        (e.kakaoId?.toLowerCase().includes(q) ?? false) ||
         (e.memo?.toLowerCase().includes(q) ?? false),
     );
   }, [entries, search]);
@@ -49,7 +52,7 @@ export function AddressBookPicker({
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by name, address, or memo…"
+        placeholder="Search by name, address, email, telegram, kakao, or memo…"
         className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
       />
       <div className="mt-4 max-h-[40vh] overflow-y-auto">
@@ -87,6 +90,11 @@ export function AddressBookPicker({
                           : "—"}
                       {e.memo ? ` · ${e.memo}` : ""}
                     </div>
+                    {e.email && (
+                      <div className="text-xs text-[var(--color-text-muted)]">
+                        {e.email}
+                      </div>
+                    )}
                   </div>
                 </label>
               </li>

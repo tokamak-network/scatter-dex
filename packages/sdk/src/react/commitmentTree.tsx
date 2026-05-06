@@ -41,6 +41,14 @@ export interface CommitmentTreeState {
    *  the tree. Use `getMerkleProofWithFallback` for the common
    *  demo-mode-aware case. */
   tryProofFor(commitment: bigint): Promise<MerkleProof | null>;
+  /** Force a re-hydrate from `loadCommitmentInsertedHistory`. Used
+   *  by UI surfaces that observe a stale state — e.g. a deposit
+   *  that hasn't transitioned out of "Confirming" because the
+   *  ethers `contract.on(...)` polling missed the event. In demo
+   *  mode the hydrate effect early-returns so no network work
+   *  happens, but the bumped nonce still re-fires the effect (a
+   *  cheap no-op). */
+  refresh(): void;
 }
 
 /** Thrown when the supplied pool has a real CommitmentPool but the
@@ -112,6 +120,10 @@ export function CommitmentTreeProvider({
   const indexRef = useRef<Map<string, number>>(new Map());
   const [leafCount, setLeafCount] = useState(0);
   const [ready, setReady] = useState(!isLive);
+  // Bumped by `refresh()` to retrigger the hydrate effect — the rest
+  // of the deps (`poolAddress`, `readProvider`) are stable across a
+  // session, so this is the only mutable handle into the effect.
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   useEffect(() => {
     // Capture fresh tree + index instances LOCALLY so any in-flight
@@ -197,7 +209,11 @@ export function CommitmentTreeProvider({
       cancelled = true;
       unsubscribe();
     };
-  }, [poolAddress, readProvider]);
+  }, [poolAddress, readProvider, refreshNonce]);
+
+  const refresh = useCallback(() => {
+    setRefreshNonce((n) => n + 1);
+  }, []);
 
   const findIndex = useCallback((commitment: bigint): number => {
     return indexRef.current.get(commitment.toString()) ?? -1;
@@ -219,8 +235,9 @@ export function CommitmentTreeProvider({
       leafCount,
       findIndex,
       tryProofFor,
+      refresh,
     }),
-    [isLive, ready, leafCount, findIndex, tryProofFor],
+    [isLive, ready, leafCount, findIndex, tryProofFor, refresh],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

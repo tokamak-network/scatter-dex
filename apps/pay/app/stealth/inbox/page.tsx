@@ -570,28 +570,33 @@ function RowActions({
     );
   }
 
+  const blockReason = !canDeriveLocally
+    ? "No ephemeral pubkey or pre-derived privkey on this entry — paste the link with `<privkey> | <pkg>` form, or open the link via the receiver's stealth wallet."
+    : derivedMismatch
+      ? "Derived stealth address doesn't match the claim package — current wallet's stealth keys aren't the ones the sender encrypted to. Switch to the receiving account, or open Stealth wallet to rotate keys."
+      : null;
   return (
-    <div className="flex items-center justify-end gap-2">
-      <button
-        onClick={onClaim}
-        disabled={!canDeriveLocally || derivedMismatch}
-        title={
-          !canDeriveLocally
-            ? "No ephemeral pubkey or pre-derived privkey on this entry"
-            : derivedMismatch
-              ? "Derived stealth address doesn't match the claim package"
-              : undefined
-        }
-        className="rounded-md bg-[var(--color-primary)] px-3 py-1 font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
-      >
-        Claim
-      </button>
-      <button
-        onClick={onRemove}
-        className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-warning-soft)]"
-      >
-        Remove
-      </button>
+    <div className="flex flex-col items-end gap-1">
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onClaim}
+          disabled={!canDeriveLocally || derivedMismatch}
+          className="rounded-md bg-[var(--color-primary)] px-3 py-1 font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+        >
+          Claim
+        </button>
+        <button
+          onClick={onRemove}
+          className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-warning-soft)]"
+        >
+          Remove
+        </button>
+      </div>
+      {blockReason && (
+        <div className="max-w-xs text-right text-[10px] leading-tight text-[var(--color-warning)]">
+          {blockReason}
+        </div>
+      )}
     </div>
   );
 }

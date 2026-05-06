@@ -31,7 +31,7 @@ import { getNetworkConfig } from "../../_lib/network";
 import { partialRunStats } from "../../_lib/resumeRun";
 import { downloadRunCsv } from "../../_lib/exportRun";
 import { buildClaimUrl } from "../../_lib/claimUrl";
-import { formatLocalStamp, formatUtcStamp } from "../../_lib/format";
+import { formatLocalStamp, formatLocalStampSec, formatUtcStamp } from "../../_lib/format";
 
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
@@ -496,7 +496,15 @@ function NotificationsBar({
       data-print="hide"
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm"
     >
-      <div className="font-semibold">📧 Claim emails</div>
+      <div className="flex items-center gap-2 font-semibold">
+        📧 Claim emails
+        <span
+          title="Bulk send isn't wired — automated SMTP is on the roadmap (SPEC.md §Notifications). Use the row Actions menu to open each recipient's claim email in your mail client."
+          className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
+        >
+          Per-row only
+        </span>
+      </div>
       <div className="mt-1 text-xs text-[var(--color-text-muted)]">
         {isFirstSend
           ? `Use the row Actions menu to open each recipient's claim email in your mail client. ${total} total — rows without an email on file are skipped.`

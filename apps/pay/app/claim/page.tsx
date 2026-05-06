@@ -5,11 +5,15 @@ import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import { useMetaAddress, useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { decodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
+import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
+import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
+import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
   addStealthInboxEntry,
   markStealthInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
 import { getNetworkConfig } from "../_lib/network";
+import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { deriveStealthForPackage } from "../_lib/stealthDerive";
@@ -79,6 +83,23 @@ function ClaimInner() {
    *  small confirmation footer so the user knows where to find this
    *  claim later. Stays null on the non-stealth / no-folder paths. */
   const [savedInboxId, setSavedInboxId] = useState<string | null>(null);
+  // null = unknown / not yet probed, true = up, false = down. Drives
+  // the gasless button's disabled state so the recipient doesn't
+  // burn a proof generation just to hit a connection refused.
+  const [relayerUp, setRelayerUp] = useState<boolean | null>(null);
+  useEffect(() => {
+    const url = parsed?.pkg.relayerUrl;
+    if (!url) {
+      setRelayerUp(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    new RelayerClient(url)
+      .getInfo(ctrl.signal)
+      .then(() => setRelayerUp(true))
+      .catch(() => setRelayerUp(false));
+    return () => ctrl.abort();
+  }, [parsed?.pkg.relayerUrl]);
 
   const stealthDerivation = useMemo(
     () => (parsed ? deriveStealthForPackage(parsed.pkg, metaKeys) : null),
@@ -117,6 +138,42 @@ function ClaimInner() {
   const isAvailable = parsed
     ? Math.floor(Date.now() / 1000) >= parsed.releaseTimeUnix
     : undefined;
+  // null = not yet probed, true = nullifier already on-chain (claimed
+  // earlier), false = unspent. Probed once `parsed` + `readProvider`
+  // are ready so a recipient who's already claimed (e.g. clicked the
+  // link a second time) sees "Already claimed" instead of being
+  // invited to burn another proof generation that the relayer would
+  // reject anyway.
+  const [alreadyClaimed, setAlreadyClaimed] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!parsed || !readProvider) {
+      setAlreadyClaimed(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const nullifier = await computeClaimNullifier(
+          BigInt(parsed.pkg.secret),
+          BigInt(parsed.pkg.leafIndex),
+        );
+        const settlement = new ethers.Contract(
+          parsed.pkg.settlementAddress,
+          PRIVATE_SETTLEMENT_ABI,
+          readProvider,
+        );
+        const spent = (await settlement.claimNullifiers(
+          toBytes32Hex(nullifier),
+        )) as boolean;
+        if (!cancelled) setAlreadyClaimed(spent);
+      } catch {
+        if (!cancelled) setAlreadyClaimed(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parsed, readProvider]);
   // Two distinct mismatches surface to the recipient:
   //   1. App was built for a different chain than the package — no
   //      submit path can work; abort.
@@ -281,17 +338,20 @@ function ClaimInner() {
               Open the original message you received and click the link from
               there — this page needs the secret encoded in the URL.
             </span>
+          ) : alreadyClaimed === true && phase.kind !== "done" ? (
+            <span className="text-[var(--color-text-muted)]">
+              ✓ Already claimed — this link's slot was spent earlier.
+            </span>
           ) : isAvailable === undefined ? (
             <span className="text-[var(--color-text-muted)]">Checking availability…</span>
           ) : isAvailable ? (
             <span className="text-[var(--color-success)]">
               ✓ Available to claim now (
-              {new Date(parsed.releaseTimeUnix * 1000).toISOString().slice(0, 10)})
+              {formatLocalStampSec(parsed.releaseTimeUnix)})
             </span>
           ) : (
             <span className="text-[var(--color-warning)]">
-              ⏳ Available from{" "}
-              {new Date(parsed.releaseTimeUnix * 1000).toISOString().slice(0, 10)}
+              ⏳ Available from {formatLocalStampSec(parsed.releaseTimeUnix)}
             </span>
           )}
         </div>
@@ -404,7 +464,16 @@ function ClaimInner() {
                       !isAvailable ||
                       (needWallet && wrongWalletChain) ||
                       (needWallet && wrongRecipient) ||
-                      busy
+                      busy ||
+                      (gasless && relayerUp === false) ||
+                      alreadyClaimed === true
+                    }
+                    title={
+                      alreadyClaimed === true
+                        ? "This claim slot was already spent on-chain."
+                        : gasless && relayerUp === false
+                        ? "Operator's relayer is unreachable — use the wallet button below to claim directly."
+                        : undefined
                     }
                     className="w-full rounded-lg bg-[var(--color-primary)] py-3 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
                   >
@@ -412,7 +481,14 @@ function ClaimInner() {
                     {phase.kind === "proving" && "Generating ZK claim proof…"}
                     {phase.kind === "submitting" &&
                       (gasless ? "Dispatching via relayer…" : "Submitting…")}
-                    {phase.kind === "idle" && (gasless ? "Claim — gasless" : "Claim")}
+                    {phase.kind === "idle" &&
+                      (alreadyClaimed === true
+                        ? "Already claimed"
+                        : gasless
+                          ? relayerUp === false
+                            ? "Relayer offline"
+                            : "Claim — gasless"
+                          : "Claim")}
                     {phase.kind === "error" && "Try again"}
                   </button>
                   {phase.kind === "error" && (
@@ -421,12 +497,13 @@ function ClaimInner() {
                       {phase.message}
                     </div>
                   )}
-                  {gasless && phase.kind === "error" && (
+                  {gasless && (phase.kind === "idle" || phase.kind === "error") && (
                     <button
                       onClick={() => {
                         setForceSelfPay(true);
                         setPhase({ kind: "idle" });
                       }}
+                      title="Bypass the operator's relayer and submit the claim tx from your own wallet (you pay the gas)."
                       className="w-full rounded-md border border-[var(--color-border-strong)] py-2 text-xs hover:bg-[var(--color-primary-soft)]"
                     >
                       Submit with my wallet instead (you pay gas)
