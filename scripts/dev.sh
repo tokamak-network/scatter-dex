@@ -245,9 +245,24 @@ fi
 # bypass build, so a circuits/build/ that was rebuilt out-of-band between
 # dev.sh runs would otherwise deploy a Verifier.sol that doesn't pair with
 # the zkeys the apps actually load — every deposit/settle/claim then
-# reverts InvalidProof(). The cmp -s gate keeps the call free when nothing
-# drifted. apps/pay and apps/drop pull from apps/pro via their predev
-# script, so syncing the two canonical mirrors is enough.
+# reverts InvalidProof(). apps/pay and apps/drop pull from apps/pro via
+# their predev script, so syncing the two canonical mirrors is enough.
+#
+# Drift gate uses size + mtime (both preserved by `cp -p`) to avoid
+# re-hashing 90 MB+ zkeys on every dev.sh start. Falls through to `cmp -s`
+# only when the cheap check already says "maybe different".
+_sync_one_asset() {
+  local src="$1" dst="$2"
+  if [ -f "$dst" ]; then
+    local s_meta d_meta
+    s_meta=$(stat -f '%z %m' "$src" 2>/dev/null || stat -c '%s %Y' "$src")
+    d_meta=$(stat -f '%z %m' "$dst" 2>/dev/null || stat -c '%s %Y' "$dst")
+    [ "$s_meta" = "$d_meta" ] && return 1
+    cmp -s "$src" "$dst" && return 1
+  fi
+  cp -p "$src" "$dst"
+  return 0
+}
 sync_zk_assets_from_build() {
   local build_dir="$ROOT_DIR/circuits/build"
   local circuits=(deposit withdraw claim claim_64 claim_128 authorize authorize_64 authorize_128 cancel)
@@ -260,14 +275,8 @@ sync_zk_assets_from_build() {
     [ -f "$wasm" ] || continue
     for t in "${targets[@]}"; do
       [ -d "$t" ] || continue
-      if ! cmp -s "$zkey" "$t/${c}_final.zkey"; then
-        cp "$zkey" "$t/${c}_final.zkey"
-        updated=$((updated + 1))
-      fi
-      if ! cmp -s "$wasm" "$t/${c}.wasm"; then
-        cp "$wasm" "$t/${c}.wasm"
-        updated=$((updated + 1))
-      fi
+      _sync_one_asset "$zkey" "$t/${c}_final.zkey" && updated=$((updated + 1))
+      _sync_one_asset "$wasm" "$t/${c}.wasm" && updated=$((updated + 1))
     done
   done
   if [ "$updated" -gt 0 ]; then
