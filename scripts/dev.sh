@@ -239,9 +239,46 @@ fi
 #
 # Set SKIP_CIRCUIT_BUILD=1 to bypass when you know nothing changed since
 # the last build (saves ~30s+ on the settle phase-2).
+# Mirror circuits/build wasm + zkey into every consumer surface
+# (frontend/, apps/pro/) when they've drifted. Normally circuits/build.sh
+# does this at the end of `npm run build`; with SKIP_CIRCUIT_BUILD=1 we
+# bypass build, so a circuits/build/ that was rebuilt out-of-band between
+# dev.sh runs would otherwise deploy a Verifier.sol that doesn't pair with
+# the zkeys the apps actually load — every deposit/settle/claim then
+# reverts InvalidProof(). The cmp -s gate keeps the call free when nothing
+# drifted. apps/pay and apps/drop pull from apps/pro via their predev
+# script, so syncing the two canonical mirrors is enough.
+sync_zk_assets_from_build() {
+  local build_dir="$ROOT_DIR/circuits/build"
+  local circuits=(deposit withdraw claim claim_64 claim_128 authorize authorize_64 authorize_128 cancel)
+  local targets=("$ROOT_DIR/frontend/public/zk" "$ROOT_DIR/apps/pro/public/zk")
+  local updated=0
+  for c in "${circuits[@]}"; do
+    local zkey="$build_dir/${c}_final.zkey"
+    local wasm="$build_dir/${c}_js/${c}.wasm"
+    [ -f "$zkey" ] || continue
+    [ -f "$wasm" ] || continue
+    for t in "${targets[@]}"; do
+      [ -d "$t" ] || continue
+      if ! cmp -s "$zkey" "$t/${c}_final.zkey"; then
+        cp "$zkey" "$t/${c}_final.zkey"
+        updated=$((updated + 1))
+      fi
+      if ! cmp -s "$wasm" "$t/${c}.wasm"; then
+        cp "$wasm" "$t/${c}.wasm"
+        updated=$((updated + 1))
+      fi
+    done
+  done
+  if [ "$updated" -gt 0 ]; then
+    echo "  Synced $updated drifted zk asset(s) from circuits/build/ to consumer surfaces (frontend/, apps/pro/)."
+  fi
+}
+
 ensure_circuits_built() {
   if [ "${SKIP_CIRCUIT_BUILD:-0}" = "1" ]; then
     echo "  SKIP_CIRCUIT_BUILD=1 — using existing zkeys + Verifier.sol."
+    sync_zk_assets_from_build
     return
   fi
   echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."
