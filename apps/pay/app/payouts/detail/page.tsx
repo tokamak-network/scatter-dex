@@ -499,7 +499,7 @@ function NotificationsBar({
       <div className="font-semibold">📧 Claim emails</div>
       <div className="mt-1 text-xs text-[var(--color-text-muted)]">
         {isFirstSend
-          ? `Use the row Actions menu to open each recipient's claim email in your mail client. ${total} total.`
+          ? `Use the row Actions menu to open each recipient's claim email in your mail client. ${total} total — rows without an email on file are skipped.`
           : `${sentCount}/${total} sent. ${unclaimed} unclaimed have an email on file.`}
       </div>
     </section>
@@ -816,7 +816,7 @@ function openClaimMailDraftAndConfirm(
     url,
     ``,
     `The link is private to you and never expires.`,
-  ].join("\n");
+  ].join("\r\n");
   const mailto = `mailto:${encodeURIComponent(row.email)}?subject=${encodeURIComponent(
     subject,
   )}&body=${encodeURIComponent(body)}`;
