@@ -107,7 +107,6 @@ const DECIMAL_RE = /^\d+$/;
 // module stays dependency-free relative to the zk constants —
 // adding a tier requires extending both lists.
 const CLAIMS_PATH_LENS = [4, 6, 7] as const;
-const MAX_LEAF_COUNT = 128; // largest tier cap
 
 export function isClaimPackage(v: unknown): v is ClaimPackage {
   if (typeof v !== "object" || v === null) return false;
@@ -124,13 +123,6 @@ export function isClaimPackage(v: unknown): v is ClaimPackage {
   if (typeof o.releaseTime !== "string" || !DECIMAL_RE.test(o.releaseTime)) return false;
   if (typeof o.secret !== "string" || !DECIMAL_RE.test(o.secret)) return false;
   if (
-    typeof o.leafIndex !== "number" ||
-    !Number.isInteger(o.leafIndex) ||
-    o.leafIndex < 0 ||
-    o.leafIndex >= MAX_LEAF_COUNT
-  )
-    return false;
-  if (
     !Array.isArray(o.pathElements) ||
     !(CLAIMS_PATH_LENS as readonly number[]).includes(o.pathElements.length) ||
     !o.pathElements.every((e) => typeof e === "string" && DECIMAL_RE.test(e))
@@ -140,6 +132,17 @@ export function isClaimPackage(v: unknown): v is ClaimPackage {
     !Array.isArray(o.pathIndices) ||
     o.pathIndices.length !== o.pathElements.length ||
     !o.pathIndices.every((i) => i === 0 || i === 1)
+  )
+    return false;
+  // leafIndex must fit the tier implied by the path depth (cap = 2^depth).
+  // Without this a tier-16 package with leafIndex 17..127 would pass
+  // and only fail later inside the prover.
+  const tierCap = 1 << o.pathElements.length;
+  if (
+    typeof o.leafIndex !== "number" ||
+    !Number.isInteger(o.leafIndex) ||
+    o.leafIndex < 0 ||
+    o.leafIndex >= tierCap
   )
     return false;
   if (o.relayerUrl !== undefined && !isPlausibleHttpUrl(o.relayerUrl)) return false;

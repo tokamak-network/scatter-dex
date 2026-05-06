@@ -44,8 +44,10 @@ export interface CommitmentTreeState {
   /** Force a re-hydrate from `loadCommitmentInsertedHistory`. Used
    *  by UI surfaces that observe a stale state — e.g. a deposit
    *  that hasn't transitioned out of "Confirming" because the
-   *  ethers `contract.on(...)` polling missed the event. Demo mode
-   *  is a no-op. */
+   *  ethers `contract.on(...)` polling missed the event. In demo
+   *  mode the hydrate effect early-returns so no network work
+   *  happens, but the bumped nonce still re-fires the effect (a
+   *  cheap no-op). */
   refresh(): void;
 }
 

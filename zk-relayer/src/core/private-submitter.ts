@@ -231,8 +231,24 @@ export class PrivateSubmitter {
     claimsRoot: string,
   ): Promise<boolean> {
     const snarkjs = await import("snarkjs");
-    const group = await this.settlement.claimsGroups(claimsRoot) as { tier: bigint };
+    const group = await this.settlement.claimsGroups(claimsRoot) as {
+      token: string;
+      tier: bigint;
+    };
+    if (group.token === ethers.ZeroAddress) {
+      // tier reads as 0 for an unregistered group — bail before trying
+      // to load `claim_0_vkey.json` (ENOENT). The caller surfaces this
+      // as a 400-class error instead of a confusing internal failure.
+      throw new Error(
+        `Claims group not registered for root ${claimsRoot} — settle tx may not have confirmed yet`,
+      );
+    }
     const tier = Number(group.tier);
+    if (![16, 64, 128].includes(tier)) {
+      throw new Error(
+        `Unsupported claim tier ${tier} for root ${claimsRoot} — relayer has no matching vkey`,
+      );
+    }
     let vkey = this.claimVkeyByTier.get(tier);
     if (!vkey) {
       const suffix = tier === 16 ? "" : `_${tier}`;

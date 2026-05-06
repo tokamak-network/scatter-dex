@@ -85,14 +85,16 @@ export function SourceNotesPanel({
   // Single 1 s ticker drives both the countdown text and the periodic
   // `onRecheck()` invocation — invoking every `RECHECK_SEC` ticks
   // avoids a second `setInterval` and the closure overhead that came
-  // with it.
+  // with it. Only spins when the panel can do something useful with
+  // it (`onRecheck` provided AND a deposit is pending) so a fully
+  // reconciled vault doesn't keep re-rendering every second.
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    if (pendingRaw <= 0n) return;
+    if (pendingRaw <= 0n || !onRecheck) return;
     const id = window.setInterval(() => {
       setTick((n) => {
         const next = n + 1;
-        if (onRecheck && next % RECHECK_SEC === 0) onRecheck();
+        if (next % RECHECK_SEC === 0) onRecheck();
         return next;
       });
     }, 1000);

@@ -278,6 +278,7 @@ function NewPayout() {
   const draftLabelParam = searchParams?.get("label") ?? null;
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
   const [draftJustSaved, setDraftJustSaved] = useState(false);
+  const [draftSaveError, setDraftSaveError] = useState<string | null>(null);
   const draftHydratedRef = useRef(false);
   // Tracks the label the draft was last persisted under. When the user
   // edits the label, the next save uses this to delete the old slot
@@ -1676,7 +1677,8 @@ function NewPayout() {
                     }
                     onClick={() => {
                       if (!account || !label.trim()) return;
-                      void saveWizardDraft(account, lastSavedLabelRef.current, {
+                      setDraftSaveError(null);
+                      saveWizardDraft(account, lastSavedLabelRef.current, {
                         step,
                         templateId,
                         label,
@@ -1685,15 +1687,25 @@ function NewPayout() {
                         reason,
                         claimFrom,
                         maxFeeBps,
-                      }).then((saved) => {
-                        setDraftSavedAt(saved.savedAt);
-                        lastSavedLabelRef.current = saved.label;
-                        router.replace(
-                          `/payouts/new?label=${encodeURIComponent(saved.label)}`,
-                        );
-                        setDraftJustSaved(true);
-                        window.setTimeout(() => setDraftJustSaved(false), 1500);
-                      });
+                      })
+                        .then((saved) => {
+                          setDraftSavedAt(saved.savedAt);
+                          lastSavedLabelRef.current = saved.label;
+                          router.replace(
+                            `/payouts/new?label=${encodeURIComponent(saved.label)}`,
+                          );
+                          setDraftJustSaved(true);
+                          window.setTimeout(
+                            () => setDraftJustSaved(false),
+                            1500,
+                          );
+                        })
+                        .catch((err: unknown) => {
+                          console.error("[Pay] saveWizardDraft failed", err);
+                          setDraftSaveError(
+                            err instanceof Error ? err.message : String(err),
+                          );
+                        });
                     }}
                     className={`rounded-md border px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${
                       draftJustSaved
@@ -1712,6 +1724,11 @@ function NewPayout() {
                 >
                   Next
                 </button>
+                {draftSaveError && (
+                  <span className="ml-2 text-xs text-[var(--color-warning)]">
+                    Save failed: {draftSaveError}
+                  </span>
+                )}
               </div>
             );
           })()
