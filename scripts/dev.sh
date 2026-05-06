@@ -239,9 +239,68 @@ fi
 #
 # Set SKIP_CIRCUIT_BUILD=1 to bypass when you know nothing changed since
 # the last build (saves ~30s+ on the settle phase-2).
+# Mirror circuits/build wasm + zkey into every consumer surface
+# (frontend/, apps/pro/) when they've drifted. Normally circuits/build.sh
+# does this at the end of `npm run build`; with SKIP_CIRCUIT_BUILD=1 we
+# bypass build, so a circuits/build/ that was rebuilt out-of-band between
+# dev.sh runs would otherwise deploy a Verifier.sol that doesn't pair with
+# the zkeys the apps actually load — every deposit/settle/claim then
+# reverts InvalidProof(). apps/pay pulls from apps/pro via its predev
+# script (`apps/pay/scripts/sync-zk-assets.mjs`); apps/drop has no such
+# hook today and currently doesn't ship circuit-driven flows, so syncing
+# the two canonical mirrors is enough.
+#
+# `mkdir -p` matches build.sh's behavior so a clean tree (frontend/public/zk
+# is gitignored) still gets populated.
+#
+# Drift gate uses size + mtime (both preserved by `cp -p`) to avoid
+# re-hashing 90 MB+ zkeys on every dev.sh start. Falls through to `cmp -s`
+# only when the cheap check already says "maybe different".
+_sync_one_asset() {
+  local src="$1" dst="$2"
+  if [ -f "$dst" ]; then
+    local s_meta d_meta
+    s_meta=$(stat -f '%z %m' "$src" 2>/dev/null || stat -c '%s %Y' "$src")
+    d_meta=$(stat -f '%z %m' "$dst" 2>/dev/null || stat -c '%s %Y' "$dst")
+    [ "$s_meta" = "$d_meta" ] && return 1
+    cmp -s "$src" "$dst" && return 1
+  fi
+  cp -p "$src" "$dst"
+  return 0
+}
+sync_zk_assets_from_build() {
+  local build_dir="$ROOT_DIR/circuits/build"
+  local circuits=(deposit withdraw claim claim_64 claim_128 authorize authorize_64 authorize_128 cancel)
+  local targets=("$ROOT_DIR/frontend/public/zk" "$ROOT_DIR/apps/pro/public/zk")
+  local updated=0
+  for t in "${targets[@]}"; do
+    mkdir -p "$t"
+  done
+  for c in "${circuits[@]}"; do
+    local zkey="$build_dir/${c}_final.zkey"
+    local wasm="$build_dir/${c}_js/${c}.wasm"
+    [ -f "$zkey" ] || continue
+    [ -f "$wasm" ] || continue
+    for t in "${targets[@]}"; do
+      _sync_one_asset "$zkey" "$t/${c}_final.zkey" && updated=$((updated + 1))
+      _sync_one_asset "$wasm" "$t/${c}.wasm" && updated=$((updated + 1))
+    done
+  done
+  if [ "$updated" -gt 0 ]; then
+    echo "  Synced $updated drifted zk asset(s) from circuits/build/ to consumer surfaces (frontend/, apps/pro/)."
+    # Refresh the deploy-time manifest so a later
+    # `check-zk-artifacts.sh --verify` doesn't false-positive on the
+    # newly-adopted build (the previous manifest described the *prior*
+    # build that was up before the out-of-band rebuild).
+    "$ROOT_DIR/scripts/check-zk-artifacts.sh" --write \
+      || echo "  WARN: zk manifest write failed after sync"
+  fi
+}
+
 ensure_circuits_built() {
   if [ "${SKIP_CIRCUIT_BUILD:-0}" = "1" ]; then
     echo "  SKIP_CIRCUIT_BUILD=1 — using existing zkeys + Verifier.sol."
+    sync_zk_assets_from_build
     return
   fi
   echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."

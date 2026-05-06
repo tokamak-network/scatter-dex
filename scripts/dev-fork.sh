@@ -179,9 +179,50 @@ wipe_dev_dbs
 #
 # Set SKIP_CIRCUIT_BUILD=1 to bypass when you know nothing changed since
 # the last build (saves ~30s+ on the settle phase-2).
+#
+# Sync helper kept inline (rather than sourced from dev.sh) to match the
+# established duplication pattern between dev.sh / dev-fork.sh — see
+# `ensure_sqlite_arch`, `ensure_circuits_built`, etc.
+_sync_one_asset() {
+  local src="$1" dst="$2"
+  if [ -f "$dst" ]; then
+    local s_meta d_meta
+    s_meta=$(stat -f '%z %m' "$src" 2>/dev/null || stat -c '%s %Y' "$src")
+    d_meta=$(stat -f '%z %m' "$dst" 2>/dev/null || stat -c '%s %Y' "$dst")
+    [ "$s_meta" = "$d_meta" ] && return 1
+    cmp -s "$src" "$dst" && return 1
+  fi
+  cp -p "$src" "$dst"
+  return 0
+}
+sync_zk_assets_from_build() {
+  local build_dir="$ROOT_DIR/circuits/build"
+  local circuits=(deposit withdraw claim claim_64 claim_128 authorize authorize_64 authorize_128 cancel)
+  local targets=("$ROOT_DIR/frontend/public/zk" "$ROOT_DIR/apps/pro/public/zk")
+  local updated=0
+  for t in "${targets[@]}"; do
+    mkdir -p "$t"
+  done
+  for c in "${circuits[@]}"; do
+    local zkey="$build_dir/${c}_final.zkey"
+    local wasm="$build_dir/${c}_js/${c}.wasm"
+    [ -f "$zkey" ] || continue
+    [ -f "$wasm" ] || continue
+    for t in "${targets[@]}"; do
+      _sync_one_asset "$zkey" "$t/${c}_final.zkey" && updated=$((updated + 1))
+      _sync_one_asset "$wasm" "$t/${c}.wasm" && updated=$((updated + 1))
+    done
+  done
+  if [ "$updated" -gt 0 ]; then
+    echo "  Synced $updated drifted zk asset(s) from circuits/build/ to consumer surfaces (frontend/, apps/pro/)."
+    "$ROOT_DIR/scripts/check-zk-artifacts.sh" --write \
+      || echo "  WARN: zk manifest write failed after sync"
+  fi
+}
 ensure_circuits_built() {
   if [ "${SKIP_CIRCUIT_BUILD:-0}" = "1" ]; then
     echo "  SKIP_CIRCUIT_BUILD=1 — using existing zkeys + Verifier.sol."
+    sync_zk_assets_from_build
     return
   fi
   echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."
