@@ -808,24 +808,6 @@ export async function recordSentNotification(
   });
 }
 
-/** Batched variant: stamps `sentAt` on every input in a single
- *  load/save round-trip. Used by "Send all" / "Resend unclaimed"
- *  flows so a 100-row send is one read + one write instead of 100. */
-export async function recordSentNotificationsBatch(input: {
-  runId: string;
-  entries: SendNotificationInput[];
-}): Promise<{ record: RunRecord; logs: NotificationLog[] }> {
-  if (!hasFolder()) throw new NoFolderSelectedError();
-  return withRunLock(input.runId, async () => {
-    const record = await loadRun(input.runId);
-    if (!record) throw new Error(`Run ${input.runId} not found`);
-    const now = Math.floor(Date.now() / 1000);
-    const logs = input.entries.map((e) => applySent(record, e, now));
-    if (logs.length > 0) await saveRun(record);
-    return { record, logs };
-  });
-}
-
 export interface ClaimedRecipientInput {
   rowIndex: number;
   /** Unix-seconds — when the on-chain `PrivateClaim` event was

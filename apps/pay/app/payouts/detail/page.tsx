@@ -36,7 +36,7 @@ import { formatLocalStamp, formatLocalStampSec, formatUtcStamp } from "../../_li
 const SAMPLE_RUN_ID = "p_2026_04_payroll";
 const EMAIL: NotificationChannel = "email";
 
-type BusyKind = "send-all" | "resend" | "row" | "seed" | null;
+type BusyKind = "row" | "seed" | null;
 
 /** Pre-Next 16 the route was `/payouts/[id]`; Pay now ships as a
  *  static export (Firebase Hosting), which forbids dynamic route
@@ -162,7 +162,6 @@ function PayoutDetailInner() {
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
         closeMenu={closeMenu}
-        markSentBatch={run.markSentBatch}
         markSent={run.markSent}
         refresh={run.refresh}
         error={run.error}
@@ -178,7 +177,6 @@ function PayoutBody({
   openMenu,
   setOpenMenu,
   closeMenu,
-  markSentBatch,
   markSent,
   refresh,
   error,
@@ -189,31 +187,11 @@ function PayoutBody({
   openMenu: number | null;
   setOpenMenu: Dispatch<SetStateAction<number | null>>;
   closeMenu: () => void;
-  markSentBatch: (entries: { rowIndex: number; channel: NotificationChannel; toAddress: string }[]) => Promise<boolean>;
   markSent: (input: { rowIndex: number; channel: NotificationChannel; toAddress: string }) => Promise<boolean>;
   refresh: () => Promise<void>;
   error: string | null;
 }) {
   const logsByRow = useMemo(() => indexLatestNotifications(record), [record]);
-
-  const sendBatch = useCallback(
-    async (kind: Exclude<BusyKind, null | "row" | "seed">, predicate: (r: RecipientRow) => boolean) => {
-      const entries = record.recipients
-        .filter((r) => !!r.email && predicate(r))
-        .map((r) => ({ rowIndex: r.rowIndex, channel: EMAIL, toAddress: r.email! }));
-      if (entries.length === 0) return;
-      setBusy(kind);
-      try {
-        await markSentBatch(entries);
-      } finally {
-        setBusy(null);
-      }
-    },
-    [record, markSentBatch, setBusy],
-  );
-
-  const onSendAll = () => sendBatch("send-all", (r) => !logsByRow.get(r.rowIndex)?.sentAt);
-  const onResendUnclaimed = () => sendBatch("resend", (r) => r.status !== "claimed");
 
   const onMarkSentRow = useCallback(
     async (row: RecipientRow) => {
@@ -234,13 +212,7 @@ function PayoutBody({
       <PayoutHeader record={record} />
       <SummaryStats record={record} logsByRow={logsByRow} />
       <MemoSection record={record} refresh={refresh} />
-      <NotificationsBar
-        record={record}
-        logsByRow={logsByRow}
-        busy={busy}
-        onSendAll={onSendAll}
-        onResendUnclaimed={onResendUnclaimed}
-      />
+      <NotificationsBar record={record} logsByRow={logsByRow} />
       <RecipientTable
         record={record}
         logsByRow={logsByRow}
@@ -256,9 +228,9 @@ function PayoutBody({
         </div>
       )}
       <p className="text-xs text-[var(--color-text-muted)]">
-        Email dispatch only stamps the local notification log — the actual send happens once the
-        Pay backend is wired in. Webhook fields (delivered / opened / clicked) are reserved in the
-        on-disk schema.
+        Pay opens each claim email in your OS mail client (Gmail, Apple Mail, Outlook…). After you
+        press send there, confirm to mark the row as Sent — Pay only records the local timestamp.
+        Delivery / opened / clicked webhook fields are reserved for a future ESP integration.
       </p>
     </div>
   );
@@ -506,69 +478,38 @@ function SummaryStats({
 function NotificationsBar({
   record,
   logsByRow,
-  busy,
-  onSendAll,
-  onResendUnclaimed,
 }: {
   record: RunRecord;
   logsByRow: Map<number, NotificationLog>;
-  busy: BusyKind;
-  onSendAll: () => void;
-  onResendUnclaimed: () => void;
 }) {
   const total = record.recipients.length;
   let sentCount = 0;
-  let unsentEmailable = 0;
   let unclaimed = 0;
   for (const r of record.recipients) {
-    const sent = !!logsByRow.get(r.rowIndex)?.sentAt;
-    if (sent) sentCount++;
-    if (r.email && !sent) unsentEmailable++;
+    if (logsByRow.get(r.rowIndex)?.sentAt) sentCount++;
     if (r.status !== "claimed" && r.email) unclaimed++;
   }
   const isFirstSend = sentCount === 0;
-  const anyBusy = busy !== null;
-  const sendAllLabel = isFirstSend
-    ? "Send to all recipients"
-    : `Send to unsent (${unsentEmailable})`;
 
   return (
     <section
       data-print="hide"
-      className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4"
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4 text-sm"
     >
-      <div className="flex-1 text-sm">
-        <div className="flex items-center gap-2 font-semibold">
-          📧 Claim emails
-          <span
-            title="Automated email delivery isn't wired yet — see SPEC.md §Notifications. Use Actions → Copy claim link per recipient meanwhile."
-            className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
-          >
-            Coming soon
-          </span>
-        </div>
-        <div className="text-xs text-[var(--color-text-muted)]">
-          Automated email send is not implemented yet. The buttons here only
-          mark rows as &quot;sent&quot; in your local log — no email actually
-          leaves the app. For now, use{" "}
-          <span className="font-medium">Actions → Copy claim link</span> on each
-          row and paste into your existing email tool.
-        </div>
+      <div className="flex items-center gap-2 font-semibold">
+        📧 Claim emails
+        <span
+          title="Bulk send isn't wired — automated SMTP is on the roadmap (SPEC.md §Notifications). Use the row Actions menu to open each recipient's claim email in your mail client."
+          className="rounded-full border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
+        >
+          Per-row only
+        </span>
       </div>
-      <button
-        disabled
-        title="Email delivery integration is on the roadmap — see SPEC.md §Notifications."
-        className="rounded-md bg-[var(--color-primary)] px-3 py-2 text-sm font-medium text-white opacity-40 cursor-not-allowed"
-      >
-        {sendAllLabel}
-      </button>
-      <button
-        disabled
-        title="Email delivery integration is on the roadmap — see SPEC.md §Notifications."
-        className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm opacity-40 cursor-not-allowed"
-      >
-        {`Resend to unclaimed (${unclaimed})`}
-      </button>
+      <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+        {isFirstSend
+          ? `Use the row Actions menu to open each recipient's claim email in your mail client. ${total} total — rows without an email on file are skipped.`
+          : `${sentCount}/${total} sent. ${unclaimed} unclaimed have an email on file.`}
+      </div>
     </section>
   );
 }
@@ -629,38 +570,7 @@ function RecipientTable({
                       }
                       onClose={closeMenu}
                       onCopy={() => copyClaimLink(record, r)}
-                      onSend={() => {
-                        if (!r.email) return;
-                        const url = buildClaimUrl(window.location.origin, record.id, r);
-                        const subject = `Your payment from ${record.label}`;
-                        const claimFromText = r.claimFrom
-                          ? `Available from: ${formatLocalStampSec(r.claimFrom)}`
-                          : `Available to claim now.`;
-                        // URL goes at the very end so the descriptive lines
-                        // above stay readable. Gmail auto-linkifies any
-                        // bare URL in plain-text body, so the recipient
-                        // can click the URL line to open the claim page.
-                        // (Body fields in the Gmail compose URL are
-                        // plain-text only — we can't wrap the URL in an
-                        // anchor without an HTML compose API.)
-                        const body = [
-                          `Hi ${r.name || "there"},`,
-                          ``,
-                          `You have a payment of ${r.amount} ${record.tokenSymbol} from "${record.label}".`,
-                          claimFromText,
-                          `The link below is private to you and never expires — keep it secret, it carries the spending key.`,
-                          ``,
-                          `Claim URL ↓`,
-                          url,
-                        ].join("\n");
-                        const gmail = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
-                          r.email,
-                        )}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                        window.open(gmail, "_blank", "noopener,noreferrer");
-                        onMarkSent(r).catch((err) =>
-                          console.error("Failed to mark recipient as sent", err),
-                        );
-                      }}
+                      onSend={() => openClaimMailDraftAndConfirm(record, r, onMarkSent)}
                       hasClaimPackage={!!r.claimPackage}
                       hasEmail={!!r.email}
                       alreadySent={!!log?.sentAt}
@@ -825,7 +735,7 @@ function RowMenu({
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
             title={!hasEmail ? "No email on file for this recipient" : undefined}
           >
-            {alreadySent ? "Resend via Gmail" : "Send via Gmail"}
+            {alreadySent ? "Resend via mail client" : "Send via mail client"}
           </button>
           <Link
             href={payslipHref}
@@ -888,6 +798,50 @@ function copyClaimLink(record: RunRecord, row: RecipientRow): void {
   const url = buildClaimUrl(window.location.origin, record.id, row);
   if (!url) return;
   void navigator.clipboard.writeText(url);
+}
+
+/** Hand the row's claim email to the OS-registered mail client and
+ *  ask the operator to confirm they actually pressed Send before we
+ *  stamp the row. Anchor-click instead of `location.href = mailto:`
+ *  so a registered webmail handler (Chrome → Gmail web) opens in a
+ *  new tab without unloading this page mid-write — otherwise the
+ *  navigation queued behind the synchronous `confirm()` would race
+ *  the markSent IndexedDB write. */
+function openClaimMailDraftAndConfirm(
+  record: RunRecord,
+  row: RecipientRow,
+  onMarkSent: (row: RecipientRow) => Promise<void>,
+): void {
+  if (!row.email) return;
+  const url = buildClaimUrl(window.location.origin, record.id, row);
+  const subject = `Your payment from ${record.label}`;
+  const body = [
+    `Hi ${row.name || ""},`,
+    ``,
+    `Your payment of ${row.amount} ${record.tokenSymbol} is ready.`,
+    ``,
+    `Claim it here:`,
+    url,
+    ``,
+    `The link is private to you and never expires.`,
+  ].join("\r\n");
+  const mailto = `mailto:${encodeURIComponent(row.email)}?subject=${encodeURIComponent(
+    subject,
+  )}&body=${encodeURIComponent(body)}`;
+  const anchor = document.createElement("a");
+  anchor.href = mailto;
+  anchor.target = "_blank";
+  anchor.rel = "noopener noreferrer";
+  anchor.click();
+  const ok = window.confirm(
+    `Mail client opened for ${row.name || row.email}.\n\n` +
+      `Click OK after you've sent the email to mark this recipient as Sent.\n` +
+      `Click Cancel if you didn't send it.`,
+  );
+  if (!ok) return;
+  onMarkSent(row).catch((err) =>
+    console.error("Failed to mark recipient as sent", err),
+  );
 }
 
 function formatRelative(unixSec: number | undefined): string {
