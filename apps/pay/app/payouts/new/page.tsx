@@ -540,16 +540,21 @@ function NewPayout() {
         // checks above (multiBatchFit / coverage) used the unrouted
         // batches so the user-shown coverage matches what they typed;
         // amounts/totals are unchanged, only the recipient field.
-        const submitBatches: PayoutBatch[] =
-          Object.keys(stealthRouted.ephPubByAddress).length > 0
-            ? splitPayout(
-                parseRecipientRows(stealthRouted.rows, decimals, claimFrom!),
-                { token: tokenAddress },
-              )
-            : batches;
+        // Always rebuild from the full submitted row set (never reuse
+        // the preview `batches`, which is clamped to MAX_RECIPIENTS_PER_RUN
+        // for display). If validation drifts and >cap rows reach this
+        // point, the guard below catches it instead of silently
+        // truncating the payout while the RunRecord stores the full list.
+        const submitRows = Object.keys(stealthRouted.ephPubByAddress).length > 0
+          ? stealthRouted.rows
+          : rows;
+        const submitBatches: PayoutBatch[] = splitPayout(
+          parseRecipientRows(submitRows, decimals, claimFrom!),
+          { token: tokenAddress },
+        );
         if (submitBatches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
-            `This payout would need ${submitBatches.length} settlement transactions; Pay allows only one. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
+            `This payout would need ${submitBatches.length} settlement ${MAX_BATCHES_PER_RUN === 1 ? "transactions" : "txs"}; Pay caps at ${MAX_BATCHES_PER_RUN === 1 ? "one" : MAX_BATCHES_PER_RUN} per payout. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
           );
         }
         // Block signing when no notes folder is picked. The settle
@@ -965,8 +970,11 @@ function NewPayout() {
       const roadmap = PLANNED_TIER_CAPS.length > 0
         ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — for now, split into multiple runs.`
         : "";
+      const txCopy = MAX_BATCHES_PER_RUN === 1
+        ? "one settlement transaction"
+        : `${MAX_BATCHES_PER_RUN} settlement transactions`;
       issues.push(
-        `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (one settlement transaction, fits the largest live circuit).${roadmap}`,
+        `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (${txCopy}).${roadmap}`,
       );
     }
     const seen = new Set<string>();
@@ -1270,7 +1278,7 @@ function NewPayout() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => {
+                  {rows.slice(0, MAX_RECIPIENTS_PER_RUN).map((r, i) => {
                     const lower = r.address.toLowerCase();
                     // The row will go through stealth at settle when
                     // either (a) the user picked a stealth-only book
@@ -1311,6 +1319,12 @@ function NewPayout() {
                   })}
                 </tbody>
               </table>
+              {rows.length > MAX_RECIPIENTS_PER_RUN && (
+                <div className="mt-2 text-xs text-[var(--color-warning)]">
+                  …and {rows.length - MAX_RECIPIENTS_PER_RUN} more rows hidden
+                  (preview capped at {MAX_RECIPIENTS_PER_RUN}).
+                </div>
+              )}
               <div className="mt-3 flex justify-between text-sm">
                 <span
                   className={
