@@ -5,6 +5,7 @@
  *  positional A/B/C = name/address/amount so the textarea's existing
  *  format keeps working without a header.
  */
+import { isAddress } from "ethers";
 
 export type ParsedRecipient = {
   name: string;
@@ -47,7 +48,10 @@ function classifyHeader(cell: unknown): ColumnKind | null {
 }
 
 function looksLikeAddress(cell: unknown): boolean {
-  return typeof cell === "string" && /^0x[a-fA-F0-9]{40}$/.test(cell.trim());
+  // ethers.isAddress validates length AND checksum (mixed-case input
+  // must match EIP-55) — a shape-only regex would silently accept
+  // "0xAaA...Aaa" with a wrong checksum and let the bad row through.
+  return typeof cell === "string" && isAddress(cell.trim());
 }
 
 function cellToString(c: unknown): string {

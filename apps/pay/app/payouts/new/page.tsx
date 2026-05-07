@@ -875,6 +875,8 @@ function NewPayout() {
     // Functional setCsv guards against stale closure state: the user can
     // edit the textarea or switch templates while async parse is in
     // flight, and `prev` always reflects the latest committed value.
+    // Match against ANY template's sample so a mid-parse template switch
+    // still replaces the (newly swapped-in) placeholder cleanly.
     let shouldReplace = false;
     setCsv((prev) => {
       const trimmed = prev.trimEnd();
