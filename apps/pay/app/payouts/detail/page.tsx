@@ -232,7 +232,58 @@ function PayoutBody({
         press send there, confirm to mark the row as Sent — Pay only records the local timestamp.
         Delivery / opened / clicked webhook fields are reserved for a future ESP integration.
       </p>
+      <PrintOnlyClaimLinks record={record} />
     </div>
+  );
+}
+
+/** Hidden on screen, surfaced in print: a per-recipient claim-link
+ *  appendix so an operator who saves the detail page as PDF still
+ *  walks away with every link they'd need to deliver offline. Keeping
+ *  it off-screen avoids the shoulder-surfing risk of having dozens of
+ *  private links permanently visible on the operator's monitor. */
+function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return (
+    <section data-print="only" className="break-before-page pt-6">
+      <h2 className="border-b border-black pb-1 text-sm font-semibold uppercase tracking-wide">
+        Claim links per recipient
+      </h2>
+      <p className="mt-1 text-[10px] text-gray-600">
+        Each link below is private to that recipient — handle this PDF as confidential.
+      </p>
+      <table className="mt-3 w-full text-[10px]">
+        <thead>
+          <tr className="border-b border-gray-400 text-left">
+            <th className="py-1 pr-3">#</th>
+            <th className="py-1 pr-3">Recipient</th>
+            <th className="py-1 pr-3">Email</th>
+            <th className="py-1">Claim link</th>
+          </tr>
+        </thead>
+        <tbody>
+          {record.recipients.map((r) => {
+            const url = buildClaimUrl(origin, record.id, r);
+            return (
+              <tr key={r.rowIndex} className="border-b border-gray-200 align-top">
+                <td className="py-1 pr-3 font-mono">{r.rowIndex + 1}</td>
+                <td className="py-1 pr-3">{r.name || "—"}</td>
+                <td className="py-1 pr-3 break-all">{r.email ?? "—"}</td>
+                <td className="break-all py-1 font-mono">
+                  {url ? (
+                    <a href={url} className="text-blue-700 underline">
+                      {url}
+                    </a>
+                  ) : (
+                    "— (claim package not yet issued)"
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
   );
 }
 
