@@ -11,6 +11,7 @@
  *  reimburses it in tokens.
  */
 import { ethers } from "ethers";
+import { ERC20_ABI } from "@zkscatter/sdk";
 
 export interface Call {
   target: string;
@@ -126,8 +127,7 @@ export async function sign7702Batch(input: Sign7702Inputs): Promise<{
       signature: {
         r: auth.signature.r,
         s: auth.signature.s,
-        // ethers normalizes to yParity (0 or 1) on SignatureLike output.
-        yParity: (auth.signature.yParity ?? auth.signature.v - 27) as 0 | 1,
+        yParity: auth.signature.yParity as 0 | 1,
       },
     },
     signature,
@@ -175,9 +175,7 @@ export function buildErc20TransferCalls(args: {
   feeRecipient: string;
   fee: bigint;
 }): Call[] {
-  const erc20 = new ethers.Interface([
-    "function transfer(address to, uint256 amount)",
-  ]);
+  const erc20 = new ethers.Interface(ERC20_ABI);
   return [
     {
       target: args.token,

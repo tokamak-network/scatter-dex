@@ -946,10 +946,13 @@ function TransferOutModal({
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [gasBalance, setGasBalance] = useState<bigint | null>(null);
-  // Default fee: 0.1 token-units (e.g. 0.1 USDC). Operators with a
-  // different fee policy can edit before signing. Native ETH gasless
-  // would need a different shape (value-bearing call to relayer
-  // rather than ERC20.transfer), so the toggle only surfaces for
+  // Default fee: 0.1 token-units (~$0.10 for USDC/USDT, sensible for
+  // stablecoin payouts which is the main HR use case). Surfacing
+  // this for ETH/WBTC will need a per-token default — flag for
+  // follow-up once those tokens hit the gasless path. Operators with
+  // a different fee policy can edit before signing. Native ETH
+  // gasless would need a value-bearing call to the relayer rather
+  // than ERC20.transfer, so the toggle only surfaces for
   // ERC20-token claims for now.
   const [feeAmount, setFeeAmount] = useState("0.1");
   const stealthAddr = entry.pkg.recipient;
@@ -988,13 +991,44 @@ function TransferOutModal({
   // the operator has published the delegate address.
   const gaslessAvailable =
     !isNative && !!relayerUrl && !!delegateAddress;
-  const [mode, setMode] = useState<"standard" | "gasless">(() =>
-    gaslessAvailable && entry.pkg.recipient ? "standard" : "standard",
-  );
+  const [mode, setMode] = useState<"standard" | "gasless">("standard");
+  // Relayer fee collector — fetched once on modal mount so signing
+  // stays purely local crypto and an unreachable relayer surfaces
+  // before the user has filled in the form.
+  const [relayerFeeAddr, setRelayerFeeAddr] = useState<string | null>(null);
+  const [relayerFeeAddrError, setRelayerFeeAddrError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!relayerUrl || !gaslessAvailable) return;
+    let cancelled = false;
+    void fetch(`${relayerUrl}/api/info`)
+      .then((r) => r.json())
+      .then((info: { address?: string }) => {
+        if (cancelled) return;
+        if (!info.address || !ethers.isAddress(info.address)) {
+          setRelayerFeeAddrError("relayer /api/info missing address");
+          return;
+        }
+        setRelayerFeeAddr(info.address);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setRelayerFeeAddrError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [relayerUrl, gaslessAvailable]);
 
   async function sendGasless() {
     if (!relayerUrl || !delegateAddress) {
       throw new Error("Gasless transfer is not configured for this network");
+    }
+    if (!relayerFeeAddr) {
+      throw new Error(
+        relayerFeeAddrError
+          ? `Relayer unreachable: ${relayerFeeAddrError}`
+          : "Resolving relayer fee address — try again in a moment",
+      );
     }
     if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
     const network = await provider.getNetwork();
@@ -1003,12 +1037,15 @@ function TransferOutModal({
     // Per-EOA `nonce` slot in StealthTransferAccount storage. Fresh
     // stealth EOAs read 0 even when the contract isn't yet
     // delegated — `eth_call` against an EOA returns 0x for missing
-    // storage, which decodes to 0n.
+    // storage, so we keep the manual encode/decode (Contract would
+    // throw on the empty return) and default to 0n on absence.
     const accountIface = new ethers.Interface([
       "function nonce() view returns (uint256)",
     ]);
-    const nonceCalldata = accountIface.encodeFunctionData("nonce");
-    const rawNonce = await provider.call({ to: stealthAddr, data: nonceCalldata });
+    const rawNonce = await provider.call({
+      to: stealthAddr,
+      data: accountIface.encodeFunctionData("nonce"),
+    });
     const batchNonce = rawNonce && rawNonce !== "0x"
       ? (accountIface.decodeFunctionResult("nonce", rawNonce)[0] as bigint)
       : 0n;
@@ -1019,24 +1056,6 @@ function TransferOutModal({
 
     const raw = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
     const fee = ethers.parseUnits(feeAmount, entry.pkg.tokenDecimals);
-
-    // Relayer's address — use the wallet that signed the on-chain
-    // settle as the fee recipient. ClaimPackage carries the relayer
-    // address inside `senderLabel` only sometimes; we fall back to
-    // querying the relayer's /api/info endpoint.
-    let relayerFeeAddr: string;
-    try {
-      const infoRes = await fetch(`${relayerUrl}/api/info`);
-      const info = (await infoRes.json()) as { address?: string };
-      if (!info.address || !ethers.isAddress(info.address)) {
-        throw new Error("relayer /api/info missing address");
-      }
-      relayerFeeAddr = info.address;
-    } catch (e) {
-      throw new Error(
-        `Could not resolve relayer fee address: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
 
     const calls: Call[] = buildErc20TransferCalls({
       token: entry.pkg.token,
@@ -1063,8 +1082,9 @@ function TransferOutModal({
     });
     setTxHash(hash);
     // The relayer 202s before broadcast confirms; poll the receipt
-    // so the UI doesn't claim "Sent ✓" before the tx actually lands.
-    await provider.waitForTransaction(hash);
+    // with a 2-minute ceiling so a dropped tx surfaces an actionable
+    // error instead of spinning the modal indefinitely.
+    await provider.waitForTransaction(hash, 1, 120_000);
   }
 
   async function send() {
