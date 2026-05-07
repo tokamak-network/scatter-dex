@@ -70,6 +70,7 @@ import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { csvSafeLabel, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { csvEscape, downloadCsv } from "../../_lib/csv";
+import { parseRecipientFile, parsedToCsvLines } from "../../_lib/parseRecipientFile";
 import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   clearWizardDraft,
@@ -275,6 +276,13 @@ function NewPayout() {
   const walletBook = useWalletBook();
   const folder = useFolderStorage();
   const [showBookPicker, setShowBookPicker] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<
+    | { kind: "ok"; message: string }
+    | { kind: "warn"; message: string }
+    | { kind: "error"; message: string }
+    | null
+  >(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftLabelParam = searchParams?.get("label") ?? null;
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
   const [draftJustSaved, setDraftJustSaved] = useState(false);
@@ -782,6 +790,44 @@ function NewPayout() {
     setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
   }
 
+  async function handleRecipientFile(file: File) {
+    if (resumeRecord) return;
+    setUploadStatus(null);
+    let result;
+    try {
+      result = await parseRecipientFile(file);
+    } catch (err) {
+      setUploadStatus({
+        kind: "error",
+        message: `Failed to read ${file.name}: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+    if (result.rows.length === 0) {
+      setUploadStatus({
+        kind: "error",
+        message: result.warnings[0] ?? "No recipients found in file.",
+      });
+      return;
+    }
+    const block = parsedToCsvLines(result.rows);
+    // Replace when the textarea is empty OR still holds the template's
+    // sample placeholder (untouched). Otherwise append so users don't
+    // lose manually entered or address-book-added rows.
+    const trimmed = csv.trimEnd();
+    const isUntouchedSample = trimmed === template.sampleCsv.trimEnd();
+    const shouldReplace = trimmed.length === 0 || isUntouchedSample;
+    setCsv(shouldReplace ? block : `${trimmed}\n${block}`);
+    const action = shouldReplace ? "Loaded" : "Appended";
+    const warn = result.warnings[0];
+    setUploadStatus({
+      kind: warn ? "warn" : "ok",
+      message: warn
+        ? `${action} ${result.rows.length} recipient(s) from ${file.name}. ${warn}`
+        : `${action} ${result.rows.length} recipient(s) from ${file.name}.`,
+    });
+  }
+
   function pickTemplate(id: TemplateId) {
     const t = TEMPLATES.find((x) => x.id === id)!;
     setTemplateId(id);
@@ -1122,7 +1168,25 @@ function NewPayout() {
                   >
                     + Add from address book
                   </button>
-                  <button className="rounded border border-[var(--color-border-strong)] px-2 py-1">Upload CSV</button>
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={!!resumeRecord}
+                    className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Upload CSV / Excel
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void handleRecipientFile(f);
+                      // Reset so picking the same filename twice still fires onChange.
+                      e.target.value = "";
+                    }}
+                  />
                 </div>
                 {addressBookHint && (
                   <span id="abp-hint" className="text-[10px] text-[var(--color-text-subtle)]">
@@ -1163,6 +1227,29 @@ function NewPayout() {
                 </div>
               );
             })()}
+            {uploadStatus && (
+              <div
+                className={`rounded-md border px-3 py-2 text-xs ${
+                  uploadStatus.kind === "error"
+                    ? "border-[var(--color-danger)] bg-red-50 text-[var(--color-danger)]"
+                    : uploadStatus.kind === "warn"
+                      ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+                      : "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
+                }`}
+                role={uploadStatus.kind === "error" ? "alert" : "status"}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <span>{uploadStatus.message}</span>
+                  <button
+                    aria-label="Dismiss"
+                    onClick={() => setUploadStatus(null)}
+                    className="text-[10px] underline opacity-70 hover:opacity-100"
+                  >
+                    dismiss
+                  </button>
+                </div>
+              </div>
+            )}
             {(() => {
               const empty = rows.length === 0;
               const missingAmount =
