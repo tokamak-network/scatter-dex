@@ -109,17 +109,61 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
   return { rows: out, warnings };
 }
 
+/**
+ *  Quote-aware RFC-4180-ish CSV reader. Handles quoted fields that
+ *  contain commas (e.g. `"Doe, John"`) and newlines, plus doubled-up
+ *  `""` escapes inside quotes. Keeps the parser dependency-free since
+ *  the textarea path already produces CSV without quoted fields.
+ */
 function parseCsvText(text: string): ParseResult {
-  // Handle CRLF (Excel), CR (mac TextEdit), and LF — Excel CSV exports
-  // are the common HR case and ship with CRLF.
-  const lines = text.split(/\r\n|\r|\n/);
-  const matrix = lines.map((l) => l.split(",").map((c) => c.trim()));
-  return rowsFromMatrix(matrix);
+  const rows: string[][] = [];
+  let cur = "";
+  let row: string[] = [];
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += c;
+      }
+      continue;
+    }
+    if (c === '"' && cur === "") {
+      inQuotes = true;
+    } else if (c === ",") {
+      row.push(cur.trim());
+      cur = "";
+    } else if (c === "\r" || c === "\n") {
+      if (c === "\r" && text[i + 1] === "\n") i++;
+      row.push(cur.trim());
+      rows.push(row);
+      row = [];
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  if (cur !== "" || row.length > 0) {
+    row.push(cur.trim());
+    rows.push(row);
+  }
+  return rowsFromMatrix(rows);
 }
 
 export async function parseRecipientFile(file: File): Promise<ParseResult> {
+  // Extension-first dispatch — `application/vnd.ms-excel` is ambiguous
+  // (browsers tag both legacy binary .xls files and mis-labeled CSVs
+  // with it), so MIME is only a fallback when the filename is missing
+  // an extension.
   const ext = (file.name.split(".").pop() ?? "").toLowerCase();
-  if (ext === "xlsx" || ext === "xls") {
+  if (ext === "xlsx") {
     // Dynamic import keeps read-excel-file out of the initial page bundle.
     const { default: readXlsxFile } = await import("read-excel-file/browser");
     const sheets = await readXlsxFile(file);
@@ -133,12 +177,20 @@ export async function parseRecipientFile(file: File): Promise<ParseResult> {
     }
     return result;
   }
-  if (ext === "csv" || file.type === "text/csv" || file.type === "application/vnd.ms-excel") {
+  if (ext === "csv" || (!ext && file.type === "text/csv")) {
     const text = await file.text();
     return parseCsvText(text);
   }
+  if (ext === "xls") {
+    return {
+      rows: [],
+      warnings: [
+        "Legacy .xls is not supported. Save the workbook as .xlsx (or export to CSV) and re-upload.",
+      ],
+    };
+  }
   return {
     rows: [],
-    warnings: [`Unsupported file type: ${ext || file.type || "unknown"}. Use .csv, .xlsx, or .xls.`],
+    warnings: [`Unsupported file type: ${ext || file.type || "unknown"}. Use .csv or .xlsx.`],
   };
 }
