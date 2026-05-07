@@ -61,22 +61,36 @@ function cellToString(c: unknown): string {
 }
 
 function isCommentRow(row: unknown[]): boolean {
-  // Treat rows whose first non-empty cell starts with `#` as comments
-  // so authors can leave human-readable notes (units, instructions) at
-  // the top of the file without confusing the parser.
+  // Treat a row as a comment only when the first non-empty cell starts
+  // with `#` AND no other cell carries content. This protects rows
+  // whose name happens to start with `#` (e.g. `#1234,0x...,100`) —
+  // those still have data in later cells and shouldn't be dropped.
+  let firstNonEmptyStartsWithHash = false;
+  let nonEmptyCount = 0;
   for (const cell of row) {
     const s = cellToString(cell);
     if (!s) continue;
-    return s.startsWith("#");
+    if (nonEmptyCount === 0) firstNonEmptyStartsWithHash = s.startsWith("#");
+    nonEmptyCount++;
   }
-  return false;
+  return firstNonEmptyStartsWithHash && nonEmptyCount === 1;
 }
 
-// EIP-5564 stealth meta-address: 33-byte compressed pubkey hex (0x +
-// 66 chars) is the most common shape we accept. Some toolchains use a
-// "st:chain:" prefix; trim that off before validation.
+/** Strip an EIP-5564 chain prefix (`st:eth:`, `st:base:`, etc.) so
+ *  validation and downstream stealth derivation see the same canonical
+ *  hex. The prefix is purely a transport convention. */
+function canonicalizeMetaAddress(s: string): string {
+  return s.replace(/^st:[a-z]+:/i, "");
+}
+
+// EIP-5564 stealth meta-address: we accept either
+//   - 33-byte compressed pubkey hex (0x + 66 chars) — common shape, single point
+//   - 65-byte uncompressed / 0x + 130 chars — fallback for tools that emit
+//     two concatenated points (spending + viewing) or a full uncompressed
+//     point. generateStealthAddress accepts both.
+// Either form may carry an `st:chain:` prefix.
 function looksLikeMetaAddress(s: string): boolean {
-  const stripped = s.replace(/^st:[a-z]+:/i, "");
+  const stripped = canonicalizeMetaAddress(s);
   return /^0x[a-fA-F0-9]{66}$/.test(stripped) || /^0x[a-fA-F0-9]{130}$/.test(stripped);
 }
 
@@ -149,8 +163,8 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
     if (row.every((c) => cellToString(c) === "")) continue;
     const get = (col: number) => (col >= 0 ? cellToString(row[col]) : "");
     const address = get(cols.address);
-    const metaAddress = get(cols.metaAddress);
-    if (!address && !metaAddress) {
+    const metaAddressRaw = get(cols.metaAddress);
+    if (!address && !metaAddressRaw) {
       skippedNoAddr++;
       continue;
     }
@@ -158,12 +172,17 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
       skippedBadAddr++;
       continue;
     }
-    if (metaAddress && !looksLikeMetaAddress(metaAddress)) {
+    if (metaAddressRaw && !looksLikeMetaAddress(metaAddressRaw)) {
       skippedBadMeta++;
       continue;
     }
-    const amount = get(cols.amount);
-    if (!/^\d+(\.\d+)?$/.test(amount.replace(/[,_\s]/g, ""))) {
+    // Canonicalize so downstream `generateStealthAddress` sees the
+    // stripped hex regardless of whether the file used an `st:chain:`
+    // prefix or not.
+    const metaAddress = metaAddressRaw ? canonicalizeMetaAddress(metaAddressRaw) : "";
+    const amountRaw = get(cols.amount);
+    const amount = amountRaw.replace(/[,_\s]/g, "");
+    if (!/^\d+(\.\d+)?$/.test(amount)) {
       skippedBadAmount++;
       continue;
     }
@@ -172,10 +191,14 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
       skippedBadEmail++;
       continue;
     }
-    // Duplicate detection keys off whichever identifier the row uses;
-    // metaAddress rows derive a fresh stealth address client-side, so
-    // dedup here keeps the user from listing the same recipient twice.
-    const dupKey = (address || metaAddress).toLowerCase();
+    // Dedup key: prefer metaAddress when present so two rows pointing
+    // at the same stealth recipient (same meta-address, different or
+    // empty `address`) are caught. Falls back to address for plain
+    // rows. The two key spaces don't collide in practice (40-hex vs
+    // 66/130-hex), and using the canonical metaAddress prevents an
+    // `st:chain:`-prefixed and unprefixed copy of the same key from
+    // both being accepted.
+    const dupKey = (metaAddress || address).toLowerCase();
     if (seenAddrs.has(dupKey)) {
       skippedDup++;
       continue;
