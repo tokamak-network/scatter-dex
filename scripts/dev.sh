@@ -685,8 +685,15 @@ NEXT_PUBLIC_PAY_USDT=$USDT
 NEXT_PUBLIC_PAY_TON=$TON
 NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$INDEX_FROM
-NEXT_PUBLIC_PAY_STEALTH_TRANSFER_ACCOUNT=$STEALTH_TRANSFER_ACCOUNT
 EOF
+      # Only emit the stealth-transfer line when the address is set
+      # (mock mode greps it from DeployLocal output). Integration mode
+      # doesn't deploy this contract, so leaving the line out lets the
+      # gasless toggle stay hidden cleanly rather than write an empty
+      # value that silently disables the feature at runtime.
+      if [ -n "$STEALTH_TRANSFER_ACCOUNT" ]; then
+        echo "NEXT_PUBLIC_PAY_STEALTH_TRANSFER_ACCOUNT=$STEALTH_TRANSFER_ACCOUNT" >> "$target_dir/.env.local"
+      fi
       ;;
   esac
   if [ -n "$preserved" ]; then

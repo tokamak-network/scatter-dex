@@ -961,13 +961,18 @@ function TransferOutModal({
   const cfg = getNetworkConfig();
   const provider = useMemo(() => getSharedProvider(cfg.rpcUrl), [cfg.rpcUrl]);
 
-  // Gasless via EIP-7702 — only available when the operator has
-  // deployed StealthTransferAccount AND the on-chain relayer
-  // registry has at least one online relayer the user can route
-  // through. The settle-time relayer (entry.pkg.relayerUrl) is just
-  // the default pick; the user can choose any registered relayer
-  // since the gasless transfer is independent of who settled the
-  // original payout.
+  // Gasless via EIP-7702 — available when StealthTransferAccount is
+  // deployed AND we have at least one relayer URL to broadcast
+  // through, sourced from either the on-chain RelayerRegistry (the
+  // user can pick any online entry) OR the settle-time relayer URL
+  // baked into the ClaimPackage (standalone fallback when the
+  // registry is empty / unconfigured / all entries are offline).
+  // Selection precedence inside the dropdown:
+  //   1. settle-time relayer if it's online + registered
+  //   2. first online registry entry otherwise
+  //   3. settle-time URL standalone — used when the registry has no
+  //      online candidates at all; fee collector then comes from a
+  //      live /api/info probe instead of the registry record.
   const delegateAddress = useMemo(() => getStealthTransferAccountAddress(), []);
   const { relayers } = useRelayers();
   // Candidate set = registered + online. If the user's settle-time
@@ -1314,10 +1319,18 @@ function TransferOutModal({
                 </span>
               </label>
             )}
-            {mode === "gasless" && candidates.length === 0 && (
+            {mode === "gasless" && candidates.length === 0 && !entry.pkg.relayerUrl && (
               <p className="mt-2 text-[10px] text-[var(--color-warning)]">
-                No online relayers in the registry — gasless transfer unavailable
-                until at least one is reachable.
+                No online relayers in the registry and no settle-time relayer on
+                this claim — gasless transfer unavailable until at least one is
+                reachable.
+              </p>
+            )}
+            {mode === "gasless" && candidates.length === 0 && entry.pkg.relayerUrl && (
+              <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                Registry has no online relayers — falling back to the settle-time
+                relayer ({entry.pkg.relayerUrl}). Fee collector resolved via its
+                /api/info instead of the registry record.
               </p>
             )}
           </div>
