@@ -63,12 +63,18 @@ interface ActivityItem {
   statusType: StatusType;
 }
 
+interface NoteActivityContext {
+  orderStatuses: Map<string, OrderStatus>;
+  changeNoteIds: ReadonlySet<string>;
+  closedLabelByNoteId: ReadonlyMap<string, string>;
+  tradePairByNoteId: ReadonlyMap<string, { sellSymbol: string; buySymbol: string }>;
+}
+
 function noteToActivity(
   note: StoredNote,
-  orderStatuses: Map<string, OrderStatus>,
-  changeNoteIds: ReadonlySet<string>,
-  closedLabelByNoteId: ReadonlyMap<string, string>,
+  ctx: NoteActivityContext,
 ): ActivityItem {
+  const { orderStatuses, changeNoteIds, closedLabelByNoteId, tradePairByNoteId } = ctx;
   // Look up by commitment (canonical note identifier) — orderId from relayer maps to commitment
   const orderStatus = orderStatuses.get(note.commitment);
   // A note is a "Change" residual when a TradeRecord points its
@@ -121,10 +127,14 @@ function noteToActivity(
     statusLabel = 'Spent';
   }
 
+  const pair = tradePairByNoteId.get(note.id);
+  const pairSuffix = pair && pair.sellSymbol !== pair.buySymbol
+    ? ` → ${pair.buySymbol}`
+    : '';
   return {
     id: note.id,
     type,
-    desc: `${formatAmount(note.amount)} ${note.tokenSymbol}${note.txHash ? ` (${shortAddr(note.txHash)})` : ''}`,
+    desc: `${formatAmount(note.amount)} ${note.tokenSymbol}${pairSuffix}${note.txHash ? ` (${shortAddr(note.txHash)})` : ''}`,
     time: formatDate(note.createdAt),
     createdAt: note.createdAt,
     status: statusLabel,
@@ -280,6 +290,19 @@ function PendingOrderRow({ order, expanded, onToggle, onCancel, cancelling, canc
           </Text>
         </View>
       )}
+      {onCancel && (
+        <TouchableOpacity
+          onPress={(e) => { e.stopPropagation(); onCancel(); }}
+          disabled={cancelling}
+          style={[s.cancelBtn, cancelling && { opacity: 0.5 }, { alignSelf: 'flex-end', marginLeft: 0, marginTop: 8 }]}
+        >
+          {cancelling ? (
+            <ActivityIndicator size="small" color={colors.danger} />
+          ) : (
+            <Text style={s.cancelBtnText}>Cancel Order</Text>
+          )}
+        </TouchableOpacity>
+      )}
       {expanded && (
         <>
           <View style={s.detailRow}>
@@ -314,19 +337,6 @@ function PendingOrderRow({ order, expanded, onToggle, onCancel, cancelling, canc
             <Text style={s.detailLabel}>Nullifier</Text>
             <View style={{ flex: 1, marginLeft: 12 }}><CopyableHash value={order.nullifier} /></View>
           </View>
-          {onCancel && (
-            <TouchableOpacity
-              onPress={(e) => { e.stopPropagation(); onCancel(); }}
-              disabled={cancelling}
-              style={[s.cancelBtn, cancelling && { opacity: 0.5 }, { alignSelf: 'flex-end', marginLeft: 0, marginTop: 8 }]}
-            >
-              {cancelling ? (
-                <ActivityIndicator size="small" color={colors.danger} />
-              ) : (
-                <Text style={s.cancelBtnText}>Cancel Order</Text>
-              )}
-            </TouchableOpacity>
-          )}
         </>
       )}
       {order.settleTxHash && (
@@ -397,16 +407,8 @@ export default function HistoryScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const [allNotes, setAllNotes] = useState<StoredNote[]>([]);
-  // Pre-indexed `changeNoteId`s from this wallet's trade history, so the
-  // activity-item type can distinguish a fresh deposit from a residual
-  // (`Change`) without a per-row DB lookup. Refreshed alongside notes —
-  // a new trade adds a row, so the set must catch up at the same cadence.
-  const [changeNoteIds, setChangeNoteIds] = useState<ReadonlySet<string>>(new Set());
-  // Trade records for this wallet, used to derive `changeNoteIds` and
-  // `closedSourceNoteIds` below. Stored raw so additional projections
-  // (e.g. per-note label resolution) can reuse the same data without
-  // refetching SQLite. Refreshed alongside notes — a new trade adds a
-  // row and we want both maps to catch up at the same cadence.
+  // Trade records for this wallet — `changeNoteIds` and `tradePairByNoteId`
+  // are derived from this in a single pass below.
   const [trades, setTrades] = useState<TradeRecord[]>([]);
   // Local async-settlement queue. Source of truth for both the History
   // status badges (via `orderStatuses` below) and cancel-eligibility (via
@@ -458,7 +460,6 @@ export default function HistoryScreen() {
   const loadHistory = useCallback(async () => {
     if (!account) {
       setAllNotes([]);
-      setChangeNoteIds(new Set());
       setTrades([]);
       setLoading(false);
       return;
@@ -473,11 +474,6 @@ export default function HistoryScreen() {
       ]);
       setAllNotes(notes);
       setTrades(trades);
-      const ids = new Set<string>();
-      for (const t of trades) {
-        if (t.changeNoteId) ids.add(t.changeNoteId);
-      }
-      setChangeNoteIds(ids);
     } catch (err: any) {
       setError(err?.message || 'Failed to load history');
     } finally {
@@ -528,7 +524,6 @@ export default function HistoryScreen() {
     return NoteStorageService.subscribeWalletSwitch(() => {
       setAllNotes([]);
       setAsyncPending([]);
-      setChangeNoteIds(new Set());
       setTrades([]);
       setCancelStep(null);
       // Wallet-scoped UI state — otherwise a stale error, loading
@@ -826,15 +821,26 @@ export default function HistoryScreen() {
     [asyncPending],
   );
 
-  // Convert notes to activity items
+  const { changeNoteIds, tradePairByNoteId } = useMemo(() => {
+    const ids = new Set<string>();
+    const pairs = new Map<string, { sellSymbol: string; buySymbol: string }>();
+    for (const t of trades) {
+      const pair = { sellSymbol: t.sellTokenSymbol, buySymbol: t.buyTokenSymbol };
+      pairs.set(t.sourceNoteId, pair);
+      if (t.changeNoteId) {
+        ids.add(t.changeNoteId);
+        pairs.set(t.changeNoteId, pair);
+      }
+    }
+    return { changeNoteIds: ids as ReadonlySet<string>, tradePairByNoteId: pairs };
+  }, [trades]);
+
   const activities = useMemo(() => {
+    const ctx: NoteActivityContext = { orderStatuses, changeNoteIds, closedLabelByNoteId, tradePairByNoteId };
     return allNotes
-      .map((note) => noteToActivity(note, orderStatuses, changeNoteIds, closedLabelByNoteId))
-      .sort((a, b) => {
-        // Sort by createdAt timestamp descending (most recent first)
-        return b.createdAt - a.createdAt;
-      });
-  }, [allNotes, orderStatuses, changeNoteIds, closedLabelByNoteId]);
+      .map((note) => noteToActivity(note, ctx))
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }, [allNotes, orderStatuses, changeNoteIds, closedLabelByNoteId, tradePairByNoteId]);
 
   // Filter by tab and search
   const filteredActivities = useMemo<typeof activities>(() => {
