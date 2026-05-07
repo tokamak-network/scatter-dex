@@ -3,7 +3,6 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {StealthTransferAccount} from "../src/StealthTransferAccount.sol";
-import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 contract MockERC20 {
     string public name = "Mock";
@@ -22,8 +21,6 @@ contract MockERC20 {
 }
 
 contract StealthTransferAccountTest is Test {
-    using MessageHashUtils for bytes32;
-
     StealthTransferAccount internal account;
     MockERC20 internal token;
 
@@ -49,35 +46,32 @@ contract StealthTransferAccountTest is Test {
     }
 
     function _signBatch(StealthTransferAccount.Call[] memory calls) internal view returns (bytes memory) {
-        // Same hashing pattern the contract verifies: chainId, account
-        // (== stealth), current nonce, encoded calls. account.nonce()
-        // queries the storage of the EOA which holds the deployed
-        // contract's slots under 7702 — see test note on
-        // testNonceLivesAtEOAUnderDelegation.
-        uint256 currentNonce = StealthTransferAccount(payable(stealth)).nonce();
-        bytes32 raw = keccak256(abi.encode(block.chainid, stealth, currentNonce, calls));
-        bytes32 ethHash = raw.toEthSignedMessageHash();
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(stealthKey, ethHash);
+        // Query the EIP-712 typed-data digest from the delegated EOA
+        // — the domain separator binds against `address(this) = stealth`,
+        // so calling the contract directly (against its deploy address)
+        // would yield a different digest that the verifier would reject.
+        uint256 currentNonce = StealthTransferAccount(stealth).nonce();
+        // Re-pack calldata to satisfy the `calldata` parameter type on
+        // hashBatch — `vm.signAndAttachDelegation`'s view-call path
+        // only handles ABI-encoded calldata.
+        StealthTransferAccount.Call[] memory cloned = calls;
+        bytes32 digest = StealthTransferAccount(stealth).hashBatch(currentNonce, cloned);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(stealthKey, digest);
         return abi.encodePacked(r, s, v);
     }
 
     function _delegate() internal {
-        // Simulate the EIP-7702 authorization being attached to the
-        // next tx so calls into the stealth EOA execute the
-        // StealthTransferAccount code.
         vm.signAndAttachDelegation(address(account), stealthKey);
     }
 
     function testHappyPathTokenTransfer() public {
         _delegate();
         StealthTransferAccount.Call[] memory calls = new StealthTransferAccount.Call[](2);
-        // 1) recipient gets 100 tokens
         calls[0] = StealthTransferAccount.Call({
             target: address(token),
             value: 0,
             data: abi.encodeWithSelector(MockERC20.transfer.selector, recipient, 100e6)
         });
-        // 2) relayer gets 1 token as fee
         calls[1] = StealthTransferAccount.Call({
             target: address(token),
             value: 0,
@@ -87,12 +81,12 @@ contract StealthTransferAccountTest is Test {
         bytes memory sig = _signBatch(calls);
 
         vm.prank(relayer);
-        StealthTransferAccount(payable(stealth)).executeBatch(calls, sig);
+        StealthTransferAccount(stealth).executeBatch(calls, sig);
 
         assertEq(token.balanceOf(recipient), 100e6, "recipient credited");
         assertEq(token.balanceOf(feeCollector), 1e6, "fee collected");
         assertEq(token.balanceOf(stealth), 1_000e6 - 101e6, "stealth debited");
-        assertEq(StealthTransferAccount(payable(stealth)).nonce(), 1, "nonce advanced");
+        assertEq(StealthTransferAccount(stealth).nonce(), 1, "nonce advanced");
     }
 
     function testHappyPathNativeEthTransfer() public {
@@ -107,7 +101,7 @@ contract StealthTransferAccountTest is Test {
         bytes memory sig = _signBatch(calls);
 
         vm.prank(relayer);
-        StealthTransferAccount(payable(stealth)).executeBatch(calls, sig);
+        StealthTransferAccount(stealth).executeBatch(calls, sig);
 
         assertEq(recipient.balance, 0.5 ether, "recipient native credit");
         assertEq(stealth.balance, 0.5 ether, "stealth native debit");
@@ -122,16 +116,16 @@ contract StealthTransferAccountTest is Test {
             data: abi.encodeWithSelector(MockERC20.transfer.selector, recipient, 100e6)
         });
 
-        // Sign with a different key — must revert
+        // Sign with an attacker key — recover() returns a different
+        // address than `stealth` and the verifier rejects.
         uint256 attackerKey = 0xBADBAD;
-        bytes32 raw = keccak256(abi.encode(block.chainid, stealth, 0, calls));
-        bytes32 ethHash = raw.toEthSignedMessageHash();
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerKey, ethHash);
+        bytes32 digest = StealthTransferAccount(stealth).hashBatch(0, calls);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(attackerKey, digest);
         bytes memory badSig = abi.encodePacked(r, s, v);
 
         vm.prank(relayer);
         vm.expectRevert(StealthTransferAccount.InvalidSignature.selector);
-        StealthTransferAccount(payable(stealth)).executeBatch(calls, badSig);
+        StealthTransferAccount(stealth).executeBatch(calls, badSig);
     }
 
     function testRevertOnReplay() public {
@@ -145,20 +139,18 @@ contract StealthTransferAccountTest is Test {
         bytes memory sig = _signBatch(calls);
 
         vm.prank(relayer);
-        StealthTransferAccount(payable(stealth)).executeBatch(calls, sig);
+        StealthTransferAccount(stealth).executeBatch(calls, sig);
 
-        // Same sig — nonce has advanced, so signer would now be a
-        // different address and recover != stealth.
+        // Same sig — nonce has advanced, so the digest the contract
+        // recomputes uses nonce=1 while the sig was over nonce=0 →
+        // recover yields a different address and the verifier rejects.
         vm.prank(relayer);
         vm.expectRevert(StealthTransferAccount.InvalidSignature.selector);
-        StealthTransferAccount(payable(stealth)).executeBatch(calls, sig);
+        StealthTransferAccount(stealth).executeBatch(calls, sig);
     }
 
     function testRevertPropagatesInnerCallFailure() public {
         _delegate();
-        // Try to send more than the stealth holds — MockERC20.transfer
-        // requires balance, so this reverts inside the call, which
-        // executeBatch surfaces as CallFailed.
         StealthTransferAccount.Call[] memory calls = new StealthTransferAccount.Call[](1);
         calls[0] = StealthTransferAccount.Call({
             target: address(token),
@@ -168,16 +160,14 @@ contract StealthTransferAccountTest is Test {
         bytes memory sig = _signBatch(calls);
 
         vm.prank(relayer);
-        // Don't pin the inner returnData — bytes-payload selector
-        // matching is enough to confirm the failure surface.
         vm.expectRevert();
-        StealthTransferAccount(payable(stealth)).executeBatch(calls, sig);
+        StealthTransferAccount(stealth).executeBatch(calls, sig);
     }
 
     function testNonceLivesAtEOAUnderDelegation() public {
         _delegate();
-        // Sanity: the deployed `account` contract's storage stays at
-        // 0 — every state write happens at the EOA's address.
+        // Deployed contract's storage stays at 0 — every state write
+        // happens at the EOA's address under 7702.
         assertEq(account.nonce(), 0, "delegate contract storage untouched");
 
         StealthTransferAccount.Call[] memory calls = new StealthTransferAccount.Call[](1);
@@ -189,9 +179,78 @@ contract StealthTransferAccountTest is Test {
         bytes memory sig = _signBatch(calls);
 
         vm.prank(relayer);
-        StealthTransferAccount(payable(stealth)).executeBatch(calls, sig);
+        StealthTransferAccount(stealth).executeBatch(calls, sig);
 
         assertEq(account.nonce(), 0, "delegate contract still untouched");
-        assertEq(StealthTransferAccount(payable(stealth)).nonce(), 1, "EOA nonce advanced");
+        assertEq(StealthTransferAccount(stealth).nonce(), 1, "EOA nonce advanced");
+    }
+
+    function testReentrancyGuardedByNonceBump() public {
+        _delegate();
+
+        // Build a batch whose first call re-enters into the EOA's
+        // executeBatch with the SAME signature. Because executeBatch
+        // bumps nonce *before* dispatching subcalls, the re-entry
+        // sees nonce=1 while the sig is over nonce=0 → invalid sig
+        // → outer call surfaces it as CallFailed.
+        StealthTransferAccount.Call[] memory inner = new StealthTransferAccount.Call[](1);
+        inner[0] = StealthTransferAccount.Call({
+            target: address(token),
+            value: 0,
+            data: abi.encodeWithSelector(MockERC20.transfer.selector, recipient, 1e6)
+        });
+        // Sign for nonce=0 (the outer call's nonce). The inner reuse
+        // would need this sig to also be valid for nonce=1 — it isn't.
+        bytes memory innerSig = _signBatch(inner);
+
+        StealthTransferAccount.Call[] memory outer = new StealthTransferAccount.Call[](1);
+        outer[0] = StealthTransferAccount.Call({
+            target: stealth, // re-enter the EOA
+            value: 0,
+            data: abi.encodeWithSelector(StealthTransferAccount.executeBatch.selector, inner, innerSig)
+        });
+        bytes memory outerSig = _signBatch(outer);
+
+        vm.prank(relayer);
+        vm.expectRevert(); // CallFailed wrapping the inner InvalidSignature
+        StealthTransferAccount(stealth).executeBatch(outer, outerSig);
+    }
+
+    function testZeroCallBatchAdvancesNonceWithoutSideEffects() public {
+        _delegate();
+        StealthTransferAccount.Call[] memory calls = new StealthTransferAccount.Call[](0);
+        bytes memory sig = _signBatch(calls);
+
+        vm.prank(relayer);
+        StealthTransferAccount(stealth).executeBatch(calls, sig);
+
+        // No funds moved, nonce still advanced. Documented behavior:
+        // a signed empty batch is a valid "burn this nonce" op (e.g.
+        // for cancelling a pending sig).
+        assertEq(StealthTransferAccount(stealth).nonce(), 1);
+        assertEq(token.balanceOf(stealth), 1_000e6);
+    }
+
+    function testCrossChainSignatureRejected() public {
+        _delegate();
+
+        StealthTransferAccount.Call[] memory calls = new StealthTransferAccount.Call[](1);
+        calls[0] = StealthTransferAccount.Call({
+            target: address(token),
+            value: 0,
+            data: abi.encodeWithSelector(MockERC20.transfer.selector, recipient, 1e6)
+        });
+
+        // Sign on chain X (id=999) for the same EOA + nonce + calls.
+        uint256 originalChainId = block.chainid;
+        vm.chainId(999);
+        bytes memory foreignSig = _signBatch(calls);
+        vm.chainId(originalChainId);
+
+        // Submit on the original chain — domain separator differs by
+        // chainId, so the recovered signer doesn't match `stealth`.
+        vm.prank(relayer);
+        vm.expectRevert(StealthTransferAccount.InvalidSignature.selector);
+        StealthTransferAccount(stealth).executeBatch(calls, foreignSig);
     }
 }
