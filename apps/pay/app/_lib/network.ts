@@ -72,3 +72,13 @@ export function isNetworkConfigured(cfg: NetworkConfig): boolean {
     cfg.contracts.relayerRegistry !== ZERO
   );
 }
+
+/** Address of the deployed `StealthTransferAccount` (the EIP-7702
+ *  delegate) — read separately from the core NetworkConfig so the
+ *  SDK type doesn't need to know about Pay's gasless-transfer
+ *  feature. Returns null when unset, in which case the inbox's
+ *  Transfer modal hides the gasless toggle. */
+export function getStealthTransferAccountAddress(): string | null {
+  const v = (process.env.NEXT_PUBLIC_PAY_STEALTH_TRANSFER_ACCOUNT || "").trim();
+  return v.length > 0 ? v : null;
+}
