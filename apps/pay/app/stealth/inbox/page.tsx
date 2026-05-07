@@ -22,7 +22,13 @@ import {
 import { CopyButton, StealthFolderGate } from "../_components";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { submitClaim, type ClaimPhase } from "../../_lib/claimSubmit";
-import { getNetworkConfig } from "../../_lib/network";
+import { getNetworkConfig, getStealthTransferAccountAddress } from "../../_lib/network";
+import {
+  buildErc20TransferCalls,
+  postRelayTransfer,
+  sign7702Batch,
+  type Call,
+} from "../../_lib/relay7702";
 import { formatLocalStamp } from "../../_lib/format";
 import { ERC20_ABI, type NetworkConfig } from "@zkscatter/sdk";
 
@@ -940,10 +946,26 @@ function TransferOutModal({
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [gasBalance, setGasBalance] = useState<bigint | null>(null);
+  // Default fee: 0.1 token-units (~$0.10 for USDC/USDT, sensible for
+  // stablecoin payouts which is the main HR use case). Surfacing
+  // this for ETH/WBTC will need a per-token default — flag for
+  // follow-up once those tokens hit the gasless path. Operators with
+  // a different fee policy can edit before signing. Native ETH
+  // gasless would need a value-bearing call to the relayer rather
+  // than ERC20.transfer, so the toggle only surfaces for
+  // ERC20-token claims for now.
+  const [feeAmount, setFeeAmount] = useState("0.1");
   const stealthAddr = entry.pkg.recipient;
 
   const cfg = getNetworkConfig();
   const provider = useMemo(() => getSharedProvider(cfg.rpcUrl), [cfg.rpcUrl]);
+
+  // Gasless via EIP-7702 — only available when the operator has
+  // deployed StealthTransferAccount and the package's relayerUrl is
+  // set (i.e. the run was settled through a real relayer, not the
+  // env-not-configured demo path).
+  const delegateAddress = useMemo(() => getStealthTransferAccountAddress(), []);
+  const relayerUrl = entry.pkg.relayerUrl ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -964,10 +986,151 @@ function TransferOutModal({
   // the WETH ERC20 — value transfers must use sendTransaction.
   const isNative = isWrappedNative(entry.pkg.token, cfg);
 
+  // Gasless eligibility: ERC20 only (native gasless needs WETH /
+  // different fee shape), relayer URL known (so we can POST), and
+  // the operator has published the delegate address.
+  const gaslessAvailable =
+    !isNative && !!relayerUrl && !!delegateAddress;
+  const [mode, setMode] = useState<"standard" | "gasless">("standard");
+  // Relayer fee collector — fetched once on modal mount so signing
+  // stays purely local crypto and an unreachable relayer surfaces
+  // before the user has filled in the form.
+  const [relayerFeeAddr, setRelayerFeeAddr] = useState<string | null>(null);
+  const [relayerFeeAddrError, setRelayerFeeAddrError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!relayerUrl || !gaslessAvailable) return;
+    let cancelled = false;
+    const url = `${relayerUrl}/api/info`;
+    void fetch(url)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`GET ${url} failed: HTTP ${r.status}`);
+        return r.json() as Promise<{ address?: string }>;
+      })
+      .then((info) => {
+        if (cancelled) return;
+        if (!info.address || !ethers.isAddress(info.address)) {
+          setRelayerFeeAddrError(`GET ${url} returned no usable address`);
+          return;
+        }
+        setRelayerFeeAddr(info.address);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        setRelayerFeeAddrError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [relayerUrl, gaslessAvailable]);
+
+  async function sendGasless() {
+    if (!relayerUrl || !delegateAddress) {
+      throw new Error("Gasless transfer is not configured for this network");
+    }
+    if (!relayerFeeAddr) {
+      throw new Error(
+        relayerFeeAddrError
+          ? `Relayer unreachable: ${relayerFeeAddrError}`
+          : "Resolving relayer fee address — try again in a moment",
+      );
+    }
+    if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
+    // Sanity-check the privkey actually owns this stealth address
+    // before signing. A mismatched key would otherwise produce a sig
+    // from a different EOA and the relayed batch would revert with
+    // a generic InvalidSignature, which is hard to diagnose.
+    const derivedAddr = ethers.computeAddress(privkey);
+    if (derivedAddr.toLowerCase() !== stealthAddr.toLowerCase()) {
+      throw new Error(
+        `Private key does not match stealth address ${shortAddr(stealthAddr)}`,
+      );
+    }
+    const network = await provider.getNetwork();
+    const chainId = network.chainId;
+
+    // Per-EOA `nonce` slot in StealthTransferAccount storage. Fresh
+    // stealth EOAs read 0 even when the contract isn't yet
+    // delegated — `eth_call` against an EOA returns 0x for missing
+    // storage, so we keep the manual encode/decode (Contract would
+    // throw on the empty return) and default to 0n on absence.
+    const accountIface = new ethers.Interface([
+      "function nonce() view returns (uint256)",
+    ]);
+    const rawNonce = await provider.call({
+      to: stealthAddr,
+      data: accountIface.encodeFunctionData("nonce"),
+    });
+    const batchNonce = rawNonce && rawNonce !== "0x"
+      ? (accountIface.decodeFunctionResult("nonce", rawNonce)[0] as bigint)
+      : 0n;
+
+    // tx nonce of the EOA — typically 0 for a stealth that hasn't
+    // sent anything before. Bound into the EIP-7702 authorization.
+    const ethNonce = BigInt(await provider.getTransactionCount(stealthAddr));
+
+    const raw = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
+    const fee = ethers.parseUnits(feeAmount, entry.pkg.tokenDecimals);
+    if (fee >= raw) {
+      throw new Error(
+        `Relayer fee (${feeAmount} ${entry.pkg.tokenSymbol}) must be smaller than the amount`,
+      );
+    }
+    // Net the fee against the input so the user's typed `amount`
+    // is the total balance moved — recipient gets `amount - fee`,
+    // relayer gets `fee`, sum = `amount`. Without this the batch
+    // would try to move `amount + fee` and revert when the user's
+    // balance equals exactly the claim amount (the common case
+    // when `Send max` is used).
+    const recipientAmount = raw - fee;
+
+    const calls: Call[] = buildErc20TransferCalls({
+      token: entry.pkg.token,
+      recipient: to,
+      amount: recipientAmount,
+      feeRecipient: relayerFeeAddr,
+      fee,
+    });
+
+    const signed = await sign7702Batch({
+      privkey,
+      delegateAddress,
+      batchNonce,
+      ethNonce,
+      chainId,
+      calls,
+    });
+
+    const hash = await postRelayTransfer(relayerUrl, {
+      stealthAddress: stealthAddr,
+      calls,
+      signature: signed.signature,
+      authorization: signed.authorization,
+    });
+    setTxHash(hash);
+    // The relayer 202s before broadcast confirms; poll the receipt
+    // with a 2-minute ceiling so a dropped tx surfaces an actionable
+    // error instead of spinning the modal indefinitely.
+    const receipt = await provider.waitForTransaction(hash, 1, 120_000);
+    // ethers v6 returns null on timeout — without this guard the
+    // modal would treat a dropped/unmined tx as success.
+    if (!receipt) {
+      throw new Error(
+        `Transfer not confirmed within 2 minutes — check the tx hash on a block explorer`,
+      );
+    }
+    if (receipt.status !== 1) {
+      throw new Error(`Transfer reverted on-chain (tx ${hash})`);
+    }
+  }
+
   async function send() {
     setError(null);
     setBusy(true);
     try {
+      if (mode === "gasless") {
+        await sendGasless();
+        return;
+      }
       if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
       const wallet = new ethers.Wallet(privkey, provider);
       const raw = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
@@ -1035,9 +1198,41 @@ function TransferOutModal({
             Token: <span className="font-mono">{entry.pkg.tokenSymbol}</span>
           </div>
         </div>
-        {gasEmpty && (
+        {gasEmpty && mode === "standard" && (
           <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
-            This stealth address has no native gas. Send a small amount of ETH to {shortAddr(stealthAddr)} first, then retry.
+            This stealth address has no native gas. {gaslessAvailable
+              ? "Switch to Gasless mode above, or send a small amount of ETH to "
+              : "Send a small amount of ETH to "}
+            {shortAddr(stealthAddr)} first, then retry.
+          </div>
+        )}
+        {gaslessAvailable && (
+          <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium">Mode</span>
+              <div className="flex gap-1">
+                {(["standard", "gasless"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setMode(m)}
+                    aria-pressed={mode === m}
+                    className={`rounded border px-2 py-0.5 ${
+                      mode === m
+                        ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+                        : "border-[var(--color-border-strong)]"
+                    }`}
+                  >
+                    {m === "standard" ? "Standard" : "Gasless ⚡"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+              {mode === "gasless"
+                ? "Relayer pays the on-chain gas; a small fee in this token is deducted from your balance to reimburse them."
+                : "You pay gas in native ETH. Requires the stealth address to hold ETH."}
+            </p>
           </div>
         )}
         <label className="block">
@@ -1074,6 +1269,23 @@ function TransferOutModal({
             className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono"
           />
         </label>
+        {mode === "gasless" && (
+          <label className="block">
+            <span className="text-xs text-[var(--color-text-muted)]">
+              Relayer fee ({entry.pkg.tokenSymbol})
+            </span>
+            <input
+              type="text"
+              value={feeAmount}
+              onChange={(e) => setFeeAmount(e.target.value)}
+              placeholder="0.1"
+              className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono"
+            />
+            <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
+              Deducted from your balance and sent to the relayer to reimburse the on-chain gas.
+            </span>
+          </label>
+        )}
         {error && (
           <p className="text-xs text-[var(--color-warning)]">{error}</p>
         )}
