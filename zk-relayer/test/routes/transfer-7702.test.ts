@@ -296,6 +296,37 @@ describe("/api/transfer-7702", () => {
     expect(res.body.paid).toBe("0.05");
   });
 
+  it("rejects a fee paid in a token completely outside the relayer's TOKEN_LIST", async () => {
+    // Different from the "in tokenEntries but no policy" case —
+    // here the address isn't even in the operator's TOKEN_LIST. A
+    // pre-fix bug would silently accept this because the loop
+    // `continue`d past unknown tokens, bypassing the floor check.
+    const RANDO_ADDR = "0x" + "f".repeat(40);
+    const app = mountRouter(
+      "/api/transfer-7702",
+      createTransfer7702Routes(
+        makeStubWithSendTx(async () => ({ hash: TX_HASH })),
+        ROUTE_OPTS,
+      ),
+    );
+    const randoFeeCall = {
+      target: RANDO_ADDR,
+      value: "0",
+      data: TRANSFER_IFACE.encodeFunctionData("transfer", [
+        RELAYER_ADDR,
+        ethers.parseUnits("9999", 6),
+      ]),
+    };
+    const res = await request(app)
+      .post("/api/transfer-7702/relay")
+      .send(validBody({ calls: [randoFeeCall] }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("token not supported");
+    // Reports the raw address (not a symbol) since it isn't in
+    // tokenEntries to look up.
+    expect(res.body.token.toLowerCase()).toBe(RANDO_ADDR.toLowerCase());
+  });
+
   it("rejects a fee in a token the relayer hasn't published a policy for", async () => {
     const ETH_ADDR = "0x" + "e".repeat(40);
     const app = mountRouter(

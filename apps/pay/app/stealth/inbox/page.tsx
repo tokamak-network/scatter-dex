@@ -1119,20 +1119,28 @@ function TransferOutModal({
     { gasless_fees?: Record<string, string>; address?: string } | null
   >(null);
   useEffect(() => {
-    setRelayerFeeAddr(null);
     setRelayerFeeAddrError(null);
-    setStandaloneRelayerInfo(null);
-    if (!relayerUrl || !gaslessAvailable) return;
-    // Fast path: registry already gave us the relayer's wallet
-    // address as `selectedRelayer.address` — skip the network probe.
-    if (selectedRelayer && ethers.isAddress(selectedRelayer.address)) {
-      setRelayerFeeAddr(selectedRelayer.address);
+    if (!relayerUrl || !gaslessAvailable) {
+      setRelayerFeeAddr(null);
+      setStandaloneRelayerInfo(null);
       return;
     }
-    // Fallback: relayer URL is set but the registry doesn't list it
-    // (legacy / cross-operator). Probe /api/info for the wallet AND
-    // the gasless_fees policy — without the latter the read-only
-    // fee panel + the send() policyFee lookup would both fail.
+    // Use any registry-cached values immediately so the read-only
+    // fee panel doesn't flash "no policy" while the probe is in
+    // flight. The probe still runs and overwrites these; that
+    // covers (a) registries that list the relayer but lack
+    // gasless_fees on RelayerInfo (race window before
+    // RelayersProvider has fetched /api/info) and (b) standalone
+    // settle-time relayers not in the registry at all.
+    const cachedAddr = selectedRelayer && ethers.isAddress(selectedRelayer.address)
+      ? selectedRelayer.address
+      : null;
+    setRelayerFeeAddr(cachedAddr);
+    setStandaloneRelayerInfo(
+      selectedRelayer?.api?.gasless_fees
+        ? { address: cachedAddr ?? undefined, gasless_fees: selectedRelayer.api.gasless_fees }
+        : null,
+    );
     let cancelled = false;
     const url = `${relayerUrl}/api/info`;
     void fetch(url)
@@ -1159,7 +1167,12 @@ function TransferOutModal({
     return () => {
       cancelled = true;
     };
-  }, [relayerUrl, gaslessAvailable, selectedRelayer]);
+    // Depend on the relayer's *address* rather than the
+    // selectedRelayer object identity — `candidates` refreshes
+    // periodically and creates a new memoized object each time
+    // even when the user's selection hasn't changed, which would
+    // otherwise re-fire the probe on every candidate refresh.
+  }, [relayerUrl, gaslessAvailable, selectedRelayer?.address, selectedRelayer?.api?.gasless_fees]);
 
   async function sendGasless() {
     if (!relayerUrl || !delegateAddress) {
