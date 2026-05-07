@@ -10,6 +10,15 @@ export type ParsedRecipient = {
   name: string;
   address: string;
   amount: string;
+  /** Optional email for the row-level "Send via Gmail" action. Carrying
+   *  it on the recipient (not via address-book lookup) keeps RunRecord
+   *  self-contained and immune to later address-book edits. */
+  email?: string;
+  /** Optional EIP-5564 meta-address. When present, the wizard derives a
+   *  one-time stealth address + ephemeral pubkey at upload time and the
+   *  recipient's `address` is replaced with the derived stealth address.
+   *  Marks the row as "stealth" without needing a separate flag column. */
+  metaAddress?: string;
 };
 
 export type ParseResult = {
@@ -17,17 +26,21 @@ export type ParseResult = {
   warnings: string[];
 };
 
-const HEADER_PATTERNS: Record<"name" | "address" | "amount", RegExp> = {
-  name: /^(name|이름|직원|employee|label|alias|email|recipient|payee)$/i,
+type ColumnKind = "name" | "address" | "amount" | "email" | "metaAddress";
+
+const HEADER_PATTERNS: Record<ColumnKind, RegExp> = {
+  name: /^(name|이름|직원|employee|label|alias|recipient|payee)$/i,
   address: /^(address|wallet|지갑|주소|to|payee[\s_-]?address|wallet[\s_-]?address)$/i,
   amount: /^(amount|금액|급여|salary|usdc|usdt|value|qty|quantity|payout|bonus)$/i,
+  email: /^(email|메일|이메일|e[\s_-]?mail)$/i,
+  metaAddress: /^(meta[\s_-]?address|stealth[\s_-]?meta|stealth[\s_-]?address|메타[\s_-]?주소)$/i,
 };
 
-function classifyHeader(cell: unknown): "name" | "address" | "amount" | null {
+function classifyHeader(cell: unknown): ColumnKind | null {
   if (typeof cell !== "string") return null;
   const v = cell.trim();
   if (!v) return null;
-  for (const k of Object.keys(HEADER_PATTERNS) as Array<keyof typeof HEADER_PATTERNS>) {
+  for (const k of Object.keys(HEADER_PATTERNS) as ColumnKind[]) {
     if (HEADER_PATTERNS[k].test(v)) return k;
   }
   return null;
@@ -43,11 +56,36 @@ function cellToString(c: unknown): string {
   return String(c).trim();
 }
 
+function isCommentRow(row: unknown[]): boolean {
+  // Treat rows whose first non-empty cell starts with `#` as comments
+  // so authors can leave human-readable notes (units, instructions) at
+  // the top of the file without confusing the parser.
+  for (const cell of row) {
+    const s = cellToString(cell);
+    if (!s) continue;
+    return s.startsWith("#");
+  }
+  return false;
+}
+
+// EIP-5564 stealth meta-address: 33-byte compressed pubkey hex (0x +
+// 66 chars) is the most common shape we accept. Some toolchains use a
+// "st:chain:" prefix; trim that off before validation.
+function looksLikeMetaAddress(s: string): boolean {
+  const stripped = s.replace(/^st:[a-z]+:/i, "");
+  return /^0x[a-fA-F0-9]{66}$/.test(stripped) || /^0x[a-fA-F0-9]{130}$/.test(stripped);
+}
+
+function looksLikeEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
 function rowsFromMatrix(matrix: unknown[][]): ParseResult {
   const warnings: string[] = [];
   while (matrix.length > 0 && matrix[matrix.length - 1].every((c) => cellToString(c) === "")) {
     matrix.pop();
   }
+  matrix = matrix.filter((row) => !isCommentRow(row));
   if (matrix.length === 0) return { rows: [], warnings: ["File is empty."] };
 
   const first = matrix[0];
@@ -55,57 +93,105 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
   const namedCount = cls.filter(Boolean).length;
   const hasAddrInRow0 = first.some(looksLikeAddress);
 
-  let nameCol = -1;
-  let addrCol = -1;
-  let amtCol = -1;
+  const cols: Record<ColumnKind, number> = {
+    name: -1,
+    address: -1,
+    amount: -1,
+    email: -1,
+    metaAddress: -1,
+  };
   let dataStart = 0;
 
   if (!hasAddrInRow0 && namedCount >= 2) {
     cls.forEach((c, i) => {
-      if (c === "name" && nameCol < 0) nameCol = i;
-      else if (c === "address" && addrCol < 0) addrCol = i;
-      else if (c === "amount" && amtCol < 0) amtCol = i;
+      if (c && cols[c] < 0) cols[c] = i;
     });
     dataStart = 1;
   } else {
-    nameCol = 0;
-    addrCol = 1;
-    amtCol = 2;
+    // Positional fallback for header-less files: legacy 3-column shape
+    // (name / address / amount). Optional email + metaAddress columns
+    // are header-only — without a header we have no way to tell column
+    // 4 from a stray data column.
+    cols.name = 0;
+    cols.address = 1;
+    cols.amount = 2;
   }
 
-  if (addrCol < 0) {
+  // address+amount required; meta_address can substitute for address
+  // (stealth-only row → wizard derives the actual address from it).
+  if (cols.address < 0 && cols.metaAddress < 0) {
     return {
       rows: [],
-      warnings: ['Could not find an "address" column. Add a header row (name/address/amount) or place addresses in column B.'],
+      warnings: ['Could not find an "address" or "meta_address" column. Add a header row.'],
     };
   }
-  if (amtCol < 0) {
+  if (cols.amount < 0) {
     return {
       rows: [],
-      warnings: ['Could not find an "amount" column. Add a header row (name/address/amount) or place amounts in column C.'],
+      warnings: ['Could not find an "amount" column. Add a header row.'],
     };
   }
 
   const out: ParsedRecipient[] = [];
+  const seenAddrs = new Set<string>();
   let skippedNoAddr = 0;
+  let skippedBadAddr = 0;
+  let skippedBadAmount = 0;
+  let skippedBadMeta = 0;
+  let skippedBadEmail = 0;
+  let skippedDup = 0;
   for (let i = dataStart; i < matrix.length; i++) {
     const row = matrix[i] ?? [];
     if (row.every((c) => cellToString(c) === "")) continue;
     const get = (col: number) => (col >= 0 ? cellToString(row[col]) : "");
-    const address = get(addrCol);
-    if (!address) {
+    const address = get(cols.address);
+    const metaAddress = get(cols.metaAddress);
+    if (!address && !metaAddress) {
       skippedNoAddr++;
       continue;
     }
+    if (address && !looksLikeAddress(address)) {
+      skippedBadAddr++;
+      continue;
+    }
+    if (metaAddress && !looksLikeMetaAddress(metaAddress)) {
+      skippedBadMeta++;
+      continue;
+    }
+    const amount = get(cols.amount);
+    if (!/^\d+(\.\d+)?$/.test(amount.replace(/[,_\s]/g, ""))) {
+      skippedBadAmount++;
+      continue;
+    }
+    const email = get(cols.email);
+    if (email && !looksLikeEmail(email)) {
+      skippedBadEmail++;
+      continue;
+    }
+    // Duplicate detection keys off whichever identifier the row uses;
+    // metaAddress rows derive a fresh stealth address client-side, so
+    // dedup here keeps the user from listing the same recipient twice.
+    const dupKey = (address || metaAddress).toLowerCase();
+    if (seenAddrs.has(dupKey)) {
+      skippedDup++;
+      continue;
+    }
+    seenAddrs.add(dupKey);
+
     out.push({
-      name: get(nameCol),
+      name: get(cols.name),
       address,
-      amount: get(amtCol),
+      amount,
+      ...(email ? { email } : {}),
+      ...(metaAddress ? { metaAddress } : {}),
     });
   }
-  if (skippedNoAddr > 0) {
-    warnings.push(`Skipped ${skippedNoAddr} row(s) with no address.`);
-  }
+  if (skippedNoAddr > 0) warnings.push(`Skipped ${skippedNoAddr} row(s) with no address or meta_address.`);
+  if (skippedBadAddr > 0) warnings.push(`Skipped ${skippedBadAddr} row(s) with malformed address.`);
+  if (skippedBadMeta > 0) warnings.push(`Skipped ${skippedBadMeta} row(s) with malformed meta_address.`);
+  if (skippedBadAmount > 0) warnings.push(`Skipped ${skippedBadAmount} row(s) with non-numeric amount.`);
+  if (skippedBadEmail > 0) warnings.push(`Skipped ${skippedBadEmail} row(s) with malformed email.`);
+  if (skippedDup > 0) warnings.push(`Skipped ${skippedDup} duplicate row(s).`);
   return { rows: out, warnings };
 }
 

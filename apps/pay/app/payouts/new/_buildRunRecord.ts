@@ -3,7 +3,6 @@ import {
   type RecipientRow,
   type RunCategory,
   type RunRecord,
-  type WalletEntry,
 } from "@zkscatter/sdk/storage";
 import type { RecipientRow as WizardRow } from "../../_lib/format";
 import type { TemplateId } from "./_templates";
@@ -41,7 +40,6 @@ export interface BuildRunRecordInput {
   rows: WizardRow[];
   total: number;
   claimFrom: string | undefined;
-  walletBook: WalletEntry[];
   /** Real settle tx hash when scatterDirectAuth was submitted; falls
    *  back to a deterministic zero hash for env-not-configured demos. */
   txHash?: string;
@@ -55,13 +53,21 @@ export interface BuildRunRecordInput {
    *  carries the right value. */
   ephPubByAddress?: Record<string, string>;
   /** Lower-cased recipient address → email captured at picker /
-   *  stealth-routing time. Used as a fallback when the address book
-   *  lookup misses (e.g. stealth-only entries whose `e.address` is
-   *  undefined, so `bookByAddress` doesn't index them). Without this,
-   *  stealth recipients lose their book email and the detail page
-   *  disables the "Send via email" action even though the operator
-   *  has the contact. */
+   *  upload / stealth-routing time. Becomes the **only** source of
+   *  email for the run record; buildRunRecord no longer reads the
+   *  live address book. Keeping this immutable at submit time means
+   *  later book edits never mutate a historical run record's contact
+   *  fields. */
   emailByAddress?: Record<string, string>;
+  /** Same picker-time snapshot pattern for telegram / kakao. The
+   *  address book is shared mutable state across runs; reading it at
+   *  display time would let later edits "rewrite history" on the
+   *  detail page. */
+  telegramByAddress?: Record<string, string>;
+  kakaoByAddress?: Record<string, string>;
+  /** Picker-time snapshot of the chosen entry's label. Falls back to
+   *  the typed name first; only used when the wizard row has no name. */
+  labelByAddress?: Record<string, string>;
   /** Token-units (decimal-string) of relayer fee actually paid. Sum
    *  across batches for a multi-batch run. Optional — stays undefined
    *  for the env-not-configured demo path. */
@@ -83,24 +89,22 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
     : null;
   const isFutureClaim = claimFromUnix !== null && claimFromUnix > now;
 
-  const bookByAddress = new Map<string, WalletEntry>();
-  for (const e of input.walletBook) {
-    if (e.address) bookByAddress.set(e.address.toLowerCase(), e);
-  }
-
+  // No live address-book lookup at build time — every contact field
+  // must arrive via the picker-time snapshot maps below. The book is
+  // mutable shared state; reading it here would let a later edit
+  // rewrite a historical run's email/telegram/kakao on the detail
+  // page. Self-contained: file in → record out.
   const recipients: RecipientRow[] = input.rows.map((r, i) => {
     const lower = r.address.toLowerCase();
-    const book = bookByAddress.get(lower);
     const pkg = input.claimPackages?.[i];
     const ephPub = input.ephPubByAddress?.[lower];
-    // Email resolution: prefer the book entry (carries telegram/kakao
-    // too), fall back to the picker/stealth-routing sideband for
-    // recipients whose address isn't in the book (stealth-only and
-    // stealth-routed cases).
-    const email = book?.email ?? input.emailByAddress?.[lower];
+    const email = input.emailByAddress?.[lower];
+    const telegramHandle = input.telegramByAddress?.[lower];
+    const kakaoId = input.kakaoByAddress?.[lower];
+    const labelSnapshot = input.labelByAddress?.[lower];
     return {
       rowIndex: i,
-      name: r.name || book?.label || lower,
+      name: r.name || labelSnapshot || lower,
       address: lower,
       amount: r.amount,
       // Brand-new runs have no claim activity yet; "available" is
@@ -109,8 +113,8 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
       status: isFutureClaim ? "locked" : "available",
       ...(isFutureClaim ? { claimFrom: claimFromUnix! } : {}),
       ...(email ? { email } : {}),
-      ...(book?.telegramHandle ? { telegramHandle: book.telegramHandle } : {}),
-      ...(book?.kakaoId ? { kakaoId: book.kakaoId } : {}),
+      ...(telegramHandle ? { telegramHandle } : {}),
+      ...(kakaoId ? { kakaoId } : {}),
       ...(ephPub ? { ephemeralPubKey: ephPub } : {}),
       ...(pkg ? { claimPackage: encodeClaimPackage(pkg) } : {}),
     };

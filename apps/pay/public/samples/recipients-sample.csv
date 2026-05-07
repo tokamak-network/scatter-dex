@@ -1,4 +1,7 @@
-name,address,amount
-Alice Kim,0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266,3500
-Bob Lee,0x70997970C51812dc3A010C7d01b50e0d17dc79C8,3500
-Carol Park,0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC,4200
+# Amount is in the token you pick in the wizard (USDC / USDT / ETH / TON).
+# Optional 5th column `meta_address` — if filled, the system creates a one-time
+# stealth address per recipient automatically. Leave blank for a regular EOA payout.
+name,address,amount,email
+Alice Kim,0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266,3500,alice@example.com
+Bob Lee,0x70997970C51812dc3A010C7d01b50e0d17dc79C8,3500,bob@example.com
+Carol Park,0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC,4200,carol@example.com
