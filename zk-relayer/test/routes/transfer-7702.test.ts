@@ -127,12 +127,14 @@ describe("/api/transfer-7702", () => {
     expect(res.body.error).toMatch(/invalid body/i);
   });
 
-  it("surfaces the upstream error reason on broadcast failure", async () => {
+  it("classifies upstream insufficient-funds errors without leaking RPC details", async () => {
     const app = mountRouter(
       "/api/transfer-7702",
       createTransfer7702Routes(
         makeStubWithSendTx(async () => {
-          throw new Error("insufficient funds for gas");
+          // ethers can include the RPC URL (which may carry an API
+          // key) in connection errors — verify we don't echo it.
+          throw new Error("insufficient funds for gas at https://mainnet.infura.io/v3/SECRETKEY");
         }),
         { stealthTransferAccountAddress: DELEGATE },
       ),
@@ -141,6 +143,83 @@ describe("/api/transfer-7702", () => {
     const res = await request(app).post("/api/transfer-7702/relay").send(validBody());
     expect(res.status).toBe(500);
     expect(res.body.error).toBe("broadcast failed");
-    expect(res.body.reason).toMatch(/insufficient funds/);
+    expect(res.body.reason).toBe("insufficient relayer balance");
+    expect(res.body.reason).not.toMatch(/SECRETKEY|infura/i);
+  });
+
+  it("falls back to a generic reason for unrecognised broadcast errors", async () => {
+    const app = mountRouter(
+      "/api/transfer-7702",
+      createTransfer7702Routes(
+        makeStubWithSendTx(async () => {
+          throw new Error("could not detect network (event=\"noNetwork\", url=\"https://rpc.example/SECRET\")");
+        }),
+        { stealthTransferAccountAddress: DELEGATE },
+      ),
+    );
+
+    const res = await request(app).post("/api/transfer-7702/relay").send(validBody());
+    expect(res.status).toBe(500);
+    expect(res.body.reason).toBe("internal error");
+    expect(res.body.reason).not.toMatch(/SECRET|rpc\.example/);
+  });
+
+  it("rejects an empty calls array", async () => {
+    const app = mountRouter(
+      "/api/transfer-7702",
+      createTransfer7702Routes(
+        makeStubWithSendTx(async () => ({ hash: TX_HASH })),
+        { stealthTransferAccountAddress: DELEGATE },
+      ),
+    );
+
+    const res = await request(app).post("/api/transfer-7702/relay").send(validBody({ calls: [] }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid body/i);
+  });
+
+  it("rejects a calls array over the cap (>16)", async () => {
+    const app = mountRouter(
+      "/api/transfer-7702",
+      createTransfer7702Routes(
+        makeStubWithSendTx(async () => ({ hash: TX_HASH })),
+        { stealthTransferAccountAddress: DELEGATE },
+      ),
+    );
+
+    const tooMany = Array.from({ length: 17 }, () => ({
+      target: TARGET,
+      value: "0",
+      data: "0x",
+    }));
+    const res = await request(app).post("/api/transfer-7702/relay").send(validBody({ calls: tooMany }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid body/i);
+  });
+
+  it("matches the configured delegate case-insensitively", async () => {
+    const sendTransaction = vi.fn(async () => ({ hash: TX_HASH }));
+    // Configure with checksummed address; user supplies lowercased.
+    const checksummed = "0x" + "Aa".repeat(20);
+    const lowercased = checksummed.toLowerCase();
+    const app = mountRouter(
+      "/api/transfer-7702",
+      createTransfer7702Routes(
+        makeStubWithSendTx(sendTransaction),
+        { stealthTransferAccountAddress: checksummed },
+      ),
+    );
+
+    const body = validBody({
+      authorization: {
+        address: lowercased,
+        chainId: "31337",
+        nonce: "0",
+        signature: { r: HEX_32, s: HEX_32, yParity: 0 },
+      },
+    });
+    const res = await request(app).post("/api/transfer-7702/relay").send(body);
+    expect(res.status).toBe(202);
+    expect(sendTransaction).toHaveBeenCalledOnce();
   });
 });

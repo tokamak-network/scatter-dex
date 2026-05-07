@@ -59,13 +59,35 @@ const authorizationSchema = z.object({
 
 const relayBodySchema = z.object({
   stealthAddress: z.string().regex(HEX_ADDRESS_RE),
-  calls: z.array(callSchema).max(16),
+  // `.min(1)` rejects the no-op batch — broadcasting one would pay
+  // gas to bump the EOA's nonce without moving any tokens, and the
+  // contract still emits BatchExecuted. The "burn this nonce" use
+  // case in the contract test is fine on-chain; we just don't want
+  // the public endpoint to subsidize it for no client benefit.
+  calls: z.array(callSchema).min(1).max(16),
   // EIP-712 sig over hashBatch — 65 bytes packed.
   signature: z.string().regex(HEX_SIG_RE),
   authorization: authorizationSchema,
 });
 
 export type RelayTransferBody = z.infer<typeof relayBodySchema>;
+
+/** Map a verbose ethers / RPC error message to a small, low-cardinality
+ *  client-facing reason. Anything we don't recognise becomes "internal
+ *  error" — the full message stays in the server log for the operator. */
+function classifyError(msg: string): string {
+  const lower = msg.toLowerCase();
+  if (lower.includes("insufficient funds")) return "insufficient relayer balance";
+  if (lower.includes("nonce too low")) return "nonce too low";
+  if (lower.includes("execution reverted") || lower.includes("invalidsignature")) {
+    return "execution reverted";
+  }
+  if (lower.includes("nonce") && lower.includes("high")) return "nonce too high";
+  if (lower.includes("replacement") && lower.includes("underpriced")) {
+    return "replacement transaction underpriced";
+  }
+  return "internal error";
+}
 
 interface CreateRoutesOpts {
   /** Address of the deployed `StealthTransferAccount`. The endpoint
@@ -152,10 +174,13 @@ export function createTransfer7702Routes(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log.error("7702 transfer broadcast failed", { error: msg });
-      // Surface the upstream message verbatim so the frontend can
-      // distinguish "insufficient relayer balance" from "invalid
-      // signature" without us re-encoding error taxonomies.
-      res.status(500).json({ error: "broadcast failed", reason: msg });
+      // Don't echo the verbatim ethers error to the client: in some
+      // failure modes (e.g. "could not detect network", connection
+      // errors) the message embeds the RPC URL — which may include
+      // an Infura/Alchemy API key. Surface a curated, low-cardinality
+      // reason whitelist instead and log the full message
+      // server-side for the operator.
+      res.status(500).json({ error: "broadcast failed", reason: classifyError(msg) });
       return;
     }
 
