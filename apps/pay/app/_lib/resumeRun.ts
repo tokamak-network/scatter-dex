@@ -1,7 +1,7 @@
 import type { ClaimPackage } from "@zkscatter/sdk/notes";
 import { encodeClaimPackage } from "@zkscatter/sdk/notes";
 import type { RecipientRow, RunRecord } from "@zkscatter/sdk/storage";
-import { csvSafeLabel } from "./format";
+import { formatRecipientCsvRow } from "./format";
 
 const ZERO_TX = "0x" + "0".repeat(64);
 
@@ -34,9 +34,7 @@ export function partialRunStats(record: RunRecord): PartialRunStats {
 }
 
 export function recipientsToCsv(rows: readonly RecipientRow[]): string {
-  return rows
-    .map((r) => `${csvSafeLabel(r.name)},${r.address},${r.amount}`)
-    .join("\n");
+  return rows.map((r) => formatRecipientCsvRow(r.name, r.address, r.amount)).join("\n");
 }
 
 export interface MergeResumeArgs {

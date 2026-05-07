@@ -21,6 +21,19 @@ export function csvSafeLabel(label: string): string {
   return (label || "").replace(/[,\n\r]/g, " ").trim();
 }
 
+/** Single source of truth for the wizard's recipient-row CSV format
+ *  (`name,address,amount`). Address-book picker, spreadsheet editor,
+ *  and resume's `recipientsToCsv` all build the textarea this way —
+ *  funnel through here so a future escape-rule tweak doesn't have to
+ *  hunt down three call sites. */
+export function formatRecipientCsvRow(
+  name: string,
+  address: string,
+  amount: string,
+): string {
+  return `${csvSafeLabel(name)},${address},${amount}`;
+}
+
 /** Local-timezone `YYYY-MM-DD` for `<input type="date">` values.
  *  Locale-free format avoids the SSR/client locale split. */
 export function toIsoDate(d: Date): string {

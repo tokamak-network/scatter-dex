@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import Spreadsheet, { type Matrix } from "react-spreadsheet";
-import { csvSafeLabel } from "../../../_lib/format";
+import { formatRecipientCsvRow } from "../../../_lib/format";
 
 type Cell = { value: string };
 
@@ -44,7 +44,7 @@ function matrixToCsv(matrix: Matrix<Cell>): string {
     .map((row) => row?.map((cell) => cell?.value ?? "") ?? [])
     .filter((cells) => cells.some((c) => c && c.trim().length > 0))
     .map(([name, address, amount]) =>
-      `${csvSafeLabel(name ?? "")},${(address ?? "").trim()},${(amount ?? "").trim()}`,
+      formatRecipientCsvRow(name ?? "", (address ?? "").trim(), (amount ?? "").trim()),
     );
   return lines.join("\n");
 }

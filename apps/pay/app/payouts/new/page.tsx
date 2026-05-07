@@ -73,7 +73,7 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { csvSafeLabel, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
+import { csvSafeLabel, formatRecipientCsvRow, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { csvEscape, downloadCsv } from "../../_lib/csv";
 import { parseRecipientFile } from "../../_lib/parseRecipientFile";
 import { SpreadsheetEditor } from "./_components/SpreadsheetEditor";
@@ -299,7 +299,12 @@ function NewPayout() {
   type EditMode = "csv" | "spreadsheet";
   const [editMode, setEditMode] = useState<EditMode>(() => {
     if (typeof window === "undefined") return "csv";
-    return (window.localStorage.getItem("pay-recipient-edit-mode") as EditMode) || "csv";
+    // Whitelist the value before trusting it: a stale or hand-edited
+    // localStorage entry (e.g. left over from a renamed mode) would
+    // otherwise yield a string that matches neither branch and the
+    // textarea would silently disappear.
+    const stored = window.localStorage.getItem("pay-recipient-edit-mode");
+    return stored === "spreadsheet" ? "spreadsheet" : "csv";
   });
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -800,7 +805,7 @@ function NewPayout() {
         if (seen.has(lower)) continue;
         seen.add(lower);
         snapshot(lower, e);
-        rowsToAdd.push(`${csvSafeLabel(e.label)},${e.address},`);
+        rowsToAdd.push(formatRecipientCsvRow(e.label, e.address, ""));
       } else if (e.metaAddress) {
         // Stealth-only entry: derive a one-time stealth address now
         // so the CSV holds a 0x EOA the parser accepts. The matching
@@ -815,7 +820,7 @@ function NewPayout() {
         seen.add(lower);
         newEphPubs[lower] = ephemeralPubKey;
         snapshot(lower, e);
-        rowsToAdd.push(`${csvSafeLabel(e.label)},${stealthAddress},`);
+        rowsToAdd.push(formatRecipientCsvRow(e.label, stealthAddress, ""));
       }
     }
     if (rowsToAdd.length === 0) return;
@@ -878,7 +883,7 @@ function NewPayout() {
       if (r.email && addr) {
         newEmails[addr.toLowerCase()] = r.email;
       }
-      csvLines.push(`${csvSafeLabel(r.name)},${addr},${r.amount}`);
+      csvLines.push(formatRecipientCsvRow(r.name, addr, r.amount));
     }
     if (Object.keys(newEphPubs).length > 0) {
       setPickerEphPubs((prev) => ({ ...prev, ...newEphPubs }));
