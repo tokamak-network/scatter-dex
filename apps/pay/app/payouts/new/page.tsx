@@ -1199,6 +1199,24 @@ function NewPayout() {
                     }}
                   />
                 </div>
+                <div className="text-[10px] text-[var(--color-text-subtle)]">
+                  Sample:{" "}
+                  <a
+                    href="/samples/recipients-sample.csv"
+                    download
+                    className="underline hover:text-[var(--color-primary)]"
+                  >
+                    CSV
+                  </a>
+                  {" · "}
+                  <a
+                    href="/samples/recipients-sample.xlsx"
+                    download
+                    className="underline hover:text-[var(--color-primary)]"
+                  >
+                    Excel
+                  </a>
+                </div>
                 {addressBookHint && (
                   <span id="abp-hint" className="text-[10px] text-[var(--color-text-subtle)]">
                     {addressBookHint}
