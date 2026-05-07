@@ -159,8 +159,17 @@ contract StealthTransferAccountTest is Test {
         });
         bytes memory sig = _signBatch(calls);
 
+        // Pin the failure surface: the inner ERC20 transfer reverts
+        // with `Error("insufficient")`, which the wrapper repackages
+        // as `CallFailed(0, abi.encode(Error("insufficient")))`.
+        // Asserting both the selector AND the index guarantees the
+        // test fails if a regression makes the call succeed for a
+        // different reason or fail at a different index.
+        bytes memory innerRevert = abi.encodeWithSignature("Error(string)", "insufficient");
         vm.prank(relayer);
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(StealthTransferAccount.CallFailed.selector, uint256(0), innerRevert)
+        );
         StealthTransferAccount(stealth).executeBatch(calls, sig);
     }
 

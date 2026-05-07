@@ -97,8 +97,15 @@ contract StealthTransferAccount is EIP712 {
         uint256 currentNonce = nonce;
 
         bytes32 digest = _hashTypedDataV4(_hashBatch(currentNonce, calls));
-        address signer = digest.recover(signature);
-        if (signer != account) revert InvalidSignature();
+        // tryRecover normalizes every failure mode (wrong length,
+        // invalid s/v, etc.) into a single `RecoverError` enum
+        // instead of letting OZ's per-shape custom errors bubble
+        // out — callers see a stable `InvalidSignature()` selector
+        // regardless of how the signature was malformed.
+        (address signer, ECDSA.RecoverError err, ) = digest.tryRecover(signature);
+        if (err != ECDSA.RecoverError.NoError || signer != account) {
+            revert InvalidSignature();
+        }
 
         // Bump first so a re-entrant call into `executeBatch` sees a
         // stale nonce and reverts before touching funds again.
