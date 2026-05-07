@@ -974,26 +974,42 @@ function TransferOutModal({
   // relayer isn't in the registry (legacy / cross-operator case)
   // fall back to using its URL alone — fee collector will come from
   // an /api/info probe instead of the registry's `address` field.
+  // Normalize trailing slashes so `http://x:3002/` and `http://x:3002`
+  // compare equal — the registry and ClaimPackage occasionally
+  // disagree on the trailing slash for the same operator.
+  const normalizeUrl = (u: string | null | undefined) =>
+    u ? u.replace(/\/+$/, "") : null;
   const candidates = useMemo(
     () => relayers.filter((r) => r.online),
     [relayers],
   );
   const [selectedRelayerUrl, setSelectedRelayerUrl] = useState<string | null>(null);
-  // Initial pick: prefer the settle-time relayer if it's online, else
-  // first online registry entry, else the settle-time URL standalone.
+  // Re-pick whenever the current selection is no longer reachable —
+  // covers the initial mount AND the case where the user's chosen
+  // relayer drops offline mid-session and we need to fail over to
+  // another registered one.
   useEffect(() => {
-    if (selectedRelayerUrl !== null) return;
-    const settleUrl = entry.pkg.relayerUrl ?? null;
-    if (settleUrl && candidates.some((r) => r.url === settleUrl)) {
+    const settleUrl = normalizeUrl(entry.pkg.relayerUrl ?? null);
+    const currentNormalized = normalizeUrl(selectedRelayerUrl);
+    const stillOk = candidates.some((r) => normalizeUrl(r.url) === currentNormalized);
+    if (currentNormalized && stillOk) return;
+    // Prefer settle-time relayer when registered + online; otherwise
+    // first online registry entry; otherwise standalone settle URL.
+    if (settleUrl && candidates.some((r) => normalizeUrl(r.url) === settleUrl)) {
       setSelectedRelayerUrl(settleUrl);
     } else if (candidates.length > 0) {
-      setSelectedRelayerUrl(candidates[0].url);
+      setSelectedRelayerUrl(normalizeUrl(candidates[0].url));
     } else if (settleUrl) {
       setSelectedRelayerUrl(settleUrl);
+    } else {
+      setSelectedRelayerUrl(null);
     }
   }, [candidates, entry.pkg.relayerUrl, selectedRelayerUrl]);
   const selectedRelayer = useMemo(
-    () => candidates.find((r) => r.url === selectedRelayerUrl) ?? null,
+    () =>
+      candidates.find(
+        (r) => normalizeUrl(r.url) === normalizeUrl(selectedRelayerUrl),
+      ) ?? null,
     [candidates, selectedRelayerUrl],
   );
   const relayerUrl = selectedRelayerUrl;
@@ -1285,9 +1301,11 @@ function TransferOutModal({
                   className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 text-xs"
                 >
                   {candidates.map((r) => (
-                    <option key={r.address} value={r.url}>
+                    <option key={r.address} value={normalizeUrl(r.url) ?? r.url}>
                       {r.name || shortAddr(r.address)} · {r.url}
-                      {r.url === entry.pkg.relayerUrl ? " (default)" : ""}
+                      {normalizeUrl(r.url) === normalizeUrl(entry.pkg.relayerUrl ?? null)
+                        ? " (default)"
+                        : ""}
                     </option>
                   ))}
                 </select>

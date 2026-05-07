@@ -393,7 +393,7 @@ if [ "$MOCK_MODE" = true ]; then
   BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^  BatchExecutor:" | awk '{print $NF}')
   STEALTH_TRANSFER_ACCOUNT=$(echo "$DEPLOY_OUTPUT" | grep "^  StealthTransferAccount:" | awk '{print $NF}')
 
-  if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
+  if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ] || [ -z "$STEALTH_TRANSFER_ACCOUNT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
     echo "$DEPLOY_OUTPUT"
     exit 1
