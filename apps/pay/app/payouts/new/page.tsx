@@ -48,6 +48,11 @@ const MAX_TIER_CAP = ACTIVE_TIERS[ACTIVE_TIERS.length - 1]!.cap;
 const MAX_BATCHES_PER_RUN = 1;
 // Effective per-run recipient cap: 1 batch × largest active tier.
 const MAX_RECIPIENTS_PER_RUN = MAX_TIER_CAP * MAX_BATCHES_PER_RUN;
+const UPLOAD_STATUS_STYLES: Record<"ok" | "warn" | "error", string> = {
+  ok: "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]",
+  warn: "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
+  error: "border-[var(--color-danger)] bg-red-50 text-[var(--color-danger)]",
+};
 // Tiers known to the SDK but not yet wired on-chain — used to surface
 // the roadmap signal in user-facing validation messages without hard-
 // coding "64 / 128" copy that drifts as tiers ship.
@@ -70,7 +75,7 @@ import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { csvSafeLabel, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { csvEscape, downloadCsv } from "../../_lib/csv";
-import { parseRecipientFile, parsedToCsvLines } from "../../_lib/parseRecipientFile";
+import { parseRecipientFile } from "../../_lib/parseRecipientFile";
 import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   clearWizardDraft,
@@ -276,11 +281,9 @@ function NewPayout() {
   const walletBook = useWalletBook();
   const folder = useFolderStorage();
   const [showBookPicker, setShowBookPicker] = useState(false);
+  type UploadStatusKind = "ok" | "warn" | "error";
   const [uploadStatus, setUploadStatus] = useState<
-    | { kind: "ok"; message: string }
-    | { kind: "warn"; message: string }
-    | { kind: "error"; message: string }
-    | null
+    { kind: UploadStatusKind; message: string } | null
   >(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const draftLabelParam = searchParams?.get("label") ?? null;
@@ -793,7 +796,7 @@ function NewPayout() {
   async function handleRecipientFile(file: File) {
     if (resumeRecord) return;
     setUploadStatus(null);
-    let result;
+    let result: Awaited<ReturnType<typeof parseRecipientFile>>;
     try {
       result = await parseRecipientFile(file);
     } catch (err) {
@@ -810,21 +813,20 @@ function NewPayout() {
       });
       return;
     }
-    const block = parsedToCsvLines(result.rows);
-    // Replace when the textarea is empty OR still holds the template's
-    // sample placeholder (untouched). Otherwise append so users don't
-    // lose manually entered or address-book-added rows.
+    const block = result.rows
+      .map((r) => `${csvSafeLabel(r.name)},${r.address},${r.amount}`)
+      .join("\n");
+    // Don't clobber manually entered rows: replace only when the textarea
+    // is empty or still holds the template's sample placeholder.
     const trimmed = csv.trimEnd();
-    const isUntouchedSample = trimmed === template.sampleCsv.trimEnd();
-    const shouldReplace = trimmed.length === 0 || isUntouchedSample;
+    const shouldReplace =
+      trimmed.length === 0 || trimmed === template.sampleCsv.trimEnd();
     setCsv(shouldReplace ? block : `${trimmed}\n${block}`);
     const action = shouldReplace ? "Loaded" : "Appended";
     const warn = result.warnings[0];
     setUploadStatus({
       kind: warn ? "warn" : "ok",
-      message: warn
-        ? `${action} ${result.rows.length} recipient(s) from ${file.name}. ${warn}`
-        : `${action} ${result.rows.length} recipient(s) from ${file.name}.`,
+      message: `${action} ${result.rows.length} recipient(s) from ${file.name}.${warn ? ` ${warn}` : ""}`,
     });
   }
 
@@ -1229,13 +1231,7 @@ function NewPayout() {
             })()}
             {uploadStatus && (
               <div
-                className={`rounded-md border px-3 py-2 text-xs ${
-                  uploadStatus.kind === "error"
-                    ? "border-[var(--color-danger)] bg-red-50 text-[var(--color-danger)]"
-                    : uploadStatus.kind === "warn"
-                      ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
-                      : "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
-                }`}
+                className={`rounded-md border px-3 py-2 text-xs ${UPLOAD_STATUS_STYLES[uploadStatus.kind]}`}
                 role={uploadStatus.kind === "error" ? "alert" : "status"}
               >
                 <div className="flex items-start justify-between gap-3">

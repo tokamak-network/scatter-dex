@@ -1,14 +1,10 @@
 /**
- *  Parses an HR-supplied recipient list (CSV or Excel) into the same
- *  `name,address,amount` shape the wizard's textarea uses, so the
- *  upload path and the manual paste path share a single source of
- *  truth (the `csv` state). Header detection is best-effort: if the
- *  first row looks like a header (matches our known column names and
- *  contains no 0x address), it's used to map columns; otherwise the
- *  parser falls back to positional A/B/C = name/address/amount, which
- *  matches the wizard's existing CSV format.
+ *  Header detection is best-effort: if the first row looks like a
+ *  header (matches our known column names and contains no 0x address),
+ *  it's used to map columns; otherwise the parser falls back to
+ *  positional A/B/C = name/address/amount so the textarea's existing
+ *  format keeps working without a header.
  */
-import { csvSafeLabel } from "./format";
 
 export type ParsedRecipient = {
   name: string;
@@ -49,7 +45,6 @@ function cellToString(c: unknown): string {
 
 function rowsFromMatrix(matrix: unknown[][]): ParseResult {
   const warnings: string[] = [];
-  // Drop fully-empty trailing rows (Excel exports often pad)
   while (matrix.length > 0 && matrix[matrix.length - 1].every((c) => cellToString(c) === "")) {
     matrix.pop();
   }
@@ -115,7 +110,8 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
 }
 
 function parseCsvText(text: string): ParseResult {
-  // Excel CSV exports use \r\n; mac TextEdit uses \r; Linux \n. Handle all.
+  // Handle CRLF (Excel), CR (mac TextEdit), and LF — Excel CSV exports
+  // are the common HR case and ship with CRLF.
   const lines = text.split(/\r\n|\r|\n/);
   const matrix = lines.map((l) => l.split(",").map((c) => c.trim()));
   return rowsFromMatrix(matrix);
@@ -124,23 +120,18 @@ function parseCsvText(text: string): ParseResult {
 export async function parseRecipientFile(file: File): Promise<ParseResult> {
   const ext = (file.name.split(".").pop() ?? "").toLowerCase();
   if (ext === "xlsx" || ext === "xls") {
-    // Lazy-load read-excel-file so the ~50KB parser is only fetched
-    // when the user actually picks an Excel file.
+    // Dynamic import keeps read-excel-file out of the initial page bundle.
     const { default: readXlsxFile } = await import("read-excel-file/browser");
-    // v9 returns `Sheet[]` (one entry per worksheet). For now we use the
-    // first non-empty sheet — a future PR can add a sheet-picker dialog
-    // when a workbook has multiple data sheets.
     const sheets = await readXlsxFile(file);
-    const target =
-      sheets.find((s) => s.data.length > 0) ?? sheets[0] ?? { data: [] as unknown[] };
-    const warnings: string[] = [];
+    const target = sheets.find((s) => s.data.length > 0) ?? sheets[0];
+    if (!target) return { rows: [], warnings: ["File is empty."] };
+    const result = rowsFromMatrix(target.data as unknown[][]);
     if (sheets.length > 1) {
-      warnings.push(
-        `Workbook has ${sheets.length} sheet(s); used "${target.sheet ?? "Sheet1"}". Save the right sheet first if this picked the wrong one.`,
+      result.warnings.unshift(
+        `Workbook has ${sheets.length} sheet(s); used "${target.sheet}". Save the right sheet first if this picked the wrong one.`,
       );
     }
-    const result = rowsFromMatrix(target.data as unknown[][]);
-    return { ...result, warnings: [...warnings, ...result.warnings] };
+    return result;
   }
   if (ext === "csv" || file.type === "text/csv" || file.type === "application/vnd.ms-excel") {
     const text = await file.text();
@@ -150,8 +141,4 @@ export async function parseRecipientFile(file: File): Promise<ParseResult> {
     rows: [],
     warnings: [`Unsupported file type: ${ext || file.type || "unknown"}. Use .csv, .xlsx, or .xls.`],
   };
-}
-
-export function parsedToCsvLines(rows: readonly ParsedRecipient[]): string {
-  return rows.map((r) => `${csvSafeLabel(r.name)},${r.address},${r.amount}`).join("\n");
 }
