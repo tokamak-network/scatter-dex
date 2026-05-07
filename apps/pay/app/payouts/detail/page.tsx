@@ -306,6 +306,16 @@ function ExportMenu({ record }: { record: RunRecord }) {
           >
             Print / Save as PDF
           </button>
+          <a
+            href={`/payouts/payslip?id=${record.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+            title="Open every recipient's payslip in one bundled PDF (page-break between each)."
+          >
+            Print all payslips (PDF)
+          </a>
         </div>
       )}
     </div>
@@ -735,7 +745,7 @@ function RowMenu({
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
             title={!hasEmail ? "No email on file for this recipient" : undefined}
           >
-            {alreadySent ? "Resend via mail client" : "Send via mail client"}
+            {alreadySent ? "Resend via Gmail" : "Send via Gmail"}
           </button>
           <Link
             href={payslipHref}
@@ -800,13 +810,14 @@ function copyClaimLink(record: RunRecord, row: RecipientRow): void {
   void navigator.clipboard.writeText(url);
 }
 
-/** Hand the row's claim email to the OS-registered mail client and
- *  ask the operator to confirm they actually pressed Send before we
- *  stamp the row. Anchor-click instead of `location.href = mailto:`
- *  so a registered webmail handler (Chrome → Gmail web) opens in a
- *  new tab without unloading this page mid-write — otherwise the
- *  navigation queued behind the synchronous `confirm()` would race
- *  the markSent IndexedDB write. */
+/** Open Gmail's web-compose URL with the row's claim email pre-filled
+ *  and ask the operator to confirm they actually pressed Send in
+ *  Gmail before we stamp the row. The Gmail-direct URL works
+ *  regardless of the OS's mailto-handler registration — operators
+ *  who keep Gmail open in a browser tab (the common case here) used
+ *  to lose the draft to Apple Mail or a stale handler when this used
+ *  the mailto: scheme. Anchor-click in a new tab so the synchronous
+ *  confirm() doesn't race the markSent IndexedDB write on this page. */
 function openClaimMailDraftAndConfirm(
   record: RunRecord,
   row: RecipientRow,
@@ -825,17 +836,19 @@ function openClaimMailDraftAndConfirm(
     ``,
     `The link is private to you and never expires.`,
   ].join("\r\n");
-  const mailto = `mailto:${encodeURIComponent(row.email)}?subject=${encodeURIComponent(
-    subject,
-  )}&body=${encodeURIComponent(body)}`;
+  const gmailUrl =
+    `https://mail.google.com/mail/?view=cm&fs=1` +
+    `&to=${encodeURIComponent(row.email)}` +
+    `&su=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(body)}`;
   const anchor = document.createElement("a");
-  anchor.href = mailto;
+  anchor.href = gmailUrl;
   anchor.target = "_blank";
   anchor.rel = "noopener noreferrer";
   anchor.click();
   const ok = window.confirm(
-    `Mail client opened for ${row.name || row.email}.\n\n` +
-      `Click OK after you've sent the email to mark this recipient as Sent.\n` +
+    `Gmail compose opened for ${row.name || row.email}.\n\n` +
+      `Click OK after you've sent the email in Gmail to mark this recipient as Sent.\n` +
       `Click Cancel if you didn't send it.`,
   );
   if (!ok) return;
