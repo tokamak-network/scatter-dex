@@ -297,18 +297,30 @@ function NewPayout() {
   // sticks across visits. Default is CSV for the existing user base;
   // first-time HR users can flip via the tab toggle in the UI.
   type EditMode = "csv" | "spreadsheet";
-  const [editMode, setEditMode] = useState<EditMode>(() => {
-    if (typeof window === "undefined") return "csv";
-    // Whitelist the value before trusting it: a stale or hand-edited
-    // localStorage entry (e.g. left over from a renamed mode) would
-    // otherwise yield a string that matches neither branch and the
-    // textarea would silently disappear.
-    const stored = window.localStorage.getItem("pay-recipient-edit-mode");
-    return stored === "spreadsheet" ? "spreadsheet" : "csv";
-  });
+  // Defer the localStorage read to a post-mount effect. Pay ships as
+  // a static export — pre-rendered HTML uses the "csv" default, so
+  // any client-side initializer that returned "spreadsheet" would
+  // trip a hydration mismatch on first render.
+  const [editMode, setEditMode] = useState<EditMode>("csv");
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    try {
+      const stored = window.localStorage.getItem("pay-recipient-edit-mode");
+      // Whitelist the value before trusting it: a stale or hand-edited
+      // entry (e.g. from a renamed mode) would otherwise admit anything
+      // truthy and break the render branch.
+      if (stored === "spreadsheet") setEditMode("spreadsheet");
+    } catch {
+      // localStorage can throw in privacy mode / blocked storage.
+      // Silently fall back to the default — the wizard still works,
+      // the user just doesn't get persistence.
+    }
+  }, []);
+  useEffect(() => {
+    try {
       window.localStorage.setItem("pay-recipient-edit-mode", editMode);
+    } catch {
+      // setItem can throw on quota exceeded / blocked storage. Same
+      // policy: the choice still applies for the current session.
     }
   }, [editMode]);
   const draftLabelParam = searchParams?.get("label") ?? null;

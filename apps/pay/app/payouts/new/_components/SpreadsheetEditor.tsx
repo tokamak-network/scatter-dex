@@ -17,23 +17,35 @@ const TRAILING_BLANK_ROWS = 1;
 // before the wizard's per-run cap rejects it elsewhere.
 const MAX_VISIBLE_ROWS = 200;
 
-function parseCsvToMatrix(csv: string): Matrix<Cell> {
-  // Mirror the wizard's existing 3-column derivation (page.tsx ~line
-  // 800): trim, drop empties, split on first two commas only so a
-  // name with a comma doesn't shift the columns. The spreadsheet is a
-  // visual editor for the textarea, not a re-parser, so it should see
-  // exactly what the textarea shows.
-  const lines = csv
+function splitNameAddressAmount(line: string): [string, string, string] {
+  // Take the last two comma-separated fields as address + amount and
+  // everything before them as the name. Defensive: csvSafeLabel
+  // upstream strips commas from names, but a user who hand-edits the
+  // textarea could still slip one in (e.g. "Doe, John") — keeping
+  // the splitter robust avoids silently shifting their columns into
+  // the wrong cells.
+  const parts = line.split(",");
+  if (parts.length < 3) {
+    return [parts[0]?.trim() ?? "", parts[1]?.trim() ?? "", parts[2]?.trim() ?? ""];
+  }
+  const amount = parts.pop()!.trim();
+  const address = parts.pop()!.trim();
+  const name = parts.join(",").trim();
+  return [name, address, amount];
+}
+
+function parseCsvLines(csv: string): string[] {
+  return csv
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+}
+
+function parseCsvToMatrix(csv: string): Matrix<Cell> {
+  const lines = parseCsvLines(csv);
   return lines.slice(0, MAX_VISIBLE_ROWS).map((line) => {
-    const parts = line.split(",").map((s) => s.trim());
-    return [
-      { value: parts[0] ?? "" },
-      { value: parts[1] ?? "" },
-      { value: parts[2] ?? "" },
-    ];
+    const [name, address, amount] = splitNameAddressAmount(line);
+    return [{ value: name }, { value: address }, { value: amount }];
   });
 }
 
@@ -75,6 +87,14 @@ interface Props {
  *  banner all see the same recipient list regardless of which mode
  *  the user happens to be in. */
 export function SpreadsheetEditor({ csv, onCsvChange, readOnly }: Props) {
+  // Stash the lines past the row cap so we can stitch them back onto
+  // the serialized output — without this, a user editing a single
+  // cell when the list has 250 recipients would silently delete the
+  // last 50. The grid still only renders the first 200, but the
+  // hidden tail survives every roundtrip.
+  const allLines = useMemo(() => parseCsvLines(csv), [csv]);
+  const overflowLines = allLines.slice(MAX_VISIBLE_ROWS);
+
   // Re-derive the matrix on every csv change so an external write
   // (upload, address-book picker) refreshes the grid immediately.
   // The trailing blank padding gives the user a visible empty row
@@ -104,14 +124,25 @@ export function SpreadsheetEditor({ csv, onCsvChange, readOnly }: Props) {
 
   return (
     <div className="overflow-x-auto rounded-md border border-[var(--color-border-strong)] bg-white p-2">
+      {overflowLines.length > 0 && (
+        <div className="mb-2 rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-2 py-1 text-[11px] text-[var(--color-warning)]">
+          Showing first {MAX_VISIBLE_ROWS} of {allLines.length} rows. The rest stay
+          attached to your list — switch to CSV mode to edit them.
+        </div>
+      )}
       <Spreadsheet
         data={data}
         columnLabels={COLUMN_LABELS}
         onChange={(next) => {
           const serialized = matrixToCsv(next as Matrix<Cell>);
-          if (serialized === lastEmittedRef.current) return;
-          lastEmittedRef.current = serialized;
-          onCsvChange(serialized);
+          // Stitch the hidden tail back onto every emitted CSV so an
+          // edit to row 5 doesn't drop rows 201+.
+          const combined = overflowLines.length > 0
+            ? [serialized, ...overflowLines].filter(Boolean).join("\n")
+            : serialized;
+          if (combined === lastEmittedRef.current) return;
+          lastEmittedRef.current = combined;
+          onCsvChange(combined);
         }}
       />
     </div>
