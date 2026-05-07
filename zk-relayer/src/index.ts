@@ -279,7 +279,13 @@ async function main() {
       pauseGuard,
       createTransfer7702Routes(
         submitter,
-        { stealthTransferAccountAddress: config.stealthTransferAccountAddress },
+        {
+          stealthTransferAccountAddress: config.stealthTransferAccountAddress,
+          // tokenEntries / gaslessFees default to env-derived state
+          // inside the factory; explicit injection is reserved for
+          // tests so the route can be exercised without touching
+          // process.env.
+        },
         writeLimiter,
       ),
     );

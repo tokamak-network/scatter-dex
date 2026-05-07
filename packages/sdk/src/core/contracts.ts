@@ -42,6 +42,13 @@ export const ERC20_ABI = [
   "function balanceOf(address account) external view returns (uint256)",
   "function symbol() external view returns (string)",
   "function decimals() external view returns (uint8)",
+  // Standard transfer entrypoints used by the stealth-transfer flow
+  // (`relay7702.buildErc20TransferCalls` encodes calldata via this
+  // ABI) and the inbox modal's direct EOA send path. Without them
+  // both ethers.encodeFunctionData and Contract.transfer error with
+  // `unknown function "transfer"`.
+  "function transfer(address to, uint256 amount) external returns (bool)",
+  "function transferFrom(address from, address to, uint256 amount) external returns (bool)",
 ] as const;
 
 export const MOCK_TOKEN_ABI = [

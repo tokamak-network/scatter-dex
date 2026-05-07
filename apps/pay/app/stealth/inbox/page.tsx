@@ -804,6 +804,41 @@ function ClaimedRowActions({
     return derived?.matches ? derived.privateKey : null;
   }, [entry, spendingKey, viewingKey]);
 
+  // Fetch the stealth balance so a row whose tokens have already been
+  // transferred out (or never funded) can't open the modal — there's
+  // nothing to send. Mirrors StealthBalance's polling cadence.
+  const cfg = useMemo(() => getNetworkConfig(), []);
+  const [balance, setBalance] = useState<bigint | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const provider = getSharedProvider(cfg.rpcUrl);
+    const isWeth = isWrappedNative(entry.pkg.token, cfg);
+    const erc20 = isWeth ? null : new ethers.Contract(entry.pkg.token, ERC20_ABI, provider);
+    const tick = async () => {
+      try {
+        const v = isWeth
+          ? await provider.getBalance(entry.pkg.recipient)
+          : ((await erc20!.balanceOf(entry.pkg.recipient)) as bigint);
+        if (!cancelled) setBalance(v);
+      } catch {
+        if (!cancelled) setBalance(null);
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [entry.pkg.recipient, entry.pkg.token, cfg]);
+  const hasBalance = balance !== null && balance > 0n;
+  const transferDisabled = !privkey || !hasBalance;
+  const transferTitle = !privkey
+    ? "Cannot derive stealth privkey for this entry"
+    : !hasBalance
+      ? `Stealth address has no ${entry.pkg.tokenSymbol} to transfer`
+      : undefined;
+
   const [showKey, setShowKey] = useState(false);
   return (
     <div className="flex items-center justify-end gap-2">
@@ -811,8 +846,8 @@ function ClaimedRowActions({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        disabled={!privkey}
-        title={privkey ? undefined : "Cannot derive stealth privkey for this entry"}
+        disabled={transferDisabled}
+        title={transferTitle}
         className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white disabled:opacity-40"
       >
         Transfer
@@ -947,15 +982,16 @@ function TransferOutModal({
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [gasBalance, setGasBalance] = useState<bigint | null>(null);
-  // Default fee: 0.1 token-units (~$0.10 for USDC/USDT, sensible for
-  // stablecoin payouts which is the main HR use case). Surfacing
-  // this for ETH/WBTC will need a per-token default — flag for
-  // follow-up once those tokens hit the gasless path. Operators with
-  // a different fee policy can edit before signing. Native ETH
-  // gasless would need a value-bearing call to the relayer rather
-  // than ERC20.transfer, so the toggle only surfaces for
-  // ERC20-token claims for now.
-  const [feeAmount, setFeeAmount] = useState("0.1");
+  // ERC20 balance of the stealth address. Used both to disable the
+  // Send button on insufficient funds AND to display the live
+  // balance under the Token row. For native (post-WETH-unwrap) the
+  // balance equals `gasBalance` so we just mirror that.
+  const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
+  // Fee no longer user-editable — sourced from the selected
+  // relayer's published policy in /api/info. The selector dropdown
+  // surfaces each relayer's fee per token so users can compare and
+  // pick. Native ETH gasless still needs a value-bearing call shape
+  // and isn't supported in this path.
   const stealthAddr = entry.pkg.recipient;
 
   const cfg = getNetworkConfig();
@@ -1029,6 +1065,32 @@ function TransferOutModal({
     };
   }, [provider, stealthAddr]);
 
+  // Fetch the ERC20 (or native after unwrap) balance for the
+  // disable-send check + UI display. Re-fetches when txHash changes
+  // so the post-send confirmation pulls in the new (drained) balance.
+  useEffect(() => {
+    let cancelled = false;
+    if (isWrappedNative(entry.pkg.token, cfg)) {
+      // Native ETH balance is already fetched into gasBalance — no
+      // separate query needed.
+      void provider.getBalance(stealthAddr).then((b) => {
+        if (!cancelled) setTokenBalance(b);
+      });
+    } else {
+      const erc20 = new ethers.Contract(entry.pkg.token, ERC20_ABI, provider);
+      void erc20.balanceOf(stealthAddr).then((b: bigint) => {
+        if (!cancelled) setTokenBalance(b);
+      }).catch(() => {
+        // Token contract isn't reachable yet (e.g. mid-deploy on
+        // dev); fail-open so the existing flow can still attempt
+        // and surface the real error.
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, stealthAddr, entry.pkg.token, cfg, txHash]);
+
   // WETH claims auto-unwrap to native ETH on payout (see contract
   // line 1019-1024), so the stealth address holds native ETH not the
   // WETH ERC20. Transfers in that case are native value sends; for
@@ -1049,24 +1111,42 @@ function TransferOutModal({
   // before the user has filled in the form.
   const [relayerFeeAddr, setRelayerFeeAddr] = useState<string | null>(null);
   const [relayerFeeAddrError, setRelayerFeeAddrError] = useState<string | null>(null);
+  // Stand-in for the registry's RelayerInfo when the selected
+  // relayer isn't in the on-chain registry (legacy / cross-operator
+  // claim). Holds the same `/api/info` shape so the policy lookup
+  // and fee display fall back gracefully through `gasless_fees`.
+  const [standaloneRelayerInfo, setStandaloneRelayerInfo] = useState<
+    { gasless_fees?: Record<string, string>; address?: string } | null
+  >(null);
   useEffect(() => {
-    setRelayerFeeAddr(null);
     setRelayerFeeAddrError(null);
-    if (!relayerUrl || !gaslessAvailable) return;
-    // Fast path: registry already gave us the relayer's wallet
-    // address as `selectedRelayer.address` — skip the network probe.
-    if (selectedRelayer && ethers.isAddress(selectedRelayer.address)) {
-      setRelayerFeeAddr(selectedRelayer.address);
+    if (!relayerUrl || !gaslessAvailable) {
+      setRelayerFeeAddr(null);
+      setStandaloneRelayerInfo(null);
       return;
     }
-    // Fallback: relayer URL is set but the registry doesn't list it
-    // (legacy / cross-operator). Probe /api/info for the wallet.
+    // Use any registry-cached values immediately so the read-only
+    // fee panel doesn't flash "no policy" while the probe is in
+    // flight. The probe still runs and overwrites these; that
+    // covers (a) registries that list the relayer but lack
+    // gasless_fees on RelayerInfo (race window before
+    // RelayersProvider has fetched /api/info) and (b) standalone
+    // settle-time relayers not in the registry at all.
+    const cachedAddr = selectedRelayer && ethers.isAddress(selectedRelayer.address)
+      ? selectedRelayer.address
+      : null;
+    setRelayerFeeAddr(cachedAddr);
+    setStandaloneRelayerInfo(
+      selectedRelayer?.api?.gasless_fees
+        ? { address: cachedAddr ?? undefined, gasless_fees: selectedRelayer.api.gasless_fees }
+        : null,
+    );
     let cancelled = false;
     const url = `${relayerUrl}/api/info`;
     void fetch(url)
       .then(async (r) => {
         if (!r.ok) throw new Error(`GET ${url} failed: HTTP ${r.status}`);
-        return r.json() as Promise<{ address?: string }>;
+        return r.json() as Promise<{ address?: string; gasless_fees?: Record<string, string> }>;
       })
       .then((info) => {
         if (cancelled) return;
@@ -1075,6 +1155,10 @@ function TransferOutModal({
           return;
         }
         setRelayerFeeAddr(info.address);
+        setStandaloneRelayerInfo({
+          address: info.address,
+          gasless_fees: info.gasless_fees,
+        });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -1083,7 +1167,12 @@ function TransferOutModal({
     return () => {
       cancelled = true;
     };
-  }, [relayerUrl, gaslessAvailable, selectedRelayer]);
+    // Depend on the relayer's *address* rather than the
+    // selectedRelayer object identity — `candidates` refreshes
+    // periodically and creates a new memoized object each time
+    // even when the user's selection hasn't changed, which would
+    // otherwise re-fire the probe on every candidate refresh.
+  }, [relayerUrl, gaslessAvailable, selectedRelayer?.address, selectedRelayer?.api?.gasless_fees]);
 
   async function sendGasless() {
     if (!relayerUrl || !delegateAddress) {
@@ -1131,10 +1220,24 @@ function TransferOutModal({
     const ethNonce = BigInt(await provider.getTransactionCount(stealthAddr));
 
     const raw = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
-    const fee = ethers.parseUnits(feeAmount, entry.pkg.tokenDecimals);
+    // Fee is whatever the selected relayer published for this token.
+    // Missing policy means the relayer doesn't relay this token —
+    // surface the failure here rather than letting the relayer
+    // reject with `token not supported` after the user signs.
+    // Policy fee may come from the registry-backed RelayerInfo or
+    // the standalone /api/info probe — both share the same shape.
+    const policyFee =
+      selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol] ??
+      standaloneRelayerInfo?.gasless_fees?.[entry.pkg.tokenSymbol];
+    if (!policyFee) {
+      throw new Error(
+        `Selected relayer has no published fee for ${entry.pkg.tokenSymbol} — pick a different relayer.`,
+      );
+    }
+    const fee = ethers.parseUnits(policyFee, entry.pkg.tokenDecimals);
     if (fee >= raw) {
       throw new Error(
-        `Relayer fee (${feeAmount} ${entry.pkg.tokenSymbol}) must be smaller than the amount`,
+        `Relayer fee (${policyFee} ${entry.pkg.tokenSymbol}) is greater than or equal to the amount`,
       );
     }
     // Net the fee against the input so the user's typed `amount`
@@ -1305,14 +1408,20 @@ function TransferOutModal({
                   onChange={(e) => setSelectedRelayerUrl(e.target.value || null)}
                   className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 text-xs"
                 >
-                  {candidates.map((r) => (
-                    <option key={r.address} value={normalizeUrl(r.url) ?? r.url}>
-                      {r.name || shortAddr(r.address)} · {r.url}
-                      {normalizeUrl(r.url) === normalizeUrl(entry.pkg.relayerUrl ?? null)
-                        ? " (default)"
-                        : ""}
-                    </option>
-                  ))}
+                  {candidates.map((r) => {
+                    const fee = r.api?.gasless_fees?.[entry.pkg.tokenSymbol];
+                    const feeLabel = fee
+                      ? `${fee} ${entry.pkg.tokenSymbol}`
+                      : "no policy";
+                    const isDefault =
+                      normalizeUrl(r.url) === normalizeUrl(entry.pkg.relayerUrl ?? null);
+                    return (
+                      <option key={r.address} value={normalizeUrl(r.url) ?? r.url}>
+                        {r.name || shortAddr(r.address)} · fee {feeLabel}
+                        {isDefault ? " (default)" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
                 <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
                   Any registered relayer can broadcast — pick whichever you trust.
@@ -1369,23 +1478,53 @@ function TransferOutModal({
             className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono"
           />
         </label>
-        {mode === "gasless" && (
-          <label className="block">
-            <span className="text-xs text-[var(--color-text-muted)]">
-              Relayer fee ({entry.pkg.tokenSymbol})
-            </span>
-            <input
-              type="text"
-              value={feeAmount}
-              onChange={(e) => setFeeAmount(e.target.value)}
-              placeholder="0.1"
-              className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono"
-            />
-            <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
-              Deducted from your balance and sent to the relayer to reimburse the on-chain gas.
-            </span>
-          </label>
-        )}
+        {mode === "gasless" && (() => {
+          // Render the relayer's published fee + the recipient's
+          // net-of-fee amount as a read-only summary. When the
+          // selected relayer doesn't list a policy for this token,
+          // surface the gap so the user knows to pick a different
+          // relayer (the send() path also throws on this).
+          // BigInt math throughout so 18-decimal tokens and large
+          // amounts don't lose precision through Number() coercion.
+          const policyFee =
+            selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol] ??
+            standaloneRelayerInfo?.gasless_fees?.[entry.pkg.tokenSymbol] ??
+            null;
+          let amtWei: bigint | null = null;
+          try {
+            if (amount.trim()) amtWei = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
+          } catch {
+            // invalid input — recipientGets stays null, banner shows —
+          }
+          const feeWei = policyFee ? ethers.parseUnits(policyFee, entry.pkg.tokenDecimals) : null;
+          const recipientGets =
+            amtWei !== null && feeWei !== null && amtWei > feeWei
+              ? ethers.formatUnits(amtWei - feeWei, entry.pkg.tokenDecimals)
+              : null;
+          return (
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--color-text-muted)]">Relayer fee</span>
+                <span className="font-mono">
+                  {policyFee
+                    ? `${policyFee} ${entry.pkg.tokenSymbol}`
+                    : <span className="text-[var(--color-warning)]">no policy — pick another relayer</span>}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between border-t border-[var(--color-border)] pt-1">
+                <span className="text-[var(--color-text-muted)]">Recipient receives</span>
+                <span className="font-mono">
+                  {recipientGets
+                    ? `${recipientGets} ${entry.pkg.tokenSymbol}`
+                    : "—"}
+                </span>
+              </div>
+              <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                Fee is the relayer's published policy. Switch relayer above to compare.
+              </p>
+            </div>
+          );
+        })()}
         {error && (
           <p className="text-xs text-[var(--color-warning)]">{error}</p>
         )}
@@ -1401,13 +1540,41 @@ function TransferOutModal({
           >
             Close
           </button>
-          <button
-            onClick={() => void send()}
-            disabled={busy || !to || !amount}
-            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-          >
-            {busy ? "Sending…" : "Send"}
-          </button>
+          {(() => {
+            // Compute disable rules upfront so the same logic powers
+            // both the disabled flag and the inline reason copy
+            // (helps users figure out *why* they can't click Send).
+            let disableReason: string | null = null;
+            if (txHash) disableReason = "Already sent";
+            else if (!to) disableReason = "Recipient required";
+            else if (!amount) disableReason = "Amount required";
+            else {
+              try {
+                const want = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
+                if (tokenBalance !== null && want > tokenBalance) {
+                  disableReason = `Insufficient ${entry.pkg.tokenSymbol} balance (${ethers.formatUnits(tokenBalance, entry.pkg.tokenDecimals)} available)`;
+                }
+              } catch {
+                disableReason = "Invalid amount";
+              }
+            }
+            return (
+              <div className="flex items-center gap-2">
+                {disableReason && !busy && (
+                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                    {disableReason}
+                  </span>
+                )}
+                <button
+                  onClick={() => void send()}
+                  disabled={busy || disableReason !== null}
+                  className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+                >
+                  {busy ? "Sending…" : "Send"}
+                </button>
+              </div>
+            );
+          })()}
         </div>
       </div>
     </Modal>

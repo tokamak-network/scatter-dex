@@ -15,6 +15,7 @@ import { ethers } from "ethers";
 import { z } from "zod";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { createLogger } from "../core/logger.js";
+import { config } from "../config.js";
 
 const log = createLogger("transfer-7702");
 
@@ -32,6 +33,44 @@ const DECIMAL_INT_RE = /^[0-9]+$/;
 const ACCOUNT_IFACE = new ethers.Interface([
   "function executeBatch((address target, uint256 value, bytes data)[] calls, bytes signature)",
 ]);
+
+// Used to recognize ERC20.transfer(to, amount) calls inside the batch
+// so the endpoint can sum fee credits to the relayer wallet.
+const ERC20_TRANSFER_IFACE = new ethers.Interface([
+  "function transfer(address to, uint256 amount)",
+]);
+
+// addr:SYMBOL:decimals from TOKEN_LIST — duplicated from
+// vault.ts because that module's parser is local. A future cleanup
+// could centralize this in config.ts.
+export interface TokenEntry {
+  addr: string;
+  symbol: string;
+  decimals: number;
+}
+function parseTokenList(raw: string): TokenEntry[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split(":");
+      const decimals = parseInt(parts[2] ?? "18", 10);
+      // ethers.parseUnits requires a finite, non-negative decimals
+      // value. Drop entries with malformed values rather than letting
+      // them blow up during fee validation as a runtime 500 — log
+      // would be more useful but parsing happens at module load.
+      if (!Number.isFinite(decimals) || decimals < 0 || decimals > 255) {
+        return null;
+      }
+      return {
+        addr: (parts[0] ?? "").trim().toLowerCase(),
+        symbol: (parts[1] ?? "").trim(),
+        decimals,
+      };
+    })
+    .filter((e): e is TokenEntry => !!e && !!e.addr);
+}
 
 const callSchema = z.object({
   target: z.string().regex(HEX_ADDRESS_RE),
@@ -95,6 +134,15 @@ interface CreateRoutesOpts {
    *  different contract — this is the operator's safety net against
    *  a tampered frontend. */
   stealthTransferAccountAddress: string;
+  /** addr:symbol:decimals → resolves a token address to a policy
+   *  key when validating in-batch fee. Defaults to parsing
+   *  TOKEN_LIST env at construction so production wiring stays a
+   *  no-op; tests inject a fixture. */
+  tokenEntries?: TokenEntry[];
+  /** Symbol → decimal-string flat fee for that token. Same sourcing
+   *  story: prod reads `config.gaslessFees`, tests pass an explicit
+   *  fixture. */
+  gaslessFees?: Record<string, string>;
 }
 
 export function createTransfer7702Routes(
@@ -102,6 +150,8 @@ export function createTransfer7702Routes(
   opts: CreateRoutesOpts,
   writeLimiter?: RequestHandler,
 ): Router {
+  const tokenEntries = opts.tokenEntries ?? parseTokenList(process.env.TOKEN_LIST ?? "");
+  const gaslessFees = opts.gaslessFees ?? config.gaslessFees;
   const router = Router();
 
   if (writeLimiter) router.post("/relay", writeLimiter);
@@ -138,6 +188,74 @@ export function createTransfer7702Routes(
         error: "chainId mismatch",
         expected: network.chainId.toString(),
         got: body.authorization.chainId,
+      });
+      return;
+    }
+
+    // Enforce the operator's published fee policy. Sum every
+    // ERC20.transfer(relayerWallet, amount) call in the batch (per
+    // token) and require the total to be ≥ the policy floor for
+    // that token. Without this gate a client could sign a batch
+    // with `fee = 0` and the relayer would broadcast at a net
+    // loss — Phase A of the fee model assumes the relayer's policy
+    // is the canonical price.
+    const relayerWallet = submitter.getWallet().address.toLowerCase();
+    const feeByToken = new Map<string, bigint>();
+    for (const c of body.calls) {
+      let decoded;
+      try {
+        decoded = ERC20_TRANSFER_IFACE.decodeFunctionData("transfer", c.data);
+      } catch {
+        continue; // not an ERC20.transfer — skip
+      }
+      const to = (decoded[0] as string).toLowerCase();
+      if (to !== relayerWallet) continue;
+      const tokenAddr = c.target.toLowerCase();
+      const amount = BigInt(decoded[1] as bigint);
+      feeByToken.set(tokenAddr, (feeByToken.get(tokenAddr) ?? 0n) + amount);
+    }
+    let supportedFeePaid = false;
+    for (const [tokenAddr, paid] of feeByToken) {
+      const entry = tokenEntries.find((t) => t.addr === tokenAddr);
+      if (!entry) {
+        // Reject unknown-token fee transfers explicitly. Skipping
+        // them would let a client pay the relayer in some random
+        // token (worth $0 to the relayer) and bypass both the
+        // policy floor and the no-fee-paid rejection because
+        // feeByToken.size would still be > 0.
+        res.status(400).json({
+          error: "token not supported",
+          token: tokenAddr,
+          reason: `Relayer does not accept fees in token ${tokenAddr}`,
+        });
+        return;
+      }
+      const policy = gaslessFees[entry.symbol];
+      if (!policy) {
+        res.status(400).json({
+          error: "token not supported",
+          token: entry.symbol,
+          reason: `Relayer has no published gasless fee for ${entry.symbol}`,
+        });
+        return;
+      }
+      const policyWei = ethers.parseUnits(policy, entry.decimals);
+      if (paid < policyWei) {
+        res.status(400).json({
+          error: "fee below policy",
+          token: entry.symbol,
+          paid: ethers.formatUnits(paid, entry.decimals),
+          required: policy,
+        });
+        return;
+      }
+      supportedFeePaid = true;
+    }
+    if (!supportedFeePaid) {
+      res.status(400).json({
+        error: "no fee paid to relayer",
+        reason:
+          "Batch must include at least one ERC20.transfer to the relayer wallet matching the published fee policy",
       });
       return;
     }
