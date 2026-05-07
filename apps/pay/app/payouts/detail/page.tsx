@@ -244,6 +244,20 @@ function PayoutBody({
  *  private links permanently visible on the operator's monitor. */
 function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
+  // Force landscape orientation for the detail page's print output:
+  // claim URLs and ephemeral pubkeys are long, and portrait wraps
+  // them awkwardly. Other routes (per-recipient payslip) keep
+  // portrait by not mounting this effect. Cleanup on unmount so a
+  // subsequent navigation-back to a portrait-style page restores the
+  // browser default.
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = "@media print { @page { size: A4 landscape; } }";
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
   return (
     <section data-print="only" className="break-before-page pt-6">
       <h2 className="border-b border-black pb-1 text-sm font-semibold uppercase tracking-wide">
@@ -258,6 +272,7 @@ function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
             <th className="py-1 pr-3">#</th>
             <th className="py-1 pr-3">Recipient</th>
             <th className="py-1 pr-3">Email</th>
+            <th className="py-1 pr-3">Stealth</th>
             <th className="py-1">Claim link</th>
           </tr>
         </thead>
@@ -269,6 +284,7 @@ function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
                 <td className="py-1 pr-3 font-mono">{r.rowIndex + 1}</td>
                 <td className="py-1 pr-3">{r.name || "—"}</td>
                 <td className="py-1 pr-3 break-all">{r.email ?? "—"}</td>
+                <td className="py-1 pr-3">{r.ephemeralPubKey ? "yes" : "no"}</td>
                 <td className="break-all py-1 font-mono">
                   {url ? (
                     <a href={url} className="text-blue-700 underline">
@@ -283,6 +299,37 @@ function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
           })}
         </tbody>
       </table>
+      {record.recipients.some((r) => r.ephemeralPubKey) && (
+        <>
+          <h3 className="mt-5 border-b border-gray-400 pb-1 text-[11px] font-semibold uppercase tracking-wide">
+            Stealth ephemeral pubkeys
+          </h3>
+          <p className="mt-1 text-[10px] text-gray-600">
+            Required for the recipient to derive the spending private key.
+            Pair each row with the matching meta-address (kept off-record).
+          </p>
+          <table className="mt-2 w-full text-[10px]">
+            <thead>
+              <tr className="border-b border-gray-300 text-left">
+                <th className="py-1 pr-3">#</th>
+                <th className="py-1 pr-3">Stealth address</th>
+                <th className="py-1">Ephemeral pubkey</th>
+              </tr>
+            </thead>
+            <tbody>
+              {record.recipients
+                .filter((r) => r.ephemeralPubKey)
+                .map((r) => (
+                  <tr key={r.rowIndex} className="border-b border-gray-200 align-top">
+                    <td className="py-1 pr-3 font-mono">{r.rowIndex + 1}</td>
+                    <td className="break-all py-1 pr-3 font-mono">{r.address}</td>
+                    <td className="break-all py-1 font-mono">{r.ephemeralPubKey}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </section>
   );
 }
