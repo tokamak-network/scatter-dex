@@ -804,6 +804,41 @@ function ClaimedRowActions({
     return derived?.matches ? derived.privateKey : null;
   }, [entry, spendingKey, viewingKey]);
 
+  // Fetch the stealth balance so a row whose tokens have already been
+  // transferred out (or never funded) can't open the modal — there's
+  // nothing to send. Mirrors StealthBalance's polling cadence.
+  const cfg = useMemo(() => getNetworkConfig(), []);
+  const [balance, setBalance] = useState<bigint | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const provider = getSharedProvider(cfg.rpcUrl);
+    const isWeth = isWrappedNative(entry.pkg.token, cfg);
+    const erc20 = isWeth ? null : new ethers.Contract(entry.pkg.token, ERC20_ABI, provider);
+    const tick = async () => {
+      try {
+        const v = isWeth
+          ? await provider.getBalance(entry.pkg.recipient)
+          : ((await erc20!.balanceOf(entry.pkg.recipient)) as bigint);
+        if (!cancelled) setBalance(v);
+      } catch {
+        if (!cancelled) setBalance(null);
+      }
+    };
+    void tick();
+    const id = window.setInterval(tick, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [entry.pkg.recipient, entry.pkg.token, cfg]);
+  const hasBalance = balance !== null && balance > 0n;
+  const transferDisabled = !privkey || !hasBalance;
+  const transferTitle = !privkey
+    ? "Cannot derive stealth privkey for this entry"
+    : !hasBalance
+      ? `Stealth address has no ${entry.pkg.tokenSymbol} to transfer`
+      : undefined;
+
   const [showKey, setShowKey] = useState(false);
   return (
     <div className="flex items-center justify-end gap-2">
@@ -811,8 +846,8 @@ function ClaimedRowActions({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        disabled={!privkey}
-        title={privkey ? undefined : "Cannot derive stealth privkey for this entry"}
+        disabled={transferDisabled}
+        title={transferTitle}
         className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white disabled:opacity-40"
       >
         Transfer
