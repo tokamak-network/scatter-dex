@@ -363,4 +363,13 @@ export class PrivateSubmitter {
     this.txMutex = new Promise<void>((r) => { resolve = r; });
     return prev.then(fn).finally(() => resolve!());
   }
+
+  /** Public escape hatch onto the same nonce-serializing lock that
+   *  guards `submitClaim` / `claimVaultFee`. Other routes that need
+   *  to drive the relayer wallet (e.g. the EIP-7702 transfer route)
+   *  must funnel through here so concurrent POSTs across endpoints
+   *  don't race for the same nonce. */
+  sendWithTxLock<T>(fn: () => Promise<T>): Promise<T> {
+    return this.withTxLock(fn);
+  }
 }

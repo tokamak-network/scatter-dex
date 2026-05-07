@@ -150,21 +150,29 @@ export function createTransfer7702Routes(
       ]);
 
       const wallet = submitter.getWallet();
-      const tx = await wallet.sendTransaction({
-        type: 4,
-        to: body.stealthAddress,
-        data,
-        // Single-element list — only the recipient's EOA delegates;
-        // the relayer's own EOA does not need any 7702 hat.
-        authorizationList: [
-          {
-            address: body.authorization.address,
-            chainId: BigInt(body.authorization.chainId),
-            nonce: BigInt(body.authorization.nonce),
-            signature: body.authorization.signature,
-          },
-        ],
-      });
+      // Funnel through the submitter's nonce-serializing mutex so
+      // concurrent POSTs (or overlap with claim/vault txs already
+      // gated by the same lock) can't race on the same nonce —
+      // ethers' default in-flight nonce tracking is per-Wallet, but
+      // sharing one Wallet across endpoints exposes it to drops if
+      // two callers hit broadcast at the same instant.
+      const tx = await submitter.sendWithTxLock(() =>
+        wallet.sendTransaction({
+          type: 4,
+          to: body.stealthAddress,
+          data,
+          // Single-element list — only the recipient's EOA delegates;
+          // the relayer's own EOA does not need any 7702 hat.
+          authorizationList: [
+            {
+              address: body.authorization.address,
+              chainId: BigInt(body.authorization.chainId),
+              nonce: BigInt(body.authorization.nonce),
+              signature: body.authorization.signature,
+            },
+          ],
+        }),
+      );
       txHash = tx.hash;
       log.info("submitted 7702 transfer", {
         stealth: body.stealthAddress,
