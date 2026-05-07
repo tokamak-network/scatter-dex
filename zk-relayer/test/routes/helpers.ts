@@ -20,6 +20,7 @@ type SubmitterStub = {
   getCommitmentMerkleProof: (i: number) => Promise<unknown>;
   submitClaim: (params: unknown) => Promise<string>;
   claimVaultFee: (vaultAddress: string, token: string) => Promise<string>;
+  sendWithTxLock: <T>(fn: () => Promise<T>) => Promise<T>;
 };
 
 export function makeSubmitterStub(overrides: Partial<SubmitterStub> = {}): PrivateSubmitter {
@@ -37,6 +38,7 @@ export function makeSubmitterStub(overrides: Partial<SubmitterStub> = {}): Priva
     getCommitmentMerkleProof: async (i: number) => ({ leafIndex: i, siblings: [] }),
     submitClaim: async () => "0x" + "f".repeat(64),
     claimVaultFee: async () => "0x" + "e".repeat(64),
+    sendWithTxLock: <T,>(fn: () => Promise<T>) => fn(),
     ...overrides,
   };
   return stub as unknown as PrivateSubmitter;

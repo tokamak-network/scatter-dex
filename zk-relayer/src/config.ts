@@ -43,6 +43,24 @@ export const config = {
   commitmentPoolAddress: requireEnv("COMMITMENT_POOL_ADDRESS"),
   privateSettlementAddress: requireEnv("PRIVATE_SETTLEMENT_ADDRESS"),
   feeVaultAddress: requireEnv("FEE_VAULT_ADDRESS"),
+  // Optional: address of the deployed `StealthTransferAccount` — the
+  // delegate contract recipients use for gasless transfers via
+  // EIP-7702. Unset disables the /api/transfer-7702 endpoint, so an
+  // older operator deployment doesn't accidentally expose a
+  // misconfigured route. Validate at startup: this address acts as
+  // the allowlist for delegation, so a typo or stray whitespace
+  // would cause every legitimate request to fail with "unauthorized
+  // delegate" — fail-fast here so the operator notices.
+  stealthTransferAccountAddress: (() => {
+    const raw = (process.env.STEALTH_TRANSFER_ACCOUNT_ADDRESS || "").trim();
+    if (!raw) return null;
+    if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) {
+      throw new Error(
+        "STEALTH_TRANSFER_ACCOUNT_ADDRESS must be a 0x-prefixed 20-byte address",
+      );
+    }
+    return raw;
+  })(),
   adminApiKey: (() => {
     const key = process.env.ADMIN_API_KEY;
     if (!key) return null;
