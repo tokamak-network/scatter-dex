@@ -816,12 +816,21 @@ function NewPayout() {
     const block = result.rows
       .map((r) => `${csvSafeLabel(r.name)},${r.address},${r.amount}`)
       .join("\n");
-    // Don't clobber manually entered rows: replace only when the textarea
-    // is empty or still holds the template's sample placeholder.
-    const trimmed = csv.trimEnd();
-    const shouldReplace =
-      trimmed.length === 0 || trimmed === template.sampleCsv.trimEnd();
-    setCsv(shouldReplace ? block : `${trimmed}\n${block}`);
+    // Functional setCsv guards against stale closure state: the user can
+    // edit the textarea or switch templates while async parse is in
+    // flight, and `prev` always reflects the latest committed value.
+    // Match against ANY template's sample (not just the closure's
+    // captured one) so a mid-parse template switch still replaces the
+    // placeholder rather than appending under it.
+    let shouldReplace = false;
+    setCsv((prev) => {
+      const trimmed = prev.trimEnd();
+      const isUntouchedSample = TEMPLATES.some(
+        (t) => t.sampleCsv.trimEnd() === trimmed,
+      );
+      shouldReplace = trimmed.length === 0 || isUntouchedSample;
+      return shouldReplace ? block : `${trimmed}\n${block}`;
+    });
     const action = shouldReplace ? "Loaded" : "Appended";
     const warn = result.warnings[0];
     setUploadStatus({
