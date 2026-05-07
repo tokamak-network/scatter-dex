@@ -12,6 +12,8 @@ const HEADERS = [
   "row_index",
   "name",
   "address",
+  "is_stealth",
+  "ephemeral_pub_key",
   "amount",
   "token",
   "status",
@@ -30,6 +32,11 @@ export function runRecordToCsv(record: RunRecord, origin: string): string {
     r.rowIndex,
     r.name,
     r.address,
+    // is_stealth flag: presence of an ephemeralPubKey on the row is
+    // the on-record marker that this address was derived from a
+    // meta-address rather than chosen as a plain EOA.
+    r.ephemeralPubKey ? "yes" : "no",
+    r.ephemeralPubKey ?? "",
     r.amount,
     record.tokenSymbol,
     r.status,

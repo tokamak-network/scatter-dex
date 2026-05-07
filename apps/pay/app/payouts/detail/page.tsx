@@ -232,7 +232,105 @@ function PayoutBody({
         press send there, confirm to mark the row as Sent — Pay only records the local timestamp.
         Delivery / opened / clicked webhook fields are reserved for a future ESP integration.
       </p>
+      <PrintOnlyClaimLinks record={record} />
     </div>
+  );
+}
+
+/** Hidden on screen, surfaced in print: a per-recipient claim-link
+ *  appendix so an operator who saves the detail page as PDF still
+ *  walks away with every link they'd need to deliver offline. Keeping
+ *  it off-screen avoids the shoulder-surfing risk of having dozens of
+ *  private links permanently visible on the operator's monitor. */
+function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  // Force landscape orientation for the detail page's print output:
+  // claim URLs and ephemeral pubkeys are long, and portrait wraps
+  // them awkwardly. Other routes (per-recipient payslip) keep
+  // portrait by not mounting this effect. Cleanup on unmount so a
+  // subsequent navigation-back to a portrait-style page restores the
+  // browser default.
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = "@media print { @page { size: A4 landscape; } }";
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+  return (
+    <section data-print="only" className="break-before-page pt-6">
+      <h2 className="border-b border-black pb-1 text-sm font-semibold uppercase tracking-wide">
+        Claim links per recipient
+      </h2>
+      <p className="mt-1 text-[10px] text-gray-600">
+        Each link below is private to that recipient — handle this PDF as confidential.
+      </p>
+      <table className="mt-3 w-full text-[10px]">
+        <thead>
+          <tr className="border-b border-gray-400 text-left">
+            <th className="py-1 pr-3">#</th>
+            <th className="py-1 pr-3">Recipient</th>
+            <th className="py-1 pr-3">Email</th>
+            <th className="py-1 pr-3">Stealth</th>
+            <th className="py-1">Claim link</th>
+          </tr>
+        </thead>
+        <tbody>
+          {record.recipients.map((r) => {
+            const url = buildClaimUrl(origin, record.id, r);
+            return (
+              <tr key={r.rowIndex} className="border-b border-gray-200 align-top">
+                <td className="py-1 pr-3 font-mono">{r.rowIndex + 1}</td>
+                <td className="py-1 pr-3">{r.name || "—"}</td>
+                <td className="py-1 pr-3 break-all">{r.email ?? "—"}</td>
+                <td className="py-1 pr-3">{r.ephemeralPubKey ? "yes" : "no"}</td>
+                <td className="break-all py-1 font-mono">
+                  {url ? (
+                    <a href={url} className="text-blue-700 underline">
+                      {url}
+                    </a>
+                  ) : (
+                    "— (claim package not yet issued)"
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {record.recipients.some((r) => r.ephemeralPubKey) && (
+        <>
+          <h3 className="mt-5 border-b border-gray-400 pb-1 text-[11px] font-semibold uppercase tracking-wide">
+            Stealth ephemeral pubkeys
+          </h3>
+          <p className="mt-1 text-[10px] text-gray-600">
+            Required for the recipient to derive the spending private key.
+            Pair each row with the matching meta-address (kept off-record).
+          </p>
+          <table className="mt-2 w-full text-[10px]">
+            <thead>
+              <tr className="border-b border-gray-300 text-left">
+                <th className="py-1 pr-3">#</th>
+                <th className="py-1 pr-3">Stealth address</th>
+                <th className="py-1">Ephemeral pubkey</th>
+              </tr>
+            </thead>
+            <tbody>
+              {record.recipients
+                .filter((r) => r.ephemeralPubKey)
+                .map((r) => (
+                  <tr key={r.rowIndex} className="border-b border-gray-200 align-top">
+                    <td className="py-1 pr-3 font-mono">{r.rowIndex + 1}</td>
+                    <td className="break-all py-1 pr-3 font-mono">{r.address}</td>
+                    <td className="break-all py-1 font-mono">{r.ephemeralPubKey}</td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -306,6 +404,16 @@ function ExportMenu({ record }: { record: RunRecord }) {
           >
             Print / Save as PDF
           </button>
+          <a
+            href={`/payouts/payslip?id=${record.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setOpen(false)}
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+            title="Open every recipient's payslip in one bundled PDF (page-break between each)."
+          >
+            Print all payslips (PDF)
+          </a>
         </div>
       )}
     </div>
@@ -735,7 +843,7 @@ function RowMenu({
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
             title={!hasEmail ? "No email on file for this recipient" : undefined}
           >
-            {alreadySent ? "Resend via mail client" : "Send via mail client"}
+            {alreadySent ? "Resend via Gmail" : "Send via Gmail"}
           </button>
           <Link
             href={payslipHref}
@@ -800,13 +908,14 @@ function copyClaimLink(record: RunRecord, row: RecipientRow): void {
   void navigator.clipboard.writeText(url);
 }
 
-/** Hand the row's claim email to the OS-registered mail client and
- *  ask the operator to confirm they actually pressed Send before we
- *  stamp the row. Anchor-click instead of `location.href = mailto:`
- *  so a registered webmail handler (Chrome → Gmail web) opens in a
- *  new tab without unloading this page mid-write — otherwise the
- *  navigation queued behind the synchronous `confirm()` would race
- *  the markSent IndexedDB write. */
+/** Open Gmail's web-compose URL with the row's claim email pre-filled
+ *  and ask the operator to confirm they actually pressed Send in
+ *  Gmail before we stamp the row. The Gmail-direct URL works
+ *  regardless of the OS's mailto-handler registration — operators
+ *  who keep Gmail open in a browser tab (the common case here) used
+ *  to lose the draft to Apple Mail or a stale handler when this used
+ *  the mailto: scheme. Anchor-click in a new tab so the synchronous
+ *  confirm() doesn't race the markSent IndexedDB write on this page. */
 function openClaimMailDraftAndConfirm(
   record: RunRecord,
   row: RecipientRow,
@@ -825,17 +934,19 @@ function openClaimMailDraftAndConfirm(
     ``,
     `The link is private to you and never expires.`,
   ].join("\r\n");
-  const mailto = `mailto:${encodeURIComponent(row.email)}?subject=${encodeURIComponent(
-    subject,
-  )}&body=${encodeURIComponent(body)}`;
+  const gmailUrl =
+    `https://mail.google.com/mail/?view=cm&fs=1` +
+    `&to=${encodeURIComponent(row.email)}` +
+    `&su=${encodeURIComponent(subject)}` +
+    `&body=${encodeURIComponent(body)}`;
   const anchor = document.createElement("a");
-  anchor.href = mailto;
+  anchor.href = gmailUrl;
   anchor.target = "_blank";
   anchor.rel = "noopener noreferrer";
   anchor.click();
   const ok = window.confirm(
-    `Mail client opened for ${row.name || row.email}.\n\n` +
-      `Click OK after you've sent the email to mark this recipient as Sent.\n` +
+    `Gmail compose opened for ${row.name || row.email}.\n\n` +
+      `Click OK after you've sent the email in Gmail to mark this recipient as Sent.\n` +
       `Click Cancel if you didn't send it.`,
   );
   if (!ok) return;

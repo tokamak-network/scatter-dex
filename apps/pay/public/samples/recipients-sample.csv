@@ -1,0 +1,12 @@
+# THIS IS A TEMPLATE — replace every value below before uploading.
+# Addresses are 0x000…000 placeholders. Submitting them as-is would BURN funds.
+#
+"# Row 1: regular EOA payout — replace `address`, `amount`, `email`, and `name`."
+"# Row 2: stealth payout — leave `address` blank, replace `meta_address` with the"
+# recipient's EIP-5564 key (format: `st:eth:0x` + 132 hex chars). The system
+# derives a one-time stealth address per recipient automatically.
+#
+# Amount is in the token you pick in the wizard (USDC / USDT / ETH / TON).
+name,address,amount,email,meta_address
+Alice (sample — replace),0x0000000000000000000000000000000000000000,100,alice@example.com,
+Bob Stealth (sample — replace),,100,bob@example.com,st:eth:0x03ebf948270e460d6dde0385f6fbc7d303d7fa6cbb9ce8a76ad23edbcd3e28c37d02afe23955ae8a9f4ef7d09a27c88f3ee7a45661d44ab526ed3d1832f35a2c95cb

@@ -231,6 +231,11 @@ function NewPayout() {
   // ends up with `email: undefined` — the detail page then disables
   // "Send via email" even though the book has the address.
   const [pickerEmails, setPickerEmails] = useState<Record<string, string>>({});
+  // Picker-time snapshot maps for the other contact channels — see
+  // BuildRunRecordInput for the why (book is mutable shared state).
+  const [pickerTelegrams, setPickerTelegrams] = useState<Record<string, string>>({});
+  const [pickerKakaos, setPickerKakaos] = useState<Record<string, string>>({});
+  const [pickerLabels, setPickerLabels] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
   // Captured once on first render — used as the input's `min` so the
@@ -484,11 +489,13 @@ function NewPayout() {
               rows: submittedRows ?? rows,
               total,
               claimFrom,
-              walletBook: walletBook.entries,
               txHash,
               claimPackages,
               ephPubByAddress: submittedEphPubByAddress,
               emailByAddress: submittedEmailByAddress,
+              telegramByAddress: pickerTelegrams,
+              kakaoByAddress: pickerKakaos,
+              labelByAddress: pickerLabels,
               ...(totalRelayerFeeRaw !== undefined
                 ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
                 : {}),
@@ -755,6 +762,19 @@ function NewPayout() {
     const rowsToAdd: string[] = [];
     const newEphPubs: Record<string, string> = {};
     const newEmails: Record<string, string> = {};
+    const newTelegrams: Record<string, string> = {};
+    const newKakaos: Record<string, string> = {};
+    const newLabels: Record<string, string> = {};
+    // Snapshot every contact field the book entry carries at picker
+    // time. The run record will only see these snapshots — buildRunRecord
+    // never reads the live book — so a later book edit can't rewrite
+    // a historical run's contact info.
+    const snapshot = (lower: string, e: WalletEntry) => {
+      if (e.email) newEmails[lower] = e.email;
+      if (e.telegramHandle) newTelegrams[lower] = e.telegramHandle;
+      if (e.kakaoId) newKakaos[lower] = e.kakaoId;
+      if (e.label) newLabels[lower] = e.label;
+    };
     for (const e of picked) {
       if (e.address) {
         // Regular path: a default EOA is in the book — use it
@@ -764,6 +784,7 @@ function NewPayout() {
         const lower = e.address.toLowerCase();
         if (seen.has(lower)) continue;
         seen.add(lower);
+        snapshot(lower, e);
         rowsToAdd.push(`${csvSafeLabel(e.label)},${e.address},`);
       } else if (e.metaAddress) {
         // Stealth-only entry: derive a one-time stealth address now
@@ -778,7 +799,7 @@ function NewPayout() {
         if (seen.has(lower)) continue;
         seen.add(lower);
         newEphPubs[lower] = ephemeralPubKey;
-        if (e.email) newEmails[lower] = e.email;
+        snapshot(lower, e);
         rowsToAdd.push(`${csvSafeLabel(e.label)},${stealthAddress},`);
       }
     }
@@ -788,6 +809,15 @@ function NewPayout() {
     }
     if (Object.keys(newEmails).length > 0) {
       setPickerEmails((prev) => ({ ...prev, ...newEmails }));
+    }
+    if (Object.keys(newTelegrams).length > 0) {
+      setPickerTelegrams((prev) => ({ ...prev, ...newTelegrams }));
+    }
+    if (Object.keys(newKakaos).length > 0) {
+      setPickerKakaos((prev) => ({ ...prev, ...newKakaos }));
+    }
+    if (Object.keys(newLabels).length > 0) {
+      setPickerLabels((prev) => ({ ...prev, ...newLabels }));
     }
     const trimmed = csv.trimEnd();
     setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
@@ -813,15 +843,40 @@ function NewPayout() {
       });
       return;
     }
-    const block = result.rows
-      .map((r) => `${csvSafeLabel(r.name)},${r.address},${r.amount}`)
-      .join("\n");
+    // For each parsed row: if metaAddress is present, derive a one-time
+    // stealth address + ephPub now so the textarea always shows the
+    // actual on-chain address (consistent with the address-book picker
+    // path) and so the run record carries email/ephPub without a later
+    // address-book lookup. Self-contained: file in → record out.
+    const newEphPubs: Record<string, string> = {};
+    const newEmails: Record<string, string> = {};
+    const csvLines: string[] = [];
+    for (const r of result.rows) {
+      let addr = r.address;
+      if (r.metaAddress) {
+        const { stealthAddress, ephemeralPubKey } = generateStealthAddress(
+          r.metaAddress,
+        );
+        addr = stealthAddress;
+        newEphPubs[stealthAddress.toLowerCase()] = ephemeralPubKey;
+      }
+      if (r.email && addr) {
+        newEmails[addr.toLowerCase()] = r.email;
+      }
+      csvLines.push(`${csvSafeLabel(r.name)},${addr},${r.amount}`);
+    }
+    if (Object.keys(newEphPubs).length > 0) {
+      setPickerEphPubs((prev) => ({ ...prev, ...newEphPubs }));
+    }
+    if (Object.keys(newEmails).length > 0) {
+      setPickerEmails((prev) => ({ ...prev, ...newEmails }));
+    }
+    const block = csvLines.join("\n");
     // Functional setCsv guards against stale closure state: the user can
     // edit the textarea or switch templates while async parse is in
     // flight, and `prev` always reflects the latest committed value.
-    // Match against ANY template's sample (not just the closure's
-    // captured one) so a mid-parse template switch still replaces the
-    // placeholder rather than appending under it.
+    // Match against ANY template's sample so a mid-parse template switch
+    // still replaces the (newly swapped-in) placeholder cleanly.
     let shouldReplace = false;
     setCsv((prev) => {
       const trimmed = prev.trimEnd();
@@ -832,10 +887,16 @@ function NewPayout() {
       return shouldReplace ? block : `${trimmed}\n${block}`;
     });
     const action = shouldReplace ? "Loaded" : "Appended";
+    const stealthCount = Object.keys(newEphPubs).length;
+    const emailCount = Object.keys(newEmails).length;
+    const meta: string[] = [];
+    if (stealthCount > 0) meta.push(`${stealthCount} stealth`);
+    if (emailCount > 0) meta.push(`${emailCount} with email`);
+    const metaSuffix = meta.length > 0 ? ` (${meta.join(", ")})` : "";
     const warn = result.warnings[0];
     setUploadStatus({
       kind: warn ? "warn" : "ok",
-      message: `${action} ${result.rows.length} recipient(s) from ${file.name}.${warn ? ` ${warn}` : ""}`,
+      message: `${action} ${result.rows.length} recipient(s) from ${file.name}${metaSuffix}.${warn ? ` ${warn}` : ""}`,
     });
   }
 
@@ -1199,6 +1260,23 @@ function NewPayout() {
                     }}
                   />
                 </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-[var(--color-text-muted)]">Download sample:</span>
+                  <a
+                    href="/samples/recipients-sample.csv"
+                    download
+                    className="rounded border border-[var(--color-border-strong)] px-2 py-1 font-medium hover:bg-[var(--color-primary-soft)]"
+                  >
+                    ↓ Sample CSV
+                  </a>
+                  <a
+                    href="/samples/recipients-sample.xlsx"
+                    download
+                    className="rounded border border-[var(--color-border-strong)] px-2 py-1 font-medium hover:bg-[var(--color-primary-soft)]"
+                  >
+                    ↓ Sample Excel
+                  </a>
+                </div>
                 {addressBookHint && (
                   <span id="abp-hint" className="text-[10px] text-[var(--color-text-subtle)]">
                     {addressBookHint}
@@ -1225,7 +1303,9 @@ function NewPayout() {
                       amount
                     </span>
                   </span>{" "}
-                  — one per line.
+                  — one per line. Amounts are in the selected token (e.g. 3500.00 USDC).
+                  Optional columns via upload: <span className="font-mono">email</span>,{" "}
+                  <span className="font-mono">meta_address</span> (auto-stealth).
                   {empty ? (
                     <span className="ml-2 text-[var(--color-warning)]">
                       ← add at least one recipient line below.

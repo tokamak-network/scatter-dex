@@ -11,7 +11,8 @@
     "lint": "next lint",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
-    "e2e:install": "playwright install chromium"
+    "e2e:install": "playwright install chromium",
+    "generate-samples": "node ./scripts/generate-recipient-samples.mjs"
   },
   "dependencies": {
     "@zkscatter/sdk": "file:../../packages/sdk",
@@ -32,6 +33,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "write-excel-file": "^4.0.5"
   }
 }

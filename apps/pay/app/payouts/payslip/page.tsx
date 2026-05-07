@@ -49,17 +49,36 @@ function PayslipInner() {
     return <p className="p-8 text-sm text-red-600">Run not found.</p>;
   }
 
-  const row = Number.isFinite(rowIndex)
-    ? record.recipients.find((r) => r.rowIndex === rowIndex)
-    : undefined;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+
+  // No `row` param → bundle every recipient's payslip into one PDF.
+  // The hard page-break between slips is a print-only CSS rule so the
+  // on-screen view stays a single scrollable preview.
+  if (!Number.isFinite(rowIndex)) {
+    return (
+      <div>
+        {record.recipients.map((row, i) => {
+          const claimUrl = buildClaimUrl(origin, record.id, row);
+          const Slip = record.category === "payroll" ? PayrollPayslip : GenericPayslip;
+          return (
+            <div
+              key={row.rowIndex}
+              style={{ pageBreakAfter: i === record.recipients.length - 1 ? "auto" : "always" }}
+            >
+              <Slip record={record} row={row} claimUrl={claimUrl} />
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const row = record.recipients.find((r) => r.rowIndex === rowIndex);
   if (!row) {
     return <p className="p-8 text-sm text-red-600">Recipient not found.</p>;
   }
 
-  const claimUrl =
-    typeof window !== "undefined"
-      ? buildClaimUrl(window.location.origin, record.id, row)
-      : "";
+  const claimUrl = buildClaimUrl(origin, record.id, row);
 
   if (record.category === "payroll") {
     return <PayrollPayslip record={record} row={row} claimUrl={claimUrl} />;
@@ -103,6 +122,12 @@ function PayrollPayslip({
               <th className="bg-gray-50 p-2 text-left text-xs font-semibold">Payment address</th>
               <td className="break-all p-2 font-mono text-xs">{row.address}</td>
             </tr>
+            {row.email && (
+              <tr className="border-b border-gray-300">
+                <th className="bg-gray-50 p-2 text-left text-xs font-semibold">Email</th>
+                <td className="break-all p-2 text-xs">{row.email}</td>
+              </tr>
+            )}
             <tr className="border-b border-gray-300">
               <th className="bg-gray-50 p-2 text-left text-xs font-semibold">Available to claim</th>
               <td className="p-2">
@@ -152,7 +177,16 @@ function PayrollPayslip({
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">
           Claim link
         </h3>
-        <p className="mt-1 break-all font-mono text-[10px]">{claimUrl || "—"}</p>
+        {claimUrl ? (
+          <a
+            href={claimUrl}
+            className="mt-1 block break-all font-mono text-[10px] text-blue-700 underline"
+          >
+            {claimUrl}
+          </a>
+        ) : (
+          <p className="mt-1 break-all font-mono text-[10px]">— (claim package not yet issued)</p>
+        )}
         <p className="mt-2 text-[10px] text-gray-600">
           Open the link above to claim your payment. It is private to you and never
           expires.
@@ -193,6 +227,7 @@ function GenericPayslip({
         <Cell k="Recipient" v={row.name || "—"} />
         <Cell k="Amount" v={`${row.amount} ${record.tokenSymbol}`} />
         <Cell k="Address" v={<span className="break-all font-mono">{row.address}</span>} />
+        {row.email && <Cell k="Email" v={<span className="break-all">{row.email}</span>} />}
         <Cell
           k="Claim opens"
           v={row.claimFrom ? formatLocalStamp(row.claimFrom) : "Available now"}
@@ -208,7 +243,16 @@ function GenericPayslip({
         <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-600">
           Claim link
         </h2>
-        <p className="mt-1 break-all font-mono text-xs">{claimUrl || "—"}</p>
+        {claimUrl ? (
+          <a
+            href={claimUrl}
+            className="mt-1 block break-all font-mono text-xs text-blue-700 underline"
+          >
+            {claimUrl}
+          </a>
+        ) : (
+          <p className="mt-1 break-all font-mono text-xs">— (claim package not yet issued)</p>
+        )}
         <p className="mt-3 text-xs text-gray-600">
           Open this link to claim your payment. The link is private to you and
           never expires.
