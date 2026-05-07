@@ -1111,9 +1111,17 @@ function TransferOutModal({
   // before the user has filled in the form.
   const [relayerFeeAddr, setRelayerFeeAddr] = useState<string | null>(null);
   const [relayerFeeAddrError, setRelayerFeeAddrError] = useState<string | null>(null);
+  // Stand-in for the registry's RelayerInfo when the selected
+  // relayer isn't in the on-chain registry (legacy / cross-operator
+  // claim). Holds the same `/api/info` shape so the policy lookup
+  // and fee display fall back gracefully through `gasless_fees`.
+  const [standaloneRelayerInfo, setStandaloneRelayerInfo] = useState<
+    { gasless_fees?: Record<string, string>; address?: string } | null
+  >(null);
   useEffect(() => {
     setRelayerFeeAddr(null);
     setRelayerFeeAddrError(null);
+    setStandaloneRelayerInfo(null);
     if (!relayerUrl || !gaslessAvailable) return;
     // Fast path: registry already gave us the relayer's wallet
     // address as `selectedRelayer.address` — skip the network probe.
@@ -1122,13 +1130,15 @@ function TransferOutModal({
       return;
     }
     // Fallback: relayer URL is set but the registry doesn't list it
-    // (legacy / cross-operator). Probe /api/info for the wallet.
+    // (legacy / cross-operator). Probe /api/info for the wallet AND
+    // the gasless_fees policy — without the latter the read-only
+    // fee panel + the send() policyFee lookup would both fail.
     let cancelled = false;
     const url = `${relayerUrl}/api/info`;
     void fetch(url)
       .then(async (r) => {
         if (!r.ok) throw new Error(`GET ${url} failed: HTTP ${r.status}`);
-        return r.json() as Promise<{ address?: string }>;
+        return r.json() as Promise<{ address?: string; gasless_fees?: Record<string, string> }>;
       })
       .then((info) => {
         if (cancelled) return;
@@ -1137,6 +1147,10 @@ function TransferOutModal({
           return;
         }
         setRelayerFeeAddr(info.address);
+        setStandaloneRelayerInfo({
+          address: info.address,
+          gasless_fees: info.gasless_fees,
+        });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
@@ -1197,8 +1211,11 @@ function TransferOutModal({
     // Missing policy means the relayer doesn't relay this token —
     // surface the failure here rather than letting the relayer
     // reject with `token not supported` after the user signs.
+    // Policy fee may come from the registry-backed RelayerInfo or
+    // the standalone /api/info probe — both share the same shape.
     const policyFee =
-      selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol];
+      selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol] ??
+      standaloneRelayerInfo?.gasless_fees?.[entry.pkg.tokenSymbol];
     if (!policyFee) {
       throw new Error(
         `Selected relayer has no published fee for ${entry.pkg.tokenSymbol} — pick a different relayer.`,
@@ -1454,13 +1471,22 @@ function TransferOutModal({
           // selected relayer doesn't list a policy for this token,
           // surface the gap so the user knows to pick a different
           // relayer (the send() path also throws on this).
+          // BigInt math throughout so 18-decimal tokens and large
+          // amounts don't lose precision through Number() coercion.
           const policyFee =
-            selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol] ?? null;
-          const amtNum = Number(amount);
-          const feeNum = policyFee ? Number(policyFee) : NaN;
+            selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol] ??
+            standaloneRelayerInfo?.gasless_fees?.[entry.pkg.tokenSymbol] ??
+            null;
+          let amtWei: bigint | null = null;
+          try {
+            if (amount.trim()) amtWei = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
+          } catch {
+            // invalid input — recipientGets stays null, banner shows —
+          }
+          const feeWei = policyFee ? ethers.parseUnits(policyFee, entry.pkg.tokenDecimals) : null;
           const recipientGets =
-            Number.isFinite(amtNum) && Number.isFinite(feeNum) && feeNum < amtNum
-              ? (amtNum - feeNum).toString()
+            amtWei !== null && feeWei !== null && amtWei > feeWei
+              ? ethers.formatUnits(amtWei - feeWei, entry.pkg.tokenDecimals)
               : null;
           return (
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-xs">

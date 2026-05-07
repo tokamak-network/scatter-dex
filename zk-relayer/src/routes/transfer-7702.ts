@@ -55,13 +55,21 @@ function parseTokenList(raw: string): TokenEntry[] {
     .filter(Boolean)
     .map((entry) => {
       const parts = entry.split(":");
+      const decimals = parseInt(parts[2] ?? "18", 10);
+      // ethers.parseUnits requires a finite, non-negative decimals
+      // value. Drop entries with malformed values rather than letting
+      // them blow up during fee validation as a runtime 500 — log
+      // would be more useful but parsing happens at module load.
+      if (!Number.isFinite(decimals) || decimals < 0 || decimals > 255) {
+        return null;
+      }
       return {
         addr: (parts[0] ?? "").trim().toLowerCase(),
         symbol: (parts[1] ?? "").trim(),
-        decimals: parseInt(parts[2] ?? "18", 10),
+        decimals,
       };
     })
-    .filter((e) => e.addr);
+    .filter((e): e is TokenEntry => !!e && !!e.addr);
 }
 
 const callSchema = z.object({
@@ -206,9 +214,22 @@ export function createTransfer7702Routes(
       const amount = BigInt(decoded[1] as bigint);
       feeByToken.set(tokenAddr, (feeByToken.get(tokenAddr) ?? 0n) + amount);
     }
+    let supportedFeePaid = false;
     for (const [tokenAddr, paid] of feeByToken) {
       const entry = tokenEntries.find((t) => t.addr === tokenAddr);
-      if (!entry) continue; // unknown token — operator hasn't listed
+      if (!entry) {
+        // Reject unknown-token fee transfers explicitly. Skipping
+        // them would let a client pay the relayer in some random
+        // token (worth $0 to the relayer) and bypass both the
+        // policy floor and the no-fee-paid rejection because
+        // feeByToken.size would still be > 0.
+        res.status(400).json({
+          error: "token not supported",
+          token: tokenAddr,
+          reason: `Relayer does not accept fees in token ${tokenAddr}`,
+        });
+        return;
+      }
       const policy = gaslessFees[entry.symbol];
       if (!policy) {
         res.status(400).json({
@@ -228,8 +249,9 @@ export function createTransfer7702Routes(
         });
         return;
       }
+      supportedFeePaid = true;
     }
-    if (feeByToken.size === 0) {
+    if (!supportedFeePaid) {
       res.status(400).json({
         error: "no fee paid to relayer",
         reason:
