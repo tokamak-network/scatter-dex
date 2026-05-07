@@ -1260,22 +1260,21 @@ function NewPayout() {
                     }}
                   />
                 </div>
-                <div className="text-[10px] text-[var(--color-text-subtle)]">
-                  Sample:{" "}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-[var(--color-text-muted)]">Download sample:</span>
                   <a
                     href="/samples/recipients-sample.csv"
                     download
-                    className="underline hover:text-[var(--color-primary)]"
+                    className="rounded border border-[var(--color-border-strong)] px-2 py-1 font-medium hover:bg-[var(--color-primary-soft)]"
                   >
-                    CSV
+                    ↓ CSV
                   </a>
-                  {" · "}
                   <a
                     href="/samples/recipients-sample.xlsx"
                     download
-                    className="underline hover:text-[var(--color-primary)]"
+                    className="rounded border border-[var(--color-border-strong)] px-2 py-1 font-medium hover:bg-[var(--color-primary-soft)]"
                   >
-                    Excel
+                    ↓ Excel
                   </a>
                 </div>
                 {addressBookHint && (
