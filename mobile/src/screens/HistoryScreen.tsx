@@ -64,7 +64,7 @@ interface ActivityItem {
 }
 
 interface NoteActivityContext {
-  orderStatuses: Map<string, OrderStatus>;
+  orderStatuses: ReadonlyMap<string, OrderStatus>;
   changeNoteIds: ReadonlySet<string>;
   closedLabelByNoteId: ReadonlyMap<string, string>;
   tradePairByNoteId: ReadonlyMap<string, { sellSymbol: string; buySymbol: string }>;
@@ -77,8 +77,11 @@ function noteToActivity(
   const { orderStatuses, changeNoteIds, closedLabelByNoteId, tradePairByNoteId } = ctx;
   // Look up by commitment (canonical note identifier) — orderId from relayer maps to commitment
   const orderStatus = orderStatuses.get(note.commitment);
+  // Guard the arrow on `note.tokenSymbol === pair.sellSymbol` — today the map
+  // only ever indexes sell-side notes, but a buy-side entry would otherwise
+  // render a misleading "USDC → USDC".
   const pair = tradePairByNoteId.get(note.id);
-  const pairSuffix = pair && pair.sellSymbol !== pair.buySymbol
+  const pairSuffix = pair && pair.sellSymbol !== pair.buySymbol && note.tokenSymbol === pair.sellSymbol
     ? ` → ${pair.buySymbol}`
     : '';
   const desc = `${formatAmount(note.amount)} ${note.tokenSymbol}${pairSuffix}${note.txHash ? ` (${shortAddr(note.txHash)})` : ''}`;
