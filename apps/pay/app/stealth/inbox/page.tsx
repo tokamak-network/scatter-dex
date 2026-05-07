@@ -947,6 +947,11 @@ function TransferOutModal({
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [gasBalance, setGasBalance] = useState<bigint | null>(null);
+  // ERC20 balance of the stealth address. Used both to disable the
+  // Send button on insufficient funds AND to display the live
+  // balance under the Token row. For native (post-WETH-unwrap) the
+  // balance equals `gasBalance` so we just mirror that.
+  const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
   // Fee no longer user-editable — sourced from the selected
   // relayer's published policy in /api/info. The selector dropdown
   // surfaces each relayer's fee per token so users can compare and
@@ -1024,6 +1029,32 @@ function TransferOutModal({
       cancelled = true;
     };
   }, [provider, stealthAddr]);
+
+  // Fetch the ERC20 (or native after unwrap) balance for the
+  // disable-send check + UI display. Re-fetches when txHash changes
+  // so the post-send confirmation pulls in the new (drained) balance.
+  useEffect(() => {
+    let cancelled = false;
+    if (isWrappedNative(entry.pkg.token, cfg)) {
+      // Native ETH balance is already fetched into gasBalance — no
+      // separate query needed.
+      void provider.getBalance(stealthAddr).then((b) => {
+        if (!cancelled) setTokenBalance(b);
+      });
+    } else {
+      const erc20 = new ethers.Contract(entry.pkg.token, ERC20_ABI, provider);
+      void erc20.balanceOf(stealthAddr).then((b: bigint) => {
+        if (!cancelled) setTokenBalance(b);
+      }).catch(() => {
+        // Token contract isn't reachable yet (e.g. mid-deploy on
+        // dev); fail-open so the existing flow can still attempt
+        // and surface the real error.
+      });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, stealthAddr, entry.pkg.token, cfg, txHash]);
 
   // WETH claims auto-unwrap to native ETH on payout (see contract
   // line 1019-1024), so the stealth address holds native ETH not the
@@ -1435,13 +1466,41 @@ function TransferOutModal({
           >
             Close
           </button>
-          <button
-            onClick={() => void send()}
-            disabled={busy || !to || !amount}
-            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
-          >
-            {busy ? "Sending…" : "Send"}
-          </button>
+          {(() => {
+            // Compute disable rules upfront so the same logic powers
+            // both the disabled flag and the inline reason copy
+            // (helps users figure out *why* they can't click Send).
+            let disableReason: string | null = null;
+            if (txHash) disableReason = "Already sent";
+            else if (!to) disableReason = "Recipient required";
+            else if (!amount) disableReason = "Amount required";
+            else {
+              try {
+                const want = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
+                if (tokenBalance !== null && want > tokenBalance) {
+                  disableReason = `Insufficient ${entry.pkg.tokenSymbol} balance (${ethers.formatUnits(tokenBalance, entry.pkg.tokenDecimals)} available)`;
+                }
+              } catch {
+                disableReason = "Invalid amount";
+              }
+            }
+            return (
+              <div className="flex items-center gap-2">
+                {disableReason && !busy && (
+                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                    {disableReason}
+                  </span>
+                )}
+                <button
+                  onClick={() => void send()}
+                  disabled={busy || disableReason !== null}
+                  className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-40"
+                >
+                  {busy ? "Sending…" : "Send"}
+                </button>
+              </div>
+            );
+          })()}
         </div>
       </div>
     </Modal>
