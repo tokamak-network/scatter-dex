@@ -28,37 +28,32 @@ function csvCell(value) {
 }
 
 const commentLines = [
-  "# THIS IS A TEMPLATE — replace every <input ...> placeholder below before uploading.",
-  "# All addresses are intentionally invalid so an as-is upload errors out instead of",
-  "# accidentally paying fictional accounts.",
+  "# THIS IS A TEMPLATE — replace every value below before uploading.",
+  "# Addresses are 0x000…000 placeholders. Submitting them as-is would BURN funds.",
+  "#",
+  "# Row 1: regular EOA payout — replace `address`, `amount`, `email`, and `name`.",
+  "# Row 2: stealth payout — leave `address` blank, replace `meta_address` with the",
+  "# recipient's EIP-5564 key (format: `st:eth:0x` + 132 hex chars). The system",
+  "# derives a one-time stealth address per recipient automatically.",
   "#",
   "# Amount is in the token you pick in the wizard (USDC / USDT / ETH / TON).",
-  "# Optional 5th column `meta_address` — when filled, the system derives a one-time",
-  "# stealth address per recipient automatically (privacy mode). Leave blank for a",
-  "# regular EOA payout. Format: `st:eth:0x` + 132 hex chars.",
 ];
 const headers = ["name", "address", "amount", "email", "meta_address"];
-// All values below are placeholders — addresses don't pass EIP-55
-// checksum, meta_address is a fixed sentinel string. The parser will
-// skip every row with a "malformed" warning, which is the intended
-// behaviour: the user MUST edit the file before it will accept any
-// recipient. Better than shipping real-looking Hardhat test
-// addresses, which a hurried operator might leave in by mistake.
-const PLACEHOLDER_ADDRESS = "<input recipient address>";
-const PLACEHOLDER_AMOUNT = "<input amount>";
-const PLACEHOLDER_EMAIL = "<input email>";
-const PLACEHOLDER_META = "<input st:eth:0x... meta_address (or leave blank)>";
+// One concrete example per mode (plain + stealth) so the column shape
+// is obvious. Addresses are intentionally the zero address — clearly
+// not a real recipient, the wizard's review screen will flag it, and
+// a hurried operator who forgot to replace gets a "burn address"
+// signal rather than ship to real-looking Hardhat test addresses by
+// mistake. The stealth row's meta_address uses a fixed
+// deterministic key pair so the sample diff stays stable; the
+// matching private keys are unknown so any payout to it is
+// unrecoverable — that's fine for a template.
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const SAMPLE_META_ADDRESS =
+  "st:eth:0x03ebf948270e460d6dde0385f6fbc7d303d7fa6cbb9ce8a76ad23edbcd3e28c37d02afe23955ae8a9f4ef7d09a27c88f3ee7a45661d44ab526ed3d1832f35a2c95cb";
 const rows = [
-  ["<input recipient name>", PLACEHOLDER_ADDRESS, PLACEHOLDER_AMOUNT, PLACEHOLDER_EMAIL, ""],
-  ["<input recipient name>", PLACEHOLDER_ADDRESS, PLACEHOLDER_AMOUNT, PLACEHOLDER_EMAIL, ""],
-  ["<input recipient name>", PLACEHOLDER_ADDRESS, PLACEHOLDER_AMOUNT, PLACEHOLDER_EMAIL, ""],
-  [
-    "<input stealth recipient name>",
-    "",
-    PLACEHOLDER_AMOUNT,
-    PLACEHOLDER_EMAIL,
-    PLACEHOLDER_META,
-  ],
+  ["Alice (sample — replace)", ZERO_ADDRESS, 100, "alice@example.com", ""],
+  ["Bob Stealth (sample — replace)", "", 100, "bob@example.com", SAMPLE_META_ADDRESS],
 ];
 
 const csvPath = join(outDir, "recipients-sample.csv");
