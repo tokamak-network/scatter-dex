@@ -1,12 +1,13 @@
+# THIS IS A TEMPLATE — replace every <input ...> placeholder below before uploading.
+# All addresses are intentionally invalid so an as-is upload errors out instead of
+# accidentally paying fictional accounts.
+#
 # Amount is in the token you pick in the wizard (USDC / USDT / ETH / TON).
-"# Optional 5th column `meta_address` — when filled, the system derives"
-# a one-time stealth address per recipient automatically (privacy mode).
-# Leave it blank for a regular EOA payout. The example row below shows
-"# the stealth case: address column empty, meta_address filled. REPLACE"
-# the placeholder meta_address with the recipient's actual EIP-5564 key
-# (format: `st:eth:0x` + 132 hex chars).
+"# Optional 5th column `meta_address` — when filled, the system derives a one-time"
+# stealth address per recipient automatically (privacy mode). Leave blank for a
+# regular EOA payout. Format: `st:eth:0x` + 132 hex chars.
 name,address,amount,email,meta_address
-Alice Kim,0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266,3500,alice@example.com,
-Bob Lee,0x70997970C51812dc3A010C7d01b50e0d17dc79C8,3500,bob@example.com,
-Carol Park,0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC,4200,carol@example.com,
-Dave Stealth (replace meta_address),,5000,dave@example.com,st:eth:0x03ebf948270e460d6dde0385f6fbc7d303d7fa6cbb9ce8a76ad23edbcd3e28c37d02afe23955ae8a9f4ef7d09a27c88f3ee7a45661d44ab526ed3d1832f35a2c95cb
+<input recipient name>,<input recipient address>,<input amount>,<input email>,
+<input recipient name>,<input recipient address>,<input amount>,<input email>,
+<input recipient name>,<input recipient address>,<input amount>,<input email>,
+<input stealth recipient name>,,<input amount>,<input email>,<input st:eth:0x... meta_address (or leave blank)>

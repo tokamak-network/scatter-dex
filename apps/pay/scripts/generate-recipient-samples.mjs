@@ -28,34 +28,36 @@ function csvCell(value) {
 }
 
 const commentLines = [
+  "# THIS IS A TEMPLATE — replace every <input ...> placeholder below before uploading.",
+  "# All addresses are intentionally invalid so an as-is upload errors out instead of",
+  "# accidentally paying fictional accounts.",
+  "#",
   "# Amount is in the token you pick in the wizard (USDC / USDT / ETH / TON).",
-  "# Optional 5th column `meta_address` — when filled, the system derives",
-  "# a one-time stealth address per recipient automatically (privacy mode).",
-  "# Leave it blank for a regular EOA payout. The example row below shows",
-  "# the stealth case: address column empty, meta_address filled. REPLACE",
-  "# the placeholder meta_address with the recipient's actual EIP-5564 key",
-  "# (format: `st:eth:0x` + 132 hex chars).",
+  "# Optional 5th column `meta_address` — when filled, the system derives a one-time",
+  "# stealth address per recipient automatically (privacy mode). Leave blank for a",
+  "# regular EOA payout. Format: `st:eth:0x` + 132 hex chars.",
 ];
 const headers = ["name", "address", "amount", "email", "meta_address"];
-// The stealth example row uses a real, on-curve EIP-5564 meta-address
-// derived from a deterministic seed (so the sample diff stays stable
-// across regenerations). It's a valid public key — the wizard will
-// derive a working stealth address from it on upload — but no one
-// holds the matching private keys, so funds sent here are
-// unrecoverable. The "(replace meta_address)" suffix in the name
-// flags this; the comment header repeats the warning.
-const SAMPLE_PLACEHOLDER_META_ADDRESS =
-  "st:eth:0x03ebf948270e460d6dde0385f6fbc7d303d7fa6cbb9ce8a76ad23edbcd3e28c37d02afe23955ae8a9f4ef7d09a27c88f3ee7a45661d44ab526ed3d1832f35a2c95cb";
+// All values below are placeholders — addresses don't pass EIP-55
+// checksum, meta_address is a fixed sentinel string. The parser will
+// skip every row with a "malformed" warning, which is the intended
+// behaviour: the user MUST edit the file before it will accept any
+// recipient. Better than shipping real-looking Hardhat test
+// addresses, which a hurried operator might leave in by mistake.
+const PLACEHOLDER_ADDRESS = "<input recipient address>";
+const PLACEHOLDER_AMOUNT = "<input amount>";
+const PLACEHOLDER_EMAIL = "<input email>";
+const PLACEHOLDER_META = "<input st:eth:0x... meta_address (or leave blank)>";
 const rows = [
-  ["Alice Kim", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", 3500, "alice@example.com", ""],
-  ["Bob Lee", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", 3500, "bob@example.com", ""],
-  ["Carol Park", "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC", 4200, "carol@example.com", ""],
+  ["<input recipient name>", PLACEHOLDER_ADDRESS, PLACEHOLDER_AMOUNT, PLACEHOLDER_EMAIL, ""],
+  ["<input recipient name>", PLACEHOLDER_ADDRESS, PLACEHOLDER_AMOUNT, PLACEHOLDER_EMAIL, ""],
+  ["<input recipient name>", PLACEHOLDER_ADDRESS, PLACEHOLDER_AMOUNT, PLACEHOLDER_EMAIL, ""],
   [
-    "Dave Stealth (replace meta_address)",
+    "<input stealth recipient name>",
     "",
-    5000,
-    "dave@example.com",
-    SAMPLE_PLACEHOLDER_META_ADDRESS,
+    PLACEHOLDER_AMOUNT,
+    PLACEHOLDER_EMAIL,
+    PLACEHOLDER_META,
   ],
 ];
 
@@ -91,7 +93,9 @@ const sheetData = [
   ...rows.map(([name, address, amount, email, metaAddress]) => [
     { value: name, type: String },
     { value: address, type: String },
-    { value: amount, type: Number, format: "0.00" },
+    typeof amount === "number"
+      ? { value: amount, type: Number, format: "0.00" }
+      : { value: String(amount), type: String },
     { value: email, type: String },
     { value: metaAddress, type: String },
   ]),

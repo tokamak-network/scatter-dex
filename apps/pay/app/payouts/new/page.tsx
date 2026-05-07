@@ -1267,14 +1267,14 @@ function NewPayout() {
                     download
                     className="rounded border border-[var(--color-border-strong)] px-2 py-1 font-medium hover:bg-[var(--color-primary-soft)]"
                   >
-                    ↓ CSV
+                    ↓ Sample CSV
                   </a>
                   <a
                     href="/samples/recipients-sample.xlsx"
                     download
                     className="rounded border border-[var(--color-border-strong)] px-2 py-1 font-medium hover:bg-[var(--color-primary-soft)]"
                   >
-                    ↓ Excel
+                    ↓ Sample Excel
                   </a>
                 </div>
                 {addressBookHint && (
