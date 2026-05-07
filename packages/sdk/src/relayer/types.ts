@@ -37,10 +37,10 @@ export interface RelayerApiInfo {
   settlement: string;
   profile?: RelayerProfile;
   /** Per-token gasless-transfer fee policy. Symbol → decimal-string
-   *  amount in token-units (e.g. `{ USDC: "0.10" }` = 0.10 USDC per
-   *  transfer). Empty / missing when the relayer hasn't configured a
-   *  policy, in which case its `/api/transfer-7702/relay` rejects
-   *  with `token not supported`. */
+   *  amount in token-units, e.g.
+   *  `{ USDC: "0.10", USDT: "0.10", TON: "1.0" }`. Empty / missing
+   *  when the relayer hasn't configured a policy, in which case its
+   *  `/api/transfer-7702/relay` rejects with `token not supported`. */
   gasless_fees?: Record<string, string>;
 }
 
