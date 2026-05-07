@@ -11,6 +11,7 @@ import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {MockToken} from "./DeployTestTokens.s.sol";
 import {MockWETH} from "../test/mocks/MockWETH.sol";
 import {BatchExecutor} from "../src/BatchExecutor.sol";
+import {StealthTransferAccount} from "../src/StealthTransferAccount.sol";
 
 /// @dev Mock identity registry that verifies everyone (for local testing)
 contract MockIdentityRegistry is IIdentityRegistry {
@@ -42,6 +43,11 @@ contract DeployLocal is Script {
         address gate;
         address vault;
         address batchExecutor;
+        // EIP-7702 delegate for the stealth-claim recipient flow —
+        // lets a zero-gas EOA move its tokens via the relayer's
+        // type-4 path. See apps/pay TransferOutModal "Gasless"
+        // toggle and zk-relayer's /api/transfer-7702/relay route.
+        address stealthTransferAccount;
     }
 
     function run() external {
@@ -154,6 +160,12 @@ contract DeployLocal is Script {
         BatchExecutor batchExecutor = new BatchExecutor();
         console.log("BatchExecutor:", address(batchExecutor));
 
+        // Deploy the EIP-7702 delegate for gasless stealth transfers.
+        // Single shared contract per chain — every stealth recipient
+        // delegates to this one address.
+        StealthTransferAccount stealthTransferAccount = new StealthTransferAccount();
+        console.log("StealthTransferAccount:", address(stealthTransferAccount));
+
         vm.stopBroadcast();
 
         Deployed memory d;
@@ -172,6 +184,7 @@ contract DeployLocal is Script {
         d.gate = address(gate);
         d.vault = address(vault);
         d.batchExecutor = address(batchExecutor);
+        d.stealthTransferAccount = address(stealthTransferAccount);
         _printSummary(d);
     }
 
@@ -212,6 +225,8 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(vault)));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
+        console.log(string.concat("NEXT_PUBLIC_PAY_STEALTH_TRANSFER_ACCOUNT=", vm.toString(d.stealthTransferAccount)));
+        console.log(string.concat("STEALTH_TRANSFER_ACCOUNT_ADDRESS=", vm.toString(d.stealthTransferAccount)));
         // Surface every active tier's authorize verifier so a dev
         // running `dev.sh` can spot a missing tier registration in the
         // summary; the SDK reads addresses from the on-chain registry,

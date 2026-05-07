@@ -29,6 +29,7 @@ import {
   sign7702Batch,
   type Call,
 } from "../../_lib/relay7702";
+import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
 import { ERC20_ABI, type NetworkConfig } from "@zkscatter/sdk";
 
@@ -960,12 +961,63 @@ function TransferOutModal({
   const cfg = getNetworkConfig();
   const provider = useMemo(() => getSharedProvider(cfg.rpcUrl), [cfg.rpcUrl]);
 
-  // Gasless via EIP-7702 — only available when the operator has
-  // deployed StealthTransferAccount and the package's relayerUrl is
-  // set (i.e. the run was settled through a real relayer, not the
-  // env-not-configured demo path).
+  // Gasless via EIP-7702 — available when StealthTransferAccount is
+  // deployed AND we have at least one relayer URL to broadcast
+  // through, sourced from either the on-chain RelayerRegistry (the
+  // user can pick any online entry) OR the settle-time relayer URL
+  // baked into the ClaimPackage (standalone fallback when the
+  // registry is empty / unconfigured / all entries are offline).
+  // Selection precedence inside the dropdown:
+  //   1. settle-time relayer if it's online + registered
+  //   2. first online registry entry otherwise
+  //   3. settle-time URL standalone — used when the registry has no
+  //      online candidates at all; fee collector then comes from a
+  //      live /api/info probe instead of the registry record.
   const delegateAddress = useMemo(() => getStealthTransferAccountAddress(), []);
-  const relayerUrl = entry.pkg.relayerUrl ?? null;
+  const { relayers } = useRelayers();
+  // Candidate set = registered + online. If the user's settle-time
+  // relayer isn't in the registry (legacy / cross-operator case)
+  // fall back to using its URL alone — fee collector will come from
+  // an /api/info probe instead of the registry's `address` field.
+  // Normalize trailing slashes so `http://x:3002/` and `http://x:3002`
+  // compare equal — the registry and ClaimPackage occasionally
+  // disagree on the trailing slash for the same operator.
+  const normalizeUrl = (u: string | null | undefined) =>
+    u ? u.replace(/\/+$/, "") : null;
+  const candidates = useMemo(
+    () => relayers.filter((r) => r.online),
+    [relayers],
+  );
+  const [selectedRelayerUrl, setSelectedRelayerUrl] = useState<string | null>(null);
+  // Re-pick whenever the current selection is no longer reachable —
+  // covers the initial mount AND the case where the user's chosen
+  // relayer drops offline mid-session and we need to fail over to
+  // another registered one.
+  useEffect(() => {
+    const settleUrl = normalizeUrl(entry.pkg.relayerUrl ?? null);
+    const currentNormalized = normalizeUrl(selectedRelayerUrl);
+    const stillOk = candidates.some((r) => normalizeUrl(r.url) === currentNormalized);
+    if (currentNormalized && stillOk) return;
+    // Prefer settle-time relayer when registered + online; otherwise
+    // first online registry entry; otherwise standalone settle URL.
+    if (settleUrl && candidates.some((r) => normalizeUrl(r.url) === settleUrl)) {
+      setSelectedRelayerUrl(settleUrl);
+    } else if (candidates.length > 0) {
+      setSelectedRelayerUrl(normalizeUrl(candidates[0].url));
+    } else if (settleUrl) {
+      setSelectedRelayerUrl(settleUrl);
+    } else {
+      setSelectedRelayerUrl(null);
+    }
+  }, [candidates, entry.pkg.relayerUrl, selectedRelayerUrl]);
+  const selectedRelayer = useMemo(
+    () =>
+      candidates.find(
+        (r) => normalizeUrl(r.url) === normalizeUrl(selectedRelayerUrl),
+      ) ?? null,
+    [candidates, selectedRelayerUrl],
+  );
+  const relayerUrl = selectedRelayerUrl;
 
   useEffect(() => {
     let cancelled = false;
@@ -998,7 +1050,17 @@ function TransferOutModal({
   const [relayerFeeAddr, setRelayerFeeAddr] = useState<string | null>(null);
   const [relayerFeeAddrError, setRelayerFeeAddrError] = useState<string | null>(null);
   useEffect(() => {
+    setRelayerFeeAddr(null);
+    setRelayerFeeAddrError(null);
     if (!relayerUrl || !gaslessAvailable) return;
+    // Fast path: registry already gave us the relayer's wallet
+    // address as `selectedRelayer.address` — skip the network probe.
+    if (selectedRelayer && ethers.isAddress(selectedRelayer.address)) {
+      setRelayerFeeAddr(selectedRelayer.address);
+      return;
+    }
+    // Fallback: relayer URL is set but the registry doesn't list it
+    // (legacy / cross-operator). Probe /api/info for the wallet.
     let cancelled = false;
     const url = `${relayerUrl}/api/info`;
     void fetch(url)
@@ -1021,7 +1083,7 @@ function TransferOutModal({
     return () => {
       cancelled = true;
     };
-  }, [relayerUrl, gaslessAvailable]);
+  }, [relayerUrl, gaslessAvailable, selectedRelayer]);
 
   async function sendGasless() {
     if (!relayerUrl || !delegateAddress) {
@@ -1233,6 +1295,44 @@ function TransferOutModal({
                 ? "Relayer pays the on-chain gas; a small fee in this token is deducted from your balance to reimburse them."
                 : "You pay gas in native ETH. Requires the stealth address to hold ETH."}
             </p>
+            {mode === "gasless" && candidates.length > 0 && (
+              <label className="mt-2 block">
+                <span className="text-[10px] text-[var(--color-text-muted)]">
+                  Relayer ({candidates.length} online)
+                </span>
+                <select
+                  value={selectedRelayerUrl ?? ""}
+                  onChange={(e) => setSelectedRelayerUrl(e.target.value || null)}
+                  className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 text-xs"
+                >
+                  {candidates.map((r) => (
+                    <option key={r.address} value={normalizeUrl(r.url) ?? r.url}>
+                      {r.name || shortAddr(r.address)} · {r.url}
+                      {normalizeUrl(r.url) === normalizeUrl(entry.pkg.relayerUrl ?? null)
+                        ? " (default)"
+                        : ""}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
+                  Any registered relayer can broadcast — pick whichever you trust.
+                </span>
+              </label>
+            )}
+            {mode === "gasless" && candidates.length === 0 && !entry.pkg.relayerUrl && (
+              <p className="mt-2 text-[10px] text-[var(--color-warning)]">
+                No online relayers in the registry and no settle-time relayer on
+                this claim — gasless transfer unavailable until at least one is
+                reachable.
+              </p>
+            )}
+            {mode === "gasless" && candidates.length === 0 && entry.pkg.relayerUrl && (
+              <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                Registry has no online relayers — falling back to the settle-time
+                relayer ({entry.pkg.relayerUrl}). Fee collector resolved via its
+                /api/info instead of the registry record.
+              </p>
+            )}
           </div>
         )}
         <label className="block">

@@ -391,8 +391,9 @@ if [ "$MOCK_MODE" = true ]; then
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep "^  IdentityGate:" | awk '{print $NF}')
   FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep "^  FeeVault:" | awk '{print $NF}')
   BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^  BatchExecutor:" | awk '{print $NF}')
+  STEALTH_TRANSFER_ACCOUNT=$(echo "$DEPLOY_OUTPUT" | grep "^  StealthTransferAccount:" | awk '{print $NF}')
 
-  if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
+  if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ] || [ -z "$STEALTH_TRANSFER_ACCOUNT" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
     echo "$DEPLOY_OUTPUT"
     exit 1
@@ -567,6 +568,7 @@ RELAYER_PUBLIC_URL=http://localhost:3002
 RELAYER_NAME=Relayer-A
 DB_PATH=$ROOT_DIR/zk-relayer/zk-relayer.db
 CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003
+STEALTH_TRANSFER_ACCOUNT_ADDRESS=$STEALTH_TRANSFER_ACCOUNT
 EOF
 echo "  Admin API key: $ADMIN_KEY"
 
@@ -599,6 +601,7 @@ RELAYER_PUBLIC_URL=http://localhost:3003 \
 RELAYER_NAME=Relayer-B \
 DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
 CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003 \
+STEALTH_TRANSFER_ACCOUNT_ADDRESS="$STEALTH_TRANSFER_ACCOUNT" \
 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
@@ -683,6 +686,14 @@ NEXT_PUBLIC_PAY_TON=$TON
 NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$INDEX_FROM
 EOF
+      # Only emit the stealth-transfer line when the address is set
+      # (mock mode greps it from DeployLocal output). Integration mode
+      # doesn't deploy this contract, so leaving the line out lets the
+      # gasless toggle stay hidden cleanly rather than write an empty
+      # value that silently disables the feature at runtime.
+      if [ -n "$STEALTH_TRANSFER_ACCOUNT" ]; then
+        echo "NEXT_PUBLIC_PAY_STEALTH_TRANSFER_ACCOUNT=$STEALTH_TRANSFER_ACCOUNT" >> "$target_dir/.env.local"
+      fi
       ;;
   esac
   if [ -n "$preserved" ]; then
