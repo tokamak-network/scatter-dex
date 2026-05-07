@@ -61,6 +61,28 @@ export const config = {
     }
     return raw;
   })(),
+  // Per-token gasless transfer fee policy. Operator publishes a flat
+  // amount (decimal string in token-units) for every token they want
+  // to relay. Read from `GASLESS_FEE_<SYMBOL>` env vars (e.g.
+  // `GASLESS_FEE_USDC=0.1`). Frontend surfaces this in the relayer
+  // selector so users can compare across relayers; the
+  // /api/transfer-7702/relay endpoint also enforces that the fee
+  // included in the batch is at least this published value.
+  gaslessFees: (() => {
+    const out: Record<string, string> = {};
+    for (const key of Object.keys(process.env)) {
+      const m = key.match(/^GASLESS_FEE_([A-Z0-9]+)$/);
+      if (!m) continue;
+      const value = (process.env[key] ?? "").trim();
+      if (!value) continue;
+      // Validate as decimal: refuses negative, hex, or junk.
+      if (!/^\d+(\.\d+)?$/.test(value)) {
+        throw new Error(`${key} must be a non-negative decimal (got "${value}")`);
+      }
+      out[m[1]] = value;
+    }
+    return out;
+  })(),
   adminApiKey: (() => {
     const key = process.env.ADMIN_API_KEY;
     if (!key) return null;

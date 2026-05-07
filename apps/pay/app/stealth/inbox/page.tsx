@@ -947,15 +947,11 @@ function TransferOutModal({
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
   const [gasBalance, setGasBalance] = useState<bigint | null>(null);
-  // Default fee: 0.1 token-units (~$0.10 for USDC/USDT, sensible for
-  // stablecoin payouts which is the main HR use case). Surfacing
-  // this for ETH/WBTC will need a per-token default — flag for
-  // follow-up once those tokens hit the gasless path. Operators with
-  // a different fee policy can edit before signing. Native ETH
-  // gasless would need a value-bearing call to the relayer rather
-  // than ERC20.transfer, so the toggle only surfaces for
-  // ERC20-token claims for now.
-  const [feeAmount, setFeeAmount] = useState("0.1");
+  // Fee no longer user-editable — sourced from the selected
+  // relayer's published policy in /api/info. The selector dropdown
+  // surfaces each relayer's fee per token so users can compare and
+  // pick. Native ETH gasless still needs a value-bearing call shape
+  // and isn't supported in this path.
   const stealthAddr = entry.pkg.recipient;
 
   const cfg = getNetworkConfig();
@@ -1131,10 +1127,21 @@ function TransferOutModal({
     const ethNonce = BigInt(await provider.getTransactionCount(stealthAddr));
 
     const raw = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
-    const fee = ethers.parseUnits(feeAmount, entry.pkg.tokenDecimals);
+    // Fee is whatever the selected relayer published for this token.
+    // Missing policy means the relayer doesn't relay this token —
+    // surface the failure here rather than letting the relayer
+    // reject with `token not supported` after the user signs.
+    const policyFee =
+      selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol];
+    if (!policyFee) {
+      throw new Error(
+        `Selected relayer has no published fee for ${entry.pkg.tokenSymbol} — pick a different relayer.`,
+      );
+    }
+    const fee = ethers.parseUnits(policyFee, entry.pkg.tokenDecimals);
     if (fee >= raw) {
       throw new Error(
-        `Relayer fee (${feeAmount} ${entry.pkg.tokenSymbol}) must be smaller than the amount`,
+        `Relayer fee (${policyFee} ${entry.pkg.tokenSymbol}) is greater than or equal to the amount`,
       );
     }
     // Net the fee against the input so the user's typed `amount`
@@ -1305,14 +1312,20 @@ function TransferOutModal({
                   onChange={(e) => setSelectedRelayerUrl(e.target.value || null)}
                   className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 text-xs"
                 >
-                  {candidates.map((r) => (
-                    <option key={r.address} value={normalizeUrl(r.url) ?? r.url}>
-                      {r.name || shortAddr(r.address)} · {r.url}
-                      {normalizeUrl(r.url) === normalizeUrl(entry.pkg.relayerUrl ?? null)
-                        ? " (default)"
-                        : ""}
-                    </option>
-                  ))}
+                  {candidates.map((r) => {
+                    const fee = r.api?.gasless_fees?.[entry.pkg.tokenSymbol];
+                    const feeLabel = fee
+                      ? `${fee} ${entry.pkg.tokenSymbol}`
+                      : "no policy";
+                    const isDefault =
+                      normalizeUrl(r.url) === normalizeUrl(entry.pkg.relayerUrl ?? null);
+                    return (
+                      <option key={r.address} value={normalizeUrl(r.url) ?? r.url}>
+                        {r.name || shortAddr(r.address)} · fee {feeLabel}
+                        {isDefault ? " (default)" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
                 <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
                   Any registered relayer can broadcast — pick whichever you trust.
@@ -1369,23 +1382,44 @@ function TransferOutModal({
             className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono"
           />
         </label>
-        {mode === "gasless" && (
-          <label className="block">
-            <span className="text-xs text-[var(--color-text-muted)]">
-              Relayer fee ({entry.pkg.tokenSymbol})
-            </span>
-            <input
-              type="text"
-              value={feeAmount}
-              onChange={(e) => setFeeAmount(e.target.value)}
-              placeholder="0.1"
-              className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 font-mono"
-            />
-            <span className="mt-1 block text-[10px] text-[var(--color-text-muted)]">
-              Deducted from your balance and sent to the relayer to reimburse the on-chain gas.
-            </span>
-          </label>
-        )}
+        {mode === "gasless" && (() => {
+          // Render the relayer's published fee + the recipient's
+          // net-of-fee amount as a read-only summary. When the
+          // selected relayer doesn't list a policy for this token,
+          // surface the gap so the user knows to pick a different
+          // relayer (the send() path also throws on this).
+          const policyFee =
+            selectedRelayer?.api?.gasless_fees?.[entry.pkg.tokenSymbol] ?? null;
+          const amtNum = Number(amount);
+          const feeNum = policyFee ? Number(policyFee) : NaN;
+          const recipientGets =
+            Number.isFinite(amtNum) && Number.isFinite(feeNum) && feeNum < amtNum
+              ? (amtNum - feeNum).toString()
+              : null;
+          return (
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[var(--color-text-muted)]">Relayer fee</span>
+                <span className="font-mono">
+                  {policyFee
+                    ? `${policyFee} ${entry.pkg.tokenSymbol}`
+                    : <span className="text-[var(--color-warning)]">no policy — pick another relayer</span>}
+                </span>
+              </div>
+              <div className="mt-1 flex items-center justify-between border-t border-[var(--color-border)] pt-1">
+                <span className="text-[var(--color-text-muted)]">Recipient receives</span>
+                <span className="font-mono">
+                  {recipientGets
+                    ? `${recipientGets} ${entry.pkg.tokenSymbol}`
+                    : "—"}
+                </span>
+              </div>
+              <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">
+                Fee is the relayer's published policy. Switch relayer above to compare.
+              </p>
+            </div>
+          );
+        })()}
         {error && (
           <p className="text-xs text-[var(--color-warning)]">{error}</p>
         )}

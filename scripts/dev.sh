@@ -569,6 +569,9 @@ RELAYER_NAME=Relayer-A
 DB_PATH=$ROOT_DIR/zk-relayer/zk-relayer.db
 CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003
 STEALTH_TRANSFER_ACCOUNT_ADDRESS=$STEALTH_TRANSFER_ACCOUNT
+GASLESS_FEE_USDC=0.10
+GASLESS_FEE_USDT=0.10
+GASLESS_FEE_TON=1.0
 EOF
 echo "  Admin API key: $ADMIN_KEY"
 
@@ -602,6 +605,9 @@ RELAYER_NAME=Relayer-B \
 DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
 CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003 \
 STEALTH_TRANSFER_ACCOUNT_ADDRESS="$STEALTH_TRANSFER_ACCOUNT" \
+GASLESS_FEE_USDC=0.05 \
+GASLESS_FEE_USDT=0.05 \
+GASLESS_FEE_TON=0.5 \
 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
