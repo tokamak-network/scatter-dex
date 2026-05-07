@@ -77,6 +77,11 @@ function noteToActivity(
   const { orderStatuses, changeNoteIds, closedLabelByNoteId, tradePairByNoteId } = ctx;
   // Look up by commitment (canonical note identifier) — orderId from relayer maps to commitment
   const orderStatus = orderStatuses.get(note.commitment);
+  const pair = tradePairByNoteId.get(note.id);
+  const pairSuffix = pair && pair.sellSymbol !== pair.buySymbol
+    ? ` → ${pair.buySymbol}`
+    : '';
+  const desc = `${formatAmount(note.amount)} ${note.tokenSymbol}${pairSuffix}${note.txHash ? ` (${shortAddr(note.txHash)})` : ''}`;
   // A note is a "Change" residual when a TradeRecord points its
   // `changeNoteId` at this note. Default `Deposit` covers fresh
   // top-ups so the two are visually distinct on the Active tab.
@@ -115,7 +120,7 @@ function noteToActivity(
       return {
         id: note.id,
         type: 'Trade',
-        desc: `${formatAmount(note.amount)} ${note.tokenSymbol}${note.txHash ? ` (${shortAddr(note.txHash)})` : ''}`,
+        desc,
         time: formatDate(note.createdAt),
         createdAt: note.createdAt,
         status: closedLabel,
@@ -127,14 +132,10 @@ function noteToActivity(
     statusLabel = 'Spent';
   }
 
-  const pair = tradePairByNoteId.get(note.id);
-  const pairSuffix = pair && pair.sellSymbol !== pair.buySymbol
-    ? ` → ${pair.buySymbol}`
-    : '';
   return {
     id: note.id,
     type,
-    desc: `${formatAmount(note.amount)} ${note.tokenSymbol}${pairSuffix}${note.txHash ? ` (${shortAddr(note.txHash)})` : ''}`,
+    desc,
     time: formatDate(note.createdAt),
     createdAt: note.createdAt,
     status: statusLabel,
