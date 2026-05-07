@@ -1,4 +1,5 @@
 import { LAUNCH_TOKENS, type NetworkConfig } from "@zkscatter/sdk";
+import { isAddress } from "ethers";
 
 // Pay's network config. Uses NEXT_PUBLIC_* envs at build time so
 // Pay never reads chain state from process.env at runtime — this
@@ -80,5 +81,10 @@ export function isNetworkConfigured(cfg: NetworkConfig): boolean {
  *  Transfer modal hides the gasless toggle. */
 export function getStealthTransferAccountAddress(): string | null {
   const v = (process.env.NEXT_PUBLIC_PAY_STEALTH_TRANSFER_ACCOUNT || "").trim();
-  return v.length > 0 ? v : null;
+  // Validate fail-closed: a typo in the env (e.g. truncated address)
+  // would otherwise show the gasless toggle in the UI but every
+  // signing attempt would later fail at the relayer's
+  // "unauthorized delegate" gate. Hide the toggle entirely when the
+  // value isn't a real address.
+  return v.length > 0 && isAddress(v) ? v : null;
 }

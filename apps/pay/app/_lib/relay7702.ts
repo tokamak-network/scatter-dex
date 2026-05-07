@@ -67,8 +67,9 @@ export interface Sign7702Inputs {
   /** Stealth EOA private key — already known to the user via the
    *  inbox row's "Privkey" action. Never touches the network. */
   privkey: string;
-  /** Address of the deployed `StealthTransferAccount`. From
-   *  NEXT_PUBLIC_STEALTH_TRANSFER_ACCOUNT_ADDRESS. */
+  /** Address of the deployed `StealthTransferAccount`. Read from
+   *  `NEXT_PUBLIC_PAY_STEALTH_TRANSFER_ACCOUNT` via
+   *  `getStealthTransferAccountAddress()` in network.ts. */
   delegateAddress: string;
   /** EOA nonce per `StealthTransferAccount.nonce` (per-EOA storage
    *  slot 0 under 7702). The relayer's first call to a fresh stealth
@@ -155,7 +156,7 @@ export async function postRelayTransfer(
   };
   if (!res.ok) {
     const detail = json.reason ?? json.error ?? `HTTP ${res.status}`;
-    throw new Error(`Relayer rejected transfer: ${detail}`);
+    throw new Error(`POST ${relayerUrl}/api/transfer-7702/relay failed: ${detail}`);
   }
   if (!json.txHash) throw new Error("Relayer response missing txHash");
   return json.txHash;
@@ -163,10 +164,14 @@ export async function postRelayTransfer(
 
 /**
  *  Build the executeBatch `calls` array for a "send tokens, fee in
- *  same token" flow. Two calls — recipient first (so a partial-fail
- *  scenario lands the recipient's transfer before the fee), then the
- *  relayer fee. ERC20-only; native ETH gas-recovery would need a
- *  different shape (a separate call with `value` going to the relayer).
+ *  same token" flow. Two calls — recipient transfer first, then the
+ *  relayer fee. The batch is atomic — if either call reverts the
+ *  whole tx reverts and no balance moves, so call ordering is for
+ *  readability rather than partial-failure semantics. ERC20-only;
+ *  native ETH gas recovery would need a different shape (a separate
+ *  value-bearing call to the relayer). Caller is responsible for
+ *  netting the fee against the user's intended send (`amount`
+ *  should already be `userInput - fee` if that's the desired UX).
  */
 export function buildErc20TransferCalls(args: {
   token: string;

@@ -1000,12 +1000,16 @@ function TransferOutModal({
   useEffect(() => {
     if (!relayerUrl || !gaslessAvailable) return;
     let cancelled = false;
-    void fetch(`${relayerUrl}/api/info`)
-      .then((r) => r.json())
-      .then((info: { address?: string }) => {
+    const url = `${relayerUrl}/api/info`;
+    void fetch(url)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`GET ${url} failed: HTTP ${r.status}`);
+        return r.json() as Promise<{ address?: string }>;
+      })
+      .then((info) => {
         if (cancelled) return;
         if (!info.address || !ethers.isAddress(info.address)) {
-          setRelayerFeeAddrError("relayer /api/info missing address");
+          setRelayerFeeAddrError(`GET ${url} returned no usable address`);
           return;
         }
         setRelayerFeeAddr(info.address);
@@ -1031,6 +1035,16 @@ function TransferOutModal({
       );
     }
     if (!ethers.isAddress(to)) throw new Error("Invalid recipient address");
+    // Sanity-check the privkey actually owns this stealth address
+    // before signing. A mismatched key would otherwise produce a sig
+    // from a different EOA and the relayed batch would revert with
+    // a generic InvalidSignature, which is hard to diagnose.
+    const derivedAddr = ethers.computeAddress(privkey);
+    if (derivedAddr.toLowerCase() !== stealthAddr.toLowerCase()) {
+      throw new Error(
+        `Private key does not match stealth address ${shortAddr(stealthAddr)}`,
+      );
+    }
     const network = await provider.getNetwork();
     const chainId = network.chainId;
 
@@ -1056,11 +1070,23 @@ function TransferOutModal({
 
     const raw = ethers.parseUnits(amount, entry.pkg.tokenDecimals);
     const fee = ethers.parseUnits(feeAmount, entry.pkg.tokenDecimals);
+    if (fee >= raw) {
+      throw new Error(
+        `Relayer fee (${feeAmount} ${entry.pkg.tokenSymbol}) must be smaller than the amount`,
+      );
+    }
+    // Net the fee against the input so the user's typed `amount`
+    // is the total balance moved — recipient gets `amount - fee`,
+    // relayer gets `fee`, sum = `amount`. Without this the batch
+    // would try to move `amount + fee` and revert when the user's
+    // balance equals exactly the claim amount (the common case
+    // when `Send max` is used).
+    const recipientAmount = raw - fee;
 
     const calls: Call[] = buildErc20TransferCalls({
       token: entry.pkg.token,
       recipient: to,
-      amount: raw,
+      amount: recipientAmount,
       feeRecipient: relayerFeeAddr,
       fee,
     });
@@ -1084,7 +1110,17 @@ function TransferOutModal({
     // The relayer 202s before broadcast confirms; poll the receipt
     // with a 2-minute ceiling so a dropped tx surfaces an actionable
     // error instead of spinning the modal indefinitely.
-    await provider.waitForTransaction(hash, 1, 120_000);
+    const receipt = await provider.waitForTransaction(hash, 1, 120_000);
+    // ethers v6 returns null on timeout — without this guard the
+    // modal would treat a dropped/unmined tx as success.
+    if (!receipt) {
+      throw new Error(
+        `Transfer not confirmed within 2 minutes — check the tx hash on a block explorer`,
+      );
+    }
+    if (receipt.status !== 1) {
+      throw new Error(`Transfer reverted on-chain (tx ${hash})`);
+    }
   }
 
   async function send() {
@@ -1162,9 +1198,12 @@ function TransferOutModal({
             Token: <span className="font-mono">{entry.pkg.tokenSymbol}</span>
           </div>
         </div>
-        {gasEmpty && !gaslessAvailable && (
+        {gasEmpty && mode === "standard" && (
           <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
-            This stealth address has no native gas. Send a small amount of ETH to {shortAddr(stealthAddr)} first, then retry.
+            This stealth address has no native gas. {gaslessAvailable
+              ? "Switch to Gasless mode above, or send a small amount of ETH to "
+              : "Send a small amount of ETH to "}
+            {shortAddr(stealthAddr)} first, then retry.
           </div>
         )}
         {gaslessAvailable && (
