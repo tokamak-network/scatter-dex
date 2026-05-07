@@ -76,6 +76,7 @@ import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { csvSafeLabel, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { csvEscape, downloadCsv } from "../../_lib/csv";
 import { parseRecipientFile } from "../../_lib/parseRecipientFile";
+import { SpreadsheetEditor } from "./_components/SpreadsheetEditor";
 import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   clearWizardDraft,
@@ -291,6 +292,20 @@ function NewPayout() {
     { kind: UploadStatusKind; message: string } | null
   >(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Recipient editor mode: textarea (CSV power-user) vs grid
+  // (HR-friendly cell-by-cell view). Persisted so the user's choice
+  // sticks across visits. Default is CSV for the existing user base;
+  // first-time HR users can flip via the tab toggle in the UI.
+  type EditMode = "csv" | "spreadsheet";
+  const [editMode, setEditMode] = useState<EditMode>(() => {
+    if (typeof window === "undefined") return "csv";
+    return (window.localStorage.getItem("pay-recipient-edit-mode") as EditMode) || "csv";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("pay-recipient-edit-mode", editMode);
+    }
+  }, [editMode]);
   const draftLabelParam = searchParams?.get("label") ?? null;
   const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
   const [draftJustSaved, setDraftJustSaved] = useState(false);
@@ -1335,26 +1350,51 @@ function NewPayout() {
                 </div>
               </div>
             )}
-            {(() => {
-              const empty = rows.length === 0;
-              const missingAmount =
-                rows.length > 0 && rows.some((r) => !r.amount.trim());
-              const needsAttention = empty || missingAmount;
-              return (
-                <textarea
-                  value={csv}
-                  readOnly={!!resumeRecord}
-                  onChange={(e) => setCsv(e.target.value)}
-                  rows={8}
-                  className={`w-full rounded-md border bg-white p-3 font-mono text-sm read-only:cursor-not-allowed read-only:opacity-70 ${
-                    needsAttention
-                      ? "border-[var(--color-warning)]"
-                      : "border-[var(--color-border-strong)]"
+            <div className="flex border-b border-[var(--color-border)] text-xs">
+              {(["csv", "spreadsheet"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setEditMode(m)}
+                  aria-pressed={editMode === m}
+                  className={`px-3 py-1.5 ${
+                    editMode === m
+                      ? "border-b-2 border-[var(--color-primary)] font-medium text-[var(--color-primary)]"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
                   }`}
-                  placeholder={`${template.identifierLabel.toLowerCase()},address,amount`}
-                />
-              );
-            })()}
+                >
+                  {m === "csv" ? "CSV" : "Spreadsheet"}
+                </button>
+              ))}
+            </div>
+            {editMode === "csv" ? (
+              (() => {
+                const empty = rows.length === 0;
+                const missingAmount =
+                  rows.length > 0 && rows.some((r) => !r.amount.trim());
+                const needsAttention = empty || missingAmount;
+                return (
+                  <textarea
+                    value={csv}
+                    readOnly={!!resumeRecord}
+                    onChange={(e) => setCsv(e.target.value)}
+                    rows={8}
+                    className={`w-full rounded-md border bg-white p-3 font-mono text-sm read-only:cursor-not-allowed read-only:opacity-70 ${
+                      needsAttention
+                        ? "border-[var(--color-warning)]"
+                        : "border-[var(--color-border-strong)]"
+                    }`}
+                    placeholder={`${template.identifierLabel.toLowerCase()},address,amount`}
+                  />
+                );
+              })()
+            ) : (
+              <SpreadsheetEditor
+                csv={csv}
+                onCsvChange={setCsv}
+                readOnly={!!resumeRecord}
+              />
+            )}
             {template.reasonLabel && (
               <Field label={template.reasonLabel}>
                 <input
