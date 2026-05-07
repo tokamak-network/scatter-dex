@@ -6,6 +6,7 @@
  *  format keeps working without a header.
  */
 import { isAddress } from "ethers";
+import { isMetaAddress } from "@zkscatter/sdk/zk";
 
 export type ParsedRecipient = {
   name: string;
@@ -76,23 +77,10 @@ function isCommentRow(row: unknown[]): boolean {
   return firstNonEmptyStartsWithHash && nonEmptyCount === 1;
 }
 
-/** Strip an EIP-5564 chain prefix (`st:eth:`, `st:base:`, etc.) so
- *  validation and downstream stealth derivation see the same canonical
- *  hex. The prefix is purely a transport convention. */
-function canonicalizeMetaAddress(s: string): string {
-  return s.replace(/^st:[a-z]+:/i, "");
-}
-
-// EIP-5564 stealth meta-address: we accept either
-//   - 33-byte compressed pubkey hex (0x + 66 chars) — common shape, single point
-//   - 65-byte uncompressed / 0x + 130 chars — fallback for tools that emit
-//     two concatenated points (spending + viewing) or a full uncompressed
-//     point. generateStealthAddress accepts both.
-// Either form may carry an `st:chain:` prefix.
-function looksLikeMetaAddress(s: string): boolean {
-  const stripped = canonicalizeMetaAddress(s);
-  return /^0x[a-fA-F0-9]{66}$/.test(stripped) || /^0x[a-fA-F0-9]{130}$/.test(stripped);
-}
+// EIP-5564 stealth meta-address validation is delegated to the SDK so
+// the parser accepts exactly what `parseMetaAddress` / `generateStealthAddress`
+// accept downstream. Canonical shape: `st:eth:0x` + 132 hex (two
+// concatenated 33-byte compressed pubkeys: spending + viewing).
 
 function looksLikeEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -172,14 +160,11 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
       skippedBadAddr++;
       continue;
     }
-    if (metaAddressRaw && !looksLikeMetaAddress(metaAddressRaw)) {
+    if (metaAddressRaw && !isMetaAddress(metaAddressRaw)) {
       skippedBadMeta++;
       continue;
     }
-    // Canonicalize so downstream `generateStealthAddress` sees the
-    // stripped hex regardless of whether the file used an `st:chain:`
-    // prefix or not.
-    const metaAddress = metaAddressRaw ? canonicalizeMetaAddress(metaAddressRaw) : "";
+    const metaAddress = metaAddressRaw;
     const amountRaw = get(cols.amount);
     const amount = amountRaw.replace(/[,_\s]/g, "");
     if (!/^\d+(\.\d+)?$/.test(amount)) {
@@ -214,8 +199,8 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
     });
   }
   if (skippedNoAddr > 0) warnings.push(`Skipped ${skippedNoAddr} row(s) with no address or meta_address.`);
-  if (skippedBadAddr > 0) warnings.push(`Skipped ${skippedBadAddr} row(s) with malformed address.`);
-  if (skippedBadMeta > 0) warnings.push(`Skipped ${skippedBadMeta} row(s) with malformed meta_address.`);
+  if (skippedBadAddr > 0) warnings.push(`Skipped ${skippedBadAddr} row(s) with malformed address (expected 0x + 40 hex with valid EIP-55 checksum).`);
+  if (skippedBadMeta > 0) warnings.push(`Skipped ${skippedBadMeta} row(s) with malformed meta_address (expected st:eth:0x + 132 hex chars).`);
   if (skippedBadAmount > 0) warnings.push(`Skipped ${skippedBadAmount} row(s) with non-numeric amount.`);
   if (skippedBadEmail > 0) warnings.push(`Skipped ${skippedBadEmail} row(s) with malformed email.`);
   if (skippedDup > 0) warnings.push(`Skipped ${skippedDup} duplicate row(s).`);

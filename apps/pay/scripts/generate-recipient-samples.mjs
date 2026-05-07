@@ -29,17 +29,23 @@ function csvCell(value) {
 
 const commentLines = [
   "# Amount is in the token you pick in the wizard (USDC / USDT / ETH / TON).",
-  "# Optional 5th column `meta_address` — when filled, the system derives a",
-  "# one-time stealth address per recipient automatically (privacy mode).",
+  "# Optional 5th column `meta_address` — when filled, the system derives",
+  "# a one-time stealth address per recipient automatically (privacy mode).",
   "# Leave it blank for a regular EOA payout. The example row below shows",
   "# the stealth case: address column empty, meta_address filled. REPLACE",
-  "# the placeholder meta_address with the recipient's actual EIP-5564 key.",
+  "# the placeholder meta_address with the recipient's actual EIP-5564 key",
+  "# (format: `st:eth:0x` + 132 hex chars).",
 ];
 const headers = ["name", "address", "amount", "email", "meta_address"];
-// Rows: 3 plain EOA + 1 stealth example. The stealth row leaves
-// `address` blank and fills `meta_address` with a clearly-placeholder
-// 33-byte compressed pubkey hex so the user sees "ah, this is what
-// stealth mode looks like" and replaces it with a real key.
+// The stealth example row uses a real, on-curve EIP-5564 meta-address
+// derived from a deterministic seed (so the sample diff stays stable
+// across regenerations). It's a valid public key — the wizard will
+// derive a working stealth address from it on upload — but no one
+// holds the matching private keys, so funds sent here are
+// unrecoverable. The "(replace meta_address)" suffix in the name
+// flags this; the comment header repeats the warning.
+const SAMPLE_PLACEHOLDER_META_ADDRESS =
+  "st:eth:0x03ebf948270e460d6dde0385f6fbc7d303d7fa6cbb9ce8a76ad23edbcd3e28c37d02afe23955ae8a9f4ef7d09a27c88f3ee7a45661d44ab526ed3d1832f35a2c95cb";
 const rows = [
   ["Alice Kim", "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", 3500, "alice@example.com", ""],
   ["Bob Lee", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", 3500, "bob@example.com", ""],
@@ -49,7 +55,7 @@ const rows = [
     "",
     5000,
     "dave@example.com",
-    "0x02deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    SAMPLE_PLACEHOLDER_META_ADDRESS,
   ],
 ];
 
