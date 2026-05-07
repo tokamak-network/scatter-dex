@@ -54,13 +54,9 @@ export interface PrivateOrderResponse {
 }
 
 /**
- * Shape returned by `GET /api/private-orders/:pubKeyAx`. Mirrors
- * zk-relayer's `PrivateOrderResponse` (see zk-relayer/src/types/order.ts:257).
- * bigint-backed numeric fields (sellToken/buyToken/amounts/maxFee/expiry/
- * nonce/pubKeyA{x,y}) are returned as decimal strings; other fields keep
- * their native API representations (`status` as an enum string,
- * `settleTxHash` as an 0x tx hash, `crossRelayer` as a boolean,
- * `submittedAt` as a number).
+ * Projection shape used by HistoryScreen to surface order status. Originally
+ * returned by `GET /api/private-orders/:pubKeyAx` (retired in tracker #29);
+ * now built locally from PendingOrdersService rows.
  */
 export interface OrderStatus {
   sellToken?: string;
@@ -250,13 +246,6 @@ export const RelayerApiService = {
     }
     if (!isAuthorizeOrderStatus(data)) return null;
     return data;
-  },
-
-  async getOrderStatus(pubKeyAx: string, relayerUrl?: string): Promise<OrderStatus[]> {
-    return relayerGetJson(
-      `${relayerUrl || this.getBaseUrl()}/api/private-orders/${pubKeyAx}`,
-      'order status',
-    );
   },
 
   /**
