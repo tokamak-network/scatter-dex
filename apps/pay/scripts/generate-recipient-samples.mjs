@@ -63,7 +63,10 @@ const csvPath = join(outDir, "recipients-sample.csv");
 writeFileSync(
   csvPath,
   [
-    ...commentLines,
+    // Quote each comment line: most contain commas inside the prose,
+    // so without escaping the parser would split them into multiple
+    // data cells and then mis-classify them as malformed data rows.
+    ...commentLines.map(csvCell),
     headers.map(csvCell).join(","),
     ...rows.map((r) => r.map(csvCell).join(",")),
   ].join("\n") + "\n",

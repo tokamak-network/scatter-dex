@@ -1,8 +1,8 @@
 # Amount is in the token you pick in the wizard (USDC / USDT / ETH / TON).
-# Optional 5th column `meta_address` — when filled, the system derives
+"# Optional 5th column `meta_address` — when filled, the system derives"
 # a one-time stealth address per recipient automatically (privacy mode).
 # Leave it blank for a regular EOA payout. The example row below shows
-# the stealth case: address column empty, meta_address filled. REPLACE
+"# the stealth case: address column empty, meta_address filled. REPLACE"
 # the placeholder meta_address with the recipient's actual EIP-5564 key
 # (format: `st:eth:0x` + 132 hex chars).
 name,address,amount,email,meta_address

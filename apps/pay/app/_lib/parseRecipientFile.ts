@@ -62,19 +62,31 @@ function cellToString(c: unknown): string {
 }
 
 function isCommentRow(row: unknown[]): boolean {
-  // Treat a row as a comment only when the first non-empty cell starts
-  // with `#` AND no other cell carries content. This protects rows
-  // whose name happens to start with `#` (e.g. `#1234,0x...,100`) —
-  // those still have data in later cells and shouldn't be dropped.
+  // Treat a row as a comment when its first non-empty cell starts with
+  // `#` AND none of the remaining cells holds something that looks like
+  // a recipient identifier (an address or a meta-address). Pure-text
+  // splatter from a comment whose prose contains commas (e.g.
+  // `# foo, bar, baz`) gets correctly classified — none of the
+  // fragments are addresses. A real data row whose name starts with
+  // `#` (e.g. `#1234,0x...,100`) still survives because the second
+  // cell IS an address.
   let firstNonEmptyStartsWithHash = false;
-  let nonEmptyCount = 0;
+  let seenFirstNonEmpty = false;
+  let hasIdentifier = false;
   for (const cell of row) {
     const s = cellToString(cell);
     if (!s) continue;
-    if (nonEmptyCount === 0) firstNonEmptyStartsWithHash = s.startsWith("#");
-    nonEmptyCount++;
+    if (!seenFirstNonEmpty) {
+      seenFirstNonEmpty = true;
+      firstNonEmptyStartsWithHash = s.startsWith("#");
+      continue;
+    }
+    if (looksLikeAddress(s) || isMetaAddress(s)) {
+      hasIdentifier = true;
+      break;
+    }
   }
-  return firstNonEmptyStartsWithHash && nonEmptyCount === 1;
+  return firstNonEmptyStartsWithHash && !hasIdentifier;
 }
 
 // EIP-5564 stealth meta-address validation is delegated to the SDK so
