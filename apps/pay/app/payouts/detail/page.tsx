@@ -338,8 +338,6 @@ function PayoutHeader({ record }: { record: RunRecord }) {
   // ISO `YYYY-MM-DD HH:mm UTC` to avoid SSR / client locale mismatch
   // (operators app uses the same pattern in `app/lib/format.ts`).
   const submitted = formatUtcStamp(record.createdAt);
-  // Resume button replaces "Run again" for partial runs — cloning
-  // would orphan the claim packages already issued on the original.
   const { partial, unsettled } = partialRunStats(record);
   return (
     <header className="flex items-end justify-between">
@@ -350,19 +348,12 @@ function PayoutHeader({ record }: { record: RunRecord }) {
         </p>
       </div>
       <div data-print="hide" className="flex gap-2">
-        {partial ? (
+        {partial && (
           <Link
             href={`/payouts/new?resume=${record.id}`}
             className="rounded-md border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-3 py-2 text-sm font-medium text-[var(--color-primary)]"
           >
             Resume settlement ({unsettled.length} pending) →
-          </Link>
-        ) : (
-          <Link
-            href={`/payouts/new?clone=${record.id}`}
-            className="rounded-md border border-[var(--color-border-strong)] px-3 py-2 text-sm"
-          >
-            Run again →
           </Link>
         )}
         <ExportMenu record={record} />
