@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {CommitmentPool} from "./CommitmentPool.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
 import {IAuthorizeVerifier} from "./IAuthorizeVerifier.sol";
@@ -27,6 +28,7 @@ import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 ///         a per-settle `claimsRoot` without revealing which settle.
 contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     using SafeERC20 for IERC20;
+    using ECDSA for bytes32;
 
     // ─── Errors ──────────────────────────────────────────────────
     error ZeroAddress();
@@ -73,6 +75,19 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     error AddressSanctioned();
     error EmptyBatch();
     error BatchTooLarge();
+    /// @dev `claimToPool` slice sum did not equal the claim's amount.
+    error SumMismatch();
+    /// @dev `claimToPool` was called with more than `MAX_CLAIM_TO_POOL_SLICES`
+    ///      slices. The cap keeps per-tx gas bounded.
+    error TooManySlices();
+    /// @dev `claimToPool` slice contained a zero amount, zero commitment,
+    ///      or amount exceeding the total claim amount.
+    error InvalidSlice();
+    /// @dev `claimToPool` stealthSignature did not recover to
+    ///      `stealthRecipient`. Indicates either a malformed signature or
+    ///      a payload (slices/nullifier/amount/token) that doesn't match
+    ///      what the stealth privkey holder authorized.
+    error InvalidStealthSignature();
 
     uint256 public constant MAX_DEX_PLATFORM_FEE_BPS = 500; // 5%
 
@@ -81,6 +96,35 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     ///         block gas limit. Frontends should chunk larger sets.
     uint256 public constant MAX_CLAIM_BATCH_SIZE = 20;
 
+    /// @notice Max slices per `claimToPool` call. Each slice runs a full
+    ///         deposit ZK verification (~300k) + transferFrom + Merkle
+    ///         insert (~50k); 8 stays comfortably under L1 block gas.
+    ///         Anonymity-set value past 4–8 hits diminishing returns
+    ///         anyway, so 8 is a comfortable ceiling.
+    uint256 public constant MAX_CLAIM_TO_POOL_SLICES = 8;
+
+    /// @notice EIP-712 typehash for `ClaimToPoolAuth`. The stealth
+    ///         privkey holder signs this struct to authorize a claim →
+    ///         pool redirect with a specific slice layout. `slicesHash`
+    ///         is `keccak256(abi.encode(slices))` so substituting any
+    ///         field of any slice invalidates the signature.
+    bytes32 private constant CLAIM_TO_POOL_AUTH_TYPEHASH =
+        keccak256(
+            "ClaimToPoolAuth(bytes32 claimNullifier,uint256 amount,address token,bytes32 slicesHash)"
+        );
+
+    /// @dev EIP-712 domain typehash. Inlined (rather than inheriting
+    ///      OZ's `EIP712` base) so we don't pay 2 storage slots for
+    ///      its name/version cache — a contract this size benefits
+    ///      more from byte-stable storage layout than from the ~10k
+    ///      gas the cache saves on `_hashTypedDataV4` once per claim.
+    bytes32 private constant _EIP712_DOMAIN_TYPEHASH =
+        keccak256(
+            "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+        );
+    bytes32 private constant _EIP712_HASHED_NAME = keccak256(bytes("PrivateSettlement"));
+    bytes32 private constant _EIP712_HASHED_VERSION = keccak256(bytes("1"));
+
     // ─── Events ──────────────────────────────────────────────────
     event PrivateClaim(
         bytes32 indexed claimsRoot,
@@ -88,6 +132,18 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         address indexed recipient,
         address token,
         uint256 amount
+    );
+    /// @notice Emitted by `claimToPool`. The per-slice commitments are not
+    ///         included here — the pool's existing `CommitmentInserted`
+    ///         events (one per slice via `pool.deposit`) already carry
+    ///         `(commitment, leafIndex, timestamp)`.
+    event PrivateClaimToPool(
+        bytes32 indexed claimsRoot,
+        bytes32 indexed nullifier,
+        address indexed stealthRecipient,
+        address token,
+        uint256 amount,
+        uint256 sliceCount
     );
     event PausedUpdated(bool paused);
     event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
@@ -1024,6 +1080,252 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         }
 
         emit PrivateClaim(claimsRoot, claimNullifier, recipient, token, amount);
+    }
+
+    // ─── Claim to Pool ───────────────────────────────────────────
+
+    /// @notice One slice of a `claimToPool` split. Each slice carries its
+    ///         own deposit ZK proof so the contract enforces the
+    ///         CommitmentPool's v2 commitment scheme:
+    ///         `commitment = Poseidon(TAG_COMMITMENT_V2, ownerSecret,
+    ///          token, amount, salt, pubKeyAx, pubKeyAy)` — same binding
+    ///         the pool's `deposit()` enforces via its deposit verifier.
+    ///         The owner pubkey can be the caller's own EdDSA key (most
+    ///         common — anonymity-set use case) or any third party's
+    ///         (forwarding via off-chain secret hand-off). The contract
+    ///         doesn't care; only the deposit proof's binding matters.
+    struct ClaimToPoolSlice {
+        uint[2] proofA;
+        uint[2][2] proofB;
+        uint[2] proofC;
+        uint256 commitment;
+        uint256 amount;
+    }
+
+    /// @notice `claimToPool` parameters bundled into a struct so the
+    ///         entry function stays under Solidity's 16-slot stack
+    ///         limit without flipping on via-ir. Mirrors the EIP-712
+    ///         payload's logical fields plus the proof's verification
+    ///         inputs.
+    struct ClaimToPoolParams {
+        uint[2] claimProofA;
+        uint[2][2] claimProofB;
+        uint[2] claimProofC;
+        bytes32 claimsRoot;
+        bytes32 claimNullifier;
+        uint256 amount;
+        address token;
+        address stealthRecipient;
+        uint256 releaseTime;
+    }
+
+    /// @notice Atomically claim a stealth payment and route the output
+    ///         into N fresh CommitmentPool deposits. Replaces the
+    ///         privacy-leaking two-step (claim → stealth EOA →
+    ///         redeposit) with a single tx that doesn't require the
+    ///         stealth EOA to hold gas.
+    ///
+    /// @dev    Cryptographic authentication:
+    ///         - **Claim ZK proof**: identical binding as
+    ///           `claimWithProof` — recipient stays as
+    ///           `stealthRecipient` (the address baked into the
+    ///           claims-tree leaf at settle-time). No circuit changes.
+    ///         - **EIP-712 signature**: `stealthRecipient` (= the
+    ///           privkey holder) signs `ClaimToPoolAuth(claimNullifier,
+    ///           amount, token, slicesHash)`. `slicesHash` covers the
+    ///           full slices array including each slice's deposit
+    ///           proof, so a mempool observer cannot substitute their
+    ///           own commitments — the signature would no longer
+    ///           recover to `stealthRecipient`.
+    ///
+    ///         Cross-flow replay safety:
+    ///         - The same `claimNullifiers` slot is consumed as
+    ///           `claimWithProof`; a stealth payment can be claimed
+    ///           via either path, but only once across both.
+    ///         - `claimWithProof` accepts the same proof but requires
+    ///           no signature, so a frontrunner copying the proof
+    ///           would only succeed at the *normal* claim flow
+    ///           (paying `stealthRecipient`'s EOA) — funds still reach
+    ///           the user, just at a different destination.
+    function claimToPool(
+        ClaimToPoolParams calldata p,
+        ClaimToPoolSlice[] calldata slices,
+        bytes calldata stealthSignature
+    ) external nonReentrant {
+        if (paused) revert ContractPaused();
+        if (p.stealthRecipient == address(0)) revert ZeroAddress();
+        _requireNotSanctioned(p.stealthRecipient);
+
+        // Validate slice payload + claim group state BEFORE any
+        // mutation. Returns slicesHash for the EIP-712 digest.
+        bytes32 slicesHash = _validateClaimToPoolPayload(
+            slices, p.claimsRoot, p.claimNullifier, p.amount, p.token, p.releaseTime
+        );
+
+        // Verify EIP-712 sig + claim ZK proof in two separate helpers
+        // to keep this function under Solidity's 16-slot stack limit
+        // without flipping on via-ir.
+        _verifyStealthSignature(
+            p.claimNullifier, p.amount, p.token, slicesHash, p.stealthRecipient, stealthSignature
+        );
+        _verifyClaimProofToPool(
+            p.claimProofA, p.claimProofB, p.claimProofC,
+            p.claimsRoot, p.claimNullifier, p.amount, p.token, p.stealthRecipient, p.releaseTime
+        );
+
+        // Mark nullifier + advance group claimed before any external
+        // call. After this point a revert rolls back both, preserving
+        // the user's option to retry.
+        claimNullifiers[p.claimNullifier] = true;
+        claimsGroups[p.claimsRoot].totalClaimed += uint128(p.amount);
+
+        // Single forceApprove for the total then loop pool.deposit
+        // per slice. pool.deposit verifies the deposit ZK proof, runs
+        // the fee-on-transfer balance-delta check, and enforces field
+        // bounds — reusing the existing pool entry's safety net. No
+        // WETH unwrap branch — the pool wants the ERC20.
+        IERC20(p.token).forceApprove(address(pool), p.amount);
+        _depositSlicesToPool(slices, p.token);
+        // Defensive reset: with the sum check above, pool.deposit
+        // consumes exactly `amount` and the allowance lands at zero
+        // already. Explicit reset is a belt-and-suspenders guard
+        // against a future bug in pool.deposit (or a fee-on-transfer
+        // edge case its balance-delta check misses) leaving residual
+        // approval that another caller could exploit.
+        IERC20(p.token).forceApprove(address(pool), 0);
+
+        emit PrivateClaimToPool(
+            p.claimsRoot, p.claimNullifier, p.stealthRecipient, p.token, p.amount, slices.length
+        );
+    }
+
+    /// @dev Per-slice loop calling `pool.deposit` for each slice.
+    ///      Extracted so the parent `claimToPool` stays under
+    ///      Solidity's 16-slot local-variable limit.
+    function _depositSlicesToPool(
+        ClaimToPoolSlice[] calldata slices,
+        address token
+    ) internal {
+        uint256 n = slices.length;
+        for (uint256 i = 0; i < n;) {
+            ClaimToPoolSlice calldata s = slices[i];
+            pool.deposit(s.proofA, s.proofB, s.proofC, s.commitment, token, s.amount);
+            unchecked { ++i; }
+        }
+    }
+
+    /// @dev Slice-payload + claim-group validation extracted from
+    ///      `claimToPool` to keep the parent under Solidity's 16-slot
+    ///      local-variable limit without flipping on via-ir.
+    ///      Reverts on any invariant violation; never mutates state.
+    ///      Returns `slicesHash` so the caller can include it in the
+    ///      EIP-712 digest without rehashing the calldata.
+    function _validateClaimToPoolPayload(
+        ClaimToPoolSlice[] calldata slices,
+        bytes32 claimsRoot,
+        bytes32 claimNullifier,
+        uint256 amount,
+        address token,
+        uint256 releaseTime
+    ) internal view returns (bytes32 slicesHash) {
+        uint256 n = slices.length;
+        if (n == 0) revert EmptyBatch();
+        if (n > MAX_CLAIM_TO_POOL_SLICES) revert TooManySlices();
+        // Bound amount upfront so the per-slice `s.amount <= amount`
+        // check below transitively bounds individual slices, making the
+        // uint256 sum accumulator overflow-safe. uint256 arithmetic for
+        // the totalLocked check so Panic(0x11) on uint128 overflow
+        // never preempts the explicit ExceedsTotalLocked error.
+        if (amount > type(uint128).max) revert AmountOverflow();
+
+        SettleVerifyLib.ClaimsGroup storage group = claimsGroups[claimsRoot];
+        if (group.token == address(0)) revert ClaimsGroupNotFound();
+        if (claimNullifiers[claimNullifier]) revert NullifierAlreadySpent();
+        if (uint256(group.totalClaimed) + amount > group.totalLocked) revert ExceedsTotalLocked();
+        if (block.timestamp < releaseTime) revert NotYetReleasable();
+        if (token != group.token) revert TokenMismatch();
+
+        // Sum + per-slice validation. `s.amount > amount` keeps each
+        // slice ≤ total, so the uint256 accumulator can't overflow.
+        uint256 sum;
+        for (uint256 i = 0; i < n;) {
+            ClaimToPoolSlice calldata s = slices[i];
+            if (s.commitment == 0 || s.amount == 0 || s.amount > amount) revert InvalidSlice();
+            sum += s.amount;
+            unchecked { ++i; }
+        }
+        if (sum != amount) revert SumMismatch();
+
+        // Hash the entire slices array — including each slice's
+        // deposit proof — so the EIP-712 signature binds every byte
+        // of the payload. `keccak256(abi.encode(slices))` is
+        // deterministic on calldata.
+        slicesHash = keccak256(abi.encode(slices));
+    }
+
+    /// @dev EIP-712 signature recover for `claimToPool`. Extracted so
+    ///      its locals don't pile onto the parent's stack. tryRecover
+    ///      normalizes every malformed-signature mode into a single
+    ///      `InvalidStealthSignature` revert for stable caller UX.
+    function _verifyStealthSignature(
+        bytes32 claimNullifier,
+        uint256 amount,
+        address token,
+        bytes32 slicesHash,
+        address expectedSigner,
+        bytes calldata signature
+    ) internal view {
+        bytes32 structHash = keccak256(abi.encode(
+            CLAIM_TO_POOL_AUTH_TYPEHASH,
+            claimNullifier,
+            amount,
+            token,
+            slicesHash
+        ));
+        bytes32 domainSeparator = keccak256(abi.encode(
+            _EIP712_DOMAIN_TYPEHASH,
+            _EIP712_HASHED_NAME,
+            _EIP712_HASHED_VERSION,
+            block.chainid,
+            address(this)
+        ));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domainSeparator, structHash));
+        (address signer, ECDSA.RecoverError err, ) = digest.tryRecover(signature);
+        if (err != ECDSA.RecoverError.NoError || signer != expectedSigner) {
+            revert InvalidStealthSignature();
+        }
+    }
+
+    /// @dev Claim ZK proof verification for `claimToPool`. Same
+    ///      circuit + same public-signal layout as `claimWithProof`;
+    ///      `recipient` stays as the stealth address (matches leaf).
+    ///      Extracted to keep the parent function's stack within the
+    ///      16-slot limit.
+    function _verifyClaimProofToPool(
+        uint[2] calldata claimProofA,
+        uint[2][2] calldata claimProofB,
+        uint[2] calldata claimProofC,
+        bytes32 claimsRoot,
+        bytes32 claimNullifier,
+        uint256 amount,
+        address token,
+        address stealthRecipient,
+        uint256 releaseTime
+    ) internal view {
+        SettleVerifyLib.ClaimsGroup storage group = claimsGroups[claimsRoot];
+        IClaimVerifier _verifier = claimVerifierByTier[group.tier];
+        if (address(_verifier) == address(0)) revert TierNotConfigured(group.tier);
+        uint[6] memory pubSignals = [
+            uint256(claimsRoot),
+            uint256(claimNullifier),
+            amount,
+            uint256(uint160(token)),
+            uint256(uint160(stealthRecipient)),
+            releaseTime
+        ];
+        if (!_verifier.verifyProof(claimProofA, claimProofB, claimProofC, pubSignals)) {
+            revert InvalidProof();
+        }
     }
 
     // ─── Internal Fee Routing ────────────────────────────────────
