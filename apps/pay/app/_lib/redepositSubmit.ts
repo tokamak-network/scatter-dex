@@ -5,6 +5,7 @@ import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import {
   callClaimToPool,
   computeClaimToPoolSlicesHash,
+  MAX_CLAIM_TO_POOL_SLICES,
   signClaimToPoolAuth,
   type ClaimToPoolCallInputs,
   type ClaimToPoolSlice,
@@ -71,8 +72,11 @@ export interface SubmitRedepositResult {
  *  Flow:
  *  1. Probe the on-chain claims group (validates `pkg`).
  *  2. Generate the claim ZK proof (recipient = stealth address).
- *  3. Generate N deposit proofs in parallel — each binds a fresh
- *     note to the user's EdDSA pubkey.
+ *  3. Generate N deposit proofs sequentially. The shared
+ *     `depositProver` is a single web-worker with a FIFO queue, so
+ *     even an `await Promise.all(...)` would still serialize on the
+ *     worker — the for loop just makes the order deterministic and
+ *     the per-slice progress copy honest.
  *  4. Sign the EIP-712 ClaimToPoolAuth with the stealth privkey,
  *     covering the slicesHash so a relayer / MEV bot cannot
  *     substitute slices.
@@ -88,13 +92,40 @@ export async function submitRedeposit(
     tokenSymbol, tokenDecimals, onPhase,
   } = opts;
 
+  // Mirror every contract-side guard up here so we never burn ZK
+  // work on a payload that's guaranteed to revert. Each proof costs
+  // ~3-5s of browser CPU, so failing fast on a bad input matters.
   if (slices.length === 0) throw new Error("redeposit: no slices");
+  if (slices.length > MAX_CLAIM_TO_POOL_SLICES) {
+    throw new Error(
+      `redeposit: ${slices.length} slices exceeds MAX_CLAIM_TO_POOL_SLICES (${MAX_CLAIM_TO_POOL_SLICES})`,
+    );
+  }
 
-  const totalRaw = slices.reduce((sum, s) => sum + s.amountRaw, 0n);
+  let totalRaw = 0n;
+  for (let i = 0; i < slices.length; i++) {
+    if (slices[i]!.amountRaw <= 0n) {
+      throw new Error(`redeposit: slice ${i} amount must be > 0`);
+    }
+    totalRaw += slices[i]!.amountRaw;
+  }
   if (totalRaw !== BigInt(pkg.amount)) {
     throw new Error(
       `redeposit: slice sum ${totalRaw} != claim amount ${pkg.amount}`,
     );
+  }
+
+  if (!signer.provider) {
+    throw new Error("redeposit: signer has no provider — connect a wallet first");
+  }
+  if (!ethers.isAddress(pkg.settlementAddress)) {
+    throw new Error(`redeposit: invalid settlement address ${pkg.settlementAddress}`);
+  }
+  if (!ethers.isAddress(pkg.recipient)) {
+    throw new Error(`redeposit: invalid stealth recipient ${pkg.recipient}`);
+  }
+  if (!ethers.isAddress(pkg.token)) {
+    throw new Error(`redeposit: invalid token ${pkg.token}`);
   }
 
   // Verify stealth privkey matches the package's recipient — catching
@@ -119,7 +150,7 @@ export async function submitRedeposit(
       totalClaimed: bigint;
       tier: bigint;
     }>,
-    signer.provider!.getNetwork(),
+    signer.provider.getNetwork(),
   ]);
   if (group.token === ethers.ZeroAddress) {
     throw new Error("On-chain claims group missing — settle tx may not have confirmed yet.");
@@ -190,20 +221,23 @@ export async function submitRedeposit(
   // === EIP-712 sign auth ===
   onPhase?.("signing");
   const inputs: ClaimToPoolCallInputs = {
-    claimsRoot: toBytes32Hex(claimMeta.claimsRoot),
-    claimNullifier: toBytes32Hex(claimMeta.nullifier),
     amount: claimAmountRaw,
     token: pkg.token,
     stealthRecipient: pkg.recipient,
     releaseTime: BigInt(pkg.releaseTime),
   };
   const slicesHash = computeClaimToPoolSlicesHash(sliceProofs);
+  const claimNullifierHex = toBytes32Hex(claimMeta.nullifier);
   const stealthSig = await signClaimToPoolAuth(
     stealthPrivkey,
     network.chainId,
     pkg.settlementAddress,
-    inputs,
-    slicesHash,
+    {
+      claimNullifier: claimNullifierHex,
+      amount: claimAmountRaw,
+      token: pkg.token,
+      slicesHash,
+    },
   );
 
   // === Submit + persist ===

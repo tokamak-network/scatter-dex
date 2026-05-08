@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { useEdDSAKey, useWallet } from "@zkscatter/sdk/react";
@@ -79,6 +79,10 @@ export function RedepositSplitModal({
   const [phase, setPhase] = useState<{ p: RedepositPhase; detail?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null); // tx hash on success
+  // Synchronous re-entry guard. `setRunning(true)` is async — a fast
+  // double-click in the same React render frame can fire `run()`
+  // twice before the disabled prop sees the first transition.
+  const inFlightRef = useRef(false);
 
   const slices = useMemo<bigint[]>(() => {
     if (mode === "preset") return equalSplit(totalRaw, presetN);
@@ -114,9 +118,12 @@ export function RedepositSplitModal({
   }
 
   async function run() {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setError(null);
     if (!signer) {
       setError("Connect a wallet first.");
+      inFlightRef.current = false;
       return;
     }
     setRunning(true);
@@ -141,6 +148,7 @@ export function RedepositSplitModal({
     } finally {
       setRunning(false);
       setPhase(null);
+      inFlightRef.current = false;
     }
   }
 

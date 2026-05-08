@@ -301,9 +301,14 @@ function InboxBody() {
             // Same bookkeeping as the regular Claim path: mark the
             // entry claimed in the inbox so the row no longer shows
             // a Claimable pill. Funds are in the pool, not at the
-            // stealth EOA, so the post-claim Transfer/Privkey UI
-            // becomes irrelevant — the user spends via authorize
-            // proofs against their vault notes.
+            // stealth EOA, so the post-claim Transfer button auto-
+            // disables (ClaimedRowActions polls the stealth balance
+            // and disables Transfer when balance == 0). The Privkey
+            // reveal stays available — the user may still want the
+            // key for record-keeping or for future packages sent to
+            // the same address. The user spends the new pool
+            // commitments via authorize proofs against their vault
+            // notes, not via inbox actions.
             await markStealthInboxEntryClaimed(activeRedeposit.entry.id, txHash);
             setActiveRedeposit(null);
             await refresh();

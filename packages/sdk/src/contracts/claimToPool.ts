@@ -15,16 +15,27 @@ export interface ClaimToPoolSlice {
   amount: bigint;
 }
 
-/** Public claim metadata mirroring the contract's `ClaimToPoolParams`
- *  struct. Callers pre-build it once per claim and reuse across the
- *  EIP-712 signing helper and the contract-call helper. */
+/** Contract-call metadata for `claimToPool`. Excludes `claimsRoot`
+ *  and `claimNullifier` — those are derived from `claimProof` at the
+ *  call site so the same scalar can never be used for signing one
+ *  message and submitting another (which would deterministically
+ *  fail with `InvalidStealthSignature`). */
 export interface ClaimToPoolCallInputs {
-  claimsRoot: string;
-  claimNullifier: string;
   amount: bigint;
   token: string;
   stealthRecipient: string;
   releaseTime: bigint;
+}
+
+/** EIP-712 message fields the stealth privkey signs. The frontend
+ *  builds this once per redeposit and feeds it both to the signing
+ *  helper and (after deriving `claimsRoot`) to the contract call —
+ *  using the *same struct* in both places makes drift impossible. */
+export interface ClaimToPoolAuthMessage {
+  claimNullifier: string;
+  amount: bigint;
+  token: string;
+  slicesHash: string;
 }
 
 /** EIP-712 domain matching the contract's manual implementation
@@ -94,8 +105,7 @@ export async function signClaimToPoolAuth(
   stealthPrivkey: string,
   chainId: bigint,
   settlementAddress: string,
-  inputs: ClaimToPoolCallInputs,
-  slicesHash: string,
+  message: ClaimToPoolAuthMessage,
 ): Promise<string> {
   const wallet = new ethers.Wallet(stealthPrivkey);
   const domain = {
@@ -103,12 +113,6 @@ export async function signClaimToPoolAuth(
     version: CLAIM_TO_POOL_DOMAIN_VERSION,
     chainId,
     verifyingContract: settlementAddress,
-  };
-  const message = {
-    claimNullifier: inputs.claimNullifier,
-    amount: inputs.amount,
-    token: inputs.token,
-    slicesHash,
   };
   return wallet.signTypedData(domain, CLAIM_TO_POOL_AUTH_TYPES, message);
 }
