@@ -1,9 +1,24 @@
 # `claimToPool` — claim a stealth payment directly into the commitment pool
 
-**Status:** design draft
+**Status:** design draft (Revision 2)
 **Author:** Zena
 **Date:** 2026-05-08
 **Related:** [`stealth-address-claim.md`](./stealth-address-claim.md), [`zk-escrow.md`](./zk-escrow.md)
+
+> ⚠️ **Revision 2 supersedes the original interface and execution flow below.**
+> The original design (sections "Proposed interface" through "Gas estimate")
+> contained two critical security flaws caught in PR review:
+>
+> 1. The claim circuit hashes `recipient` into the leaf preimage, so setting
+>    `pubSignals[4] = address(pool)` cannot verify against a leaf that was
+>    written at settle-time with the recipient's stealth address.
+> 2. With the slices unbound by the proof, a mempool observer can replace
+>    them with their own commitments before the tx lands.
+>
+> The implementation attempt (PR #630) was reverted on `06b1a9fa`. See the
+> **"Revision 2 — corrected design"** section at the end of this doc for
+> the design that supersedes the broken parts. The earlier sections remain
+> as a historical record of what was rejected and why.
 
 ## Motivation
 
@@ -395,3 +410,213 @@ escalation. Post-mainnet: revisit.
    user's address that signed the tx. Default proposal: check
    `msg.sender` (consistent with the broader contract's pattern); revisit
    if compliance requires more.
+
+---
+
+## Revision 2 — corrected design (supersedes the above)
+
+PR #629/#630 review surfaced two critical flaws in the original design that
+make it unimplementable as written. This section is the corrected design.
+Anything above this line is historical.
+
+### The two flaws
+
+**Flaw 1 — recipient is part of the leaf preimage.** The claim circuit
+(`circuits/claim_template.circom`) computes
+`leaf = Poseidon(secret, recipient, token, amount, releaseTime)`. At
+settle-time, the leaf is written with the recipient's stealth address.
+Setting `pubSignals[4] = address(pool)` in `claimToPool` cannot verify
+against that leaf — the proof would fail in production. The mock
+verifier in PR #630's test suite hid this because `MockClaimVerifier`
+doesn't validate against an actual claim leaf. **Conclusion: the proof's
+recipient public signal MUST remain the stealth address.**
+
+**Flaw 2 — slices are not bound by the proof.** The claim ZK proof
+constrains `(claimsRoot, claimNullifier, amount, token, recipient,
+releaseTime)`. It does not see the `slices[]` array. Whoever broadcasts
+the tx (the user themselves *or* any mempool observer who copies the
+calldata into a competing tx with higher fees) can substitute their own
+slice commitments. Funds end up under the front-runner's EdDSA pubkey;
+the user's nullifier is consumed; the user's funds are gone.
+
+### Corrected interface
+
+```solidity
+struct ClaimToPoolSlice {
+    uint[2] proofA;
+    uint[2][2] proofB;
+    uint[2] proofC;
+    uint256 commitment;
+    uint256 amount;
+}
+
+/// @notice Stealth claim → split pool deposit, atomically. The proof
+///         binds (..., recipient = stealthAddress) exactly like
+///         `claimWithProof`. The redirect-to-pool intent + the slice
+///         payload are authenticated by an EIP-712 signature from the
+///         stealth privkey, so a mempool observer cannot substitute
+///         their own slices and the proof cannot be replayed via
+///         `claimWithProof` to grief the user.
+function claimToPool(
+    uint[2] calldata claimProofA,
+    uint[2][2] calldata claimProofB,
+    uint[2] calldata claimProofC,
+    bytes32 claimsRoot,
+    bytes32 claimNullifier,
+    uint256 amount,
+    address token,
+    address stealthRecipient,
+    uint256 releaseTime,
+    ClaimToPoolSlice[] calldata slices,
+    bytes calldata stealthSignature
+) external nonReentrant;
+```
+
+`stealthRecipient` is the address baked into the claim leaf (typically
+the user's stealth EOA). The proof verifies against it via signal #4.
+`stealthSignature` is the user's authorization to redirect funds into
+the pool with the specified slice layout.
+
+### EIP-712 message
+
+The frontend has the stealth privkey already (the inbox flow derives it
+from the user's meta-keys + the package's ephemeral pubkey). It signs
+the following typed-data message with that key:
+
+```
+TypedData ClaimToPoolAuth {
+    bytes32 claimNullifier;
+    uint256 amount;
+    address token;
+    bytes32 slicesHash;          // keccak256(abi.encode(slices))
+    uint256 chainId;
+    address verifyingContract;   // PrivateSettlement address
+}
+```
+
+Including `slicesHash` binds the entire slice array — including each
+slice's deposit proof, commitment, and amount — to the signature. Any
+substitution invalidates the signature.
+
+`chainId + verifyingContract` are the standard EIP-712 domain separator
+fields and prevent the signature from being replayed against a different
+deployment.
+
+### Execution flow
+
+1. **Validate payload before any mutation.** All of the original Rev 1
+   guards — `slices.length` in `[1, MAX_CLAIM_TO_POOL_SLICES]`,
+   `paused == false`, `block.timestamp >= releaseTime`,
+   `token == claimsGroups[claimsRoot].token`,
+   `amount <= type(uint128).max`, nullifier unused, `claimsGroup` exists,
+   `group.totalClaimed + amount <= group.totalLocked` (in `uint256`
+   arithmetic, per Gemini medium), per-slice
+   `commitment != 0 && amount != 0 && amount <= total` — still apply.
+   Fail before any state mutation so a botched payload doesn't burn the
+   nullifier.
+
+2. **Sanctions check the stealth recipient.** Mirror `_executeClaim`'s
+   `_requireNotSanctioned(stealthRecipient)`. Checking `msg.sender` is
+   ineffective when a relayer broadcasts (Gemini medium), and the
+   stealth recipient is the right compliance target for parity with
+   `claimWithProof`.
+
+3. **Verify the claim ZK proof.** Public signals are
+   `[claimsRoot, claimNullifier, amount, token, stealthRecipient,
+   releaseTime]` — identical to `claimWithProof`. Reuses the existing
+   tier verifier registry. No circuit changes.
+
+4. **Verify the EIP-712 signature.** Recover the signer of
+   `ClaimToPoolAuth` and require it to equal `stealthRecipient`. This
+   cryptographically binds the slices to the stealth-key holder's
+   intent. Front-running fails because the bot cannot produce a
+   signature matching the user's stealth privkey. Cross-flow grief
+   (Copilot) is also prevented: a `claimWithProof(...)` call with the
+   same proof is harmless (it pays the user's stealth EOA, which is
+   the normal flow).
+
+5. **Mark nullifier and advance `group.totalClaimed`.** Identical to
+   `_executeClaim`.
+
+6. **Token movement: per-slice `pool.deposit`** with single bulk
+   approval (Copilot fee-on-transfer concern). Each slice carries its
+   own deposit ZK proof; `pool.deposit` enforces the
+   `commitment ↔ (token, amount)` binding via the deposit verifier and
+   does its own balance-delta check, so fee-on-transfer / rebasing
+   tokens revert cleanly. Implementation:
+   ```solidity
+   IERC20(token).forceApprove(address(pool), amount);
+   for each slice s:
+       pool.deposit(s.proofA, s.proofB, s.proofC, s.commitment, token, s.amount);
+   ```
+   No WETH unwrap branch (Gemini medium): the pool wants the ERC20.
+   The unwrap path in `_executeClaim` stays untouched for the EOA flow.
+
+7. **Emit `PrivateClaimToPool`** as in Rev 1. Per-slice
+   `CommitmentInserted` events come from `pool.deposit` automatically.
+
+### Why this fixes each flagged issue
+
+| Issue | Severity | Status in Rev 2 |
+|-------|----------|-----------------|
+| Slice front-running (Gemini #1) | Critical | Fixed by EIP-712 signature binding `slicesHash` |
+| Recipient ↔ leaf mismatch (Gemini #2) | High | Fixed: proof keeps `recipient = stealthAddress` |
+| WETH unwrap to pool (Gemini #3) | Medium | Fixed: `claimToPool` skips the unwrap branch |
+| Sanctions effectiveness (Gemini #4) | Medium | Fixed: check `stealthRecipient`, not `msg.sender` |
+| Cross-flow grief (Copilot #1) | High | Fixed: proof binds stealth EOA, not pool |
+| Fee-on-transfer (Copilot #2) | Medium | Fixed: per-slice `pool.deposit` runs balance-delta |
+| Commitment scheme doc (Copilot #3) | Low | Fixed: doc references v2 Poseidon scheme |
+| `insertCommitment(0)` silent loss (Copilot #4) | Low | Fixed: per-slice `commitment != 0` rejected upfront |
+| Field-modulus checks (Copilot #5) | Low | Fixed: `pool.deposit` enforces them |
+| `uint256` sum overflow (Gemini PR #630 follow-up) | High | Fixed: `s.amount <= amount` bound + `amount <= uint128.max` |
+| `Panic(0x11)` preempts custom error (Gemini PR #630) | Medium | Fixed: `uint256` arithmetic for the bounds check |
+
+### What does *not* change vs. Rev 1
+
+- **Storage layout.** Still no new state.
+- **`_executeClaim` body.** Still byte-identical; `claimWithProof` /
+  `claimWithProofBatch` paths untouched.
+- **Circuits.** Both the claim circuit and the deposit circuit are
+  reused unchanged. The only new cryptographic primitive is an EIP-712
+  signature recovery, handled with OpenZeppelin's `ECDSA.recover`.
+- **Pool contract.** No new functions. Reuses `pool.deposit`.
+- **Nullifier domain.** Still shared with `claimWithProof`.
+
+### Updated gas estimate
+
+| N | Gas | Per-slice contributors |
+|---|-----|------------------------|
+| 1 | ~800k  | claim verify 300k + nullifier 22k + sig recover 5k + approve 46k + pool.deposit (verify 300k + transfer 30k + insert 50k + balance check 15k) = ~768k |
+| 2 | ~1.20M | + 1×395k |
+| 4 | ~1.99M | recommended for anonymity-set |
+| 8 | ~3.16M | cap |
+
+Higher than Rev 1's option A estimate because we (correctly) chose
+option B with per-slice deposit proofs *and* added an EIP-712 signature
+recovery. The signature recovery is ~5k gas — negligible compared to
+the proof verifications.
+
+### Updated test plan
+
+In addition to the Rev 1 forge tests, add:
+
+- `test_claimToPool_stealthSigInvalid_reverts` — wrong signer
+- `test_claimToPool_slicesHashTampered_reverts` — same sig, different
+  slices
+- `test_claimToPool_chainIdMismatch_reverts` — replay across chains
+- `test_claimToPool_verifyingContractMismatch_reverts` — replay across
+  deployments
+- Extend `MockClaimVerifier` to enforce `pubSignals[4] = stealthRecipient`
+  (now varies per test rather than being pinned to `address(pool)`)
+
+### Frontend implications
+
+Frontend changes vs. Rev 1:
+
+- Generate the `ClaimToPoolAuth` EIP-712 message and sign it with the
+  stealth privkey (already available from the inbox derivation). One
+  extra `eth_signTypedData_v4` step in the modal flow.
+- The user's *connected MetaMask* still pays gas (broadcasts the tx)
+  but does not sign anything beyond the standard tx submission. The
+  stealth key is the cryptographic authority on the destination.
+- Vault note generation is unchanged.
