@@ -16,7 +16,6 @@ import { z } from "zod";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { createLogger } from "../core/logger.js";
 import { config } from "../config.js";
-import { parseTokenList, type TokenEntry } from "../lib/tokens.js";
 
 const log = createLogger("transfer-7702");
 
@@ -40,6 +39,38 @@ const ACCOUNT_IFACE = new ethers.Interface([
 const ERC20_TRANSFER_IFACE = new ethers.Interface([
   "function transfer(address to, uint256 amount)",
 ]);
+
+// addr:SYMBOL:decimals from TOKEN_LIST — duplicated from
+// vault.ts because that module's parser is local. A future cleanup
+// could centralize this in config.ts.
+export interface TokenEntry {
+  addr: string;
+  symbol: string;
+  decimals: number;
+}
+function parseTokenList(raw: string): TokenEntry[] {
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const parts = entry.split(":");
+      const decimals = parseInt(parts[2] ?? "18", 10);
+      // ethers.parseUnits requires a finite, non-negative decimals
+      // value. Drop entries with malformed values rather than letting
+      // them blow up during fee validation as a runtime 500 — log
+      // would be more useful but parsing happens at module load.
+      if (!Number.isFinite(decimals) || decimals < 0 || decimals > 255) {
+        return null;
+      }
+      return {
+        addr: (parts[0] ?? "").trim().toLowerCase(),
+        symbol: (parts[1] ?? "").trim(),
+        decimals,
+      };
+    })
+    .filter((e): e is TokenEntry => !!e && !!e.addr);
+}
 
 const callSchema = z.object({
   target: z.string().regex(HEX_ADDRESS_RE),
