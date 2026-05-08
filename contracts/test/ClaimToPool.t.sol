@@ -139,17 +139,28 @@ contract ClaimToPoolTest is Test {
     }
 
     function _slice(uint256 commitment, uint256 amount)
-        internal pure returns (PrivateSettlement.ClaimToPoolSlice memory)
+        internal view returns (PrivateSettlement.ClaimToPoolSlice memory)
     {
-        return PrivateSettlement.ClaimToPoolSlice({commitment: commitment, amount: amount});
+        return PrivateSettlement.ClaimToPoolSlice({
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
+            commitment: commitment,
+            amount: amount
+        });
     }
 
-    function _equalSlices(uint256 n) internal pure returns (PrivateSettlement.ClaimToPoolSlice[] memory s) {
+    function _equalSlices(uint256 n) internal view returns (PrivateSettlement.ClaimToPoolSlice[] memory s) {
         s = new PrivateSettlement.ClaimToPoolSlice[](n);
         uint256 base = CLAIM_AMOUNT / n;
         uint256 rem = CLAIM_AMOUNT - base * n;
         for (uint256 i = 0; i < n; i++) {
-            s[i] = _slice(uint256(keccak256(abi.encode("commit", i))), i == 0 ? base + rem : base);
+            // Small commitment values stay well below BN254_FIELD_MODULUS
+            // (~2^254) which the pool's deposit guard enforces. Real
+            // commitments are field elements; the mock verifier accepts
+            // any (proof, pubSignals) so the value here only needs to be
+            // unique + in-range.
+            s[i] = _slice(100 + i, i == 0 ? base + rem : base);
         }
     }
 
@@ -159,12 +170,15 @@ contract ClaimToPoolTest is Test {
 
     function test_claimToPool_singleSlice() public {
         PrivateSettlement.ClaimToPoolSlice[] memory slices = new PrivateSettlement.ClaimToPoolSlice[](1);
-        slices[0] = _slice(uint256(keccak256("commit-solo")), CLAIM_AMOUNT);
+        slices[0] = _slice(42, CLAIM_AMOUNT);
 
         uint256 settlementBefore = usdc.balanceOf(address(settlement));
         uint256 poolBefore = usdc.balanceOf(address(pool));
 
-        vm.expectEmit(true, true, true, true);
+        // Filter expectEmit to settlement's address — pool's deposit
+        // emits Approval / Transfer / CommitmentInserted along the way
+        // and would otherwise trip the strict matcher.
+        vm.expectEmit(true, true, true, true, address(settlement));
         emit PrivateSettlement.PrivateClaimToPool(
             CLAIMS_R, CLAIM_NULLIFIER, address(usdc), CLAIM_AMOUNT, 1
         );
@@ -188,6 +202,8 @@ contract ClaimToPoolTest is Test {
 
     function test_claimToPool_fourSlices_split() public {
         PrivateSettlement.ClaimToPoolSlice[] memory slices = _equalSlices(4);
+        uint256 settlementBefore = usdc.balanceOf(address(settlement));
+        uint256 poolBefore = usdc.balanceOf(address(pool));
 
         settlement.claimToPool(
             proofA, proofB, proofC,
@@ -201,11 +217,11 @@ contract ClaimToPoolTest is Test {
         uint256 sum;
         for (uint256 i = 0; i < slices.length; i++) sum += slices[i].amount;
         assertEq(sum, CLAIM_AMOUNT);
-        // Tokens fully moved to pool
-        assertEq(usdc.balanceOf(address(pool)), 1_000_000e18 + CLAIM_AMOUNT - 20_000e18); // settleAuth pulled 20k out for the maker side then claimToPool returns it
-        // Pool received 4 commitments — its merkle tree advanced by 4
-        // (no precise leafIndex assertion since other inserts could exist
-        // but the next leaf index advances monotonically).
+        // Tokens fully moved settlement → pool
+        assertEq(usdc.balanceOf(address(settlement)), settlementBefore - CLAIM_AMOUNT);
+        assertEq(usdc.balanceOf(address(pool)), poolBefore + CLAIM_AMOUNT);
+        // Nullifier consumed
+        assertTrue(settlement.claimNullifiers(CLAIM_NULLIFIER));
     }
 
     // ────────────────────────────────────────────────────────────
@@ -338,6 +354,54 @@ contract ClaimToPoolTest is Test {
         PrivateSettlement.ClaimToPoolSlice[] memory s = _equalSlices(2);
 
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
+        settlement.claimToPool(
+            proofA, proofB, proofC,
+            CLAIMS_R, CLAIM_NULLIFIER,
+            CLAIM_AMOUNT, address(usdc),
+            uint64(block.timestamp),
+            s
+        );
+        assertFalse(settlement.claimNullifiers(CLAIM_NULLIFIER));
+    }
+
+    /// @notice Per-slice deposit proof failure aborts the whole tx.
+    ///         This is the load-bearing safety against the pool-drain
+    ///         attack flagged in PR #630 review: without per-slice
+    ///         proof verification, a caller could submit a commitment
+    ///         hashed with a large amount while declaring a small
+    ///         slice and later withdraw the inflated amount.
+    function test_claimToPool_invalidDepositProof_reverts() public {
+        depositVerifier.setShouldPass(false);
+        PrivateSettlement.ClaimToPoolSlice[] memory s = _equalSlices(2);
+
+        // Pool's deposit reverts with its own InvalidProof error; the
+        // outer tx propagates the revert.
+        vm.expectRevert(CommitmentPool.InvalidProof.selector);
+        settlement.claimToPool(
+            proofA, proofB, proofC,
+            CLAIMS_R, CLAIM_NULLIFIER,
+            CLAIM_AMOUNT, address(usdc),
+            uint64(block.timestamp),
+            s
+        );
+        // Whole tx reverted — claim nullifier was set during execution
+        // but the tx state is rolled back, so the nullifier is unset
+        // again from the test's perspective. The user can retry with a
+        // valid deposit proof.
+        assertFalse(settlement.claimNullifiers(CLAIM_NULLIFIER));
+    }
+
+    /// @notice Per-slice amount upper bound (`s.amount > amount`)
+    ///         protects the uint256 sum accumulator from overflow.
+    ///         Without this guard, two ~uint256-max slices could
+    ///         "sum" to a small `amount` via wraparound and pass the
+    ///         SumMismatch check.
+    function test_claimToPool_sliceExceedsTotal_reverts() public {
+        PrivateSettlement.ClaimToPoolSlice[] memory s = new PrivateSettlement.ClaimToPoolSlice[](2);
+        s[0] = _slice(1, CLAIM_AMOUNT + 1); // single slice > total
+        s[1] = _slice(2, type(uint256).max - CLAIM_AMOUNT); // would overflow sum to wraparound
+
+        vm.expectRevert(PrivateSettlement.InvalidSlice.selector);
         settlement.claimToPool(
             proofA, proofB, proofC,
             CLAIMS_R, CLAIM_NULLIFIER,

@@ -1058,15 +1058,21 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     // ─── Claim to Pool ───────────────────────────────────────────
 
-    /// @notice One slice of a `claimToPool` split. The frontend builds
-    ///         `commitment = hash(secret, eddsaPubkey, token, amount)` for
-    ///         the *connected wallet's* spending key, persists the secret
-    ///         note locally, then includes the commitment hash + amount
-    ///         here. The contract does not verify this binding (see the
-    ///         design doc's "Malformed commitments" section): a commitment
-    ///         that doesn't match a recoverable secret only locks the
-    ///         caller's own slice — it cannot drain other users' funds.
+    /// @notice One slice of a `claimToPool` split. Each slice carries its
+    ///         own deposit ZK proof so the contract enforces
+    ///         `commitment = hash(secret, eddsaPubkey, token, amount)`. The
+    ///         proof is verified by the same circuit `pool.deposit` uses
+    ///         today — without it, an attacker could submit a commitment
+    ///         hashed with a large amount while only depositing a small
+    ///         slice, then later withdraw the inflated amount and drain
+    ///         the pool's other deposits. Per-slice verification costs
+    ///         ~300k gas but is non-negotiable for safety; settle's change
+    ///         commitments avoid this only because the settle circuit
+    ///         constrains them as public signals.
     struct ClaimToPoolSlice {
+        uint[2] proofA;
+        uint[2][2] proofB;
+        uint[2] proofC;
         uint256 commitment;
         uint256 amount;
     }
@@ -1132,16 +1138,25 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         claimNullifiers[claimNullifier] = true;
         group.totalClaimed += uint128(amount);
 
-        // Move tokens from settlement to pool in a single transfer, then
-        // append each slice as a leaf. Unlike `_executeClaim`, no WETH
-        // unwrap — the pool holds the ERC20 and the user later spends as
-        // WETH like any other deposit.
-        IERC20(token).safeTransfer(address(pool), amount);
+        // Approve the pool once for the total then call `pool.deposit`
+        // per slice. Each `pool.deposit` call independently verifies a
+        // deposit ZK proof — this is the load-bearing safety: without
+        // it, a caller could submit a commitment hashed with a large
+        // amount while declaring a small slice, drain the pool on
+        // later withdraw. Settle's change-commitment path avoids the
+        // proof only because its commitments are constrained by the
+        // settle circuit's public signals; that constraint is absent
+        // here so we pay the verification cost.
+        IERC20(token).forceApprove(address(pool), amount);
         uint256 n = slices.length;
         for (uint256 i = 0; i < n;) {
-            pool.insertCommitment(slices[i].commitment);
+            ClaimToPoolSlice calldata s = slices[i];
+            pool.deposit(s.proofA, s.proofB, s.proofC, s.commitment, token, s.amount);
             unchecked { ++i; }
         }
+        // After exactly `amount` is consumed across N deposits, the
+        // approval is back to zero. `forceApprove` already handled any
+        // residual approval from a botched prior call.
 
         emit PrivateClaimToPool(claimsRoot, claimNullifier, token, amount, n);
     }
@@ -1161,25 +1176,34 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         uint256 n = slices.length;
         if (n == 0) revert EmptyBatch();
         if (n > MAX_CLAIM_TO_POOL_SLICES) revert TooManySlices();
-
-        // Sum check via a uint256 accumulator; cannot overflow because
-        // amount is bounded to uint128 below (and n <= MAX = 8).
-        uint256 sum;
-        for (uint256 i = 0; i < n;) {
-            ClaimToPoolSlice calldata s = slices[i];
-            if (s.commitment == 0 || s.amount == 0) revert InvalidSlice();
-            sum += s.amount;
-            unchecked { ++i; }
-        }
-        if (sum != amount) revert SumMismatch();
+        // Bound amount upfront so the per-slice `s.amount <= amount`
+        // check below transitively bounds individual slices, making the
+        // uint256 sum accumulator overflow-safe. uint256 arithmetic for
+        // the totalLocked check so the panic-on-uint128-overflow
+        // (Panic 0x11) never preempts the explicit ExceedsTotalLocked
+        // error — a user passing an unreasonable amount sees the
+        // friendly revert reason.
+        if (amount > type(uint128).max) revert AmountOverflow();
 
         SettleVerifyLib.ClaimsGroup storage group = claimsGroups[claimsRoot];
         if (group.token == address(0)) revert ClaimsGroupNotFound();
         if (claimNullifiers[claimNullifier]) revert NullifierAlreadySpent();
-        if (amount > type(uint128).max) revert AmountOverflow();
-        if (group.totalClaimed + uint128(amount) > group.totalLocked) revert ExceedsTotalLocked();
+        if (uint256(group.totalClaimed) + amount > group.totalLocked) revert ExceedsTotalLocked();
         if (block.timestamp < releaseTime) revert NotYetReleasable();
         if (token != group.token) revert TokenMismatch();
+
+        // Sum check. `s.amount > amount` revert keeps each slice ≤
+        // total, which combined with `amount <= type(uint128).max`
+        // bounds each slice to uint128 — the uint256 accumulator
+        // therefore cannot overflow with N ≤ 8 slices.
+        uint256 sum;
+        for (uint256 i = 0; i < n;) {
+            ClaimToPoolSlice calldata s = slices[i];
+            if (s.commitment == 0 || s.amount == 0 || s.amount > amount) revert InvalidSlice();
+            sum += s.amount;
+            unchecked { ++i; }
+        }
+        if (sum != amount) revert SumMismatch();
     }
 
     // ─── Internal Fee Routing ────────────────────────────────────
