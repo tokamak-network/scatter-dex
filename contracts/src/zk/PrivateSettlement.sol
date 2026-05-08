@@ -1059,16 +1059,19 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     // ─── Claim to Pool ───────────────────────────────────────────
 
     /// @notice One slice of a `claimToPool` split. Each slice carries its
-    ///         own deposit ZK proof so the contract enforces
-    ///         `commitment = hash(secret, eddsaPubkey, token, amount)`. The
-    ///         proof is verified by the same circuit `pool.deposit` uses
-    ///         today — without it, an attacker could submit a commitment
-    ///         hashed with a large amount while only depositing a small
-    ///         slice, then later withdraw the inflated amount and drain
-    ///         the pool's other deposits. Per-slice verification costs
-    ///         ~300k gas but is non-negotiable for safety; settle's change
-    ///         commitments avoid this only because the settle circuit
-    ///         constrains them as public signals.
+    ///         own deposit ZK proof so the contract enforces the
+    ///         CommitmentPool's v2 commitment scheme:
+    ///         `commitment = Poseidon(TAG_COMMITMENT_V2, ownerSecret,
+    ///          token, amount, salt, pubKeyAx, pubKeyAy)` — the same
+    ///         binding the pool's `deposit()` already enforces via its
+    ///         deposit verifier. Without per-slice verification, an
+    ///         attacker could submit a commitment hashed with a large
+    ///         amount while only depositing a small slice, then later
+    ///         withdraw the inflated amount and drain the pool's other
+    ///         deposits. Per-slice verification costs ~300k gas but is
+    ///         non-negotiable for safety; settle's change commitments
+    ///         avoid this only because the settle circuit constrains
+    ///         them as public signals.
     struct ClaimToPoolSlice {
         uint[2] proofA;
         uint[2][2] proofB;

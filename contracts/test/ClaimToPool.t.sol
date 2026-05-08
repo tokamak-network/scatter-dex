@@ -391,6 +391,44 @@ contract ClaimToPoolTest is Test {
         assertFalse(settlement.claimNullifiers(CLAIM_NULLIFIER));
     }
 
+    /// @notice Confirms the claim proof's `recipient` public signal is
+    ///         bound to `address(pool)` and not, say, `msg.sender` or a
+    ///         caller-supplied address. The mock claim verifier's
+    ///         `setEnforceRecipient` mirrors the real Groth16 verifier's
+    ///         cryptographic binding (signal #4 = recipient).
+    function test_claimToPool_bindsRecipientToPool() public {
+        // Enforce that the verifier sees recipient = address(pool).
+        // Happy path passes.
+        claimVerifier.setEnforceRecipient(true, address(pool));
+        PrivateSettlement.ClaimToPoolSlice[] memory s = _equalSlices(2);
+        settlement.claimToPool(
+            proofA, proofB, proofC,
+            CLAIMS_R, CLAIM_NULLIFIER,
+            CLAIM_AMOUNT, address(usdc),
+            uint64(block.timestamp),
+            s
+        );
+        assertTrue(settlement.claimNullifiers(CLAIM_NULLIFIER));
+    }
+
+    function test_claimToPool_recipientNotPool_reverts() public {
+        // Pin the verifier to expect a *different* recipient than the
+        // pool. If claimToPool ever wired msg.sender or some other
+        // address into the proof's public signals, this assertion would
+        // pass; verifying it reverts with InvalidProof confirms the
+        // binding is correct.
+        claimVerifier.setEnforceRecipient(true, address(0xDEADBEEF));
+        PrivateSettlement.ClaimToPoolSlice[] memory s = _equalSlices(2);
+        vm.expectRevert(PrivateSettlement.InvalidProof.selector);
+        settlement.claimToPool(
+            proofA, proofB, proofC,
+            CLAIMS_R, CLAIM_NULLIFIER,
+            CLAIM_AMOUNT, address(usdc),
+            uint64(block.timestamp),
+            s
+        );
+    }
+
     /// @notice Per-slice amount upper bound (`s.amount > amount`)
     ///         protects the uint256 sum accumulator from overflow.
     ///         Without this guard, two ~uint256-max slices could
