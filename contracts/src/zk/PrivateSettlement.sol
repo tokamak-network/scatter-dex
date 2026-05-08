@@ -1186,7 +1186,13 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         // WETH unwrap branch — the pool wants the ERC20.
         IERC20(p.token).forceApprove(address(pool), p.amount);
         _depositSlicesToPool(slices, p.token);
-        // After exactly `amount` is consumed, allowance is back to 0.
+        // Defensive reset: with the sum check above, pool.deposit
+        // consumes exactly `amount` and the allowance lands at zero
+        // already. Explicit reset is a belt-and-suspenders guard
+        // against a future bug in pool.deposit (or a fee-on-transfer
+        // edge case its balance-delta check misses) leaving residual
+        // approval that another caller could exploit.
+        IERC20(p.token).forceApprove(address(pool), 0);
 
         emit PrivateClaimToPool(
             p.claimsRoot, p.claimNullifier, p.stealthRecipient, p.token, p.amount, slices.length
