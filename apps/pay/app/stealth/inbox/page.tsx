@@ -32,6 +32,7 @@ import {
 import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
 import { ERC20_ABI, type NetworkConfig } from "@zkscatter/sdk";
+import { RedepositSplitModal } from "./_RedepositSplitModal";
 
 /** True when `token` is the chain's WETH — claims auto-unwrap to
  *  native ETH on payout, so native send-tx and `getBalance` are the
@@ -840,6 +841,12 @@ function ClaimedRowActions({
       : undefined;
 
   const [showKey, setShowKey] = useState(false);
+  const [showRedeposit, setShowRedeposit] = useState(false);
+  const redepositTitle = !privkey
+    ? "Cannot derive stealth privkey for this entry"
+    : !hasBalance
+      ? `Stealth address has no ${entry.pkg.tokenSymbol} to redeposit`
+      : "Split the received amount into multiple deposit commitments for privacy";
   return (
     <div className="flex items-center justify-end gap-2">
       {entry.txHash && <ClaimTxLink txHash={entry.txHash} />}
@@ -851,6 +858,15 @@ function ClaimedRowActions({
         className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white disabled:opacity-40"
       >
         Transfer
+      </button>
+      <button
+        type="button"
+        onClick={() => setShowRedeposit(true)}
+        disabled={transferDisabled}
+        title={redepositTitle}
+        className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-bg)] disabled:opacity-40"
+      >
+        Redeposit
       </button>
       <button
         type="button"
@@ -872,6 +888,14 @@ function ClaimedRowActions({
           entry={entry}
           privkey={privkey}
           onClose={() => setOpen(false)}
+        />
+      )}
+      {showRedeposit && privkey && balance !== null && balance > 0n && (
+        <RedepositSplitModal
+          entry={entry}
+          privkey={privkey}
+          balanceRaw={balance}
+          onClose={() => setShowRedeposit(false)}
         />
       )}
       {showKey && privkey && (
