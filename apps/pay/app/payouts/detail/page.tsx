@@ -13,11 +13,16 @@ import {
   useRef,
   useState,
 } from "react";
+import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
-import { shortAddr, useMounted } from "@zkscatter/sdk/react";
+import { shortAddr, useMetaAddress, useMounted, useWallet } from "@zkscatter/sdk/react";
+import { decodeClaimPackage } from "@zkscatter/sdk/notes";
+import { deriveStealthForPackage } from "../../_lib/stealthDerive";
+import { submitClaim } from "../../_lib/claimSubmit";
 import {
   indexLatestNotifications,
   saveRun,
+  type ClaimedRecipientInput,
   type NotificationChannel,
   type NotificationLog,
   type RecipientRow,
@@ -163,6 +168,7 @@ function PayoutDetailInner() {
         setOpenMenu={setOpenMenu}
         closeMenu={closeMenu}
         markSent={run.markSent}
+        markClaimed={run.markClaimed}
         refresh={run.refresh}
         error={run.error}
       />
@@ -178,6 +184,7 @@ function PayoutBody({
   setOpenMenu,
   closeMenu,
   markSent,
+  markClaimed,
   refresh,
   error,
 }: {
@@ -188,10 +195,32 @@ function PayoutBody({
   setOpenMenu: Dispatch<SetStateAction<number | null>>;
   closeMenu: () => void;
   markSent: (input: { rowIndex: number; channel: NotificationChannel; toAddress: string }) => Promise<boolean>;
+  markClaimed: (entries: ClaimedRecipientInput[]) => Promise<number>;
   refresh: () => Promise<void>;
   error: string | null;
 }) {
   const logsByRow = useMemo(() => indexLatestNotifications(record), [record]);
+
+  // Hooks needed for the inline gasless claim path. Read-provider is
+  // always available once the WalletProvider mounts; meta keys come
+  // from the user's stealth wallet (only valid when the recipient
+  // row was derived from this wallet's meta-address).
+  const { keys, ready: keysReady } = useMetaAddress();
+  const { readProvider } = useWallet();
+  const [claimingRow, setClaimingRow] = useState<number | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  /** Current step of the in-flight claim (validating → proving →
+   *  submitting). Drives the progress banner so the operator knows
+   *  the modal isn't frozen mid-prove (proof generation can run
+   *  10–20s depending on tier). */
+  const [claimPhase, setClaimPhase] = useState<
+    "validating" | "proving" | "submitting" | null
+  >(null);
+  /** Tx hash of the most recently completed claim. Surfaced as a
+   *  brief success banner so the operator gets explicit confirmation
+   *  even before the claim reconciler flips the row's badge. Cleared
+   *  on the next claim or after a few seconds. */
+  const [lastClaimTx, setLastClaimTx] = useState<{ rowIndex: number; txHash: string } | null>(null);
 
   const onMarkSentRow = useCallback(
     async (row: RecipientRow) => {
@@ -207,12 +236,116 @@ function PayoutBody({
     [markSent, setBusy, setOpenMenu],
   );
 
+  /** Inline gasless claim. Decodes the row's encoded `ClaimPackage`,
+   *  derives the stealth privkey from the operator's meta-keys (only
+   *  succeeds when the recipient address came from this wallet's
+   *  meta-address — i.e. operator's own `my-stealth-*` rows), and
+   *  pushes the claim through the run's bundled relayer URL. The
+   *  claim reconciler effect picks the claimed-flag up via
+   *  `markClaimed` once the tx mines, so the row badge flips
+   *  Available → Claimed without an extra refresh. */
+  const onClaimRow = useCallback(
+    async (row: RecipientRow) => {
+      setClaimError(null);
+      if (!row.claimPackage) {
+        setClaimError("This row predates the claim flow — no encoded package to claim.");
+        return;
+      }
+      if (!keysReady) {
+        setClaimError("Stealth wallet keys aren't ready yet. Try again in a moment.");
+        return;
+      }
+      if (!readProvider) {
+        setClaimError("Read provider not ready — connect to a network first.");
+        return;
+      }
+      setClaimingRow(row.rowIndex);
+      setClaimPhase("validating");
+      setLastClaimTx(null);
+      setOpenMenu(null);
+      try {
+        const pkg = decodeClaimPackage(row.claimPackage);
+        // Defense-in-depth: refuse if the encoded package's recipient
+        // doesn't match the row's recorded address. A drift here would
+        // mean a corrupted run record could redirect an operator's
+        // gasless claim to an address they didn't intend.
+        if (pkg.recipient.toLowerCase() !== row.address.toLowerCase()) {
+          throw new Error(
+            `Encoded claim package addresses ${pkg.recipient}, but the row records ${row.address}. Refusing to submit — the run record may be corrupted.`,
+          );
+        }
+        if (!pkg.relayerUrl) {
+          throw new Error(
+            "This run wasn't bundled with a relayer URL, so the operator can't claim on behalf — the recipient must self-pay from their own wallet.",
+          );
+        }
+        // Stealth rows: derive the recipient's spending key from the
+        // operator's meta keys so we can pass a signer for the
+        // self-pay fallback (relayer rejection / 5xx). Non-stealth
+        // rows skip this — the gasless path doesn't need a signer.
+        let signer: ethers.Wallet | undefined;
+        if (pkg.ephemeralPubKey && keysReady) {
+          const derived = deriveStealthForPackage(pkg, keys);
+          if (derived?.matches) {
+            signer = new ethers.Wallet(derived.privateKey, readProvider);
+          }
+        }
+        const { txHash } = await submitClaim({
+          pkg,
+          readProvider,
+          signer,
+          onPhase: setClaimPhase,
+        });
+        setLastClaimTx({ rowIndex: row.rowIndex, txHash });
+        // submitClaim returns when the relayer accepts the tx, but the
+        // claim reconciler only flips the row to Claimed once the
+        // PrivateClaim event lands and is matched on-chain. Wait for
+        // the receipt (so the event has been emitted) then poll the
+        // run record until the badge updates — without this the
+        // operator sees a stuck "Available" badge for several seconds
+        // after a successful submit.
+        // Wait for the tx to mine, then stamp the row claimed
+        // locally so the badge flips immediately. ClaimReconciler
+        // will idempotently catch up if its event subscription
+        // delivers the same `PrivateClaim` later.
+        try {
+          await readProvider.waitForTransaction(txHash);
+        } catch {
+          // RPC drop / cancellation — fall through to markClaimed
+          // anyway; the relayer accepted the tx so the on-chain
+          // state will reflect it shortly.
+        }
+        try {
+          await markClaimed([
+            { rowIndex: row.rowIndex, claimedAt: Math.floor(Date.now() / 1000) },
+          ]);
+        } catch (err) {
+          console.warn("[detail] markClaimed after gasless claim failed:", err);
+          await refresh();
+        }
+      } catch (e) {
+        setClaimError(e instanceof Error ? e.message : "Claim failed");
+      } finally {
+        setClaimingRow(null);
+        setClaimPhase(null);
+      }
+    },
+    [keys, keysReady, readProvider, refresh, markClaimed, setOpenMenu],
+  );
+
   return (
     <div className="space-y-8">
       <PayoutHeader record={record} />
       <SummaryStats record={record} logsByRow={logsByRow} />
       <MemoSection record={record} refresh={refresh} />
       <NotificationsBar record={record} logsByRow={logsByRow} />
+      <ClaimProgressBanner
+        record={record}
+        claimingRow={claimingRow}
+        claimPhase={claimPhase}
+        lastClaimTx={lastClaimTx}
+        onDismissSuccess={() => setLastClaimTx(null)}
+      />
       <RecipientTable
         record={record}
         logsByRow={logsByRow}
@@ -221,7 +354,20 @@ function PayoutBody({
         closeMenu={closeMenu}
         busy={busy}
         onMarkSent={onMarkSentRow}
+        onClaim={onClaimRow}
+        claimingRow={claimingRow}
       />
+      {claimError && (
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
+          {claimError}
+          <button
+            onClick={() => setClaimError(null)}
+            className="ml-3 rounded border border-[var(--color-warning)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-warning)] hover:text-white"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {error && (
         <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
           {error}
@@ -621,6 +767,8 @@ function RecipientTable({
   closeMenu,
   busy,
   onMarkSent,
+  onClaim,
+  claimingRow,
 }: {
   record: RunRecord;
   logsByRow: Map<number, NotificationLog>;
@@ -629,6 +777,14 @@ function RecipientTable({
   closeMenu: () => void;
   busy: BusyKind;
   onMarkSent: (row: RecipientRow) => Promise<void>;
+  /** Run the gasless claim for `row` against this run's bundled
+   *  relayer. Resolves once the relayer's submit returns or throws —
+   *  the parent's claim reconciler effect handles the badge flip. */
+  onClaim: (row: RecipientRow) => Promise<void>;
+  /** `rowIndex` of the row whose claim is currently in flight, or
+   *  `null` when nothing is claiming. Drives the per-row "Claiming…"
+   *  label and disables the menu while the proof is generating. */
+  claimingRow: number | null;
 }) {
   return (
     <section>
@@ -651,7 +807,9 @@ function RecipientTable({
               return (
                 <tr key={r.rowIndex} className="border-t border-[var(--color-border)]">
                   <td className="px-5 py-3">{r.name}</td>
-                  <td className="px-5 py-3 font-mono text-xs">{shortAddr(r.address)}</td>
+                  <td className="px-5 py-3 font-mono text-xs">
+                    <AddressCell address={r.address} />
+                  </td>
                   <td className="px-5 py-3 text-right font-mono">
                     {r.amount} {record.tokenSymbol}
                   </td>
@@ -675,6 +833,10 @@ function RecipientTable({
                       alreadySent={!!log?.sentAt}
                       busy={busy !== null}
                       payslipHref={`/payouts/payslip?id=${record.id}&row=${r.rowIndex}`}
+                      onClaim={() => onClaim(r)}
+                      isClaiming={claimingRow === r.rowIndex}
+                      anyClaiming={claimingRow !== null}
+                      alreadyClaimed={r.status === "claimed"}
                     />
                   </td>
                 </tr>
@@ -779,6 +941,216 @@ function NotificationStatus({
   return <>{stage.label}</>;
 }
 
+/** Progress banner for the inline gasless claim. Replaces the silent
+ *  "menu auto-closes and nothing happens for 15s" experience with a
+ *  step-by-step indicator (validating → proving → submitting) plus a
+ *  green success row that names the tx hash and links to the explorer
+ *  when one is configured. Shown above the recipients table so the
+ *  operator's eye lands on it without scrolling. */
+function ClaimProgressBanner({
+  record,
+  claimingRow,
+  claimPhase,
+  lastClaimTx,
+  onDismissSuccess,
+}: {
+  record: RunRecord;
+  claimingRow: number | null;
+  claimPhase: "validating" | "proving" | "submitting" | null;
+  lastClaimTx: { rowIndex: number; txHash: string } | null;
+  onDismissSuccess: () => void;
+}) {
+  const explorerBase = getNetworkConfig().explorerBase;
+  if (claimingRow !== null && claimPhase) {
+    const row = record.recipients.find((r) => r.rowIndex === claimingRow);
+    const label = row?.name ?? `row ${claimingRow + 1}`;
+    const amountText = row
+      ? `${row.amount} ${record.tokenSymbol}`
+      : "";
+    const addr = row ? shortAddr(row.address) : "";
+    const phases: Array<{
+      key: "validating" | "proving" | "submitting";
+      label: string;
+      detail: string;
+    }> = [
+      {
+        key: "validating",
+        label: "Validating",
+        detail: "Probing the on-chain claims group + warming the prover.",
+      },
+      {
+        key: "proving",
+        label: "Generating proof",
+        detail: "ZK proof of ownership — runs locally, ~10–20s.",
+      },
+      {
+        key: "submitting",
+        label: "Submitting",
+        detail: "Sending proof to the run's relayer for gasless inclusion.",
+      },
+    ];
+    const cur = phases.findIndex((p) => p.key === claimPhase);
+    return (
+      <div className="space-y-2 rounded-xl border border-[var(--color-primary)] bg-[var(--color-primary-soft)] p-3 text-xs">
+        <div className="flex items-center gap-2 text-[var(--color-primary)]">
+          <span
+            className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent"
+            aria-hidden
+          />
+          <span className="font-medium">
+            Claiming {amountText} for {label}{addr ? ` (${addr})` : ""}: {phases[cur]?.label ?? claimPhase}…
+          </span>
+        </div>
+        <p className="text-[var(--color-text-muted)]">{phases[cur]?.detail}</p>
+        <ol className="space-y-0.5 pl-1">
+          {phases.map((p, i) => {
+            const state = i < cur ? "done" : i === cur ? "current" : "pending";
+            return (
+              <li
+                key={p.key}
+                className={`flex items-center gap-2 ${
+                  state === "done"
+                    ? "text-[var(--color-text-muted)]"
+                    : state === "current"
+                      ? "text-[var(--color-primary)]"
+                      : "text-[var(--color-text-subtle)]"
+                }`}
+              >
+                <span aria-hidden className="w-3 text-center">
+                  {state === "done" ? "✓" : state === "current" ? "●" : "○"}
+                </span>
+                <span>{p.label}</span>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    );
+  }
+  if (lastClaimTx) {
+    const row = record.recipients.find((r) => r.rowIndex === lastClaimTx.rowIndex);
+    const label = row?.name ?? `row ${lastClaimTx.rowIndex + 1}`;
+    const amountText = row ? `${row.amount} ${record.tokenSymbol}` : "";
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-xs text-[var(--color-success)]">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span>
+            ✓ Claimed {amountText} for <strong>{label}</strong>. Tx
+          </span>
+          <TxHashChip txHash={lastClaimTx.txHash} explorerBase={explorerBase} />
+        </div>
+        <button
+          onClick={onDismissSuccess}
+          className="rounded border border-[var(--color-success)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-success)] hover:text-white"
+        >
+          Dismiss
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
+/** Compact tx-hash widget used by status banners: the truncated hash
+ *  + a copy button + an optional explorer link. Keeping the three
+ *  controls visually adjacent (and the hash itself a plain span, not
+ *  a link) avoids the "I just wanted to copy but it opened a tab"
+ *  collision the previous single-element design had. */
+function TxHashChip({
+  txHash,
+  explorerBase,
+}: {
+  txHash: string;
+  explorerBase?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const short = `${txHash.slice(0, 10)}…${txHash.slice(-6)}`;
+  return (
+    <span className="inline-flex items-center gap-1">
+      <span title={txHash} className="font-mono">
+        {short}
+      </span>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard
+            .writeText(txHash)
+            .then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            })
+            .catch((err) => {
+              console.warn("[detail] clipboard write failed", err);
+            });
+        }}
+        title="Copy tx hash"
+        aria-label="Copy tx hash"
+        className="rounded border border-current px-1 py-0.5 text-[10px] hover:bg-[var(--color-surface)]"
+      >
+        {copied ? "✓" : "Copy"}
+      </button>
+      {explorerBase && (
+        <a
+          href={`${explorerBase.replace(/\/$/, "")}/tx/${txHash}`}
+          target="_blank"
+          rel="noreferrer noopener"
+          title="Open in explorer"
+          aria-label="Open in explorer"
+          className="rounded border border-current px-1 py-0.5 text-[10px] hover:bg-[var(--color-surface)]"
+        >
+          ↗
+        </a>
+      )}
+    </span>
+  );
+}
+
+/** Inline cell: short address + copy button + optional explorer link.
+ *  Operators routinely need to spot-check a stealth address against
+ *  their wallet/explorer; making the truncated text actionable saves
+ *  the "select-then-Cmd-C" dance. Copy uses the clipboard API and a
+ *  brief check-mark so the click registers visibly. */
+function AddressCell({ address }: { address: string }) {
+  const explorerBase = getNetworkConfig().explorerBase;
+  const [copied, setCopied] = useState(false);
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span title={address}>{shortAddr(address)}</span>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard
+            .writeText(address)
+            .then(() => {
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            })
+            .catch((err) => {
+              console.warn("[detail] clipboard write failed", err);
+            });
+        }}
+        title="Copy address"
+        aria-label="Copy address"
+        className="rounded border border-[var(--color-border-strong)] px-1 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
+      >
+        {copied ? "✓" : "Copy"}
+      </button>
+      {explorerBase && (
+        <a
+          href={`${explorerBase.replace(/\/$/, "")}/address/${address}`}
+          target="_blank"
+          rel="noreferrer noopener"
+          title="Open in explorer"
+          aria-label="Open in explorer"
+          className="rounded border border-[var(--color-border-strong)] px-1 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
+        >
+          ↗
+        </a>
+      )}
+    </span>
+  );
+}
+
 interface RowMenuProps {
   open: boolean;
   onOpen: () => void;
@@ -790,6 +1162,19 @@ interface RowMenuProps {
   alreadySent: boolean;
   busy: boolean;
   payslipHref: string;
+  /** Trigger the inline gasless claim. Only succeeds when the
+   *  recipient's stealth address was derived from the connected
+   *  wallet's meta-address — the parent surfaces a warning otherwise. */
+  onClaim: () => void;
+  /** True for the row currently mid-claim. Disables the button +
+   *  swaps the label to "Claiming…". */
+  isClaiming: boolean;
+  /** True when *any* row is mid-claim. Other rows lock to keep the
+   *  proving worker single-tasked. */
+  anyClaiming: boolean;
+  /** Hides the Claim-now affordance once the claim has landed so
+   *  operators don't double-submit a finalized row. */
+  alreadyClaimed: boolean;
 }
 
 function RowMenu({
@@ -803,6 +1188,10 @@ function RowMenu({
   alreadySent,
   busy,
   payslipHref,
+  onClaim,
+  isClaiming,
+  anyClaiming,
+  alreadyClaimed,
 }: RowMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   useOutsideClick({ enabled: open, ref, onClose });
@@ -836,6 +1225,16 @@ function RowMenu({
           >
             {alreadySent ? "Resend via Gmail" : "Send via Gmail"}
           </button>
+          {hasClaimPackage && !alreadyClaimed && (
+            <button
+              onClick={onClaim}
+              disabled={anyClaiming}
+              title="Generate the claim proof and submit through the run's relayer (gasless). Works for any recipient — the proof binds to the package's claim secret, not the recipient's privkey."
+              className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+            >
+              {isClaiming ? "Claiming…" : "Claim now (gasless)"}
+            </button>
+          )}
           <Link
             href={payslipHref}
             target="_blank"
