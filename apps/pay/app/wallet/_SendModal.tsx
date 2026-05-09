@@ -188,14 +188,30 @@ export function SendModal({
             });
             return;
           }
+          // Validate the fee at candidate-build time — if the
+          // relayer publishes a malformed decimal string, surface
+          // "invalid fee" as the picker reason and refuse the
+          // option, instead of letting it stay selectable while
+          // \`feeOk\` silently flips to false at parse time.
+          const rawFee = info.gasless_fees?.[row.token.symbol] ?? null;
+          let validatedFeeStr: string | null = rawFee;
+          let parseError: string | null = null;
+          if (rawFee !== null) {
+            try {
+              ethers.parseUnits(rawFee, row.token.decimals);
+            } catch {
+              validatedFeeStr = null;
+              parseError = "invalid fee published";
+            }
+          }
           apply({
             url,
             // Prefer the registry-recorded name when registry-resolved
             // so a hostile relayer can't social-engineer via display.
             name: registryAddr ? registryName : info.name ?? registryName,
-            feeStr: info.gasless_fees?.[row.token.symbol] ?? null,
+            feeStr: validatedFeeStr,
             feeCollector: info.address ?? null,
-            infoError: null,
+            infoError: parseError,
           });
         } catch (e) {
           if (ac.signal.aborted) return;
@@ -696,7 +712,14 @@ function sendButtonLabel(phase: SendPhase, mode: Mode): string {
 function relayerOptionFeeLabel(c: GaslessCandidate | undefined, symbol: string): string {
   if (!c) return "loading…";
   if (c.feeStr) return `${c.feeStr} ${formatTokenLabel(symbol)} fee`;
-  if (c.infoError) return "unreachable";
+  if (c.infoError) {
+    // Surface a known short reason verbatim; collapse network errors
+    // ("HTTP 500", "Failed to fetch") to a generic "unreachable" so
+    // the dropdown stays scannable.
+    const known = ["invalid", "fee-collector"];
+    if (known.some((p) => c.infoError!.startsWith(p))) return c.infoError;
+    return "unreachable";
+  }
   return "no fee published";
 }
 
