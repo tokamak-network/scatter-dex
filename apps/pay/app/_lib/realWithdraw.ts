@@ -3,12 +3,8 @@
 import { ethers } from "ethers";
 import {
   COMMITMENT_POOL_ABI,
-  TAG_COMMITMENT_V2,
-  computeCommitment,
   computeNullifier,
-  computeTokenHash,
-  poseidonHash,
-  randomFieldElement,
+  generateWithdrawProof,
   type CommitmentNote,
 } from "@zkscatter/sdk";
 import type { CommitmentTreeState, VaultNote } from "@zkscatter/sdk/react";
@@ -82,19 +78,15 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     throw new Error("Cannot withdraw against a demo / unconnected pool.");
   }
 
-  // Run the three independent precomputations in parallel — each
-  // dynamic-imports `circomlibjs` and runs poseidon, so a sequential
-  // chain wastes ~1–2 s on cold cache. Merkle proof shares the same
-  // window. We pass `getMerkleProofWithFallback` a thrower as the
-  // fallback so a missing live commitment surfaces a clear error
-  // instead of silently producing an empty-tree proof.
-  const tokenAddrHex = "0x" + note.note.token.toString(16).padStart(40, "0");
+  // Resolve merkle path + pre-compute the spend nullifier in
+  // parallel. Both are circomlibjs-backed and dynamic-import
+  // poseidon on cold cache — sequential chains wasted ~1 s on the
+  // first withdraw of a session.
   const fallbackThrow = async (): Promise<never> => {
     throw new CommitmentProofUnavailableError(note.commitment);
   };
-  const [{ merkleProof }, tokenHash, nullifierHash] = await Promise.all([
+  const [{ merkleProof }, nullifierHash] = await Promise.all([
     getMerkleProofWithFallback(tree, note.commitment, fallbackThrow),
-    computeTokenHash(tokenAddrHex),
     computeNullifier(note.note),
   ]);
 
@@ -124,87 +116,38 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     }
   }
 
-  // Change-UTXO commitment: zero when the withdraw is full, else a
-  // fresh `Poseidon(TAG_V2, ownerSecret, token, change, newSalt,
-  // pubKeyAx, pubKeyAy)` so the residual stays spendable. Mirrors
-  // the on-chain circuit's reconstruction byte-for-byte.
-  const changeAmount = note.note.amount - amountRaw;
-  let newCommitment = 0n;
-  let newSalt = 0n;
-  let changeNote: CommitmentNote | null = null;
-  if (changeAmount > 0n) {
-    newSalt = randomFieldElement();
-    changeNote = {
-      ownerSecret: note.note.ownerSecret,
-      token: note.note.token,
-      amount: changeAmount,
-      salt: newSalt,
-      pubKeyAx: note.note.pubKeyAx,
-      pubKeyAy: note.note.pubKeyAy,
-    };
-    newCommitment = await poseidonHash([
-      TAG_COMMITMENT_V2,
-      changeNote.ownerSecret,
-      changeNote.token,
-      changeNote.amount,
-      changeNote.salt,
-      changeNote.pubKeyAx,
-      changeNote.pubKeyAy,
-    ]);
-  }
-
-  const relayer = ethers.ZeroAddress;
-  const circuitInput = {
-    // Public
-    root: merkleProof.root.toString(),
-    nullifierHash: nullifierHash.toString(),
-    newCommitment: newCommitment.toString(),
-    tokenHash: tokenHash.toString(),
-    withdrawAmount: amountRaw.toString(),
-    recipient: BigInt(recipient).toString(),
-    relayer: BigInt(relayer).toString(),
-    // Private
-    ownerSecret: note.note.ownerSecret.toString(),
-    token: note.note.token.toString(),
-    amount: note.note.amount.toString(),
-    salt: note.note.salt.toString(),
-    newSalt: newSalt.toString(),
-    pathElements: merkleProof.pathElements.map((e) => e.toString()),
-    pathIndices: merkleProof.pathIndices.map((i) => i.toString()),
-    pubKeyAx: note.note.pubKeyAx.toString(),
-    pubKeyAy: note.note.pubKeyAy.toString(),
-  };
-
   onPhase?.("proving");
-  const snarkjs = await import("snarkjs");
-  const { proof, publicSignals: _publicSignals } = await snarkjs.groth16.fullProve(
-    circuitInput,
-    "/zk/withdraw.wasm",
-    "/zk/withdraw_final.zkey",
+  const tokenAddrHex = "0x" + note.note.token.toString(16).padStart(40, "0");
+  const proofResult = await generateWithdrawProof(
+    {
+      note: note.note,
+      merkleProof,
+      withdrawAmount: amountRaw,
+      recipient,
+    },
+    {
+      // snarkjs accepts URLs; the assets are mirrored into
+      // apps/pay/public/zk by sync-zk-assets.mjs's REQUIRED list.
+      wasm: "/zk/withdraw.wasm",
+      zkey: "/zk/withdraw_final.zkey",
+    },
   );
-
-  // Solidity verifier expects each `b` row in reversed pair order —
-  // mirrors the convention used by `frontend/lib/zk/prover.ts`.
-  const proofA: [string, string] = [proof.pi_a[0], proof.pi_a[1]];
-  const proofB: [[string, string], [string, string]] = [
-    [proof.pi_b[0][1], proof.pi_b[0][0]],
-    [proof.pi_b[1][1], proof.pi_b[1][0]],
-  ];
-  const proofC: [string, string] = [proof.pi_c[0], proof.pi_c[1]];
+  const changeNote = proofResult.changeNote;
 
   onPhase?.("submitting");
   const pool = new ethers.Contract(commitmentPoolAddress, COMMITMENT_POOL_ABI, signer);
+  const { proof } = proofResult;
   const tx = (await pool.withdraw(
-    proofA,
-    proofB,
-    proofC,
-    merkleProof.root,
-    nullifierHash,
-    newCommitment,
+    proof.a,
+    proof.b,
+    proof.c,
+    proofResult.root,
+    proofResult.nullifierHash,
+    proofResult.newCommitment,
     tokenAddrHex,
     amountRaw,
     recipient,
-    relayer,
+    ethers.ZeroAddress,
   )) as ethers.ContractTransactionResponse;
 
   onPhase?.("confirming");
@@ -213,16 +156,18 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     throw new Error(`pool.withdraw tx failed: ${tx.hash}`);
   }
 
-  let change: SubmitWithdrawResult["change"] = null;
-  if (changeNote) {
-    const commitment = await computeCommitment(changeNote);
-    if (commitment !== newCommitment) {
-      throw new Error(
-        "Recomputed change commitment doesn't match the proof's newCommitment — vault would store an unspendable note.",
-      );
-    }
-    change = { note: changeNote, commitment, amount: changeAmount };
-  }
+  // generateWithdrawProof already round-trip-verified the change
+  // commitment against `computeCommitment` before producing the
+  // proof. We trust that result here rather than re-doing the
+  // poseidon work — a mismatch at this point would mean the SDK
+  // produced an inconsistent result we'd be storing anyway.
+  const change: SubmitWithdrawResult["change"] = changeNote
+    ? {
+        note: changeNote,
+        commitment: proofResult.newCommitment,
+        amount: note.note.amount - amountRaw,
+      }
+    : null;
 
   return { txHash: tx.hash, change };
 }
