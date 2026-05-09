@@ -217,7 +217,21 @@ export function SourceNotesPanel({
           ✓ Deposit confirmed — pick the newly-spendable note(s) below to fund this run.
         </div>
       )}
-      {tokenNotes.length > 0 && (
+      {tokenNotes.length > 0 && (() => {
+        // Coverage gate is row-invariant; resolve the formatted
+        // tooltip + bigint comparison once instead of in every map
+        // iteration.
+        const coverageActive =
+          singleSelect &&
+          requiredCoverageRaw !== undefined &&
+          requiredCoverageRaw > 0n;
+        const coverageLabel = coverageActive
+          ? `${ethers.formatUnits(requiredCoverageRaw, decimals)} ${token}`
+          : "";
+        const insufficientTitle = coverageActive
+          ? `Note is smaller than the run total — single-batch settle needs one commitment that covers ${coverageLabel}.`
+          : undefined;
+        return (
         <>
           <div className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
             Your deposits ({tokenNotes.length}) —{" "}
@@ -236,21 +250,19 @@ export function SourceNotesPanel({
               {tokenNotes.map((n) => {
                 const ready = n.leafIndex >= 0;
                 const checked = selectedIds.has(n.id);
-                // In single-select mode, a note is only spendable
-                // when it covers the full run on its own — single-
-                // batch settle consumes one commitment. Block the
-                // input + tooltip the reason so a row that says
-                // "Ready" but can't fund the run isn't a UX trap.
+                // Single-select mode requires one commitment that
+                // covers the run by itself; smaller rows render
+                // disabled with the hoisted tooltip. The narrowed
+                // `coverageActive` flag ensures `requiredCoverageRaw`
+                // is non-undefined inside this branch without a
+                // non-null assertion.
                 const insufficient =
-                  singleSelect &&
-                  requiredCoverageRaw !== undefined &&
-                  requiredCoverageRaw > 0n &&
-                  n.note.amount < requiredCoverageRaw;
+                  coverageActive && n.note.amount < (requiredCoverageRaw as bigint);
                 const inputDisabled = !ready || insufficient;
                 const inputTitle = !ready
                   ? "Confirming on-chain — selectable after one block"
                   : insufficient
-                    ? `Note is smaller than the run total — single-batch settle needs one commitment that covers ${ethers.formatUnits(requiredCoverageRaw!, decimals)} ${token}.`
+                    ? insufficientTitle
                     : undefined;
                 return (
                   <tr key={n.id} className="border-t border-[var(--color-border)]">
@@ -318,7 +330,8 @@ export function SourceNotesPanel({
             </tbody>
           </table>
         </>
-      )}
+        );
+      })()}
       {shortfallRaw > 0n && (() => {
         // The shortfall in `shortfallRaw` only counts what's spendable
         // RIGHT NOW (leafIndex ≥ 0). Pending deposits cover part of it

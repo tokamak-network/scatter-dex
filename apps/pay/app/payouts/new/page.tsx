@@ -1065,42 +1065,29 @@ function NewPayout() {
     }
   }, [rows, tokenAddress, decimals, claimFrom]);
 
-  // For a single-batch run the on-chain settle (`scatterDirectAuth`)
-  // consumes exactly ONE source commitment, so the shortfall has to
-  // be computed against the *largest existing reconciled note* — not
-  // the sum of all notes. Otherwise the panel would advise the
-  // operator to top up by `total - sum_of_notes`, and that small
-  // top-up still wouldn't yield a single covering commitment
-  // (deposits mint a fresh independent UTXO, they don't merge with
-  // existing notes). Multi-batch runs keep the sum-based shortfall —
-  // each batch needs its own covering note, and pickPerBatchNotes
-  // / BatchFitWarning surface the per-batch fit problem when the
-  // sum is enough but a per-batch cover isn't.
+  // Single-batch settle consumes one commitment, so the actionable
+  // top-up is `totalEscrowRaw` (mint a self-sufficient new note) —
+  // not the sum gap, since a fresh deposit is an independent UTXO
+  // that doesn't merge with existing notes. Multi-batch keeps the
+  // per-sum shortfall; per-batch fit lives in `multiBatchFit` /
+  // `BatchFitWarning`.
   const isSingleBatch = batches.length <= 1;
   const largestEligibleRaw = useMemo<bigint>(() => {
-    if (!tokenAddress) return 0n;
-    const tokenLower = tokenAddress.toLowerCase();
     let max = 0n;
-    for (const n of notes) {
+    for (const n of tokenNotes) {
       if (n.leafIndex < 0) continue;
-      if (tokenBigIntToAddress(n.note.token).toLowerCase() !== tokenLower) continue;
       if (n.note.amount > max) max = n.note.amount;
     }
     return max;
-  }, [notes, tokenAddress]);
-  const singleBatchCovered = isSingleBatch && largestEligibleRaw >= totalEscrowRaw;
-  const shortfallRaw = isSingleBatch
-    ? singleBatchCovered
-      ? 0n
-      : // No single existing note covers the run. A new deposit must
-        // mint a self-sufficient commitment — `totalEscrowRaw` is
-        // the operator's actionable top-up amount, not the sum gap.
-        totalEscrowRaw
-    : sourcePick.covered
-      ? 0n
-      : totalEscrowRaw > availableRaw
-        ? totalEscrowRaw - availableRaw
-        : totalEscrowRaw - sourcePick.pickedRaw;
+  }, [tokenNotes]);
+  const shortfallRaw = ((): bigint => {
+    if (isSingleBatch) {
+      return largestEligibleRaw >= totalEscrowRaw ? 0n : totalEscrowRaw;
+    }
+    if (sourcePick.covered) return 0n;
+    if (totalEscrowRaw > availableRaw) return totalEscrowRaw - availableRaw;
+    return totalEscrowRaw - sourcePick.pickedRaw;
+  })();
   const toggleNoteSelection = useCallback((id: string) => {
     setManualPick(true);
     setSelectedNoteIds((prev) => {
