@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { ERC20_ABI, formatTokenLabel } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
+import { useRelayers } from "../_lib/relayers";
 import { getNetworkConfig, getStealthTransferAccountAddress } from "../_lib/network";
 import {
   buildErc20TransferCalls,
@@ -39,9 +40,26 @@ const GASLESS_DEADLINE_SEC = 600;
  *  the relayer. */
 const NATIVE_MAX_GAS_RESERVE_WEI = 5_000_000_000_000_000n; // 0.005 ETH
 
-interface RelayerInfo {
-  address: string;
-  gasless_fees?: Record<string, string>;
+/** Slim view of a registry-resolved relayer that the modal renders.
+ *  Mirrors what the inbox transfer flow uses — pin to URL + name +
+ *  the published gasless-fee policy entry for the row's token, so
+ *  the dropdown can show \"Relayer-A · 0.10 USDC fee\" without us
+ *  re-walking the full RelayerInfo each render. */
+interface GaslessCandidate {
+  url: string;
+  name: string;
+  /** Fee payable to this relayer in *this row's* token, decimal
+   *  string. \`null\` when the relayer hasn't published a policy
+   *  for the symbol — the option is disabled in the picker. */
+  feeStr: string | null;
+  /** On-chain address the fee transfer call goes to. Fetched
+   *  lazily from \`/api/info\` since the registry only carries
+   *  URL + name + on-chain stats. */
+  feeCollector: string | null;
+  /** Last error seen on \`/api/info\`, if any. Drives the warning
+   *  copy under the picker so the operator sees why a candidate
+   *  is greyed out. */
+  infoError: string | null;
 }
 
 export function SendModal({
@@ -54,8 +72,20 @@ export function SendModal({
   const { signer, account, provider } = useWallet();
   const cfg = getNetworkConfig();
   const delegateAddress = useMemo(() => getStealthTransferAccountAddress(), []);
-  const relayerUrl = cfg.relayer?.url ?? null;
-  const gaslessEligible = !row.token.isNative && !!delegateAddress && !!relayerUrl;
+  const { relayers } = useRelayers();
+  const onlineRegistryRelayers = useMemo(
+    () => relayers.filter((r) => r.online),
+    [relayers],
+  );
+  // Standalone fallback — when the on-chain registry is empty /
+  // offline the operator can still gasless-send through the env's
+  // default relayer URL. Mirrors the inbox transfer flow's three-tier
+  // selection precedence (registry → settle-time → standalone env).
+  const standaloneUrl = cfg.relayer?.url ?? null;
+  const gaslessEligible =
+    !row.token.isNative &&
+    !!delegateAddress &&
+    (onlineRegistryRelayers.length > 0 || !!standaloneUrl);
 
   const [mode, setMode] = useState<Mode>("normal");
   const [recipient, setRecipient] = useState("");
@@ -63,8 +93,12 @@ export function SendModal({
   const [phase, setPhase] = useState<SendPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
-  const [relayerInfo, setRelayerInfo] = useState<RelayerInfo | null>(null);
-  const [relayerInfoError, setRelayerInfoError] = useState<string | null>(null);
+  /** Map relayer URL → resolved candidate. Populated lazily as the
+   *  modal probes \`/api/info\` on each candidate the first time gasless
+   *  mode is selected. Keyed by URL so a re-mount reuses the same
+   *  cache and the picker doesn't flash empty. */
+  const [candidatesByUrl, setCandidatesByUrl] = useState<Record<string, GaslessCandidate>>({});
+  const [selectedRelayerUrl, setSelectedRelayerUrl] = useState<string | null>(null);
 
   // Compute the "send max" amount for the current mode + token.
   // - Native ETH in Normal mode reserves a gas buffer so the wallet
@@ -91,32 +125,99 @@ export function SendModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Fetch relayer fee policy + fee-collector address when gasless mode
-  // becomes selectable. /api/info returns address + gasless_fees keyed
-  // by symbol; we read both lazily so a normal-only flow doesn't pay
-  // the round-trip.
+  // Build the candidate URL list once. Registry online relayers
+  // first; standalone env URL appended when it isn't already in the
+  // registry — same precedence the inbox transfer modal applies.
+  const candidateUrls = useMemo<string[]>(() => {
+    const norm = (u: string | null | undefined) => (u ? u.replace(/\/+$/, "") : null);
+    const urls: string[] = [];
+    for (const r of onlineRegistryRelayers) {
+      const n = norm(r.url);
+      if (n && !urls.includes(n)) urls.push(n);
+    }
+    const sa = norm(standaloneUrl);
+    if (sa && !urls.includes(sa)) urls.push(sa);
+    return urls;
+  }, [onlineRegistryRelayers, standaloneUrl]);
+
+  // Probe `/api/info` for each candidate URL the first time gasless
+  // becomes selectable. Cached by URL so toggling mode back and
+  // forth doesn't re-fetch. Each candidate's fee collector address +
+  // per-token fee is resolved from the response; greyed-out picker
+  // rows get a clear "no fee published" reason.
   useEffect(() => {
-    if (!gaslessEligible || !relayerUrl || mode !== "gasless") return;
+    if (!gaslessEligible || mode !== "gasless") return;
     let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`${relayerUrl.replace(/\/$/, "")}/api/info`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = (await res.json()) as RelayerInfo;
-        if (!cancelled) {
-          setRelayerInfo(json);
-          setRelayerInfoError(null);
+    for (const url of candidateUrls) {
+      if (candidatesByUrl[url]) continue; // already probed
+      void (async () => {
+        const registryName =
+          onlineRegistryRelayers.find((r) => r.url.replace(/\/+$/, "") === url)?.api?.name ??
+          url;
+        try {
+          const res = await fetch(`${url}/api/info`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = (await res.json()) as {
+            address?: string;
+            gasless_fees?: Record<string, string>;
+            name?: string;
+          };
+          if (cancelled) return;
+          setCandidatesByUrl((prev) => ({
+            ...prev,
+            [url]: {
+              url,
+              name: json.name ?? registryName,
+              feeStr: json.gasless_fees?.[row.token.symbol] ?? null,
+              feeCollector: json.address ?? null,
+              infoError: null,
+            },
+          }));
+        } catch (e) {
+          if (cancelled) return;
+          setCandidatesByUrl((prev) => ({
+            ...prev,
+            [url]: {
+              url,
+              name: registryName,
+              feeStr: null,
+              feeCollector: null,
+              infoError: e instanceof Error ? e.message : String(e),
+            },
+          }));
         }
-      } catch (e) {
-        if (!cancelled) {
-          setRelayerInfoError(e instanceof Error ? e.message : String(e));
-        }
-      }
-    })();
+      })();
+    }
     return () => {
       cancelled = true;
     };
-  }, [gaslessEligible, relayerUrl, mode]);
+  }, [
+    gaslessEligible,
+    mode,
+    candidateUrls,
+    candidatesByUrl,
+    onlineRegistryRelayers,
+    row.token.symbol,
+  ]);
+
+  // Pick a default selected relayer once the first candidate's
+  // policy lands. Prefer ones that actually published a fee for the
+  // row's token; fall back to the first probed otherwise so the
+  // picker isn't blank.
+  useEffect(() => {
+    if (mode !== "gasless") return;
+    if (selectedRelayerUrl && candidatesByUrl[selectedRelayerUrl]) return;
+    const eligible = candidateUrls.find(
+      (u) => candidatesByUrl[u]?.feeStr && candidatesByUrl[u]?.feeCollector,
+    );
+    const fallback = candidateUrls.find((u) => candidatesByUrl[u]);
+    const next = eligible ?? fallback ?? null;
+    if (next && next !== selectedRelayerUrl) setSelectedRelayerUrl(next);
+  }, [mode, candidateUrls, candidatesByUrl, selectedRelayerUrl]);
+
+  const selectedCandidate = selectedRelayerUrl
+    ? candidatesByUrl[selectedRelayerUrl] ?? null
+    : null;
 
   const recipientValid =
     ethers.isAddress(recipient) && recipient !== ethers.ZeroAddress;
@@ -129,14 +230,17 @@ export function SendModal({
     amountValid = false;
   }
 
-  // Gasless fee from relayer policy. The recipient's actual transfer
-  // is `amountRaw - feeRaw`; we keep the input untouched so the
-  // operator sees the gross they intended, but Send routes the net.
-  const feeStr = relayerInfo?.gasless_fees?.[row.token.symbol];
+  // Gasless fee from the *selected* relayer's policy. Empty when
+  // no candidate has resolved yet or the chosen one hasn't
+  // published a fee for the row's token. The recipient transfer is
+  // \`amountRaw - feeRaw\`; the gross input stays as-is so the
+  // operator sees what they intended.
+  const feeStr = selectedCandidate?.feeStr ?? null;
+  const feeCollector = selectedCandidate?.feeCollector ?? null;
   let feeRaw = 0n;
   let feeOk = true;
   if (mode === "gasless") {
-    if (!feeStr) {
+    if (!feeStr || !feeCollector) {
       feeOk = false;
     } else {
       try {
@@ -159,7 +263,8 @@ export function SendModal({
     recipientValid &&
     amountValid &&
     gaslessAmountValid &&
-    (mode === "normal" || (gaslessEligible && !!relayerInfo));
+    (mode === "normal" ||
+      (gaslessEligible && !!selectedCandidate && feeOk));
 
   async function runNormal() {
     if (!signer) throw new Error("Connect a wallet first.");
@@ -191,10 +296,12 @@ export function SendModal({
 
   async function runGasless() {
     if (!signer || !provider || !account) throw new Error("Connect a wallet first.");
-    if (!relayerUrl || !delegateAddress) {
+    if (!selectedCandidate?.url || !delegateAddress) {
       throw new Error("Gasless transfer not configured (no relayer URL or delegate).");
     }
-    if (!relayerInfo?.address) throw new Error("Relayer info missing fee-collector address.");
+    if (!selectedCandidate.feeCollector) {
+      throw new Error("Selected relayer's /api/info didn't publish a fee-collector address.");
+    }
     if (!row.address || row.address === ZERO) {
       throw new Error("Token address not configured.");
     }
@@ -205,7 +312,7 @@ export function SendModal({
       token: row.address,
       recipient: ethers.getAddress(recipient),
       amount: recipientNetRaw,
-      feeRecipient: ethers.getAddress(relayerInfo.address),
+      feeRecipient: ethers.getAddress(selectedCandidate.feeCollector),
       fee: feeRaw,
     });
 
@@ -238,7 +345,7 @@ export function SendModal({
     });
 
     setPhase("submitting");
-    const hash = await postEoaRelayTransfer(relayerUrl, {
+    const hash = await postEoaRelayTransfer(selectedCandidate.url, {
       fromEoa: account,
       calls,
       deadline: deadline.toString(),
@@ -388,36 +495,92 @@ export function SendModal({
                   Amount must be &gt; 0 and ≤ available balance.
                 </div>
               )}
-              {mode === "gasless" && amountValid && feeOk && recipientNetRaw <= 0n && (
-                <div className="mt-1 text-[10px] text-[var(--color-warning)]">
-                  Amount must exceed the gasless fee ({feeStr}{" "}
-                  {formatTokenLabel(row.token.symbol)}).
-                </div>
-              )}
-              {mode === "gasless" && feeOk && recipientNetRaw > 0n && (
-                <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">
-                  Recipient receives{" "}
-                  <span className="font-mono">
-                    {ethers.formatUnits(recipientNetRaw, row.token.decimals)}
-                  </span>{" "}
-                  · fee{" "}
-                  <span className="font-mono">{feeStr}</span>{" "}
-                  {formatTokenLabel(row.token.symbol)} · sig valid for{" "}
-                  {GASLESS_DEADLINE_SEC / 60} min.
-                </div>
-              )}
-              {mode === "gasless" && relayerInfoError && (
-                <div className="mt-1 text-[10px] text-[var(--color-warning)]">
-                  Couldn&apos;t reach relayer ({relayerInfoError}). Switch to Normal mode.
-                </div>
-              )}
-              {mode === "gasless" && !feeOk && relayerInfo && (
-                <div className="mt-1 text-[10px] text-[var(--color-warning)]">
-                  Relayer hasn&apos;t published a gasless fee for{" "}
-                  {formatTokenLabel(row.token.symbol)}.
-                </div>
-              )}
             </label>
+
+            {/* Gasless: relayer picker — shown only when there's an
+                actual choice OR the single candidate's policy needs
+                surfacing. Each option labels its fee for the row's
+                token; rows without a policy go disabled. */}
+            {mode === "gasless" && candidateUrls.length > 0 && (
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                  Relayer
+                </span>
+                <select
+                  value={selectedRelayerUrl ?? ""}
+                  onChange={(e) => setSelectedRelayerUrl(e.target.value || null)}
+                  disabled={running}
+                  className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 text-xs"
+                >
+                  {candidateUrls.map((url) => {
+                    const c = candidatesByUrl[url];
+                    const baseLabel = c?.name ?? url;
+                    const feeLabel = c
+                      ? c.feeStr
+                        ? `${c.feeStr} ${formatTokenLabel(row.token.symbol)} fee`
+                        : c.infoError
+                          ? "unreachable"
+                          : "no fee published"
+                      : "loading…";
+                    return (
+                      <option key={url} value={url} disabled={!c?.feeStr || !c.feeCollector}>
+                        {baseLabel} · {feeLabel}
+                      </option>
+                    );
+                  })}
+                </select>
+                {selectedCandidate?.infoError && (
+                  <div className="mt-1 text-[10px] text-[var(--color-warning)]">
+                    Couldn&apos;t reach this relayer ({selectedCandidate.infoError}). Pick another or switch to Normal mode.
+                  </div>
+                )}
+                {selectedCandidate && !selectedCandidate.feeStr && !selectedCandidate.infoError && (
+                  <div className="mt-1 text-[10px] text-[var(--color-warning)]">
+                    This relayer hasn&apos;t published a gasless fee for{" "}
+                    {formatTokenLabel(row.token.symbol)}.
+                  </div>
+                )}
+              </label>
+            )}
+
+            {/* Gasless: explicit fee + recipient-net breakdown. Far
+                more legible than the previous inline muted footer —
+                operators consistently asked "wait, am I paying a
+                fee?" because the policy was buried under the amount
+                input. */}
+            {mode === "gasless" && feeOk && (
+              <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                  Breakdown
+                </div>
+                <dl className="mt-2 space-y-1 font-mono">
+                  <Row k="You send (gross)" v={`${amount || "0"} ${formatTokenLabel(row.token.symbol)}`} />
+                  <Row
+                    k={`Relayer fee (${selectedCandidate?.name ?? ""})`}
+                    v={`− ${feeStr} ${formatTokenLabel(row.token.symbol)}`}
+                    accent
+                  />
+                  <Row
+                    k="Recipient receives"
+                    v={
+                      recipientNetRaw > 0n
+                        ? `${ethers.formatUnits(recipientNetRaw, row.token.decimals)} ${formatTokenLabel(row.token.symbol)}`
+                        : "—"
+                    }
+                    bold
+                  />
+                </dl>
+                <p className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                  Relayer pays gas in ETH and recovers the fee from your transfer in the same token.
+                  Your wallet pays no ETH. Signature is valid for {GASLESS_DEADLINE_SEC / 60} min after signing.
+                </p>
+                {recipientNetRaw <= 0n && amountValid && (
+                  <p className="mt-1 text-[10px] text-[var(--color-warning)]">
+                    Amount must exceed the relayer fee.
+                  </p>
+                )}
+              </div>
+            )}
           </>
         )}
 
@@ -509,5 +672,36 @@ export function SendModal({
         </div>
       </div>
     </Modal>
+  );
+}
+
+function Row({
+  k,
+  v,
+  accent,
+  bold,
+}: {
+  k: string;
+  v: string;
+  accent?: boolean;
+  bold?: boolean;
+}) {
+  return (
+    <div className="flex justify-between">
+      <dt
+        className={`text-[var(--color-text-muted)] ${
+          accent ? "text-[var(--color-warning)]" : ""
+        }`}
+      >
+        {k}
+      </dt>
+      <dd
+        className={`${bold ? "font-semibold" : ""} ${
+          accent ? "text-[var(--color-warning)]" : ""
+        }`}
+      >
+        {v}
+      </dd>
+    </div>
   );
 }
