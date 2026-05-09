@@ -17,7 +17,10 @@ import type { BalanceRow } from "./_types";
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 export default function WalletPage() {
-  const cfg = getNetworkConfig();
+  // `getNetworkConfig()` returns a freshly-built object every call;
+  // memoise so identity-stable cfg pieces can drive effect deps
+  // without retriggering on every render.
+  const cfg = useMemo(() => getNetworkConfig(), []);
   const { account, signer } = useWallet();
   const mounted = useMounted();
   const [rows, setRows] = useState<BalanceRow[]>(() => initialRows(cfg.tokens));
@@ -26,10 +29,17 @@ export default function WalletPage() {
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
+  // One JsonRpcProvider instance per cfg.rpcUrl — without this the
+  // effect would spin up a fresh provider on every refresh tick and
+  // every render, leaking sockets and racing pending requests.
+  const provider = useMemo(
+    () => new ethers.JsonRpcProvider(cfg.rpcUrl),
+    [cfg.rpcUrl],
+  );
+
   useEffect(() => {
     if (!mounted || !account) return;
     let cancelled = false;
-    const provider = new ethers.JsonRpcProvider(cfg.rpcUrl);
     void (async () => {
       const next = await Promise.all(
         cfg.tokens.map(async (token): Promise<BalanceRow> => {

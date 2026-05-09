@@ -34,14 +34,16 @@ export function SendModal({
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  // Pre-populate amount with the row's full balance so a one-click
-  // "send everything" flow only needs the recipient. Operator can
-  // edit before submitting.
+  // Pre-populate amount with the row's full balance once on mount
+  // so a "send everything" flow only needs the recipient. Listing
+  // `amount` in the deps would re-fire when the operator clears the
+  // field to type fresh, fighting them.
   useEffect(() => {
-    if (!amount && row.raw > 0n) {
+    if (row.raw > 0n) {
       setAmount(ethers.formatUnits(row.raw, row.token.decimals));
     }
-  }, [amount, row]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const recipientValid =
     ethers.isAddress(recipient) && recipient !== ethers.ZeroAddress;
