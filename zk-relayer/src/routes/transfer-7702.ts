@@ -367,8 +367,11 @@ export function createTransfer7702Routes(
   const tokenEntries = opts.tokenEntries ?? parseTokenList(process.env.TOKEN_LIST ?? "");
   const gaslessFees = opts.gaslessFees ?? config.gaslessFees;
   // Index by lowercased address once so per-call lookups stay O(1).
-  // `parseTokenList` already lowercases `addr`, so no normalisation here.
-  const tokenByAddr = new Map(tokenEntries.map((t) => [t.addr, t] as const));
+  // Normalise on insert: `parseTokenList` already lowercases, but
+  // tests (and any future caller injecting `opts.tokenEntries`
+  // directly) may pass checksummed addresses, which would silently
+  // miss the `c.target.toLowerCase()` lookup below.
+  const tokenByAddr = new Map(tokenEntries.map((t) => [t.addr.toLowerCase(), t] as const));
 
   // Resolve chainId lazily on first request, then cache. ethers v6
   // `getNetwork()` issues an `eth_chainId` RPC on every call past the
