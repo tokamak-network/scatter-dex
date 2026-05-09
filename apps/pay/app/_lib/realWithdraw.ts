@@ -12,7 +12,10 @@ import {
   type CommitmentNote,
 } from "@zkscatter/sdk";
 import type { CommitmentTreeState, VaultNote } from "@zkscatter/sdk/react";
-import { getMerkleProofWithFallback } from "@zkscatter/sdk/react";
+import {
+  CommitmentProofUnavailableError,
+  getMerkleProofWithFallback,
+} from "@zkscatter/sdk/react";
 
 /** Coarse phase the modal echoes into a status banner. */
 export type WithdrawPhase =
@@ -71,23 +74,55 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
 
   onPhase?.("preparing");
 
-  // Resolve merkle path from the live tree. Live mode throws if the
-  // commitment isn't reconciled, which is exactly the right behavior
-  // here — we'd rather error than mint an invalid-root proof.
-  const fallbackThrow = async () => {
-    throw new Error(
-      "Cannot resolve commitment proof — pool tree isn't ready in live mode.",
-    );
-  };
-  const { merkleProof } = await getMerkleProofWithFallback(
-    tree,
-    note.commitment,
-    fallbackThrow,
-  );
+  // Refuse demo-mode trees outright — `getMerkleProofWithFallback`
+  // falls back to an empty-tree proof there, and a live pool would
+  // reject the resulting root. The fallback callback is only reached
+  // on demo, so a thrown error here is the right gate.
+  if (tree.mode !== "live") {
+    throw new Error("Cannot withdraw against a demo / unconnected pool.");
+  }
 
+  // Run the three independent precomputations in parallel — each
+  // dynamic-imports `circomlibjs` and runs poseidon, so a sequential
+  // chain wastes ~1–2 s on cold cache. Merkle proof shares the same
+  // window. We pass `getMerkleProofWithFallback` a thrower as the
+  // fallback so a missing live commitment surfaces a clear error
+  // instead of silently producing an empty-tree proof.
   const tokenAddrHex = "0x" + note.note.token.toString(16).padStart(40, "0");
-  const tokenHash = await computeTokenHash(tokenAddrHex);
-  const nullifierHash = await computeNullifier(note.note);
+  const fallbackThrow = async (): Promise<never> => {
+    throw new CommitmentProofUnavailableError(note.commitment);
+  };
+  const [{ merkleProof }, tokenHash, nullifierHash] = await Promise.all([
+    getMerkleProofWithFallback(tree, note.commitment, fallbackThrow),
+    computeTokenHash(tokenAddrHex),
+    computeNullifier(note.note),
+  ]);
+
+  // Pre-flight `isSpent` probe — saves the ~5–10 s prover run when a
+  // re-attempt would revert anyway (e.g. the operator double-clicks
+  // through a tab refresh, or the same note is held by two browser
+  // contexts). The contract is the authoritative guard; this is a
+  // UX optimisation, not a security check.
+  const readProvider = signer.provider;
+  if (readProvider) {
+    try {
+      const pool = new ethers.Contract(
+        commitmentPoolAddress,
+        COMMITMENT_POOL_ABI,
+        readProvider,
+      );
+      const spent = (await pool.isSpent(nullifierHash)) as boolean;
+      if (spent) {
+        throw new Error("This commitment was already withdrawn — refresh the pool card.");
+      }
+    } catch (err) {
+      // Network blip / unsupported provider — let the on-chain
+      // submit revert authoritatively rather than blocking the UX.
+      if (err instanceof Error && err.message.includes("already withdrawn")) {
+        throw err;
+      }
+    }
+  }
 
   // Change-UTXO commitment: zero when the withdraw is full, else a
   // fresh `Poseidon(TAG_V2, ownerSecret, token, change, newSalt,
