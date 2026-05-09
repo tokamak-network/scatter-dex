@@ -1,5 +1,6 @@
 import {
   type CommitmentNote,
+  type MerkleProof,
   computeCommitment,
   computeNullifier,
   computeTokenHash,
@@ -8,7 +9,7 @@ import {
 } from "../commitment";
 import { TAG_COMMITMENT_V2 } from "../tags";
 import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
-import type { Groth16Proof, MerkleProof } from "../types";
+import type { Groth16Proof } from "../types";
 import type { CircuitAssets } from "./deposit";
 
 export interface WithdrawProofInput {
@@ -130,8 +131,8 @@ export async function generateWithdrawProof(
     amount: note.amount.toString(),
     salt: note.salt.toString(),
     newSalt: newSalt.toString(),
-    pathElements: merkleProof.pathElements.map((e) => e.toString()),
-    pathIndices: merkleProof.pathIndices.map((i) => i.toString()),
+    pathElements: merkleProof.pathElements.map((e: bigint) => e.toString()),
+    pathIndices: merkleProof.pathIndices.map((i: number) => i.toString()),
     pubKeyAx: note.pubKeyAx.toString(),
     pubKeyAy: note.pubKeyAy.toString(),
   };

@@ -10,11 +10,19 @@ export function WrongChainBanner() {
     <WrongChainBannerView
       wrongChain={wrongChain}
       networkLabel={networkLabel}
-      switchChain={() =>
-        void switchChain().catch((err) =>
-          console.warn("[WrongChainBanner] switchChain failed", err),
-        )
-      }
+      switchChain={() => {
+        console.log("[WrongChainBanner] switchChain clicked");
+        void switchChain()
+          .then(() => console.log("[WrongChainBanner] switchChain resolved"))
+          .catch((err) => {
+            console.warn("[WrongChainBanner] switchChain failed", err);
+            window.alert(
+              `Couldn't switch network — ${
+                err instanceof Error ? err.message : String(err)
+              }. Open MetaMask and add Localhost (chainId 31337, RPC http://localhost:8545) manually.`,
+            );
+          });
+      }}
     />
   );
 }
