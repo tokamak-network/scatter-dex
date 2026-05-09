@@ -30,6 +30,15 @@ type Mode = "normal" | "gasless";
  *  indefinitely. Mirrors the redeposit / inbox flows. */
 const GASLESS_DEADLINE_SEC = 600;
 
+/** Conservative gas reserve subtracted from `Max` for a native ETH
+ *  Normal-mode send. A plain ETH transfer is 21,000 gas; at
+ *  100 gwei that's 0.0021 ETH, so 0.005 ETH leaves comfortable
+ *  headroom for L1 + a chunky priority-fee spike without rejecting
+ *  the operator's first attempt. ERC-20 / Gasless skip this
+ *  reserve — gas there is paid in ETH (not the row token) or by
+ *  the relayer. */
+const NATIVE_MAX_GAS_RESERVE_WEI = 5_000_000_000_000_000n; // 0.005 ETH
+
 interface RelayerInfo {
   address: string;
   gasless_fees?: Record<string, string>;
@@ -57,10 +66,27 @@ export function SendModal({
   const [relayerInfo, setRelayerInfo] = useState<RelayerInfo | null>(null);
   const [relayerInfoError, setRelayerInfoError] = useState<string | null>(null);
 
-  // Pre-populate amount with the row's full balance once on mount.
+  // Compute the "send max" amount for the current mode + token.
+  // - Native ETH in Normal mode reserves a gas buffer so the wallet
+  //   can pay the broadcast fee; without this, Max → tx fails with
+  //   "insufficient funds" on the first attempt.
+  // - ERC-20 / Gasless: full balance (gas is in ETH or paid by
+  //   relayer respectively).
+  function computeMaxRaw(): bigint {
+    if (row.token.isNative && mode === "normal") {
+      return row.raw > NATIVE_MAX_GAS_RESERVE_WEI
+        ? row.raw - NATIVE_MAX_GAS_RESERVE_WEI
+        : 0n;
+    }
+    return row.raw;
+  }
+
+  // Pre-populate amount with the row's full balance (or max-minus-
+  // reserve for native ETH) once on mount.
   useEffect(() => {
-    if (row.raw > 0n) {
-      setAmount(ethers.formatUnits(row.raw, row.token.decimals));
+    const initial = computeMaxRaw();
+    if (initial > 0n) {
+      setAmount(ethers.formatUnits(initial, row.token.decimals));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -342,10 +368,16 @@ export function SendModal({
                 />
                 <button
                   type="button"
-                  onClick={() =>
-                    setAmount(ethers.formatUnits(row.raw, row.token.decimals))
-                  }
+                  onClick={() => {
+                    const maxRaw = computeMaxRaw();
+                    setAmount(ethers.formatUnits(maxRaw, row.token.decimals));
+                  }}
                   disabled={running || row.raw === 0n}
+                  title={
+                    row.token.isNative && mode === "normal"
+                      ? `Reserves ~${ethers.formatUnits(NATIVE_MAX_GAS_RESERVE_WEI, 18)} ETH for gas`
+                      : undefined
+                  }
                   className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-[10px] hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
                 >
                   Max

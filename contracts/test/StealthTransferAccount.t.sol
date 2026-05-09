@@ -45,10 +45,11 @@ contract StealthTransferAccountTest is Test {
         vm.deal(stealth, 1 ether);
     }
 
-    /// @dev Test default deadline — sits ~1 year in the future so
-    ///      every test that doesn't care about expiry behaves like
-    ///      pre-v2. `testRevertOnExpiredSignature` uses a tight
-    ///      deadline to exercise the new revert.
+    /// @dev Test default deadline — `type(uint64).max` (year ~584942
+    ///      AD) is comfortably past any test-vm timestamp Foundry
+    ///      ships, so every test that doesn't care about expiry
+    ///      behaves like pre-v2. `testRevertOnExpiredSignature` uses
+    ///      a tight deadline to exercise the new revert.
     uint256 internal constant FAR_FUTURE_DEADLINE = type(uint64).max;
 
     function _signBatch(StealthTransferAccount.Call[] memory calls) internal view returns (bytes memory) {

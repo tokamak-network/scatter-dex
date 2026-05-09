@@ -211,7 +211,12 @@ function Crumb() {
 function initialRows(tokens: WhitelistedToken[]): BalanceRow[] {
   return tokens.map((token) => ({
     token,
-    address: token.address,
+    // Native rows always carry the ZERO sentinel — the rest of the
+    // page uses ZERO to gate ERC-20 reads and hide the address chip
+    // for native ETH. Initialising with `token.address` could leak
+    // the WETH address (or `undefined` under strict TS) for the
+    // brief window before the first balance fetch settles.
+    address: token.isNative ? ZERO : token.address || ZERO,
     raw: 0n,
     loading: true,
     error: null,

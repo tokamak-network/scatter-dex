@@ -236,6 +236,15 @@ export async function sign7702BatchWithSigner(input: {
   };
 }
 
+/** Strip a single trailing slash from a URL so the endpoint
+ *  concatenation below produces `https://x/api/...` regardless of
+ *  whether the operator's NetworkConfig persists `https://x` or
+ *  `https://x/`. Other helpers in the SDK already normalise this
+ *  way; centralising here keeps the wire requests consistent. */
+function trimSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
 /**
  *  POST the relay request and return the broadcast tx hash. The
  *  endpoint returns 202 immediately; the caller polls the receipt
@@ -245,7 +254,7 @@ export async function postRelayTransfer(
   relayerUrl: string,
   body: RelayBody,
 ): Promise<string> {
-  const res = await fetch(`${relayerUrl}/api/transfer-7702/relay`, {
+  const res = await fetch(`${trimSlash(relayerUrl)}/api/transfer-7702/relay`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -272,7 +281,7 @@ export async function postEoaRelayTransfer(
   relayerUrl: string,
   body: EoaRelayBody,
 ): Promise<string> {
-  const res = await fetch(`${relayerUrl}/api/transfer-7702/eoa-relay`, {
+  const res = await fetch(`${trimSlash(relayerUrl)}/api/transfer-7702/eoa-relay`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

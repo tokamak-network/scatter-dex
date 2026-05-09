@@ -436,7 +436,10 @@ export function createTransfer7702Routes(
     // round-trip when the answer is already known.
     const nowSec = BigInt(Math.floor(Date.now() / 1000));
     const deadlineSec = BigInt(body.deadline);
-    if (nowSec + BigInt(DEADLINE_SAFETY_MARGIN_SEC) > deadlineSec) {
+    // `>=` so a deadline that lands exactly on `now + margin` is
+    // also refused — that edge case still falls inside the margin
+    // and is what the safety buffer is meant to bound out.
+    if (nowSec + BigInt(DEADLINE_SAFETY_MARGIN_SEC) >= deadlineSec) {
       return sendFailure(
         res,
         fail(400, {
