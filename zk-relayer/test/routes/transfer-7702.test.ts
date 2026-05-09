@@ -33,12 +33,18 @@ function feeCall(amountDecimal: string) {
   };
 }
 
+// Far-future unix-second timestamp — keeps existing tests immune to
+// the deadline preflight added in v2 (only the dedicated expiry
+// tests override this).
+const FAR_FUTURE = String(Math.floor(Date.now() / 1000) + 86_400);
+
 function validBody(overrides: Record<string, unknown> = {}) {
   return {
     stealthAddress: STEALTH,
     // Default: a single in-batch fee transfer that meets the policy.
     // Tests that exercise the fee-validation path override `calls`.
     calls: [feeCall("0.1")],
+    deadline: FAR_FUTURE,
     signature: SIG_65_BYTES,
     authorization: {
       address: DELEGATE,

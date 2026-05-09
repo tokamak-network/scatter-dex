@@ -39,11 +39,18 @@ const HEX_R_S_RE = /^0x[a-fA-F0-9]{64}$/;
 // noisy enough already.
 const DECIMAL_INT_RE = /^[0-9]+$/;
 
-// Mirror of `StealthTransferAccount.executeBatch(Call[], bytes)`
+// Mirror of `StealthTransferAccount.executeBatch(Call[], uint256, bytes)`
 // fragments — kept inline because the route is the only consumer.
+// v2 added the `deadline` parameter so a leaked sig can't sit
+// indefinitely on a still-fresh nonce.
 const ACCOUNT_IFACE = new ethers.Interface([
-  "function executeBatch((address target, uint256 value, bytes data)[] calls, bytes signature)",
+  "function executeBatch((address target, uint256 value, bytes data)[] calls, uint256 deadline, bytes signature)",
 ]);
+
+/** Drop-broadcast safety margin (seconds). If the signed deadline
+ *  is closer than this to `now`, the relayer refuses to submit
+ *  rather than burn gas on a tx the contract is about to revert. */
+const DEADLINE_SAFETY_MARGIN_SEC = 30;
 
 // Used to recognize ERC20.transfer(to, amount) calls inside the batch
 // so the endpoint can sum fee credits to the relayer wallet.
@@ -83,6 +90,10 @@ const relayBodySchema = z.object({
   // case in the contract test is fine on-chain; we just don't want
   // the public endpoint to subsidize it for no client benefit.
   calls: z.array(callSchema).min(1).max(16),
+  // Unix-second deadline bound into the EIP-712 sig. The contract
+  // reverts ExpiredSignature() when `block.timestamp > deadline`;
+  // we pre-flight that here so a stale sig fails fast.
+  deadline: z.string().regex(DECIMAL_INT_RE),
   // EIP-712 sig over hashBatch — 65 bytes packed.
   signature: z.string().regex(HEX_SIG_RE),
   authorization: authorizationSchema,
@@ -96,6 +107,7 @@ const eoaRelayBodySchema = z.object({
   // logs and metrics distinguish the two flows.
   fromEoa: z.string().regex(HEX_ADDRESS_RE),
   calls: z.array(callSchema).min(1).max(16),
+  deadline: z.string().regex(DECIMAL_INT_RE),
   signature: z.string().regex(HEX_SIG_RE),
   authorization: authorizationSchema,
 });
@@ -298,6 +310,10 @@ function validateEoaCallsWhitelist(
 interface BroadcastInputs {
   to: string;
   calls: CallInput[];
+  /** Decimal-string unix-second deadline. Encoded into the
+   *  `executeBatch` call so the contract's own
+   *  `block.timestamp > deadline` check can fire. */
+  deadline: string;
   signature: string;
   authorization: AuthorizationInput;
 }
@@ -313,6 +329,7 @@ async function broadcastBatch(
   try {
     const data = ACCOUNT_IFACE.encodeFunctionData("executeBatch", [
       inputs.calls.map((c) => [c.target, BigInt(c.value), c.data]),
+      BigInt(inputs.deadline),
       inputs.signature,
     ]);
     const wallet = submitter.getWallet();
@@ -412,6 +429,25 @@ export function createTransfer7702Routes(
     const chainFail = validateChainId(body.authorization, expectedChainId);
     if (chainFail) return sendFailure(res, chainFail);
 
+    // Refuse signatures whose deadline has already passed (or is
+    // close enough that the tx would land after expiry). The
+    // contract enforces the same check on-chain via
+    // `ExpiredSignature()`; this just saves the gas + the
+    // round-trip when the answer is already known.
+    const nowSec = BigInt(Math.floor(Date.now() / 1000));
+    const deadlineSec = BigInt(body.deadline);
+    if (nowSec + BigInt(DEADLINE_SAFETY_MARGIN_SEC) > deadlineSec) {
+      return sendFailure(
+        res,
+        fail(400, {
+          error: "expired_signature",
+          reason: "Signature deadline has passed (or is within the broadcast safety margin).",
+          now: nowSec.toString(),
+          deadline: body.deadline,
+        }),
+      );
+    }
+
     const decoded = decodeTransferCalls(body.calls);
     const { to, isEoaPath } = extract(body);
 
@@ -431,7 +467,13 @@ export function createTransfer7702Routes(
 
     const result = await broadcastBatch(
       submitter,
-      { to, calls: body.calls, signature: body.signature, authorization: body.authorization },
+      {
+        to,
+        calls: body.calls,
+        deadline: body.deadline,
+        signature: body.signature,
+        authorization: body.authorization,
+      },
       logTag,
     );
     if ("status" in result) return sendFailure(res, result);

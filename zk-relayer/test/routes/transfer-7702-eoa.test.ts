@@ -34,6 +34,11 @@ function transferCall(token: string, to: string, amountDecimal: string, decimals
   };
 }
 
+// Far-future unix-second timestamp — keeps existing tests immune to
+// the deadline preflight added in v2 (only the dedicated expiry
+// tests override this).
+const FAR_FUTURE = String(Math.floor(Date.now() / 1000) + 86_400);
+
 function validBody(overrides: Record<string, unknown> = {}) {
   return {
     fromEoa: FROM_EOA,
@@ -42,6 +47,7 @@ function validBody(overrides: Record<string, unknown> = {}) {
       transferCall(USDC_ADDR, RECIPIENT, "100"),
       transferCall(USDC_ADDR, RELAYER_ADDR, "0.1"),
     ],
+    deadline: FAR_FUTURE,
     signature: SIG_65_BYTES,
     authorization: {
       address: DELEGATE,
@@ -272,6 +278,7 @@ describe("/api/transfer-7702/eoa-relay", () => {
       .send({
         stealthAddress: FROM_EOA,
         calls: [transferCall(USDC_ADDR, RELAYER_ADDR, "0.1")],
+        deadline: FAR_FUTURE,
         signature: SIG_65_BYTES,
         authorization: {
           address: DELEGATE,
@@ -282,5 +289,22 @@ describe("/api/transfer-7702/eoa-relay", () => {
       });
     expect(res.status).toBe(202);
     expect(res.body.txHash).toBe(TX_HASH);
+  });
+
+  it("rejects an expired deadline before broadcasting", async () => {
+    const sendTransaction = vi.fn(async () => ({ hash: TX_HASH }));
+    const app = mountRouter(
+      "/api/transfer-7702",
+      createTransfer7702Routes(makeStubWithSendTx(sendTransaction), ROUTE_OPTS),
+    );
+    // Set deadline 5 minutes in the past — preflight should fail
+    // fast and never call sendTransaction.
+    const expired = String(Math.floor(Date.now() / 1000) - 300);
+    const res = await request(app)
+      .post("/api/transfer-7702/eoa-relay")
+      .send(validBody({ deadline: expired }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("expired_signature");
+    expect(sendTransaction).not.toHaveBeenCalled();
   });
 });
