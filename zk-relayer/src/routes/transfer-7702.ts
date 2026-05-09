@@ -1,13 +1,22 @@
 /**
- *  Gasless transfer endpoint — submits an EIP-7702 type-4 tx on the
- *  caller's behalf so a stealth EOA with zero native balance can
- *  still move its tokens. The recipient signs two things off-chain:
- *  the EIP-7702 authorization (delegating their EOA to
- *  StealthTransferAccount) and the EIP-712 batch payload that
- *  contract verifies. We pay the on-chain gas in native ETH and
- *  expect a fee-collection call inside `calls` to recover it as
- *  tokens — but the endpoint stays agnostic about the fee math, so
- *  the frontend (or operator policy) decides how much to deduct.
+ *  Gasless transfer endpoints — submit an EIP-7702 type-4 tx on the
+ *  caller's behalf so an EOA with zero native balance can still move
+ *  its tokens. The signer produces two things off-chain: the EIP-7702
+ *  authorization (delegating their EOA to StealthTransferAccount) and
+ *  the EIP-712 batch payload that contract verifies. The relayer pays
+ *  on-chain gas in native ETH and recovers it via a token fee call
+ *  included in the batch.
+ *
+ *  Two routes share the same delegate contract and fee floor:
+ *    POST /relay      — stealth-flow callers (Pay inbox); body uses
+ *                       `stealthAddress`. Permissive call shapes so
+ *                       redeposit/split flows can do non-ERC20 calls
+ *                       (e.g. into the Pay vault).
+ *    POST /eoa-relay  — general EOA → recipient transfers. Stricter:
+ *                       every batch call must be an ERC20.transfer
+ *                       against a whitelisted token, so an attacker
+ *                       can't smuggle arbitrary calldata through the
+ *                       gas sponsorship.
  */
 
 import { Router, Request, Response, RequestHandler } from "express";
@@ -17,6 +26,7 @@ import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { createLogger } from "../core/logger.js";
 import { config } from "../config.js";
 import { parseTokenList, type TokenEntry } from "../lib/tokens.js";
+import { eqAddr } from "../lib/address.js";
 
 const log = createLogger("transfer-7702");
 
@@ -80,6 +90,18 @@ const relayBodySchema = z.object({
 
 export type RelayTransferBody = z.infer<typeof relayBodySchema>;
 
+const eoaRelayBodySchema = z.object({
+  // Same wire-shape as `/relay` but renamed so consumers don't have
+  // to pretend their address is "stealth". Tracked separately so
+  // logs and metrics distinguish the two flows.
+  fromEoa: z.string().regex(HEX_ADDRESS_RE),
+  calls: z.array(callSchema).min(1).max(16),
+  signature: z.string().regex(HEX_SIG_RE),
+  authorization: authorizationSchema,
+});
+
+export type EoaRelayTransferBody = z.infer<typeof eoaRelayBodySchema>;
+
 /** Map a verbose ethers / RPC error message to a small, low-cardinality
  *  client-facing reason. Anything we don't recognise becomes "internal
  *  error" — the full message stays in the server log for the operator. */
@@ -114,6 +136,229 @@ interface CreateRoutesOpts {
   gaslessFees?: Record<string, string>;
 }
 
+type CallInput = z.infer<typeof callSchema>;
+type AuthorizationInput = z.infer<typeof authorizationSchema>;
+
+interface ValidationFailure {
+  status: number;
+  body: Record<string, unknown>;
+}
+
+function fail(status: number, body: Record<string, unknown>): ValidationFailure {
+  return { status, body };
+}
+
+function sendFailure(res: Response, f: ValidationFailure): void {
+  res.status(f.status).json(f.body);
+}
+
+/** Reject delegations that don't target the operator-published
+ *  StealthTransferAccount. A tampered client otherwise could steer
+ *  the EOA into delegating to an attacker contract. */
+function validateDelegate(
+  authorization: AuthorizationInput,
+  expected: string,
+): ValidationFailure | null {
+  if (!eqAddr(authorization.address, expected)) {
+    return fail(400, {
+      error: "unauthorized delegate",
+      expected,
+      got: authorization.address,
+    });
+  }
+  return null;
+}
+
+function validateChainId(
+  authorization: AuthorizationInput,
+  expectedChainId: bigint,
+): ValidationFailure | null {
+  if (BigInt(authorization.chainId) !== expectedChainId) {
+    return fail(400, {
+      error: "chainId mismatch",
+      expected: expectedChainId.toString(),
+      got: authorization.chainId,
+    });
+  }
+  return null;
+}
+
+/** Decoded ERC20.transfer(to, amount) — null for calls whose data
+ *  isn't a transfer selector. Computed once per request and reused
+ *  by both the whitelist gate and the fee gate so the decode work
+ *  isn't duplicated. */
+type DecodedTransfer = { to: string; amount: bigint } | null;
+
+function decodeTransferCalls(calls: CallInput[]): DecodedTransfer[] {
+  return calls.map((c) => {
+    try {
+      const d = ERC20_TRANSFER_IFACE.decodeFunctionData("transfer", c.data);
+      return { to: (d[0] as string).toLowerCase(), amount: BigInt(d[1] as bigint) };
+    } catch {
+      return null;
+    }
+  });
+}
+
+/** Sum every ERC20.transfer(relayerWallet, amount) by token and
+ *  require the total to clear the published fee floor for that
+ *  token. Shared between stealth and EOA routes — fee math doesn't
+ *  depend on the caller flavor. */
+function validateFeePayment(
+  calls: CallInput[],
+  decoded: DecodedTransfer[],
+  relayerWalletAddress: string,
+  tokenByAddr: Map<string, TokenEntry>,
+  gaslessFees: Record<string, string>,
+): ValidationFailure | null {
+  const relayerWallet = relayerWalletAddress.toLowerCase();
+  const feeByToken = new Map<string, bigint>();
+  for (let i = 0; i < calls.length; i++) {
+    const d = decoded[i];
+    if (!d || d.to !== relayerWallet) continue;
+    const tokenAddr = calls[i].target.toLowerCase();
+    feeByToken.set(tokenAddr, (feeByToken.get(tokenAddr) ?? 0n) + d.amount);
+  }
+  let supportedFeePaid = false;
+  for (const [tokenAddr, paid] of feeByToken) {
+    const entry = tokenByAddr.get(tokenAddr);
+    if (!entry) {
+      return fail(400, {
+        error: "token not supported",
+        token: tokenAddr,
+        reason: `Relayer does not accept fees in token ${tokenAddr}`,
+      });
+    }
+    const policy = gaslessFees[entry.symbol];
+    if (!policy) {
+      return fail(400, {
+        error: "token not supported",
+        token: entry.symbol,
+        reason: `Relayer has no published gasless fee for ${entry.symbol}`,
+      });
+    }
+    const policyWei = ethers.parseUnits(policy, entry.decimals);
+    if (paid < policyWei) {
+      return fail(400, {
+        error: "fee below policy",
+        token: entry.symbol,
+        paid: ethers.formatUnits(paid, entry.decimals),
+        required: policy,
+      });
+    }
+    supportedFeePaid = true;
+  }
+  if (!supportedFeePaid) {
+    return fail(400, {
+      error: "no fee paid to relayer",
+      reason:
+        "Batch must include at least one ERC20.transfer to the relayer wallet matching the published fee policy",
+    });
+  }
+  return null;
+}
+
+/** EOA-flow only: every call must be an ERC20.transfer against a
+ *  whitelisted token. Stricter than the stealth path — general EOAs
+ *  can hold arbitrary calldata patterns, and we don't want the
+ *  relayer subsidising calls into unknown contracts. */
+function validateEoaCallsWhitelist(
+  calls: CallInput[],
+  decoded: DecodedTransfer[],
+  tokenByAddr: Map<string, TokenEntry>,
+): ValidationFailure | null {
+  for (let i = 0; i < calls.length; i++) {
+    const c = calls[i];
+    if (BigInt(c.value) !== 0n) {
+      return fail(400, {
+        error: "non-zero call value",
+        index: i,
+        reason: "EOA gasless transfers may not attach native ETH value",
+      });
+    }
+    if (!decoded[i]) {
+      return fail(400, {
+        error: "non-erc20-transfer call",
+        index: i,
+        reason: "EOA gasless transfers must be ERC20.transfer(to, amount) calls",
+      });
+    }
+    if (!tokenByAddr.has(c.target.toLowerCase())) {
+      return fail(400, {
+        error: "token not whitelisted",
+        index: i,
+        token: c.target,
+        reason: "Relayer only sponsors transfers of whitelisted tokens",
+      });
+    }
+  }
+  return null;
+}
+
+interface BroadcastInputs {
+  to: string;
+  calls: CallInput[];
+  signature: string;
+  authorization: AuthorizationInput;
+}
+
+/** Encode + broadcast the type-4 tx. Shared between routes so the
+ *  RPC-error redaction lives in one place. Returns the broadcast tx
+ *  hash on success, a ValidationFailure on a classified failure. */
+async function broadcastBatch(
+  submitter: PrivateSubmitter,
+  inputs: BroadcastInputs,
+  logTag: string,
+): Promise<{ txHash: string } | ValidationFailure> {
+  try {
+    const data = ACCOUNT_IFACE.encodeFunctionData("executeBatch", [
+      inputs.calls.map((c) => [c.target, BigInt(c.value), c.data]),
+      inputs.signature,
+    ]);
+    const wallet = submitter.getWallet();
+    // Funnel through the submitter's nonce-serializing mutex so
+    // concurrent POSTs (or overlap with claim/vault txs already
+    // gated by the same lock) can't race on the same nonce —
+    // ethers' default in-flight nonce tracking is per-Wallet, but
+    // sharing one Wallet across endpoints exposes it to drops if
+    // two callers hit broadcast at the same instant.
+    const tx = await submitter.sendWithTxLock(() =>
+      wallet.sendTransaction({
+        type: 4,
+        to: inputs.to,
+        data,
+        authorizationList: [
+          {
+            address: inputs.authorization.address,
+            chainId: BigInt(inputs.authorization.chainId),
+            nonce: BigInt(inputs.authorization.nonce),
+            signature: inputs.authorization.signature,
+          },
+        ],
+      }),
+    );
+    log.info(`submitted ${logTag}`, {
+      to: inputs.to,
+      txHash: tx.hash,
+      callsCount: inputs.calls.length,
+    });
+    return { txHash: tx.hash };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log.error(`${logTag} broadcast failed`, { error: msg });
+    // Don't echo the verbatim ethers error to the client: in some
+    // failure modes (e.g. "could not detect network", connection
+    // errors) the message embeds the RPC URL — which may include
+    // an Infura/Alchemy API key. Surface a curated, low-cardinality
+    // reason whitelist instead and log the full message
+    // server-side for the operator.
+    return {
+      status: 500,
+      body: { error: "broadcast failed", reason: classifyError(msg) },
+    };
+  }
+}
+
 export function createTransfer7702Routes(
   submitter: PrivateSubmitter,
   opts: CreateRoutesOpts,
@@ -121,166 +366,96 @@ export function createTransfer7702Routes(
 ): Router {
   const tokenEntries = opts.tokenEntries ?? parseTokenList(process.env.TOKEN_LIST ?? "");
   const gaslessFees = opts.gaslessFees ?? config.gaslessFees;
+  // Index by lowercased address once so per-call lookups stay O(1).
+  // `parseTokenList` already lowercases `addr`, so no normalisation here.
+  const tokenByAddr = new Map(tokenEntries.map((t) => [t.addr, t] as const));
+
+  // Resolve chainId lazily on first request, then cache. ethers v6
+  // `getNetwork()` issues an `eth_chainId` RPC on every call past the
+  // first to detect chain drift — irrelevant for a relayer pinned to
+  // one upstream — so we read once and re-use the bigint.
+  let cachedChainId: bigint | null = null;
+  const getChainId = async (): Promise<bigint> => {
+    if (cachedChainId === null) {
+      const network = await submitter.getProvider().getNetwork();
+      cachedChainId = network.chainId;
+    }
+    return cachedChainId;
+  };
+
   const router = Router();
 
-  if (writeLimiter) router.post("/relay", writeLimiter);
-  router.post("/relay", async (req: Request, res: Response) => {
-    const parsed = relayBodySchema.safeParse(req.body);
+  async function handleRelay(
+    req: Request,
+    res: Response,
+    schema: typeof relayBodySchema | typeof eoaRelayBodySchema,
+    extract: (body: RelayTransferBody | EoaRelayTransferBody) => {
+      to: string;
+      isEoaPath: boolean;
+    },
+    logTag: string,
+  ): Promise<void> {
+    const parsed = schema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: "invalid body", details: parsed.error.issues });
       return;
     }
     const body = parsed.data;
 
-    // Refuse to relay an authorization for a delegate other than the
-    // operator-published StealthTransferAccount. Otherwise a
-    // compromised client could trick the relayer into permanently
-    // delegating the EOA to an attacker contract that drains funds.
-    if (
-      body.authorization.address.toLowerCase() !==
-      opts.stealthTransferAccountAddress.toLowerCase()
-    ) {
-      res.status(400).json({
-        error: "unauthorized delegate",
-        expected: opts.stealthTransferAccountAddress,
-        got: body.authorization.address,
-      });
-      return;
+    const delegateFail = validateDelegate(body.authorization, opts.stealthTransferAccountAddress);
+    if (delegateFail) return sendFailure(res, delegateFail);
+
+    const expectedChainId = await getChainId();
+    const chainFail = validateChainId(body.authorization, expectedChainId);
+    if (chainFail) return sendFailure(res, chainFail);
+
+    const decoded = decodeTransferCalls(body.calls);
+    const { to, isEoaPath } = extract(body);
+
+    if (isEoaPath) {
+      const whitelistFail = validateEoaCallsWhitelist(body.calls, decoded, tokenByAddr);
+      if (whitelistFail) return sendFailure(res, whitelistFail);
     }
 
-    // Bind authorization chainId to our connected network so a
-    // cross-chain auth tuple isn't replayed here.
-    const provider = submitter.getProvider();
-    const network = await provider.getNetwork();
-    if (BigInt(body.authorization.chainId) !== network.chainId) {
-      res.status(400).json({
-        error: "chainId mismatch",
-        expected: network.chainId.toString(),
-        got: body.authorization.chainId,
-      });
-      return;
-    }
+    const feeFail = validateFeePayment(
+      body.calls,
+      decoded,
+      submitter.getWallet().address,
+      tokenByAddr,
+      gaslessFees,
+    );
+    if (feeFail) return sendFailure(res, feeFail);
 
-    // Enforce the operator's published fee policy. Sum every
-    // ERC20.transfer(relayerWallet, amount) call in the batch (per
-    // token) and require the total to be ≥ the policy floor for
-    // that token. Without this gate a client could sign a batch
-    // with `fee = 0` and the relayer would broadcast at a net
-    // loss — Phase A of the fee model assumes the relayer's policy
-    // is the canonical price.
-    const relayerWallet = submitter.getWallet().address.toLowerCase();
-    const feeByToken = new Map<string, bigint>();
-    for (const c of body.calls) {
-      let decoded;
-      try {
-        decoded = ERC20_TRANSFER_IFACE.decodeFunctionData("transfer", c.data);
-      } catch {
-        continue; // not an ERC20.transfer — skip
-      }
-      const to = (decoded[0] as string).toLowerCase();
-      if (to !== relayerWallet) continue;
-      const tokenAddr = c.target.toLowerCase();
-      const amount = BigInt(decoded[1] as bigint);
-      feeByToken.set(tokenAddr, (feeByToken.get(tokenAddr) ?? 0n) + amount);
-    }
-    let supportedFeePaid = false;
-    for (const [tokenAddr, paid] of feeByToken) {
-      const entry = tokenEntries.find((t) => t.addr === tokenAddr);
-      if (!entry) {
-        // Reject unknown-token fee transfers explicitly. Skipping
-        // them would let a client pay the relayer in some random
-        // token (worth $0 to the relayer) and bypass both the
-        // policy floor and the no-fee-paid rejection because
-        // feeByToken.size would still be > 0.
-        res.status(400).json({
-          error: "token not supported",
-          token: tokenAddr,
-          reason: `Relayer does not accept fees in token ${tokenAddr}`,
-        });
-        return;
-      }
-      const policy = gaslessFees[entry.symbol];
-      if (!policy) {
-        res.status(400).json({
-          error: "token not supported",
-          token: entry.symbol,
-          reason: `Relayer has no published gasless fee for ${entry.symbol}`,
-        });
-        return;
-      }
-      const policyWei = ethers.parseUnits(policy, entry.decimals);
-      if (paid < policyWei) {
-        res.status(400).json({
-          error: "fee below policy",
-          token: entry.symbol,
-          paid: ethers.formatUnits(paid, entry.decimals),
-          required: policy,
-        });
-        return;
-      }
-      supportedFeePaid = true;
-    }
-    if (!supportedFeePaid) {
-      res.status(400).json({
-        error: "no fee paid to relayer",
-        reason:
-          "Batch must include at least one ERC20.transfer to the relayer wallet matching the published fee policy",
-      });
-      return;
-    }
+    const result = await broadcastBatch(
+      submitter,
+      { to, calls: body.calls, signature: body.signature, authorization: body.authorization },
+      logTag,
+    );
+    if ("status" in result) return sendFailure(res, result);
+    res.status(202).json({ txHash: result.txHash });
+  }
 
-    let txHash: string;
-    try {
-      const data = ACCOUNT_IFACE.encodeFunctionData("executeBatch", [
-        body.calls.map((c) => [c.target, BigInt(c.value), c.data]),
-        body.signature,
-      ]);
+  if (writeLimiter) router.post("/relay", writeLimiter);
+  router.post("/relay", (req, res) =>
+    handleRelay(
+      req,
+      res,
+      relayBodySchema,
+      (b) => ({ to: (b as RelayTransferBody).stealthAddress, isEoaPath: false }),
+      "7702 stealth transfer",
+    ),
+  );
 
-      const wallet = submitter.getWallet();
-      // Funnel through the submitter's nonce-serializing mutex so
-      // concurrent POSTs (or overlap with claim/vault txs already
-      // gated by the same lock) can't race on the same nonce —
-      // ethers' default in-flight nonce tracking is per-Wallet, but
-      // sharing one Wallet across endpoints exposes it to drops if
-      // two callers hit broadcast at the same instant.
-      const tx = await submitter.sendWithTxLock(() =>
-        wallet.sendTransaction({
-          type: 4,
-          to: body.stealthAddress,
-          data,
-          // Single-element list — only the recipient's EOA delegates;
-          // the relayer's own EOA does not need any 7702 hat.
-          authorizationList: [
-            {
-              address: body.authorization.address,
-              chainId: BigInt(body.authorization.chainId),
-              nonce: BigInt(body.authorization.nonce),
-              signature: body.authorization.signature,
-            },
-          ],
-        }),
-      );
-      txHash = tx.hash;
-      log.info("submitted 7702 transfer", {
-        stealth: body.stealthAddress,
-        txHash,
-        callsCount: body.calls.length,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      log.error("7702 transfer broadcast failed", { error: msg });
-      // Don't echo the verbatim ethers error to the client: in some
-      // failure modes (e.g. "could not detect network", connection
-      // errors) the message embeds the RPC URL — which may include
-      // an Infura/Alchemy API key. Surface a curated, low-cardinality
-      // reason whitelist instead and log the full message
-      // server-side for the operator.
-      res.status(500).json({ error: "broadcast failed", reason: classifyError(msg) });
-      return;
-    }
-
-    res.status(202).json({ txHash });
-  });
+  if (writeLimiter) router.post("/eoa-relay", writeLimiter);
+  router.post("/eoa-relay", (req, res) =>
+    handleRelay(
+      req,
+      res,
+      eoaRelayBodySchema,
+      (b) => ({ to: (b as EoaRelayTransferBody).fromEoa, isEoaPath: true }),
+      "7702 eoa transfer",
+    ),
+  );
 
   return router;
 }
