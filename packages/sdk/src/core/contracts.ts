@@ -108,9 +108,13 @@ export const PRIVATE_SETTLEMENT_ABI = [
 
 export const COMMITMENT_POOL_ABI = [
   "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
+  "function withdraw(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 root, uint256 nullifierHash, uint256 newCommitment, address token, uint256 amount, address recipient, address relayer) external",
+  "function isKnownRoot(uint256 root) view returns (bool)",
+  "function isSpent(uint256 nullifierHash) view returns (bool)",
   "function getLastRoot() view returns (uint256)",
   "function nextIndex() view returns (uint32)",
   "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
+  "event Withdrawal(address indexed recipient, uint256 nullifierHash, uint256 newCommitment, uint256 amount)",
 ] as const;
 
 export const FEE_VAULT_ABI = [

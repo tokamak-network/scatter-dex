@@ -23,6 +23,11 @@ const REQUIRED = [
   "claim_final.zkey",
   "deposit.wasm",
   "deposit_final.zkey",
+  // Pool-withdraw flow (per-commitment Withdraw button on the
+  // dashboard pool card). Required so the Withdraw modal's prover
+  // can fetch /zk/withdraw.* at runtime.
+  "withdraw.wasm",
+  "withdraw_final.zkey",
 ];
 
 // Tier-64 / tier-128 — produced only once the per-tier ceremony has
