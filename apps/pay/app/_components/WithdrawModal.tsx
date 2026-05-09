@@ -14,19 +14,38 @@ const PHASE_ORDER: WithdrawPhase[] = ["preparing", "proving", "submitting", "con
 const PHASE_COPY: Record<WithdrawPhase, { label: string; detail: string }> = {
   preparing: {
     label: "Preparing",
-    detail: "Resolving the merkle path and recomputing nullifier / token hash.",
+    detail:
+      "Resolving the commitment's merkle path from the live pool tree, " +
+      "then probing the contract to confirm the nullifier hasn't been " +
+      "consumed and the local merkle root matches what's on-chain. " +
+      "This is the contract-side guard rerun client-side so we don't " +
+      "burn ~10 s on a proof the chain would reject.",
   },
   proving: {
     label: "Generating proof",
-    detail: "ZK proof of ownership runs locally — ~5–10 s on a warm cache.",
+    detail:
+      "Running the Groth16 prover in your browser against the withdraw " +
+      "circuit (snarkjs + circom). The proof says \"I know a commitment " +
+      "in the pool tree that hashes to this nullifier and is owned by " +
+      "this key, without revealing which one.\" This is the slow step — " +
+      "5–10 s on a warm cache, up to 30 s the first time the wasm/zkey " +
+      "load.",
   },
   submitting: {
     label: "Submitting",
-    detail: "Sign in your wallet to broadcast the on-chain withdraw.",
+    detail:
+      "Sign the on-chain `commitmentPool.withdraw(...)` call in your " +
+      "wallet. The proof, root, nullifier, recipient, and amount are " +
+      "passed publicly; the spent commitment stays hidden. Your wallet " +
+      "pays the gas (no relayer in v1).",
   },
   confirming: {
     label: "Confirming",
-    detail: "Waiting for the network to mine the withdraw tx.",
+    detail:
+      "Waiting for the network to mine the tx. The contract verifies the " +
+      "Groth16 proof, marks the nullifier as spent, transfers the tokens " +
+      "to the recipient, and (in partial-withdraw mode — not yet wired) " +
+      "inserts the change commitment.",
   },
 };
 
@@ -141,6 +160,12 @@ export function WithdrawModal({
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
             Note <span className="font-mono">{note.label}</span> · leaf #{note.leafIndex}
           </div>
+          <p className="mt-2 text-[10px] leading-relaxed text-[var(--color-text-subtle)]">
+            Spends the entire commitment in one tx. A ZK proof shows the
+            pool you own a commitment that hashes to a fresh nullifier
+            without revealing which one — the on-chain transaction
+            reveals only the recipient, amount, and token.
+          </p>
         </div>
 
         {!done && (
