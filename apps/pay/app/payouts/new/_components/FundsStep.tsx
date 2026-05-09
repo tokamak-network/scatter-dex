@@ -192,6 +192,7 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit, depositBusy
         onToggle={onToggle}
         singleSelect={batchCount <= 1}
         onSelect={onSelect}
+        requiredCoverageRaw={totalEscrowRaw}
         onDeposit={onDeposit}
         onRecheck={onRecheck}
         explorerBase={explorerBase}

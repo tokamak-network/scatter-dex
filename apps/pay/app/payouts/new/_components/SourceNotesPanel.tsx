@@ -38,6 +38,13 @@ export interface SourceNotesPanelProps {
   /** Replace the selection with the given id. Required when
    *  `singleSelect` is true; ignored otherwise. */
   onSelect?: (id: string) => void;
+  /** Total amount the run needs in a single covering note. Used in
+   *  `singleSelect` mode to grey out rows whose `note.amount` is
+   *  smaller than the run requires — since `scatterDirectAuth`
+   *  consumes one commitment, a too-small note can't fund the run
+   *  even if it's Ready. Ignored in multi-batch mode (the per-batch
+   *  picker decides fit then). */
+  requiredCoverageRaw?: bigint;
   /** Wired to FundsStep's deposit modal so the empty state can
    *  surface a primary CTA instead of the operator hunting for the
    *  shortfall banner below. Optional so other surfaces can reuse
@@ -88,6 +95,7 @@ export function SourceNotesPanel({
   onToggle,
   singleSelect = false,
   onSelect,
+  requiredCoverageRaw,
   onDeposit,
   depositConfigured = true,
   depositBusy = false,
@@ -228,6 +236,22 @@ export function SourceNotesPanel({
               {tokenNotes.map((n) => {
                 const ready = n.leafIndex >= 0;
                 const checked = selectedIds.has(n.id);
+                // In single-select mode, a note is only spendable
+                // when it covers the full run on its own — single-
+                // batch settle consumes one commitment. Block the
+                // input + tooltip the reason so a row that says
+                // "Ready" but can't fund the run isn't a UX trap.
+                const insufficient =
+                  singleSelect &&
+                  requiredCoverageRaw !== undefined &&
+                  requiredCoverageRaw > 0n &&
+                  n.note.amount < requiredCoverageRaw;
+                const inputDisabled = !ready || insufficient;
+                const inputTitle = !ready
+                  ? "Confirming on-chain — selectable after one block"
+                  : insufficient
+                    ? `Note is smaller than the run total — single-batch settle needs one commitment that covers ${ethers.formatUnits(requiredCoverageRaw!, decimals)} ${token}.`
+                    : undefined;
                 return (
                   <tr key={n.id} className="border-t border-[var(--color-border)]">
                     <td className="py-1.5 align-middle">
@@ -235,7 +259,7 @@ export function SourceNotesPanel({
                         type={singleSelect ? "radio" : "checkbox"}
                         name={singleSelect ? "source-note-pick" : undefined}
                         checked={checked}
-                        disabled={!ready}
+                        disabled={inputDisabled}
                         onChange={() => {
                           if (singleSelect) {
                             onSelect?.(n.id);
@@ -243,11 +267,7 @@ export function SourceNotesPanel({
                             onToggle(n.id);
                           }
                         }}
-                        title={
-                          !ready
-                            ? "Confirming on-chain — selectable after one block"
-                            : undefined
-                        }
+                        title={inputTitle}
                       />
                     </td>
                     <td className="py-1.5">

@@ -1050,11 +1050,57 @@ function NewPayout() {
         : autoSourcePick,
     [manualPick, notes, selectedNoteIds, tokenAddress, totalEscrowRaw, autoSourcePick],
   );
-  const shortfallRaw = sourcePick.covered
-    ? 0n
-    : totalEscrowRaw > availableRaw
-      ? totalEscrowRaw - availableRaw
-      : totalEscrowRaw - sourcePick.pickedRaw;
+  const batches = useMemo<PayoutBatch[]>(() => {
+    if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
+    try {
+      // Clamp before parsing so the displayed Tier / batch count
+      // matches `tier`, and a paste of 10k rows doesn't parse the
+      // overflow. Validation still flags the original row count and
+      // disables Sign — this clamp only affects the preview.
+      const cappedRows = rows.slice(0, MAX_RECIPIENTS_PER_RUN);
+      const recipients = parseRecipientRows(cappedRows, decimals, claimFrom);
+      return splitPayout(recipients, { token: tokenAddress });
+    } catch {
+      return [];
+    }
+  }, [rows, tokenAddress, decimals, claimFrom]);
+
+  // For a single-batch run the on-chain settle (`scatterDirectAuth`)
+  // consumes exactly ONE source commitment, so the shortfall has to
+  // be computed against the *largest existing reconciled note* — not
+  // the sum of all notes. Otherwise the panel would advise the
+  // operator to top up by `total - sum_of_notes`, and that small
+  // top-up still wouldn't yield a single covering commitment
+  // (deposits mint a fresh independent UTXO, they don't merge with
+  // existing notes). Multi-batch runs keep the sum-based shortfall —
+  // each batch needs its own covering note, and pickPerBatchNotes
+  // / BatchFitWarning surface the per-batch fit problem when the
+  // sum is enough but a per-batch cover isn't.
+  const isSingleBatch = batches.length <= 1;
+  const largestEligibleRaw = useMemo<bigint>(() => {
+    if (!tokenAddress) return 0n;
+    const tokenLower = tokenAddress.toLowerCase();
+    let max = 0n;
+    for (const n of notes) {
+      if (n.leafIndex < 0) continue;
+      if (tokenBigIntToAddress(n.note.token).toLowerCase() !== tokenLower) continue;
+      if (n.note.amount > max) max = n.note.amount;
+    }
+    return max;
+  }, [notes, tokenAddress]);
+  const singleBatchCovered = isSingleBatch && largestEligibleRaw >= totalEscrowRaw;
+  const shortfallRaw = isSingleBatch
+    ? singleBatchCovered
+      ? 0n
+      : // No single existing note covers the run. A new deposit must
+        // mint a self-sufficient commitment — `totalEscrowRaw` is
+        // the operator's actionable top-up amount, not the sum gap.
+        totalEscrowRaw
+    : sourcePick.covered
+      ? 0n
+      : totalEscrowRaw > availableRaw
+        ? totalEscrowRaw - availableRaw
+        : totalEscrowRaw - sourcePick.pickedRaw;
   const toggleNoteSelection = useCallback((id: string) => {
     setManualPick(true);
     setSelectedNoteIds((prev) => {
@@ -1071,21 +1117,6 @@ function NewPayout() {
     setManualPick(true);
     setSelectedNoteIds(new Set([id]));
   }, []);
-
-  const batches = useMemo<PayoutBatch[]>(() => {
-    if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
-    try {
-      // Clamp before parsing so the displayed Tier / batch count
-      // matches `tier`, and a paste of 10k rows doesn't parse the
-      // overflow. Validation still flags the original row count and
-      // disables Sign — this clamp only affects the preview.
-      const cappedRows = rows.slice(0, MAX_RECIPIENTS_PER_RUN);
-      const recipients = parseRecipientRows(cappedRows, decimals, claimFrom);
-      return splitPayout(recipients, { token: tokenAddress });
-    } catch {
-      return [];
-    }
-  }, [rows, tokenAddress, decimals, claimFrom]);
 
   // Pre-flight the multi-batch picker so the Funds step can warn
   // BEFORE Sign — without this, the user sees "covered" via
