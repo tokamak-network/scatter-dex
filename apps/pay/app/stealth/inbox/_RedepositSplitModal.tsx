@@ -45,6 +45,30 @@ function phaseLabel(p: RedepositPhase, detail?: string): string {
   }
 }
 
+/** Ordered phases used to render the step tracker. Mirrors the
+ *  call order in `submitRedeposit` so completed/current/pending
+ *  state is a simple index comparison. */
+const PHASE_ORDER: ReadonlyArray<RedepositPhase> = [
+  "preparing",
+  "claim-proving",
+  "deposit-proving",
+  "signing",
+  "submitting",
+  "confirming",
+];
+
+/** One-line description of what each step actually does, surfaced
+ *  beneath the active label so the user understands why the modal
+ *  isn't responsive (proof generation can take 10–30s). */
+const PHASE_DETAIL: Record<RedepositPhase, string> = {
+  preparing: "Loading vault state and computing the merkle path for this claim.",
+  "claim-proving": "Building a Groth16 proof that authorizes the funds without revealing the stealth key.",
+  "deposit-proving": "Generating one Groth16 proof per output slice. The largest takes the longest.",
+  signing: "Signing an EIP-712 authorization with the stealth privkey so the relayer accepts the redirect.",
+  submitting: "Waiting for you to confirm the transaction in your connected wallet.",
+  confirming: "Transaction broadcast. Waiting for the network to mine it (usually one block).",
+};
+
 export function RedepositSplitModal({
   entry,
   privkey,
@@ -291,8 +315,40 @@ export function RedepositSplitModal({
         )}
 
         {phase && (
-          <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
-            {phaseLabel(phase.p, phase.detail)}
+          <div className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
+            <div className="flex items-center gap-2 text-[var(--color-primary)]">
+              <span
+                className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent"
+                aria-hidden
+              />
+              <span className="font-medium">
+                Step {PHASE_ORDER.indexOf(phase.p) + 1} of {PHASE_ORDER.length}: {phaseLabel(phase.p, phase.detail)}
+              </span>
+            </div>
+            <p className="text-[var(--color-text-muted)]">{PHASE_DETAIL[phase.p]}</p>
+            <ol className="space-y-0.5 pl-1">
+              {PHASE_ORDER.map((p, i) => {
+                const cur = PHASE_ORDER.indexOf(phase.p);
+                const state = i < cur ? "done" : i === cur ? "current" : "pending";
+                return (
+                  <li
+                    key={p}
+                    className={`flex items-center gap-2 ${
+                      state === "done"
+                        ? "text-[var(--color-text-muted)]"
+                        : state === "current"
+                          ? "text-[var(--color-primary)]"
+                          : "text-[var(--color-text-subtle)]"
+                    }`}
+                  >
+                    <span aria-hidden className="w-3 text-center">
+                      {state === "done" ? "✓" : state === "current" ? "●" : "○"}
+                    </span>
+                    <span>{phaseLabel(p)}</span>
+                  </li>
+                );
+              })}
+            </ol>
           </div>
         )}
 
