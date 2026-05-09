@@ -6,6 +6,7 @@ import { Modal } from "@zkscatter/ui";
 import { useEdDSAKey, useWallet } from "@zkscatter/sdk/react";
 import type { StealthInboxEntry } from "@zkscatter/sdk/storage";
 import { MAX_CLAIM_TO_POOL_SLICES } from "@zkscatter/sdk/contracts";
+import { formatTokenLabel } from "@zkscatter/sdk";
 import {
   submitRedeposit,
   type RedepositPhase,
@@ -186,7 +187,7 @@ export function RedepositSplitModal({
           <div className="mt-1 text-lg font-semibold">
             {ethers.formatUnits(totalRaw, tokenDecimals)}{" "}
             <span className="text-sm font-normal text-[var(--color-text-muted)]">
-              {tokenSymbol}
+              {formatTokenLabel(tokenSymbol)}
             </span>
           </div>
           <div className="mt-2 text-xs text-[var(--color-text-muted)]">
@@ -248,7 +249,7 @@ export function RedepositSplitModal({
                 <ul className="space-y-1 text-xs text-[var(--color-text-muted)]">
                   {slices.map((s, i) => (
                     <li key={i} className="font-mono">
-                      #{i + 1}: {ethers.formatUnits(s, tokenDecimals)} {tokenSymbol}
+                      #{i + 1}: {ethers.formatUnits(s, tokenDecimals)} {formatTokenLabel(tokenSymbol)}
                     </li>
                   ))}
                 </ul>
@@ -269,8 +270,11 @@ export function RedepositSplitModal({
                       inputMode="decimal"
                       className="flex-1 rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 font-mono text-xs"
                     />
-                    <span className="w-12 text-xs text-[var(--color-text-muted)]">
-                      {tokenSymbol}
+                    {/* `min-w` instead of fixed `w-12` so the longer
+                        \`Tokamak(TON)\` label fits without overlapping
+                        the remove button. */}
+                    <span className="min-w-12 whitespace-nowrap text-xs text-[var(--color-text-muted)]">
+                      {formatTokenLabel(tokenSymbol)}
                     </span>
                     <button
                       type="button"
@@ -297,7 +301,7 @@ export function RedepositSplitModal({
                       : "text-[var(--color-warning)]"
                   }`}
                 >
-                  Sum: {ethers.formatUnits(sumSlices, tokenDecimals)} {tokenSymbol}
+                  Sum: {ethers.formatUnits(sumSlices, tokenDecimals)} {formatTokenLabel(tokenSymbol)}
                   {!sumMatches && (
                     <>
                       {" "}/ {ethers.formatUnits(totalRaw, tokenDecimals)} required

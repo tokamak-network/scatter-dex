@@ -17,6 +17,7 @@ import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
 import { shortAddr, useMetaAddress, useMounted, useWallet } from "@zkscatter/sdk/react";
 import { decodeClaimPackage } from "@zkscatter/sdk/notes";
+import { formatTokenLabel } from "@zkscatter/sdk";
 import { deriveStealthForPackage } from "../../_lib/stealthDerive";
 import { submitClaim } from "../../_lib/claimSubmit";
 import {
@@ -727,10 +728,10 @@ function SummaryStats({
   }
   return (
     <section className="grid grid-cols-6 gap-4">
-      <Stat label="Total" value={`${record.totalAmount} ${record.tokenSymbol}`} />
+      <Stat label="Total" value={`${record.totalAmount} ${formatTokenLabel(record.tokenSymbol)}`} />
       <Stat
         label="Relayer fee"
-        value={record.relayerFee ? `${record.relayerFee} ${record.tokenSymbol}` : "—"}
+        value={record.relayerFee ? `${record.relayerFee} ${formatTokenLabel(record.tokenSymbol)}` : "—"}
         sub="paid"
       />
       <Stat label="Claimed" value={`${claimed} / ${total}`} />
@@ -832,7 +833,7 @@ function RecipientTable({
                     <AddressCell address={r.address} />
                   </td>
                   <td className="px-5 py-3 text-right font-mono">
-                    {r.amount} {record.tokenSymbol}
+                    {r.amount} {formatTokenLabel(record.tokenSymbol)}
                   </td>
                   <td className="px-5 py-3">
                     <ClaimStatusBadge row={r} />
@@ -990,7 +991,7 @@ function ClaimProgressBanner({
     const row = record.recipients.find((r) => r.rowIndex === claimingRow);
     const label = row?.name ?? `row ${claimingRow + 1}`;
     const amountText = row
-      ? `${row.amount} ${record.tokenSymbol}`
+      ? `${row.amount} ${formatTokenLabel(record.tokenSymbol)}`
       : "";
     const addr = row ? shortAddr(row.address) : "";
     const phases: Array<{
@@ -1055,7 +1056,7 @@ function ClaimProgressBanner({
   if (lastClaimTx) {
     const row = record.recipients.find((r) => r.rowIndex === lastClaimTx.rowIndex);
     const label = row?.name ?? `row ${lastClaimTx.rowIndex + 1}`;
-    const amountText = row ? `${row.amount} ${record.tokenSymbol}` : "";
+    const amountText = row ? `${row.amount} ${formatTokenLabel(record.tokenSymbol)}` : "";
     return (
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-xs text-[var(--color-success)]">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -1363,7 +1364,7 @@ function openClaimMailDraftAndConfirm(
   const body = [
     `Hi ${row.name || ""},`,
     ``,
-    `Your payment of ${row.amount} ${record.tokenSymbol} is ready.`,
+    `Your payment of ${row.amount} ${formatTokenLabel(record.tokenSymbol)} is ready.`,
     ``,
     `Claim it here:`,
     url,
