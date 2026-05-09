@@ -636,7 +636,12 @@ function NewPayout() {
           source: multiBatchFit.byBatch[i]!,
           relayer,
           chain: { signer, settlementAddress, chainId: cfg.chainId },
-          maxFeeBps: safeMaxFeeBps,
+          // Sign the proof against the *effective* cap (service + claim
+          // reserve), not the operator's bare service-bps input. The
+          // contract validates `fee × 10000 ≤ sellAmount × maxFee` and
+          // our `feeRaw` already includes the reserve; without this
+          // bump the validator would reject the inflated total.
+          maxFeeBps: effectiveMaxFeeBps,
           eddsaPrivateKey: kp.privateKey,
           eddsaPublicKey: kp.publicKey,
           tree,
@@ -1005,14 +1010,39 @@ function NewPayout() {
   // Sanitize first — browser number inputs can carry transient decimal
   // values (e.g. mid-typing "1.5"); `BigInt(1.5)` throws.
   const safeMaxFeeBps = Number.isFinite(maxFeeBps) ? Math.max(0, Math.trunc(maxFeeBps)) : 0;
-  // The relayer charges exactly `sellAmount − totalLocked` (see
-  // `submitScatterDirectAuth` in zk-relayer), so we can pick the
-  // cleanest possible split: fee = totalLocked × bps / 10000, then
-  // sellAmount = totalLocked + fee. The contract's bps cap
-  // (`fee × 10000 ≤ sellAmount × maxFee`) is satisfied by
-  // construction since fee/sellAmount = bps/(10000+bps) < bps/10000.
-  const feeRaw = (requiredRaw * BigInt(safeMaxFeeBps)) / 10_000n;
+  // Service portion: bps × locked amount, the operator's chosen cap
+  // for the relayer's revenue line. Same formula as the legacy
+  // single-fee model.
+  const serviceFeeRaw = (requiredRaw * BigInt(safeMaxFeeBps)) / 10_000n;
+  // Claim-gasless reserve: platform-set per-token amount × recipient
+  // count, sourced from the selected relayer's published policy
+  // (`api.claim_fees[symbol]` on /api/info). Adds N × per-recipient
+  // to the relayer's revenue so it can cover the eventual claim
+  // gas without losing money on big-N runs at gas spikes. Falls
+  // back to 0 when the platform hasn't published a policy or the
+  // selected token isn't in the table — keeps legacy runs working.
+  const claimFeePerRecipientRaw = (() => {
+    const str = relayer?.api?.claim_fees?.[token];
+    if (!str) return 0n;
+    try {
+      return ethers.parseUnits(str, decimals);
+    } catch {
+      return 0n;
+    }
+  })();
+  const claimReserveRaw = BigInt(rows.length) * claimFeePerRecipientRaw;
+  const feeRaw = serviceFeeRaw + claimReserveRaw;
   const totalEscrowRaw = requiredRaw + feeRaw;
+  // Effective bps the proof commits to. The contract enforces
+  // `fee × 10000 ≤ sellAmount × maxFee`, so the cap signal must be
+  // at least `ceil(feeRaw × 10000 / totalEscrowRaw)` for the
+  // service+reserve sum to clear validation. Falls back to the
+  // user-input bps when the run has no escrow yet (degenerate case
+  // — the form's other guards prevent submit).
+  const effectiveMaxFeeBps =
+    totalEscrowRaw > 0n
+      ? Number((feeRaw * 10_000n + totalEscrowRaw - 1n) / totalEscrowRaw)
+      : safeMaxFeeBps;
 
   // Operator-controlled checklist of vault notes to spend. Defaults
   // to whatever auto-pick would have chosen but switches to manual
@@ -1584,6 +1614,10 @@ function NewPayout() {
               decimals,
               requiredRaw,
               feeRaw,
+              serviceFeeRaw,
+              claimReserveRaw,
+              claimFeePerRecipientRaw,
+              recipientCount: rows.length,
               totalEscrowRaw,
               availableRaw,
               pendingRaw,

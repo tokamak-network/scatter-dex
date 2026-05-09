@@ -42,6 +42,14 @@ export interface RelayerApiInfo {
    *  when the relayer hasn't configured a policy, in which case its
    *  `/api/transfer-7702/relay` rejects with `token not supported`. */
   gasless_fees?: Record<string, string>;
+  /** Per-recipient claim-gasless reserve policy. Symbol → decimal-
+   *  string amount in token-units, e.g.
+   *  `{ USDC: "0.05", USDT: "0.05", TON: "0.5" }`. Multiplied by the
+   *  run's recipient count and added to the bps service fee at
+   *  settle time. Empty / missing when the platform hasn't published
+   *  a policy — operator UI falls back to legacy service-fee-only
+   *  behavior. */
+  claim_fees?: Record<string, string>;
 }
 
 /** Per-token settled volume (one row per `sell_token`). `totalVolume`

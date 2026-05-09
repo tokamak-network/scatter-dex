@@ -89,6 +89,23 @@ export interface FundsStepProps {
     decimals: number;
     requiredRaw: bigint;
     feeRaw: bigint;
+    /** Service-fee portion of `feeRaw` (bps × requiredRaw). Surfaced
+     *  in the fee breakdown so the operator can see what they're
+     *  paying the relayer for service vs the claim-gasless reserve. */
+    serviceFeeRaw: bigint;
+    /** Claim-gasless reserve portion of `feeRaw` (N × per-recipient).
+     *  `0n` when the relayer hasn't published a `claim_fees` policy
+     *  for the run's token — the breakdown row collapses to a single
+     *  line in that case. */
+    claimReserveRaw: bigint;
+    /** Per-recipient claim-fee from `relayer.api.claim_fees[token]`,
+     *  parsed to `decimals`. Rendered as the "× 0.05" multiplier in
+     *  the breakdown row — passed in directly so the row doesn't
+     *  re-divide `claimReserveRaw / recipientCount`. */
+    claimFeePerRecipientRaw: bigint;
+    /** Recipient count, used to render the breakdown row's
+     *  "16 × 0.05" subtitle. */
+    recipientCount: number;
     totalEscrowRaw: bigint;
     /** Sum of *reconciled* notes (leafIndex >= 0). `pendingRaw` is
      *  what's deposited but not yet observable to the picker. */
@@ -146,7 +163,20 @@ export interface FundsStepProps {
 }
 
 export function FundsStep({ funds, pick, wallet, relayer, onDeposit, depositBusy, onRecheck, explorerBase }: FundsStepProps) {
-  const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, pendingRaw, shortfallRaw } = funds;
+  const {
+    token,
+    decimals,
+    requiredRaw,
+    feeRaw,
+    serviceFeeRaw,
+    claimReserveRaw,
+    claimFeePerRecipientRaw,
+    recipientCount,
+    totalEscrowRaw,
+    availableRaw,
+    pendingRaw,
+    shortfallRaw,
+  } = funds;
   const { sourcePick, batchCount, multiBatchFit, tokenNotes, selectedIds, onToggle, onSelect } = pick;
   const { account, vaultLoaded } = wallet;
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
@@ -173,7 +203,31 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit, depositBusy
         <h3 className="mb-2 text-sm font-semibold">Required to escrow</h3>
         <dl className="space-y-1 font-mono">
           <FundsRow k="Recipients total" v={`${fmt(requiredRaw)} ${token}`} />
-          <FundsRow k={`Fee at max (${relayer.maxFeeBps} bps)`} v={`${fmt(feeRaw)} ${token}`} />
+          {claimReserveRaw > 0n ? (
+            <>
+              {/* Service + claim-reserve breakdown — shown only when
+                  the relayer has published a claim_fees policy for
+                  the run's token. Legacy single-fee runs still
+                  collapse to the original "Fee at max" line below. */}
+              <FundsRow
+                k={`Relayer service fee (${relayer.maxFeeBps} bps)`}
+                v={`${fmt(serviceFeeRaw)} ${token}`}
+              />
+              <FundsRow
+                k={`Claim reserve (${recipientCount} × ${fmt(claimFeePerRecipientRaw)})`}
+                v={`${fmt(claimReserveRaw)} ${token}`}
+              />
+              <FundsRow
+                k="Relayer fee (incl. claim gasless)"
+                v={`${fmt(feeRaw)} ${token}`}
+              />
+            </>
+          ) : (
+            <FundsRow
+              k={`Fee at max (${relayer.maxFeeBps} bps)`}
+              v={`${fmt(feeRaw)} ${token}`}
+            />
+          )}
           <FundsRow k="Total to escrow" v={`${fmt(totalEscrowRaw)} ${token}`} bold />
         </dl>
       </div>

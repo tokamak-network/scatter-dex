@@ -68,21 +68,16 @@ export const config = {
   // selector so users can compare across relayers; the
   // /api/transfer-7702/relay endpoint also enforces that the fee
   // included in the batch is at least this published value.
-  gaslessFees: (() => {
-    const out: Record<string, string> = {};
-    for (const key of Object.keys(process.env)) {
-      const m = key.match(/^GASLESS_FEE_([A-Z0-9]+)$/);
-      if (!m) continue;
-      const value = (process.env[key] ?? "").trim();
-      if (!value) continue;
-      // Validate as decimal: refuses negative, hex, or junk.
-      if (!/^\d+(\.\d+)?$/.test(value)) {
-        throw new Error(`${key} must be a non-negative decimal (got "${value}")`);
-      }
-      out[m[1]] = value;
-    }
-    return out;
-  })(),
+  gaslessFees: parsePerTokenDecimalEnv("GASLESS_FEE_"),
+  // Per-recipient claim-gasless reserve charged at settle time, on
+  // top of the bps service fee. The platform sets this so all
+  // relayers in the network charge the same per-token amount —
+  // operators don't have to compare claim-fee schedules across
+  // relayers. Read from `CLAIM_FEE_<SYMBOL>` env vars (e.g.
+  // `CLAIM_FEE_USDC=0.05`). The Pay wizard reads this from
+  // /api/info, multiplies by recipient count, and adds to the
+  // service fee before computing the proof's `maxFee` cap.
+  claimFees: parsePerTokenDecimalEnv("CLAIM_FEE_"),
   adminApiKey: (() => {
     const key = process.env.ADMIN_API_KEY;
     if (!key) return null;
@@ -169,6 +164,25 @@ function parseLowBalanceWei(name: string, fallback: string): bigint {
   const [whole, frac = ""] = fallback.split(".");
   const fracPadded = frac.slice(0, 18).padEnd(18, "0");
   return BigInt(whole || "0") * 10n ** 18n + BigInt(fracPadded || "0");
+}
+
+/** Scan `process.env` for `<prefix><SYMBOL>` keys and return a
+ *  symbol→decimal-string map. Refuses negatives, hex, or junk so a
+ *  typo in the operator's env doesn't silently degrade fee policy. */
+function parsePerTokenDecimalEnv(prefix: string): Record<string, string> {
+  const re = new RegExp(`^${prefix}([A-Z0-9]+)$`);
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(process.env)) {
+    const m = key.match(re);
+    if (!m) continue;
+    const value = (process.env[key] ?? "").trim();
+    if (!value) continue;
+    if (!/^\d+(\.\d+)?$/.test(value)) {
+      throw new Error(`${key} must be a non-negative decimal (got "${value}")`);
+    }
+    out[m[1]] = value;
+  }
+  return out;
 }
 
 /** Parse a non-negative integer env var with a default. Logs a warn and
