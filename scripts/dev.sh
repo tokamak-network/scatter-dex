@@ -7,6 +7,17 @@ if (( BASH_VERSINFO[0] < 4 )); then
   echo "Install a newer bash (for example: brew install bash) and ensure it is first on PATH." >&2
   exit 1
 fi
+
+# On Apple Silicon, native modules (better-sqlite3, esbuild) installed under
+# arm64 fail to load when the script runs under x86_64 Rosetta — and vice
+# versa. Some users have an x86_64 homebrew bash at /usr/local/bin/bash that
+# `/usr/bin/env bash` picks first; re-exec under the native arm64 bash so
+# `uname -m` matches the installed module arch.
+if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "x86_64" ] \
+    && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] \
+    && [ -x /opt/homebrew/bin/bash ]; then
+  exec /opt/homebrew/bin/bash "$0" "$@"
+fi
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"

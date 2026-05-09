@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
+import type { VaultNote } from "@zkscatter/sdk/react";
 import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
-import { tokenBigIntToAddress } from "../_lib/format";
+import { useCommitmentTree } from "../_lib/commitmentTree";
 
 /** Best-effort USD prices for the launch token set. Stablecoins are
  *  pinned at $1; the rest are placeholders until a live feed (oracle
@@ -27,12 +28,43 @@ interface TokenRow {
   /** Numeric balance × USD price. NaN when the price is unknown. */
   usdValue: number;
   pinned: boolean;
+  /** Per-commitment notes for this token, sorted Ready first then by
+   *  leaf index. Drives the per-token drawer when the operator
+   *  expands a row. */
+  notes: VaultNote[];
 }
 
 export function PoolBalanceCard() {
   const { account } = useWallet();
   const { notes, loaded } = useVault();
+  const tree = useCommitmentTree();
   const [expanded, setExpanded] = useState(false);
+  const hasPending = useMemo(
+    () => notes.some((n) => n.leafIndex < 0),
+    [notes],
+  );
+  // Auto-poll the on-chain commitment tree while any local note is
+  // still waiting on its `CommitmentInserted` event. Without this, a
+  // change UTXO from a fresh settle can sit Pending until the user
+  // navigates back to the wizard's funds step (which has its own
+  // poller). The reconciler converts `findIndex` hits to leafIndex
+  // updates, so a forced refresh on a 3 s tick is enough to flip
+  // Pending → Ready as soon as the node sees the event.
+  useEffect(() => {
+    if (!hasPending) return;
+    const id = window.setInterval(() => tree.refresh(), 3000);
+    return () => window.clearInterval(id);
+  }, [hasPending, tree]);
+  // Symbols whose per-note drawer is currently open. Stored as a Set
+  // so toggling one row doesn't collapse the others — the operator
+  // commonly inspects multiple tokens side by side.
+  const [openSymbols, setOpenSymbols] = useState<ReadonlySet<string>>(new Set());
+  const toggleSymbol = (s: string) =>
+    setOpenSymbols((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s); else next.add(s);
+      return next;
+    });
 
   // One row per whitelisted token (zero balance included so the
   // operator sees the full menu of what could be deposited), summed
@@ -40,12 +72,15 @@ export function PoolBalanceCard() {
   // the biggest pools surface first when the panel is expanded.
   const rows = useMemo<TokenRow[]>(() => {
     const balanceBySymbol = new Map<string, bigint>();
+    const notesBySymbol = new Map<string, VaultNote[]>();
     if (loaded) {
       for (const n of notes) {
         // `n.symbol` is the source of truth in the vault; the
         // whitelist key matches it for tokens we care about.
         const sum = balanceBySymbol.get(n.symbol) ?? 0n;
         balanceBySymbol.set(n.symbol, sum + n.note.amount);
+        const arr = notesBySymbol.get(n.symbol);
+        if (arr) arr.push(n); else notesBySymbol.set(n.symbol, [n]);
       }
     }
     const list: TokenRow[] = Object.values(LAUNCH_TOKENS).map((t) => {
@@ -53,12 +88,22 @@ export function PoolBalanceCard() {
       const numeric = Number(ethers.formatUnits(raw, t.decimals));
       const price = APPROX_USD_PRICE[t.symbol];
       const usdValue = price !== undefined ? numeric * price : NaN;
+      const tokenNotes = (notesBySymbol.get(t.symbol) ?? []).slice().sort((a, b) => {
+        // Ready (leafIndex >= 0) before Pending; within a group, by
+        // leafIndex ascending so the on-chain order matches what the
+        // operator sees when comparing against the explorer.
+        const aReady = a.leafIndex >= 0;
+        const bReady = b.leafIndex >= 0;
+        if (aReady !== bReady) return aReady ? -1 : 1;
+        return a.leafIndex - b.leafIndex;
+      });
       return {
         symbol: t.symbol,
         rawBalance: raw,
         decimals: t.decimals,
         usdValue,
         pinned: PINNED_USD_SYMBOLS.has(t.symbol),
+        notes: tokenNotes,
       };
     });
     list.sort((a, b) => {
@@ -147,6 +192,13 @@ export function PoolBalanceCard() {
         </div>
         <div className="flex gap-2">
           <button
+            onClick={() => tree.refresh()}
+            title="Re-hydrate the commitment tree from on-chain history"
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
+          >
+            Refresh
+          </button>
+          <button
             onClick={() => setExpanded((v) => !v)}
             className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
           >
@@ -160,37 +212,75 @@ export function PoolBalanceCard() {
             <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
               <tr>
                 <th className="px-3 py-2 text-left">Token</th>
+                <th className="px-3 py-2 text-right">Notes</th>
                 <th className="px-3 py-2 text-right">Balance</th>
                 <th className="px-3 py-2 text-right">USD value</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <tr
-                  key={r.symbol}
-                  className="border-t border-[var(--color-border)]"
-                >
-                  <td className="px-3 py-2 font-medium">
-                    {r.symbol}{" "}
-                    {!r.pinned && (
-                      <span
-                        title="USD value uses a static fallback price"
-                        className="ml-1 text-[10px] text-[var(--color-text-muted)]"
-                      >
-                        (approx)
-                      </span>
+              {rows.map((r) => {
+                const open = openSymbols.has(r.symbol);
+                const noteCount = r.notes.length;
+                const pendingCount = r.notes.filter((n) => n.leafIndex < 0).length;
+                const canExpand = noteCount > 0;
+                return (
+                  <Fragment key={r.symbol}>
+                    <tr className="border-t border-[var(--color-border)]">
+                      <td className="px-3 py-2 font-medium">
+                        {canExpand ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleSymbol(r.symbol)}
+                            aria-expanded={open}
+                            aria-label={`${open ? "Collapse" : "Expand"} ${r.symbol} commitments`}
+                            className="inline-flex items-center gap-1 rounded px-1 hover:bg-[var(--color-bg)]"
+                          >
+                            <span className="inline-block w-3 text-[var(--color-text-subtle)]">
+                              {open ? "▾" : "▸"}
+                            </span>
+                            <span>{r.symbol}</span>
+                          </button>
+                        ) : (
+                          <span>
+                            <span className="inline-block w-3" />{" "}
+                            {r.symbol}
+                          </span>
+                        )}{" "}
+                        {!r.pinned && (
+                          <span
+                            title="USD value uses a static fallback price"
+                            className="ml-1 text-[10px] text-[var(--color-text-muted)]"
+                          >
+                            (approx)
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-xs text-[var(--color-text-muted)]">
+                        {noteCount === 0
+                          ? "—"
+                          : pendingCount > 0
+                            ? `${noteCount} (${pendingCount} pending)`
+                            : `${noteCount}`}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">
+                        {formatBalance(r.rawBalance, r.decimals)}
+                      </td>
+                      <td className="px-3 py-2 text-right font-mono text-xs">
+                        {Number.isFinite(r.usdValue)
+                          ? formatUsd(r.usdValue)
+                          : "—"}
+                      </td>
+                    </tr>
+                    {open && canExpand && (
+                      <tr className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+                        <td colSpan={4} className="px-3 py-2">
+                          <NotesDrawer notes={r.notes} decimals={r.decimals} symbol={r.symbol} />
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    {formatBalance(r.rawBalance, r.decimals)}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    {Number.isFinite(r.usdValue)
-                      ? formatUsd(r.usdValue)
-                      : "—"}
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -215,6 +305,67 @@ function formatUsd(value: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function NotesDrawer({
+  notes,
+  decimals,
+  symbol,
+}: {
+  notes: VaultNote[];
+  decimals: number;
+  symbol: string;
+}) {
+  return (
+    <div className="overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full text-xs">
+        <thead className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-2 py-1.5 text-left">Label</th>
+            <th className="px-2 py-1.5 text-left">Status</th>
+            <th className="px-2 py-1.5 text-right">Leaf</th>
+            <th className="px-2 py-1.5 text-right">Amount</th>
+            <th className="px-2 py-1.5 text-left">Commitment</th>
+          </tr>
+        </thead>
+        <tbody>
+          {notes.map((n) => {
+            const ready = n.leafIndex >= 0;
+            return (
+              <tr key={n.id} className="border-t border-[var(--color-border)]">
+                <td className="px-2 py-1.5 font-medium">{n.label}</td>
+                <td className="px-2 py-1.5">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      ready
+                        ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+                        : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+                    }`}
+                  >
+                    {ready ? "Ready" : "Pending"}
+                  </span>
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono">
+                  {ready ? `#${n.leafIndex}` : "—"}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono">
+                  {formatBalance(n.note.amount, decimals)} {symbol}
+                </td>
+                <td className="px-2 py-1.5 font-mono text-[var(--color-text-muted)]">
+                  {shortHex(n.commitment)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function shortHex(value: bigint): string {
+  const hex = "0x" + value.toString(16).padStart(64, "0");
+  return `${hex.slice(0, 10)}…${hex.slice(-6)}`;
 }
 
 function formatBalance(raw: bigint, decimals: number): string {

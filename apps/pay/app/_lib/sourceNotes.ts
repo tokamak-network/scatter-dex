@@ -196,14 +196,23 @@ export function pickPerBatchNotes(
   notes: readonly StoredNote[],
   batches: readonly { totalAmount: bigint }[],
   tokenAddress: string,
+  /** When provided + non-empty, restrict the eligible pool to notes
+   *  whose id is in the set. This keeps the actual settle path
+   *  honoring the operator's manual selection — without it, the
+   *  funds-step preview (which respects `selectedIds`) and the
+   *  on-chain settle (which used to ignore them) could disagree on
+   *  *which* note got spent and where the change UTXO landed. */
+  selectedIds?: ReadonlySet<string>,
 ): PerBatchPick {
   if (batches.length === 0) {
     return { byBatch: [], changeRaw: 0n, covered: true };
   }
   const tokenLower = tokenAddress.toLowerCase();
+  const useSelection = !!selectedIds && selectedIds.size > 0;
   const eligible = notes
     .filter((n) => tokenBigIntToAddress(n.note.token) === tokenLower)
     .filter((n) => n.leafIndex >= 0)
+    .filter((n) => (useSelection ? selectedIds!.has(n.id) : true))
     .slice()
     .sort((a, b) =>
       a.note.amount === b.note.amount ? 0 : a.note.amount < b.note.amount ? 1 : -1,

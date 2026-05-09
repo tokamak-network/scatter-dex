@@ -217,9 +217,15 @@ export default function Dashboard() {
           sub={`across ${runs.length} run${runs.length === 1 ? "" : "s"}`}
         />
         <Stat
-          label="Saved on gas"
-          value={stats.gasSavedHint}
-          sub="vs. equivalent N transfers"
+          label={`Stale unclaimed (${STALE_THRESHOLD_DAYS}d+)`}
+          value={`${stats.staleUnclaimed}`}
+          sub={
+            stats.staleUnclaimed === 0
+              ? "no follow-ups needed"
+              : `from ${stats.staleRunIds.length} run${
+                  stats.staleRunIds.length === 1 ? "" : "s"
+                } — consider resending`
+          }
         />
       </section>
 
@@ -493,6 +499,12 @@ function SortHeader({
 function RunRow({ entry }: { entry: RunsIndexEntry }) {
   const total = entry.totalRecipients;
   const claimed = entry.claimedRecipients;
+  const unclaimed = total - claimed;
+  // `entry.createdAt` is unix seconds (per `formatIsoDate(unixSec)`),
+  // so compute age in seconds — `Date.now() - createdAt` would mix
+  // ms and seconds and mark every run stale.
+  const ageSec = Math.floor(Date.now() / 1000) - entry.createdAt;
+  const isStale = unclaimed > 0 && ageSec >= STALE_THRESHOLD_DAYS * 86400;
   const date = formatIsoDate(entry.createdAt);
   const operatorTag = entry.operatorAddress
     ? shortAddr(entry.operatorAddress)
@@ -539,6 +551,16 @@ function RunRow({ entry }: { entry: RunsIndexEntry }) {
             </span>
           )}
         </div>
+        {isStale && (
+          <div
+            title={`${unclaimed} recipient${
+              unclaimed === 1 ? "" : "s"
+            } haven't claimed in ${STALE_THRESHOLD_DAYS}+ days — consider resending the claim link.`}
+            className="mt-1 inline-block rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]"
+          >
+            {unclaimed} stale ({STALE_THRESHOLD_DAYS}d+)
+          </div>
+        )}
       </div>
     </Link>
   );
@@ -561,26 +583,44 @@ interface DashboardStats {
   thisMonthByToken: Record<string, number>;
   distinctTokens: number;
   pendingClaims: number;
-  /** When `settleGasPaid` is empty across all runs (e.g. only v1
-   *  records or wizard not yet wired to capture gas) we surface a
-   *  placeholder rather than a misleading $0. */
-  gasSavedHint: string;
+  /** Recipients on runs older than `STALE_THRESHOLD_DAYS` whose
+   *  claim hasn't landed. The count the operator can act on
+   *  (resend, follow up) — distinct from `pendingClaims`, which
+   *  also includes recipients whose links were just sent and
+   *  haven't had a chance to be opened yet. */
+  staleUnclaimed: number;
+  /** Run ids contributing to `staleUnclaimed`, capped at a few so
+   *  the action banner can name them without becoming a wall. */
+  staleRunIds: string[];
 }
+
+const STALE_THRESHOLD_DAYS = 7;
+const STALE_RUN_LIST_CAP = 3;
 
 function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
   const thisMonthByToken: Record<string, number> = {};
   let pendingClaims = 0;
+  let staleUnclaimed = 0;
+  const staleRunIds: string[] = [];
   const tokens = new Set<string>();
-  let anyGas = false;
   // `Date.now()` runs only after hydration so SSR doesn't see a
   // current-month filter the client would compute differently.
   const now = mounted ? new Date() : null;
+  // `createdAt` is unix seconds; comparing against `Date.now()` (ms)
+  // here would mark every run stale by a factor of 1000.
+  const nowSec = now ? Math.floor(now.getTime() / 1000) : 0;
+  const staleCutoffSec = STALE_THRESHOLD_DAYS * 86400;
   const thisMonthIso = now
     ? `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
     : null;
   for (const r of runs) {
     tokens.add(r.tokenSymbol);
-    pendingClaims += r.totalRecipients - r.claimedRecipients;
+    const unclaimed = r.totalRecipients - r.claimedRecipients;
+    pendingClaims += unclaimed;
+    if (now && unclaimed > 0 && nowSec - r.createdAt >= staleCutoffSec) {
+      staleUnclaimed += unclaimed;
+      if (staleRunIds.length < STALE_RUN_LIST_CAP) staleRunIds.push(r.id);
+    }
     if (thisMonthIso && formatIsoDate(r.createdAt).startsWith(thisMonthIso)) {
       // parseAmount returns NaN on a malformed total; treat that as
       // 0 so a single bad record doesn't poison the running sum
@@ -589,13 +629,13 @@ function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
       thisMonthByToken[r.tokenSymbol] =
         (thisMonthByToken[r.tokenSymbol] ?? 0) + (Number.isFinite(n) ? n : 0);
     }
-    if (r.settleGasPaid) anyGas = true;
   }
   return {
     thisMonthByToken,
     distinctTokens: tokens.size,
     pendingClaims,
-    gasSavedHint: anyGas ? "see runs" : "—",
+    staleUnclaimed,
+    staleRunIds,
   };
 }
 

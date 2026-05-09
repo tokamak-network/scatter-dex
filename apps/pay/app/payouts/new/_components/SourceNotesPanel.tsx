@@ -29,6 +29,15 @@ export interface SourceNotesPanelProps {
    *  auto-pick `sourcePick`. */
   selectedIds: ReadonlySet<string>;
   onToggle: (id: string) => void;
+  /** When true, only one note can be selected at a time (single-batch
+   *  runs spend exactly one source note per `scatterDirectAuth` call,
+   *  so multi-select is misleading). Inputs render as radios and
+   *  selecting a different row replaces the prior selection via
+   *  `onSelect` instead of toggling membership. */
+  singleSelect?: boolean;
+  /** Replace the selection with the given id. Required when
+   *  `singleSelect` is true; ignored otherwise. */
+  onSelect?: (id: string) => void;
   /** Wired to FundsStep's deposit modal so the empty state can
    *  surface a primary CTA instead of the operator hunting for the
    *  shortfall banner below. Optional so other surfaces can reuse
@@ -39,6 +48,11 @@ export interface SourceNotesPanelProps {
    *  but disabled with the same "env not configured" hint the
    *  shortfall banner uses. */
   depositConfigured?: boolean;
+  /** True while a deposit flow is in progress (approving allowance,
+   *  proving, submitting, confirming). The CTA disables and shows a
+   *  busy label so the operator can't trigger a second flow on top
+   *  of a still-running one. */
+  depositBusy?: boolean;
   /** Re-fetch the on-chain commitment tree. The panel polls this
    *  while `pendingRaw > 0` so a deposit's "Confirming → Ready"
    *  transition no longer relies on the ethers contract subscription
@@ -72,8 +86,11 @@ export function SourceNotesPanel({
   sourcePick,
   selectedIds,
   onToggle,
+  singleSelect = false,
+  onSelect,
   onDeposit,
   depositConfigured = true,
+  depositBusy = false,
   onRecheck,
   explorerBase,
 }: SourceNotesPanelProps) {
@@ -189,7 +206,8 @@ export function SourceNotesPanel({
       {tokenNotes.length > 0 && (
         <>
           <div className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-            Your deposits ({tokenNotes.length}) — check the ones to spend
+            Your deposits ({tokenNotes.length}) —{" "}
+            {singleSelect ? "pick one to spend" : "check the ones to spend"}
           </div>
           <table className="w-full text-xs">
             <thead className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
@@ -208,10 +226,17 @@ export function SourceNotesPanel({
                   <tr key={n.id} className="border-t border-[var(--color-border)]">
                     <td className="py-1.5 align-middle">
                       <input
-                        type="checkbox"
+                        type={singleSelect ? "radio" : "checkbox"}
+                        name={singleSelect ? "source-note-pick" : undefined}
                         checked={checked}
                         disabled={!ready}
-                        onChange={() => onToggle(n.id)}
+                        onChange={() => {
+                          if (singleSelect) {
+                            onSelect?.(n.id);
+                          } else {
+                            onToggle(n.id);
+                          }
+                        }}
                         title={
                           !ready
                             ? "Confirming on-chain — selectable after one block"
@@ -315,14 +340,22 @@ export function SourceNotesPanel({
             </div>
             {!fullyCoveredByPending && onDeposit && (
               <button
-                onClick={depositConfigured ? onDeposit : undefined}
-                disabled={!depositConfigured}
-                title={depositConfigured ? undefined : "Deposit env not configured"}
+                onClick={depositConfigured && !depositBusy ? onDeposit : undefined}
+                disabled={!depositConfigured || depositBusy}
+                title={
+                  !depositConfigured
+                    ? "Deposit env not configured"
+                    : depositBusy
+                      ? "Deposit in progress"
+                      : undefined
+                }
                 className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
               >
-                {depositConfigured
-                  ? `Deposit ${fmt(remaining)} ${token}`
-                  : "Deposit (env not configured)"}
+                {!depositConfigured
+                  ? "Deposit (env not configured)"
+                  : depositBusy
+                    ? "Depositing…"
+                    : `Deposit ${fmt(remaining)} ${token}`}
               </button>
             )}
           </div>
