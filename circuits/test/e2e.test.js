@@ -356,4 +356,61 @@ describe("ZK E2E Tests", () => {
 
     console.log("All 3 claims from same root verified independently!");
   }, 120000);
+
+  // Regression for PR #630 Flaw 1 (Gemini high). Rev 1 of claimToPool
+  // tried to pass `address(pool)` as pubSignals[4]; production claim
+  // zkey binds pubSignals[4] to the leaf's `recipient` (stealth
+  // address), so verifyProof would have reverted on-chain.
+  // Rev 2 fix: PrivateSettlement._verifyClaimProofToPool now passes
+  // `stealthRecipient` — this test pins the binding so any future
+  // refactor that re-introduces a non-leaf recipient breaks here
+  // instead of failing silently behind MockClaimVerifier.
+  test("Claim circuit: pubSignals[4] equals leaf recipient (claimToPool Rev 2 binding)", async () => {
+    const stealthRecipient = BigInt("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    const poolAddress = BigInt("0x5FbDB2315678afecb367f032d93F642f64180aa3");
+    const secret = randomField();
+    const token = BigInt("0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9");
+    const amount = BigInt("250000000000000000");
+    const releaseTime = BigInt(Math.floor(Date.now() / 1000));
+
+    const leaf = F.toObject(
+      poseidon([secret, stealthRecipient, token, amount, releaseTime])
+    );
+    const leafIndex = 0;
+    const nullifier = F.toObject(poseidon([2n, secret, BigInt(leafIndex)]));
+
+    const { root: claimsRoot, layers } = await buildMerkleTree([leaf], CLAIMS_DEPTH);
+    const { pathElements, pathIndices } = getMerkleProof(layers, leafIndex);
+
+    const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+      {
+        claimsRoot: claimsRoot.toString(),
+        nullifier: nullifier.toString(),
+        amount: amount.toString(),
+        token: token.toString(),
+        recipient: stealthRecipient.toString(),
+        releaseTime: releaseTime.toString(),
+        secret: secret.toString(),
+        leafIndex: leafIndex.toString(),
+        pathElements: pathElements.map(e => e.toString()),
+        pathIndices: pathIndices.map(i => i.toString()),
+      },
+      CLAIM_WASM,
+      CLAIM_ZKEY
+    );
+
+    // Public signal order from claim.circom:
+    // [claimsRoot, nullifier, amount, token, recipient, releaseTime]
+    expect(BigInt(publicSignals[4])).toBe(stealthRecipient);
+    expect(BigInt(publicSignals[4])).not.toBe(poolAddress);
+
+    const vkey = require(CLAIM_VKEY);
+    expect(await snarkjs.groth16.verify(vkey, publicSignals, proof)).toBe(true);
+
+    // Simulate the on-chain check: replacing pubSignals[4] with the
+    // pool address (Rev 1 layout) must fail the Groth16 verifier.
+    const tampered = [...publicSignals];
+    tampered[4] = poolAddress.toString();
+    expect(await snarkjs.groth16.verify(vkey, tampered, proof)).toBe(false);
+  }, 60000);
 });
