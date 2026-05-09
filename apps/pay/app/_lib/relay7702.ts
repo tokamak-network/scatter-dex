@@ -24,6 +24,10 @@ export interface Call {
 export interface RelayBody {
   stealthAddress: string;
   calls: Call[];
+  /** Unix-second timestamp; signature expires when
+   *  `block.timestamp > deadline`. Bound into the EIP-712 struct
+   *  so a held / leaked sig can't be replayed indefinitely. */
+  deadline: string;
   signature: string;
   authorization: {
     address: string;
@@ -31,6 +35,17 @@ export interface RelayBody {
     nonce: string;
     signature: { r: string; s: string; yParity: 0 | 1 };
   };
+}
+
+/** EOA-flow body — same shape as `RelayBody` but the address field
+ *  is `fromEoa` to match the relayer's `/eoa-relay` route schema
+ *  (logs and metrics distinguish the two flows). */
+export interface EoaRelayBody {
+  fromEoa: string;
+  calls: Call[];
+  deadline: string;
+  signature: string;
+  authorization: RelayBody["authorization"];
 }
 
 /**
@@ -43,7 +58,11 @@ export interface RelayBody {
 function buildDomain(eoa: string, chainId: bigint) {
   return {
     name: "StealthTransferAccount",
-    version: "1",
+    // v2 added the `deadline` field to the Batch struct. Bumping
+    // the EIP-712 version here makes any v1 signature fail at the
+    // domain-separator stage instead of mid-execute, so a stale
+    // client deploy can't accidentally land an old-shape sig.
+    version: "2",
     chainId,
     verifyingContract: eoa,
   };
@@ -54,6 +73,7 @@ const BATCH_TYPES: ethers.TypedDataField extends infer F
   : never = {
   Batch: [
     { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint256" },
     { name: "calls", type: "Call[]" },
   ],
   Call: [
@@ -78,6 +98,10 @@ export interface Sign7702Inputs {
   /** Calls forwarded into `executeBatch`. Includes the user-intended
    *  transfer + the relayer fee deduction. */
   calls: Call[];
+  /** Unix-second deadline bound into the signature. Contract
+   *  reverts with `ExpiredSignature()` if `block.timestamp > deadline`
+   *  at submit time. Callers default this to `now + 600` (10 min). */
+  deadline: bigint;
   /** EOA's tx nonce — the delegation tuple binds against this. For a
    *  fresh stealth EOA receiving claim funds + immediately
    *  delegating, this is typically 0. */
@@ -112,6 +136,7 @@ export async function sign7702Batch(input: Sign7702Inputs): Promise<{
   const domain = buildDomain(wallet.address, input.chainId);
   const value = {
     nonce: input.batchNonce,
+    deadline: input.deadline,
     calls: input.calls.map((c) => ({
       target: c.target,
       value: BigInt(c.value),
@@ -135,6 +160,91 @@ export async function sign7702Batch(input: Sign7702Inputs): Promise<{
   };
 }
 
+/** Wallet-backed variant of {@link sign7702Batch} for the operator's
+ *  connected EOA (MetaMask etc.). Uses the live signer's
+ *  `authorize` + `signTypedData` instead of an in-memory privkey,
+ *  so a hardware wallet's private key never leaves the device. The
+ *  caller is responsible for prompting the user before this runs —
+ *  the wallet UI will pop two confirmation modals (one for the
+ *  EIP-7702 authorization tuple, one for the EIP-712 batch
+ *  signature). */
+export async function sign7702BatchWithSigner(input: {
+  signer: ethers.Signer;
+  delegateAddress: string;
+  batchNonce: bigint;
+  calls: Call[];
+  deadline: bigint;
+  ethNonce: bigint;
+  chainId: bigint;
+}): Promise<{ authorization: RelayBody["authorization"]; signature: string }> {
+  const { signer } = input;
+  const account = await signer.getAddress();
+
+  // ethers v6 hangs `authorize` off AbstractSigner; hardware /
+  // injected providers that don't yet implement it (older MetaMask
+  // builds) will throw a clear error here, which is what we want —
+  // gasless requires 7702 support.
+  const authorizeFn = (
+    signer as ethers.Signer & {
+      authorize?: (auth: {
+        address: string;
+        chainId: bigint;
+        nonce: bigint;
+      }) => Promise<{
+        address: string;
+        chainId: bigint;
+        nonce: bigint;
+        signature: { r: string; s: string; yParity: number };
+      }>;
+    }
+  ).authorize;
+  if (!authorizeFn) {
+    throw new Error(
+      "Connected wallet doesn't support EIP-7702 authorization. Update MetaMask (≥ 12.x) or pick a relayer-paid flow.",
+    );
+  }
+  const auth = await authorizeFn.call(signer, {
+    address: input.delegateAddress,
+    chainId: input.chainId,
+    nonce: input.ethNonce,
+  });
+
+  const domain = buildDomain(account, input.chainId);
+  const value = {
+    nonce: input.batchNonce,
+    deadline: input.deadline,
+    calls: input.calls.map((c) => ({
+      target: c.target,
+      value: BigInt(c.value),
+      data: c.data,
+    })),
+  };
+  const signature = await signer.signTypedData(domain, BATCH_TYPES, value);
+
+  return {
+    authorization: {
+      address: auth.address,
+      chainId: auth.chainId.toString(),
+      nonce: auth.nonce.toString(),
+      signature: {
+        r: auth.signature.r,
+        s: auth.signature.s,
+        yParity: auth.signature.yParity as 0 | 1,
+      },
+    },
+    signature,
+  };
+}
+
+/** Strip a single trailing slash from a URL so the endpoint
+ *  concatenation below produces `https://x/api/...` regardless of
+ *  whether the operator's NetworkConfig persists `https://x` or
+ *  `https://x/`. Other helpers in the SDK already normalise this
+ *  way; centralising here keeps the wire requests consistent. */
+function trimSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
 /**
  *  POST the relay request and return the broadcast tx hash. The
  *  endpoint returns 202 immediately; the caller polls the receipt
@@ -144,7 +254,7 @@ export async function postRelayTransfer(
   relayerUrl: string,
   body: RelayBody,
 ): Promise<string> {
-  const res = await fetch(`${relayerUrl}/api/transfer-7702/relay`, {
+  const res = await fetch(`${trimSlash(relayerUrl)}/api/transfer-7702/relay`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -157,6 +267,33 @@ export async function postRelayTransfer(
   if (!res.ok) {
     const detail = json.reason ?? json.error ?? `HTTP ${res.status}`;
     throw new Error(`POST ${relayerUrl}/api/transfer-7702/relay failed: ${detail}`);
+  }
+  if (!json.txHash) throw new Error("Relayer response missing txHash");
+  return json.txHash;
+}
+
+/** EOA-flow counterpart to {@link postRelayTransfer}. Hits
+ *  `/api/transfer-7702/eoa-relay` which enforces ERC20.transfer-only
+ *  call shapes — stricter than the stealth path so a tampered
+ *  client can't smuggle arbitrary calldata through the gas
+ *  sponsorship. */
+export async function postEoaRelayTransfer(
+  relayerUrl: string,
+  body: EoaRelayBody,
+): Promise<string> {
+  const res = await fetch(`${trimSlash(relayerUrl)}/api/transfer-7702/eoa-relay`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    txHash?: string;
+    error?: string;
+    reason?: string;
+  };
+  if (!res.ok) {
+    const detail = json.reason ?? json.error ?? `HTTP ${res.status}`;
+    throw new Error(`POST ${relayerUrl}/api/transfer-7702/eoa-relay failed: ${detail}`);
   }
   if (!json.txHash) throw new Error("Relayer response missing txHash");
   return json.txHash;

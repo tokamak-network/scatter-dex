@@ -1308,6 +1308,10 @@ function TransferOutModal({
       fee,
     });
 
+    // Bind a 10-minute deadline into the signature. Contract reverts
+    // ExpiredSignature() once block.timestamp passes — caps the
+    // blast radius of a leaked / held sig past the user's intent.
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 600);
     const signed = await sign7702Batch({
       privkey,
       delegateAddress,
@@ -1315,11 +1319,13 @@ function TransferOutModal({
       ethNonce,
       chainId,
       calls,
+      deadline,
     });
 
     const hash = await postRelayTransfer(relayerUrl, {
       stealthAddress: stealthAddr,
       calls,
+      deadline: deadline.toString(),
       signature: signed.signature,
       authorization: signed.authorization,
     });

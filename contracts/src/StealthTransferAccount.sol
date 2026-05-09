@@ -62,20 +62,27 @@ contract StealthTransferAccount is EIP712 {
     /// @dev EIP-712 typehash for the batch. The trailing `Call(...)`
     ///      definition is required by EIP-712 — referenced types are
     ///      appended in alphabetical order.
+    ///      v2 adds `deadline` so a held / leaked signature can't
+    ///      be replayed indefinitely against a still-fresh nonce.
     bytes32 private constant BATCH_TYPEHASH =
         keccak256(
-            "Batch(uint256 nonce,Call[] calls)Call(address target,uint256 value,bytes data)"
+            "Batch(uint256 nonce,uint256 deadline,Call[] calls)Call(address target,uint256 value,bytes data)"
         );
 
     error InvalidSignature();
     error CallFailed(uint256 index, bytes returnData);
+    /// @dev Reverted when `block.timestamp > deadline` at submit
+    ///      time. The signed deadline is a unix-second timestamp
+    ///      bound into the EIP-712 struct so the relayer can't
+    ///      forge a longer validity window.
+    error ExpiredSignature();
 
     /// @notice Emitted after every successful batch so off-chain
     ///         indexers can reconcile. `caller` is the relayer that
     ///         submitted the tx; the EOA = `address(this)`.
     event BatchExecuted(address indexed caller, uint256 indexed nonce, uint256 callsCount);
 
-    constructor() EIP712("StealthTransferAccount", "1") {}
+    constructor() EIP712("StealthTransferAccount", "2") {}
 
     /**
      *  Execute a batch of arbitrary calls from the delegating EOA.
@@ -89,14 +96,24 @@ contract StealthTransferAccount is EIP712 {
      *  @param calls      Ordered list of subcalls. Native value can
      *                    be attached per-call (sourced from this
      *                    contract's balance, i.e. the EOA's balance).
+     *  @param deadline   Unix-second timestamp; reverts when
+     *                    `block.timestamp > deadline`. Bound into
+     *                    the EIP-712 struct so the relayer can't
+     *                    extend the validity window past what the
+     *                    EOA signed for.
      *  @param signature  65-byte ECDSA signature over the EIP-712
      *                    typed-data hash of the batch.
      */
-    function executeBatch(Call[] calldata calls, bytes calldata signature) external {
+    function executeBatch(
+        Call[] calldata calls,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
+        if (block.timestamp > deadline) revert ExpiredSignature();
         address account = address(this);
         uint256 currentNonce = nonce;
 
-        bytes32 digest = _hashTypedDataV4(_hashBatch(currentNonce, calls));
+        bytes32 digest = _hashTypedDataV4(_hashBatch(currentNonce, deadline, calls));
         // tryRecover normalizes every failure mode (wrong length,
         // invalid s/v, etc.) into a single `RecoverError` enum
         // instead of letting OZ's per-shape custom errors bubble
@@ -127,11 +144,19 @@ contract StealthTransferAccount is EIP712 {
     /// @notice Compute the EIP-712 struct hash for a batch payload.
     ///         Exposed so off-chain signers can mirror the hashing
     ///         logic without duplicating typehash strings.
-    function hashBatch(uint256 batchNonce, Call[] calldata calls) external view returns (bytes32) {
-        return _hashTypedDataV4(_hashBatch(batchNonce, calls));
+    function hashBatch(
+        uint256 batchNonce,
+        uint256 deadline,
+        Call[] calldata calls
+    ) external view returns (bytes32) {
+        return _hashTypedDataV4(_hashBatch(batchNonce, deadline, calls));
     }
 
-    function _hashBatch(uint256 batchNonce, Call[] calldata calls) internal pure returns (bytes32) {
+    function _hashBatch(
+        uint256 batchNonce,
+        uint256 deadline,
+        Call[] calldata calls
+    ) internal pure returns (bytes32) {
         bytes32[] memory callHashes = new bytes32[](calls.length);
         for (uint256 i = 0; i < calls.length; ) {
             callHashes[i] = keccak256(
@@ -141,6 +166,13 @@ contract StealthTransferAccount is EIP712 {
                 ++i;
             }
         }
-        return keccak256(abi.encode(BATCH_TYPEHASH, batchNonce, keccak256(abi.encodePacked(callHashes))));
+        return keccak256(
+            abi.encode(
+                BATCH_TYPEHASH,
+                batchNonce,
+                deadline,
+                keccak256(abi.encodePacked(callHashes))
+            )
+        );
     }
 }
