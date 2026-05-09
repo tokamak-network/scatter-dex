@@ -32,6 +32,7 @@ import {
 import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
 import { ERC20_ABI, type NetworkConfig } from "@zkscatter/sdk";
+import { RedepositSplitModal } from "./_RedepositSplitModal";
 
 /** True when `token` is the chain's WETH — claims auto-unwrap to
  *  native ETH on payout, so native send-tx and `getBalance` are the
@@ -90,6 +91,8 @@ function InboxBody() {
   const [corrupt, setCorrupt] = useState<StealthInboxCorruptError | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeClaim, setActiveClaim] = useState<StealthInboxEntry | null>(null);
+  const [activeRedeposit, setActiveRedeposit] =
+    useState<{ entry: StealthInboxEntry; privkey: string } | null>(null);
   const [reconciling, setReconciling] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -268,6 +271,7 @@ function InboxBody() {
             spendingKey={keys.spendingKey}
             viewingKey={keys.viewingKey}
             onClaim={setActiveClaim}
+            onRedeposit={(entry, privkey) => setActiveRedeposit({ entry, privkey })}
             onRemove={async (id) => {
               await removeStealthInboxEntry(id);
               await refresh();
@@ -284,6 +288,29 @@ function InboxBody() {
           onClaimed={async (txHash) => {
             await markStealthInboxEntryClaimed(activeClaim.id, txHash);
             setActiveClaim(null);
+            await refresh();
+          }}
+        />
+      )}
+      {activeRedeposit && (
+        <RedepositSplitModal
+          entry={activeRedeposit.entry}
+          privkey={activeRedeposit.privkey}
+          onClose={() => setActiveRedeposit(null)}
+          onDone={async (txHash) => {
+            // Same bookkeeping as the regular Claim path: mark the
+            // entry claimed in the inbox so the row no longer shows
+            // a Claimable pill. Funds are in the pool, not at the
+            // stealth EOA, so the post-claim Transfer button auto-
+            // disables (ClaimedRowActions polls the stealth balance
+            // and disables Transfer when balance == 0). The Privkey
+            // reveal stays available — the user may still want the
+            // key for record-keeping or for future packages sent to
+            // the same address. The user spends the new pool
+            // commitments via authorize proofs against their vault
+            // notes, not via inbox actions.
+            await markStealthInboxEntryClaimed(activeRedeposit.entry.id, txHash);
+            setActiveRedeposit(null);
             await refresh();
           }}
         />
@@ -411,12 +438,14 @@ function InboxTable({
   spendingKey,
   viewingKey,
   onClaim,
+  onRedeposit,
   onRemove,
 }: {
   entries: StealthInboxEntry[];
   spendingKey: string;
   viewingKey: string;
   onClaim: (entry: StealthInboxEntry) => void;
+  onRedeposit: (entry: StealthInboxEntry, privkey: string) => void;
   onRemove: (id: string) => void | Promise<void>;
 }) {
   // Refresh status timers so "locked → claimable" flips without the
@@ -479,6 +508,7 @@ function InboxTable({
                     spendingKey={spendingKey}
                     viewingKey={viewingKey}
                     onClaim={() => onClaim(e)}
+                    onRedeposit={(privkey) => onRedeposit(e, privkey)}
                     onRemove={() => void onRemove(e.id)}
                   />
                 </td>
@@ -525,6 +555,7 @@ function RowActions({
   spendingKey,
   viewingKey,
   onClaim,
+  onRedeposit,
   onRemove,
 }: {
   entry: StealthInboxEntry;
@@ -532,10 +563,23 @@ function RowActions({
   spendingKey: string;
   viewingKey: string;
   onClaim: () => void;
+  /** Resolved stealth privkey passed up so the inbox can show the
+   *  Redeposit modal without re-deriving. The button is disabled
+   *  when no privkey can be resolved. */
+  onRedeposit: (privkey: string) => void;
   onRemove: () => void;
 }) {
   const canDeriveLocally =
     Boolean(entry.stealthPrivateKey) || Boolean(entry.ephemeralPubKey);
+
+  /// Resolve the stealth privkey for the Redeposit button. The same
+  /// derivation runs inside ClaimExecuteModal; resolving here lets
+  /// the button label drive the modal directly.
+  const resolvedPrivkey = useMemo<string | null>(() => {
+    if (entry.stealthPrivateKey) return entry.stealthPrivateKey;
+    const derived = deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey });
+    return derived?.matches ? derived.privateKey : null;
+  }, [entry, spendingKey, viewingKey]);
   // Guards against keys-don't-match-sender cases: privkey path
   // verifies via ethers.Wallet, ephPub path via the shared
   // deriveStealthForPackage helper.
@@ -591,6 +635,14 @@ function RowActions({
           className="rounded-md bg-[var(--color-primary)] px-3 py-1 font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
         >
           Claim
+        </button>
+        <button
+          onClick={() => resolvedPrivkey && onRedeposit(resolvedPrivkey)}
+          disabled={!canDeriveLocally || derivedMismatch || !resolvedPrivkey}
+          title="Atomic claim → split into pool commitments. Bypasses the stealth EOA so funds land in the pool directly."
+          className="rounded-md border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-3 py-1 font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white disabled:opacity-40"
+        >
+          Redeposit
         </button>
         <button
           onClick={onRemove}
