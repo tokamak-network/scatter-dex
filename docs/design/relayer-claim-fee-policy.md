@@ -1,6 +1,6 @@
 # Relayer fee redesign — including claim gasless cost
 
-Status: **Draft / analysis-only** — no code changes implied. Requires sign-off before implementation.
+Status: **Option B1 implemented** (PR #644) — per-recipient claim reserve added off-chain by stretching the existing `maxFee` bps signal to cover service + reserve. Contract & circuit unchanged. Sections 1–4 are background; section 5 (Option B1) describes the shipped design. Future-tier options (full Option B with circuit changes) remain analysis-only.
 
 ## 1. Background
 
@@ -140,7 +140,7 @@ Each step is independent: B3 alone gives on-chain policy without circuit change;
 
 ### Relayer (zk-relayer)
 
-- `config.ts`: read `CLAIM_FEES` env (JSON) → `claim_fees: { USDC: "0.05", ... }`. Same shape as existing `gaslessFees`.
+- `config.ts`: read per-token `CLAIM_FEE_<SYMBOL>` env vars (e.g. `CLAIM_FEE_USDC=0.05`) → `claimFees: { USDC: "0.05", ... }`. Mirrors the existing `GASLESS_FEE_<SYMBOL>` pattern; both share the `parsePerTokenDecimalEnv` helper.
 - `routes/info.ts`: publish `claim_fees` alongside `gasless_fees`.
 - `routes/admin.ts` (optional): admin endpoint to update `claim_fees` at runtime (mirrors existing `relayerFee` runtime override).
 - (optional) `core/gas-estimator.ts`: background sampler publishing `gasEstimate.perClaimWei` for **admin reference only** — not consumed by operator wizard.
@@ -157,7 +157,12 @@ Each step is independent: B3 alone gives on-chain policy without circuit change;
   serviceFee   = sellAmount × bps / 10000
   claimReserve = N × claim_fees[token]
   relayerFee   = serviceFee + claimReserve
-  effectiveMaxBps = ceil(relayerFee × 10000 / sellAmount)
+  // The on-chain check is `fee × 10000 ≤ sellAmount × maxFee`,
+  // where `sellAmount` is the order's sell field and *includes* the
+  // fee (escrow = required + fee). To match the implementation, the
+  // bps stretch divides by `sellAmount = required + relayerFee`,
+  // not by `required` alone.
+  effectiveMaxBps = ceil(relayerFee × 10000 / (required + relayerFee))
   ```
 - Display single combined "Relayer fee" line; expandable detail on hover.
 - Pass `effectiveMaxBps` to authorize prover as the `maxFee` signal.

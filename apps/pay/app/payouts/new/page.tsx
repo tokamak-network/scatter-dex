@@ -1022,11 +1022,25 @@ function NewPayout() {
   // back to 0 when the platform hasn't published a policy or the
   // selected token isn't in the table — keeps legacy runs working.
   const claimFeePerRecipientRaw = (() => {
+    // Native ETH runs are settled in the same currency the relayer
+    // pays gas in, so there's nothing to pre-collect — bps service
+    // fee already covers the relayer's economics. Skip the policy
+    // lookup so a stray `CLAIM_FEE_ETH` env doesn't accidentally
+    // double-charge an ETH payout.
+    if (token === "ETH") return 0n;
     const str = relayer?.api?.claim_fees?.[token];
     if (!str) return 0n;
     try {
       return ethers.parseUnits(str, decimals);
-    } catch {
+    } catch (err) {
+      // Don't silently swallow — a typo (`0,05` vs `0.05`) would
+      // zero the reserve and have the relayer eat claim gas. Logged
+      // so operators can spot misconfigured policies in the browser
+      // console without breaking the page.
+      console.warn(
+        `[pay] Failed to parse claim_fees["${token}"]="${str}":`,
+        err,
+      );
       return 0n;
     }
   })();
