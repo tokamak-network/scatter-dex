@@ -125,7 +125,17 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
         pool.isKnownRoot(merkleProof.root) as Promise<boolean>,
       ]);
       if (spent) {
-        throw new Error("This commitment was already withdrawn — refresh the pool card.");
+        // Distinct error code so callers can branch — this often
+        // means a previous withdraw succeeded on-chain but the
+        // local file delete failed (e.g. File System Access
+        // permission expired), so the stale note is still visible
+        // in the UI. The right operator action is "reload the
+        // page", not "click Refresh on the pool card".
+        const e = new Error(
+          "This commitment was already withdrawn on-chain. Reload the page to drop the stale local note (your funds have already moved).",
+        );
+        (e as Error & { code?: string }).code = "ALREADY_WITHDRAWN";
+        throw e;
       }
       if (!knownRoot) {
         throw new Error(

@@ -96,7 +96,25 @@ export function WithdrawModal({
       // v1 is full-amount only (the helper enforces this), so
       // `result.change` is always null here; partial-withdraw
       // persistence will land alongside the partial-amount UI.
-      await vault.remove(note.id);
+      //
+      // On-chain withdraw is the source of truth. If the local
+      // remove fails (e.g. File System Access permission expired in
+      // a multi-tab session — surfaces as a NotAllowedError /
+      // "modifications are not allowed"), surface success on the
+      // on-chain side and tell the operator to refresh the folder
+      // permission. The note's nullifier is now consumed, so a
+      // future spend attempt would revert anyway — this is a
+      // transient display drift, not a fund-loss bug.
+      try {
+        await vault.remove(note.id);
+      } catch (removeErr) {
+        console.warn("[withdraw] vault.remove failed", removeErr);
+        setError(
+          "Withdraw confirmed on-chain, but the local note couldn't be marked spent " +
+            "(folder write permission expired). Reload the page to re-sync — your funds " +
+            "have already moved.",
+        );
+      }
       setDone({ txHash: result.txHash });
     } catch (e) {
       setError(e instanceof Error ? e.message : "withdraw failed");
