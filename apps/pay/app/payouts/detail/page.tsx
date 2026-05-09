@@ -858,6 +858,10 @@ function RecipientTable({
                       isClaiming={claimingRow === r.rowIndex}
                       anyClaiming={claimingRow !== null}
                       alreadyClaimed={r.status === "claimed"}
+                      isLocked={
+                        effectiveStatus(r, Math.floor(Date.now() / 1000)) === "locked"
+                      }
+                      claimFrom={r.claimFrom}
                     />
                   </td>
                 </tr>
@@ -1196,6 +1200,15 @@ interface RowMenuProps {
   /** Hides the Claim-now affordance once the claim has landed so
    *  operators don't double-submit a finalized row. */
   alreadyClaimed: boolean;
+  /** Disable Claim-now while the row's `claimFrom` hasn't passed.
+   *  The on-chain contract enforces this with `NotYetReleasable`,
+   *  so a click would burn ~10 s of proving + a wallet signature
+   *  only to revert. Surface the lock as the disabled state with a
+   *  tooltip explaining when the row opens. */
+  isLocked: boolean;
+  /** Unix-seconds release time. Used in the disabled tooltip so the
+   *  operator sees the unlock moment without leaving the menu. */
+  claimFrom?: number;
 }
 
 function RowMenu({
@@ -1213,6 +1226,8 @@ function RowMenu({
   isClaiming,
   anyClaiming,
   alreadyClaimed,
+  isLocked,
+  claimFrom,
 }: RowMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
   useOutsideClick({ enabled: open, ref, onClose });
@@ -1249,11 +1264,21 @@ function RowMenu({
           {hasClaimPackage && !alreadyClaimed && (
             <button
               onClick={onClaim}
-              disabled={anyClaiming}
-              title="Generate the claim proof and submit through the run's relayer (gasless). Works for any recipient — the proof binds to the package's claim secret, not the recipient's privkey."
+              disabled={anyClaiming || isLocked}
+              title={
+                isLocked
+                  ? `Locked until ${
+                      claimFrom ? formatLocalStampSec(claimFrom) : "release time"
+                    } — the on-chain contract rejects claims before then.`
+                  : "Generate the claim proof and submit through the run's relayer (gasless). Works for any recipient — the proof binds to the package's claim secret, not the recipient's privkey."
+              }
               className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
             >
-              {isClaiming ? "Claiming…" : "Claim now (gasless)"}
+              {isLocked
+                ? "Claim now (locked)"
+                : isClaiming
+                  ? "Claiming…"
+                  : "Claim now (gasless)"}
             </button>
           )}
           <Link
