@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
+import { formatTokenLabel } from "@zkscatter/sdk";
 import {
   listRunsSummary,
   type RunCategory,
@@ -540,7 +541,7 @@ function RunRow({ entry }: { entry: RunsIndexEntry }) {
       </div>
       <div className="text-right">
         <div className="font-mono text-sm">
-          {entry.totalAmount} {entry.tokenSymbol}
+          {entry.totalAmount} {formatTokenLabel(entry.tokenSymbol)}
         </div>
         <div className="text-xs text-[var(--color-text-muted)]">
           {claimed === total ? (
@@ -644,12 +645,12 @@ function formatThisMonthValue(stats: DashboardStats): string {
   if (entries.length === 0) return "0";
   if (entries.length === 1) {
     const [symbol, total] = entries[0]!;
-    return `${formatAmount(total)} ${symbol}`;
+    return `${formatAmount(total)} ${formatTokenLabel(symbol)}`;
   }
   // Mixed units — surface the highest-value token's total to give
   // the operator a number, but flag it as one-of-many in the sub.
   const [topSymbol, topTotal] = entries.sort((a, b) => b[1] - a[1])[0]!;
-  return `${formatAmount(topTotal)} ${topSymbol}`;
+  return `${formatAmount(topTotal)} ${formatTokenLabel(topSymbol)}`;
 }
 
 function formatThisMonthSub(stats: DashboardStats): string {

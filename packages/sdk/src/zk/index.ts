@@ -16,6 +16,7 @@ export * from "./circuits/authorize";
 export * from "./circuits/claim";
 export * from "./circuits/cancel";
 export * from "./circuits/splitPayout";
+export * from "./circuits/withdraw";
 export * from "./circuits/tierAssets";
 export * from "./zkeyCache";
 export * from "./proveTimer";

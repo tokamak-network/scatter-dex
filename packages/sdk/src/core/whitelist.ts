@@ -100,6 +100,16 @@ export const LAUNCH_TOKENS: Record<string, WhitelistedToken> = {
   },
 };
 
+/** Display string for a token symbol shown in the UI. Currently
+ *  promotes TON to `Tokamak(TON)` so the project's full name is
+ *  visible alongside the ticker — internal code paths (storage,
+ *  ABI, RPC) keep using the bare symbol so this is purely a render
+ *  helper. Add other promotions here as the launch lineup grows. */
+export function formatTokenLabel(symbol: string): string {
+  if (symbol === "TON") return "Tokamak(TON)";
+  return symbol;
+}
+
 /** Curated launch pair list. Pair listing is explicit (not
  *  all-pairs-of-tokens) so we control which markets exist on day 1.
  *

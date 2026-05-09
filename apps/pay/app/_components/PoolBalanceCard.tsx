@@ -3,10 +3,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
-import { LAUNCH_TOKENS } from "@zkscatter/sdk";
+import { LAUNCH_TOKENS, formatTokenLabel } from "@zkscatter/sdk";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
 import { useCommitmentTree } from "../_lib/commitmentTree";
+import { WithdrawModal } from "./WithdrawModal";
 
 /** Best-effort USD prices for the launch token set. Stablecoins are
  *  pinned at $1; the rest are placeholders until a live feed (oracle
@@ -65,6 +66,11 @@ export function PoolBalanceCard() {
       if (next.has(s)) next.delete(s); else next.add(s);
       return next;
     });
+  // The note currently being withdrawn (modal target). Lifted here so
+  // closing the modal releases focus back to the pool card and a
+  // successful withdraw — which mutates the vault — re-renders the
+  // drawer with the spent note already gone.
+  const [withdrawing, setWithdrawing] = useState<VaultNote | null>(null);
 
   // One row per whitelisted token (zero balance included so the
   // operator sees the full menu of what could be deposited), summed
@@ -238,12 +244,12 @@ export function PoolBalanceCard() {
                             <span className="inline-block w-3 text-[var(--color-text-subtle)]">
                               {open ? "▾" : "▸"}
                             </span>
-                            <span>{r.symbol}</span>
+                            <span>{formatTokenLabel(r.symbol)}</span>
                           </button>
                         ) : (
                           <span>
                             <span className="inline-block w-3" />{" "}
-                            {r.symbol}
+                            {formatTokenLabel(r.symbol)}
                           </span>
                         )}{" "}
                         {!r.pinned && (
@@ -274,7 +280,12 @@ export function PoolBalanceCard() {
                     {open && canExpand && (
                       <tr className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
                         <td colSpan={4} className="px-3 py-2">
-                          <NotesDrawer notes={r.notes} decimals={r.decimals} symbol={r.symbol} />
+                          <NotesDrawer
+                            notes={r.notes}
+                            decimals={r.decimals}
+                            symbol={r.symbol}
+                            onWithdraw={setWithdrawing}
+                          />
                         </td>
                       </tr>
                     )}
@@ -284,6 +295,9 @@ export function PoolBalanceCard() {
             </tbody>
           </table>
         </div>
+      )}
+      {withdrawing && (
+        <WithdrawModal note={withdrawing} onClose={() => setWithdrawing(null)} />
       )}
     </Shell>
   );
@@ -311,10 +325,15 @@ function NotesDrawer({
   notes,
   decimals,
   symbol,
+  onWithdraw,
 }: {
   notes: VaultNote[];
   decimals: number;
   symbol: string;
+  /** Open the WithdrawModal targeting `note`. Disabled per-row when
+   *  the commitment hasn't reconciled (`leafIndex < 0`) — the
+   *  withdraw circuit needs an authoritative leaf index. */
+  onWithdraw: (note: VaultNote) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -326,6 +345,7 @@ function NotesDrawer({
             <th className="px-2 py-1.5 text-right">Leaf</th>
             <th className="px-2 py-1.5 text-right">Amount</th>
             <th className="px-2 py-1.5 text-left">Commitment</th>
+            <th className="px-2 py-1.5 text-right">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -349,10 +369,25 @@ function NotesDrawer({
                   {ready ? `#${n.leafIndex}` : "—"}
                 </td>
                 <td className="px-2 py-1.5 text-right font-mono">
-                  {formatBalance(n.note.amount, decimals)} {symbol}
+                  {formatBalance(n.note.amount, decimals)} {formatTokenLabel(symbol)}
                 </td>
                 <td className="px-2 py-1.5 font-mono text-[var(--color-text-muted)]">
                   {shortHex(n.commitment)}
+                </td>
+                <td className="px-2 py-1.5 text-right">
+                  <button
+                    type="button"
+                    onClick={() => onWithdraw(n)}
+                    disabled={!ready}
+                    title={
+                      ready
+                        ? "Withdraw this commitment back to an EOA (operator pays gas)"
+                        : "Wait for the commitment to reconcile on-chain (one block)"
+                    }
+                    className="rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+                  >
+                    Withdraw
+                  </button>
                 </td>
               </tr>
             );

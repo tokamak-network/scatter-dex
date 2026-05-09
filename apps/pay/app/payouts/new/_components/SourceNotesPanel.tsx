@@ -108,12 +108,18 @@ export function SourceNotesPanel({
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (pendingRaw <= 0n || !onRecheck) return;
+    // Side effects must live in the timer body, not the setState
+    // updater — calling `onRecheck()` inside `setTick(n => ...)`
+    // makes React flag "Cannot update CommitmentTreeProvider while
+    // rendering SourceNotesPanel" because state updaters are
+    // expected to be pure. Track the local tick in a ref so we can
+    // schedule the periodic refresh without reading `tick` from
+    // closure (which would stale).
+    let local = 0;
     const id = window.setInterval(() => {
-      setTick((n) => {
-        const next = n + 1;
-        if (next % RECHECK_SEC === 0) onRecheck();
-        return next;
-      });
+      local += 1;
+      setTick(local);
+      if (local % RECHECK_SEC === 0) onRecheck();
     }, 1000);
     return () => window.clearInterval(id);
   }, [pendingRaw, onRecheck]);

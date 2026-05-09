@@ -1260,10 +1260,10 @@ function NewPayout() {
                   onChange={(e) => setToken(e.target.value)}
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <option>USDC</option>
-                  <option>USDT</option>
-                  <option>ETH</option>
-                  <option>TON</option>
+                  <option value="USDC">USDC</option>
+                  <option value="USDT">USDT</option>
+                  <option value="ETH">ETH</option>
+                  <option value="TON">Tokamak(TON)</option>
                 </select>
               </Field>
             </div>
