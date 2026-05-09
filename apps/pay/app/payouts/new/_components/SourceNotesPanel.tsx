@@ -179,10 +179,30 @@ export function SourceNotesPanel({
         </button>
       </div>
       <div className="mb-2 text-[var(--color-text-muted)]">
-        Ready to spend:{" "}
-        <span className="font-mono">
-          {fmt(availableRaw)} {token}
-        </span>
+        {singleSelect ? (
+          <>
+            {/* Single-batch settle consumes one commitment; the
+                operator can only spend the *largest* reconciled
+                note, not the sum. Showing the sum here misled
+                operators into thinking 50+50+2.306 = 102.306 was
+                spendable as a unit. */}
+            Largest spendable note:{" "}
+            <span className="font-mono">
+              {fmt(largestSpendableRaw(tokenNotes))} {token}
+            </span>
+            <span className="ml-1 text-[10px]">
+              (sum across {tokenNotes.length} reconciled note
+              {tokenNotes.length === 1 ? "" : "s"}: {fmt(availableRaw)} {token})
+            </span>
+          </>
+        ) : (
+          <>
+            Ready to spend:{" "}
+            <span className="font-mono">
+              {fmt(availableRaw)} {token}
+            </span>
+          </>
+        )}
         {pendingRaw > 0n && (
           <>
             {" · Confirming: "}
@@ -283,13 +303,20 @@ export function SourceNotesPanel({
                       />
                     </td>
                     <td className="py-1.5">
-                      {ready ? (
-                        <span className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]">
-                          Ready
-                        </span>
-                      ) : (
+                      {!ready ? (
                         <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
                           Confirming
+                        </span>
+                      ) : insufficient ? (
+                        <span
+                          title={insufficientTitle}
+                          className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]"
+                        >
+                          Too small
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]">
+                          Ready
                         </span>
                       )}
                     </td>
@@ -402,4 +429,17 @@ export function SourceNotesPanel({
       })()}
     </div>
   );
+}
+
+/** Largest reconciled note amount in the list. Used by single-batch
+ *  surfaces where the spendable cap is one commitment, not the sum.
+ *  Returns 0n when no note is reconciled — the caller's "no notes"
+ *  copy already handles that case so we just want a numeric default. */
+function largestSpendableRaw(notes: readonly VaultNote[]): bigint {
+  let max = 0n;
+  for (const n of notes) {
+    if (n.leafIndex < 0) continue;
+    if (n.note.amount > max) max = n.note.amount;
+  }
+  return max;
 }
