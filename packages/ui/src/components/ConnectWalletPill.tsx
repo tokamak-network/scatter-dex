@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { Pill, StatusDot } from "./Pill";
 import { useOutsideClick } from "./useOutsideClick";
 
@@ -21,6 +21,10 @@ export interface ConnectWalletPillViewProps {
   /** True when the wallet's chain doesn't match the app's expected
    *  network — flips the dot to "warn" and shows a switch hint. */
   wrongChain: boolean;
+  /** Optional extra menu items rendered above the Disconnect row.
+   *  Apps inject host-specific links (e.g. Pay's "View wallet"
+   *  page) without this view having to know about Next routing. */
+  extraMenuItems?: ReactNode;
 }
 
 /** Presentational header pill — rendered identically across every
@@ -37,6 +41,7 @@ export function ConnectWalletPillView({
   connectError,
   networkLabel,
   wrongChain,
+  extraMenuItems,
 }: ConnectWalletPillViewProps) {
   if (!connected) {
     return (
@@ -51,7 +56,11 @@ export function ConnectWalletPillView({
     );
   }
 
-  return <ConnectedPill {...{ shortAccount, walletName, disconnect, wrongChain }} />;
+  return (
+    <ConnectedPill
+      {...{ shortAccount, walletName, disconnect, wrongChain, extraMenuItems }}
+    />
+  );
 }
 
 interface ConnectedPillProps {
@@ -59,12 +68,19 @@ interface ConnectedPillProps {
   walletName: string | null;
   disconnect: () => void;
   wrongChain: boolean;
+  extraMenuItems?: ReactNode;
 }
 
 /** Address pill with a click-to-open menu carrying the explicit
  *  "Disconnect" action. Replaces the previous tiny `×` glyph that
  *  was easy to miss. */
-function ConnectedPill({ shortAccount, walletName, disconnect, wrongChain }: ConnectedPillProps) {
+function ConnectedPill({
+  shortAccount,
+  walletName,
+  disconnect,
+  wrongChain,
+  extraMenuItems,
+}: ConnectedPillProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -78,7 +94,11 @@ function ConnectedPill({ shortAccount, walletName, disconnect, wrongChain }: Con
         <span aria-hidden="true" className="text-[var(--color-text-subtle)]">▾</span>
       </Pill>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
+        <div
+          className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg"
+          onClick={close}
+        >
+          {extraMenuItems}
           <button
             type="button"
             onClick={() => {
