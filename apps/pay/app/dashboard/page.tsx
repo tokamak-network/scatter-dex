@@ -500,9 +500,11 @@ function RunRow({ entry }: { entry: RunsIndexEntry }) {
   const total = entry.totalRecipients;
   const claimed = entry.claimedRecipients;
   const unclaimed = total - claimed;
-  const ageMs = Date.now() - entry.createdAt;
-  const isStale =
-    unclaimed > 0 && ageMs >= STALE_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+  // `entry.createdAt` is unix seconds (per `formatIsoDate(unixSec)`),
+  // so compute age in seconds — `Date.now() - createdAt` would mix
+  // ms and seconds and mark every run stale.
+  const ageSec = Math.floor(Date.now() / 1000) - entry.createdAt;
+  const isStale = unclaimed > 0 && ageSec >= STALE_THRESHOLD_DAYS * 86400;
   const date = formatIsoDate(entry.createdAt);
   const operatorTag = entry.operatorAddress
     ? shortAddr(entry.operatorAddress)
@@ -604,8 +606,10 @@ function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
   // `Date.now()` runs only after hydration so SSR doesn't see a
   // current-month filter the client would compute differently.
   const now = mounted ? new Date() : null;
-  const nowMs = now?.getTime() ?? 0;
-  const staleCutoffMs = STALE_THRESHOLD_DAYS * 24 * 60 * 60 * 1000;
+  // `createdAt` is unix seconds; comparing against `Date.now()` (ms)
+  // here would mark every run stale by a factor of 1000.
+  const nowSec = now ? Math.floor(now.getTime() / 1000) : 0;
+  const staleCutoffSec = STALE_THRESHOLD_DAYS * 86400;
   const thisMonthIso = now
     ? `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`
     : null;
@@ -613,7 +617,7 @@ function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
     tokens.add(r.tokenSymbol);
     const unclaimed = r.totalRecipients - r.claimedRecipients;
     pendingClaims += unclaimed;
-    if (now && unclaimed > 0 && nowMs - r.createdAt >= staleCutoffMs) {
+    if (now && unclaimed > 0 && nowSec - r.createdAt >= staleCutoffSec) {
       staleUnclaimed += unclaimed;
       if (staleRunIds.length < STALE_RUN_LIST_CAP) staleRunIds.push(r.id);
     }

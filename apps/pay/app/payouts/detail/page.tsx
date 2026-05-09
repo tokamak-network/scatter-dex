@@ -219,7 +219,7 @@ function PayoutBody({
   /** Tx hash of the most recently completed claim. Surfaced as a
    *  brief success banner so the operator gets explicit confirmation
    *  even before the claim reconciler flips the row's badge. Cleared
-   *  on the next claim or after a few seconds. */
+   *  by the operator's Dismiss click or by the next claim. */
   const [lastClaimTx, setLastClaimTx] = useState<{ rowIndex: number; txHash: string } | null>(null);
 
   const onMarkSentRow = useCallback(
@@ -251,14 +251,14 @@ function PayoutBody({
         setClaimError("This row predates the claim flow — no encoded package to claim.");
         return;
       }
-      if (!keysReady) {
-        setClaimError("Stealth wallet keys aren't ready yet. Try again in a moment.");
-        return;
-      }
       if (!readProvider) {
         setClaimError("Read provider not ready — connect to a network first.");
         return;
       }
+      // No `keysReady` gate: the gasless path doesn't need the
+      // operator's stealth keys (proof binds to the package's claim
+      // secret). Stealth-key derivation below is best-effort and
+      // only used for the self-pay fallback signer.
       setClaimingRow(row.rowIndex);
       setClaimPhase("validating");
       setLastClaimTx(null);
@@ -308,17 +308,38 @@ function PayoutBody({
         // locally so the badge flips immediately. ClaimReconciler
         // will idempotently catch up if its event subscription
         // delivers the same `PrivateClaim` later.
+        //
+        // Bound the wait — without a timeout, a stalled RPC would
+        // wedge the claiming-banner indefinitely. 30 s covers a
+        // mainnet block + receipt-poll lag without blocking the UI
+        // forever; if the tx hasn't mined by then we still flip
+        // local state (relayer accepted; chain state will reflect
+        // it shortly) and let the reconciler reconcile authoritatively.
+        // Try to extract the mined block's timestamp so the locally-
+        // stamped `claimedAt` matches what the on-chain reconciler
+        // would record. Falls back to wall-clock Date.now()/1000
+        // when the receipt isn't observable (RPC drop, timeout) —
+        // close enough for the badge UX, and the reconciler is
+        // idempotent so a subsequent more-accurate pass would skip
+        // already-claimed rows.
+        let claimedAt = Math.floor(Date.now() / 1000);
         try {
-          await readProvider.waitForTransaction(txHash);
+          const receipt = (await Promise.race([
+            readProvider.waitForTransaction(txHash),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error("waitForTransaction timeout")), 30_000),
+            ),
+          ])) as ethers.TransactionReceipt | null;
+          if (receipt) {
+            const block = await readProvider.getBlock(receipt.blockNumber);
+            if (block?.timestamp) claimedAt = Number(block.timestamp);
+          }
         } catch {
-          // RPC drop / cancellation — fall through to markClaimed
-          // anyway; the relayer accepted the tx so the on-chain
-          // state will reflect it shortly.
+          // RPC drop / timeout / cancellation — keep the wall-clock
+          // fallback for `claimedAt`.
         }
         try {
-          await markClaimed([
-            { rowIndex: row.rowIndex, claimedAt: Math.floor(Date.now() / 1000) },
-          ]);
+          await markClaimed([{ rowIndex: row.rowIndex, claimedAt }]);
         } catch (err) {
           console.warn("[detail] markClaimed after gasless claim failed:", err);
           await refresh();

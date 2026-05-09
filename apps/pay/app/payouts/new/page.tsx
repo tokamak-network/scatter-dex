@@ -1094,14 +1094,16 @@ function NewPayout() {
   // each batch to fit in a single reconciled note.
   const multiBatchFit = useMemo(() => {
     if (!tokenAddress || batches.length === 0) return null;
-    // Pass `selectedNoteIds` so the per-batch picker honors the
-    // operator's manual selection. Otherwise the funds-step preview
-    // (sourcePick) and the on-chain settle (multiBatchFit) could
-    // disagree on which note pairs with which batch — surfaces as
-    // "preview said spend lot-1 with X change, but the dashboard
-    // shows lot-2 was debited and lot-1 untouched".
-    return pickPerBatchNotes(notes, batches, tokenAddress, selectedNoteIds);
-  }, [notes, batches, tokenAddress, selectedNoteIds]);
+    // Honor the operator's manual selection only when they've
+    // actually overridden the auto-pick. In auto mode `selectedNoteIds`
+    // mirrors `autoSourcePick.notes` (a *covering* subset, not a fit
+    // for every batch), so passing it here would prematurely shrink
+    // the eligible pool and could turn a multi-batch run uncovered.
+    // Auto-pick stays full-eligible-set; manual mode locks the picker
+    // to what the operator checked so preview ↔ settle agree.
+    const restrictTo = manualPick ? selectedNoteIds : undefined;
+    return pickPerBatchNotes(notes, batches, tokenAddress, restrictTo);
+  }, [notes, batches, tokenAddress, selectedNoteIds, manualPick]);
 
   // The tier governs each batch's anonymity set. Multi-batch runs
   // settle one batch per `scatterDirectAuth` tx; every batch shares

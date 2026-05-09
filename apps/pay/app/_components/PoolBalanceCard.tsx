@@ -7,7 +7,6 @@ import { LAUNCH_TOKENS } from "@zkscatter/sdk";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
 import { useCommitmentTree } from "../_lib/commitmentTree";
-import { tokenBigIntToAddress } from "../_lib/format";
 
 /** Best-effort USD prices for the launch token set. Stablecoins are
  *  pinned at $1; the rest are placeholders until a live feed (oracle
@@ -226,17 +225,27 @@ export function PoolBalanceCard() {
                 const canExpand = noteCount > 0;
                 return (
                   <Fragment key={r.symbol}>
-                    <tr
-                      className={`border-t border-[var(--color-border)] ${
-                        canExpand ? "cursor-pointer hover:bg-[var(--color-bg)]" : ""
-                      }`}
-                      onClick={canExpand ? () => toggleSymbol(r.symbol) : undefined}
-                    >
+                    <tr className="border-t border-[var(--color-border)]">
                       <td className="px-3 py-2 font-medium">
-                        <span className="inline-block w-3 text-[var(--color-text-subtle)]">
-                          {canExpand ? (open ? "▾" : "▸") : ""}
-                        </span>{" "}
-                        {r.symbol}{" "}
+                        {canExpand ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleSymbol(r.symbol)}
+                            aria-expanded={open}
+                            aria-label={`${open ? "Collapse" : "Expand"} ${r.symbol} commitments`}
+                            className="inline-flex items-center gap-1 rounded px-1 hover:bg-[var(--color-bg)]"
+                          >
+                            <span className="inline-block w-3 text-[var(--color-text-subtle)]">
+                              {open ? "▾" : "▸"}
+                            </span>
+                            <span>{r.symbol}</span>
+                          </button>
+                        ) : (
+                          <span>
+                            <span className="inline-block w-3" />{" "}
+                            {r.symbol}
+                          </span>
+                        )}{" "}
                         {!r.pinned && (
                           <span
                             title="USD value uses a static fallback price"
