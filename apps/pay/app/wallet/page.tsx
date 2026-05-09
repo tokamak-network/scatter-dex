@@ -21,7 +21,7 @@ export default function WalletPage() {
   // memoise so identity-stable cfg pieces can drive effect deps
   // without retriggering on every render.
   const cfg = useMemo(() => getNetworkConfig(), []);
-  const { account, signer } = useWallet();
+  const { account, signer, readProvider } = useWallet();
   const mounted = useMounted();
   const [rows, setRows] = useState<BalanceRow[]>(() => initialRows(cfg.tokens));
   const [sendingFor, setSendingFor] = useState<BalanceRow | null>(null);
@@ -29,13 +29,12 @@ export default function WalletPage() {
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
 
-  // One JsonRpcProvider instance per cfg.rpcUrl — without this the
-  // effect would spin up a fresh provider on every refresh tick and
-  // every render, leaking sockets and racing pending requests.
-  const provider = useMemo(
-    () => new ethers.JsonRpcProvider(cfg.rpcUrl),
-    [cfg.rpcUrl],
-  );
+  // Reuse the SDK's cached read-provider rather than spinning up a
+  // fresh `JsonRpcProvider(cfg.rpcUrl)` on every refresh tick.
+  // `useWallet()` hands back one instance keyed to the network's
+  // rpcUrl, so balance reads share keep-alive sockets with the
+  // rest of the app.
+  const provider = readProvider;
 
   useEffect(() => {
     if (!mounted || !account) return;

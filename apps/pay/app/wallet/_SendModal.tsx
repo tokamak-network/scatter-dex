@@ -349,7 +349,7 @@ export function SendModal({
                 onChange={(e) => setRecipient(e.target.value)}
                 disabled={running}
                 placeholder="0x…"
-                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
+                className="w-full rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 font-mono text-xs"
               />
             </label>
 
@@ -364,7 +364,7 @@ export function SendModal({
                   disabled={running}
                   inputMode="decimal"
                   placeholder="0.0"
-                  className="flex-1 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
+                  className="flex-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-2 font-mono text-xs"
                 />
                 <button
                   type="button"
