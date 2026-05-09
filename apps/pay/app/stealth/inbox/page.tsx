@@ -31,7 +31,7 @@ import {
 } from "../../_lib/relay7702";
 import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
-import { ERC20_ABI, type NetworkConfig } from "@zkscatter/sdk";
+import { ERC20_ABI, formatTokenLabel, type NetworkConfig } from "@zkscatter/sdk";
 import { RedepositSplitModal } from "./_RedepositSplitModal";
 
 /** True when `token` is the chain's WETH — claims auto-unwrap to
@@ -1715,7 +1715,7 @@ function StealthBalance({
   return (
     <span>
       {ethers.formatUnits(bal, decimals)}{" "}
-      <span className="text-[var(--color-text-muted)]">{symbol}</span>
+      <span className="text-[var(--color-text-muted)]">{formatTokenLabel(symbol)}</span>
     </span>
   );
 }

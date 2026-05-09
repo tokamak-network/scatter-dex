@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect } from "react";
 import { useMounted } from "@zkscatter/sdk/react";
+import { formatTokenLabel } from "@zkscatter/sdk";
 import { useRunRecord } from "../../_lib/runRecord";
 import { buildClaimUrl } from "../../_lib/claimUrl";
 import { formatLocalStamp } from "../../_lib/format";
@@ -149,13 +150,13 @@ function PayrollPayslip({
             <tr className="border-b border-gray-200">
               <td className="py-1.5">Base salary</td>
               <td className="py-1.5 text-right font-mono">
-                {row.amount} {record.tokenSymbol}
+                {row.amount} {formatTokenLabel(record.tokenSymbol)}
               </td>
             </tr>
             <tr className="border-b border-black bg-gray-50">
               <td className="py-2 font-semibold">Gross pay</td>
               <td className="py-2 text-right font-mono font-semibold">
-                {row.amount} {record.tokenSymbol}
+                {row.amount} {formatTokenLabel(record.tokenSymbol)}
               </td>
             </tr>
           </tbody>
@@ -169,7 +170,7 @@ function PayrollPayslip({
       <section className="mt-6">
         <h2 className="border-b border-black pb-1 text-sm font-semibold">Net payment</h2>
         <p className="mt-2 text-right font-mono text-xl font-bold">
-          {row.amount} {record.tokenSymbol}
+          {row.amount} {formatTokenLabel(record.tokenSymbol)}
         </p>
       </section>
 
@@ -225,7 +226,7 @@ function GenericPayslip({
 
       <section className="mt-6 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
         <Cell k="Recipient" v={row.name || "—"} />
-        <Cell k="Amount" v={`${row.amount} ${record.tokenSymbol}`} />
+        <Cell k="Amount" v={`${row.amount} ${formatTokenLabel(record.tokenSymbol)}`} />
         <Cell k="Address" v={<span className="break-all font-mono">{row.address}</span>} />
         {row.email && <Cell k="Email" v={<span className="break-all">{row.email}</span>} />}
         <Cell
