@@ -270,7 +270,10 @@ export function RedepositSplitModal({
                       inputMode="decimal"
                       className="flex-1 rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 font-mono text-xs"
                     />
-                    <span className="w-12 text-xs text-[var(--color-text-muted)]">
+                    {/* `min-w` instead of fixed `w-12` so the longer
+                        \`Tokamak(TON)\` label fits without overlapping
+                        the remove button. */}
+                    <span className="min-w-12 whitespace-nowrap text-xs text-[var(--color-text-muted)]">
                       {formatTokenLabel(tokenSymbol)}
                     </span>
                     <button
