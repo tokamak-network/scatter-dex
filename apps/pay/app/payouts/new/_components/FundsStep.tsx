@@ -108,6 +108,11 @@ export interface FundsStepProps {
     tokenNotes: readonly VaultNote[];
     selectedIds: ReadonlySet<string>;
     onToggle: (id: string) => void;
+    /** Replace the selection with a single id. Used when the run is
+     *  a single batch — only one source note is consumed per
+     *  `scatterDirectAuth` call, so the panel renders radios and
+     *  this handler swaps the selection on click. */
+    onSelect?: (id: string) => void;
   };
   /** Gates the source-notes panel — until the vault has loaded,
    *  "your notes" would flicker between empty and populated. */
@@ -124,6 +129,11 @@ export interface FundsStepProps {
     setMaxFeeBps: (bps: number) => void;
   };
   onDeposit: () => void;
+  /** True while a deposit flow is mid-flight (approving, proving,
+   *  submitting, confirming). Threaded into the source-notes panel
+   *  so the inline Deposit CTA disables and labels itself "Depositing…"
+   *  rather than letting the operator stack a second flow. */
+  depositBusy?: boolean;
   /** Wired to `tree.refresh()` so the source-notes panel can poll the
    *  pool for new `CommitmentInserted` events while a deposit is
    *  still confirming. Without this the operator sees "Confirming"
@@ -135,9 +145,9 @@ export interface FundsStepProps {
   explorerBase?: string;
 }
 
-export function FundsStep({ funds, pick, wallet, relayer, onDeposit, onRecheck, explorerBase }: FundsStepProps) {
+export function FundsStep({ funds, pick, wallet, relayer, onDeposit, depositBusy, onRecheck, explorerBase }: FundsStepProps) {
   const { token, decimals, requiredRaw, feeRaw, totalEscrowRaw, availableRaw, pendingRaw, shortfallRaw } = funds;
-  const { sourcePick, batchCount, multiBatchFit, tokenNotes, selectedIds, onToggle } = pick;
+  const { sourcePick, batchCount, multiBatchFit, tokenNotes, selectedIds, onToggle, onSelect } = pick;
   const { account, vaultLoaded } = wallet;
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
   const configured = isNetworkConfigured(getNetworkConfig());
@@ -180,10 +190,13 @@ export function FundsStep({ funds, pick, wallet, relayer, onDeposit, onRecheck, 
         sourcePick={sourcePick}
         selectedIds={selectedIds}
         onToggle={onToggle}
+        singleSelect={batchCount <= 1}
+        onSelect={onSelect}
         onDeposit={onDeposit}
         onRecheck={onRecheck}
         explorerBase={explorerBase}
         depositConfigured={configured}
+        depositBusy={depositBusy}
       />
 
       <BatchFitWarning

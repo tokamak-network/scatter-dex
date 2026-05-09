@@ -1064,6 +1064,13 @@ function NewPayout() {
       return next;
     });
   }, []);
+  // Single-select counterpart for batch=1 runs. Replaces the entire
+  // selection with `{id}` so the panel's radio semantics match the
+  // settle constraint (one source note per `scatterDirectAuth` call).
+  const selectSingleNote = useCallback((id: string) => {
+    setManualPick(true);
+    setSelectedNoteIds(new Set([id]));
+  }, []);
 
   const batches = useMemo<PayoutBatch[]>(() => {
     if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
@@ -1087,8 +1094,14 @@ function NewPayout() {
   // each batch to fit in a single reconciled note.
   const multiBatchFit = useMemo(() => {
     if (!tokenAddress || batches.length === 0) return null;
-    return pickPerBatchNotes(notes, batches, tokenAddress);
-  }, [notes, batches, tokenAddress]);
+    // Pass `selectedNoteIds` so the per-batch picker honors the
+    // operator's manual selection. Otherwise the funds-step preview
+    // (sourcePick) and the on-chain settle (multiBatchFit) could
+    // disagree on which note pairs with which batch — surfaces as
+    // "preview said spend lot-1 with X change, but the dashboard
+    // shows lot-2 was debited and lot-1 untouched".
+    return pickPerBatchNotes(notes, batches, tokenAddress, selectedNoteIds);
+  }, [notes, batches, tokenAddress, selectedNoteIds]);
 
   // The tier governs each batch's anonymity set. Multi-batch runs
   // settle one batch per `scatterDirectAuth` tx; every batch shares
@@ -1563,6 +1576,7 @@ function NewPayout() {
               tokenNotes,
               selectedIds: selectedNoteIds,
               onToggle: toggleNoteSelection,
+              onSelect: selectSingleNote,
             }}
             wallet={{ account, vaultLoaded }}
             relayer={{
@@ -1575,6 +1589,10 @@ function NewPayout() {
             }}
             onRecheck={tree.refresh}
             explorerBase={networkCfg.explorerBase}
+            depositBusy={
+              depositPhase != null &&
+              !TERMINAL_DEPOSIT_PHASES.has(depositPhase.kind)
+            }
             onDeposit={() => {
               // Synchronous lock first — state-based checks would
               // race a same-frame double-click and start two flows.
