@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { ERC20_ABI, formatTokenLabel } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
+import { RelayerClient } from "@zkscatter/sdk/relayer";
 import { useRelayers } from "../_lib/relayers";
 import { getNetworkConfig, getStealthTransferAccountAddress } from "../_lib/network";
 import {
@@ -40,25 +41,11 @@ const GASLESS_DEADLINE_SEC = 600;
  *  the relayer. */
 const NATIVE_MAX_GAS_RESERVE_WEI = 5_000_000_000_000_000n; // 0.005 ETH
 
-/** Slim view of a registry-resolved relayer that the modal renders.
- *  Mirrors what the inbox transfer flow uses — pin to URL + name +
- *  the published gasless-fee policy entry for the row's token, so
- *  the dropdown can show \"Relayer-A · 0.10 USDC fee\" without us
- *  re-walking the full RelayerInfo each render. */
 interface GaslessCandidate {
   url: string;
   name: string;
-  /** Fee payable to this relayer in *this row's* token, decimal
-   *  string. \`null\` when the relayer hasn't published a policy
-   *  for the symbol — the option is disabled in the picker. */
   feeStr: string | null;
-  /** On-chain address the fee transfer call goes to. Fetched
-   *  lazily from \`/api/info\` since the registry only carries
-   *  URL + name + on-chain stats. */
   feeCollector: string | null;
-  /** Last error seen on \`/api/info\`, if any. Drives the warning
-   *  copy under the picker so the operator sees why a candidate
-   *  is greyed out. */
   infoError: string | null;
 }
 
@@ -93,12 +80,35 @@ export function SendModal({
   const [phase, setPhase] = useState<SendPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
-  /** Map relayer URL → resolved candidate. Populated lazily as the
-   *  modal probes \`/api/info\` on each candidate the first time gasless
-   *  mode is selected. Keyed by URL so a re-mount reuses the same
-   *  cache and the picker doesn't flash empty. */
   const [candidatesByUrl, setCandidatesByUrl] = useState<Record<string, GaslessCandidate>>({});
   const [selectedRelayerUrl, setSelectedRelayerUrl] = useState<string | null>(null);
+  // Probe-dedupe set kept in a ref so the candidate-fetch effect
+  // doesn't list `candidatesByUrl` in its deps (which would re-run
+  // the effect on every probe completion).
+  const probedRef = useRef<Set<string>>(new Set());
+
+  // Lower-cased registry address by URL — used to refuse a relayer
+  // whose `/api/info` publishes a fee-collector address that doesn't
+  // match the on-chain registry record. Without this check a hostile
+  // relayer could harvest fees by publishing an attacker-controlled
+  // address.
+  const registryAddrByUrl = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const r of onlineRegistryRelayers) {
+      const u = r.url.replace(/\/+$/, "");
+      if (r.address) out[u] = r.address.toLowerCase();
+    }
+    return out;
+  }, [onlineRegistryRelayers]);
+
+  const registryNameByUrl = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = {};
+    for (const r of onlineRegistryRelayers) {
+      const u = r.url.replace(/\/+$/, "");
+      if (r.api?.name) out[u] = r.api.name;
+    }
+    return out;
+  }, [onlineRegistryRelayers]);
 
   // Compute the "send max" amount for the current mode + token.
   // - Native ETH in Normal mode reserves a gas buffer so the wallet
@@ -125,85 +135,95 @@ export function SendModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Build the candidate URL list once. Registry online relayers
-  // first; standalone env URL appended when it isn't already in the
-  // registry — same precedence the inbox transfer modal applies.
+  // Registry online first, then standalone env URL as fallback.
   const candidateUrls = useMemo<string[]>(() => {
-    const norm = (u: string | null | undefined) => (u ? u.replace(/\/+$/, "") : null);
+    const trim = (u: string | null | undefined) => (u ? u.replace(/\/+$/, "") : null);
     const urls: string[] = [];
     for (const r of onlineRegistryRelayers) {
-      const n = norm(r.url);
+      const n = trim(r.url);
       if (n && !urls.includes(n)) urls.push(n);
     }
-    const sa = norm(standaloneUrl);
+    const sa = trim(standaloneUrl);
     if (sa && !urls.includes(sa)) urls.push(sa);
     return urls;
   }, [onlineRegistryRelayers, standaloneUrl]);
 
-  // Probe `/api/info` for each candidate URL the first time gasless
-  // becomes selectable. Cached by URL so toggling mode back and
-  // forth doesn't re-fetch. Each candidate's fee collector address +
-  // per-token fee is resolved from the response; greyed-out picker
-  // rows get a clear "no fee published" reason.
+  // Lazy-probe `/api/info` for each candidate via SDK's `RelayerClient`
+  // (handles trim + 5 s default timeout + abort signal). Defense-in-
+  // depth: when the candidate is registry-resolved, refuse it if the
+  // self-published fee-collector doesn't match the on-chain `address`
+  // — a compromised relayer could otherwise harvest the fee. Probe
+  // dedupe lives in a ref so this effect doesn't list candidatesByUrl
+  // in deps (which would re-fire on each completion).
   useEffect(() => {
     if (!gaslessEligible || mode !== "gasless") return;
-    let cancelled = false;
+    const ac = new AbortController();
     for (const url of candidateUrls) {
-      if (candidatesByUrl[url]) continue; // already probed
+      if (probedRef.current.has(url)) continue;
+      probedRef.current.add(url);
+      const registryName = registryNameByUrl[url] ?? url;
+      const registryAddr = registryAddrByUrl[url] ?? null;
+      const apply = (next: GaslessCandidate) =>
+        setCandidatesByUrl((prev) => ({ ...prev, [url]: next }));
       void (async () => {
-        const registryName =
-          onlineRegistryRelayers.find((r) => r.url.replace(/\/+$/, "") === url)?.api?.name ??
-          url;
         try {
-          const res = await fetch(`${url}/api/info`);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const json = (await res.json()) as {
-            address?: string;
-            gasless_fees?: Record<string, string>;
-            name?: string;
-          };
-          if (cancelled) return;
-          setCandidatesByUrl((prev) => ({
-            ...prev,
-            [url]: {
+          const info = await new RelayerClient(url).getInfo(ac.signal);
+          if (ac.signal.aborted) return;
+          // Refuse a registry-resolved candidate whose published
+          // address mismatches the on-chain registry's record —
+          // standalone-env candidates aren't pinned to a registry
+          // entry so we trust the operator's own config there.
+          const apiAddrLc = info.address?.toLowerCase() ?? null;
+          if (registryAddr && apiAddrLc && apiAddrLc !== registryAddr) {
+            apply({
               url,
-              name: json.name ?? registryName,
-              feeStr: json.gasless_fees?.[row.token.symbol] ?? null,
-              feeCollector: json.address ?? null,
-              infoError: null,
-            },
-          }));
-        } catch (e) {
-          if (cancelled) return;
-          setCandidatesByUrl((prev) => ({
-            ...prev,
-            [url]: {
-              url,
+              // Trust the registry-recorded name over self-reported
+              // when there's a mismatch — a hostile relayer can't
+              // hijack the operator's mental model of which entry
+              // they picked.
               name: registryName,
               feeStr: null,
               feeCollector: null,
-              infoError: e instanceof Error ? e.message : String(e),
-            },
-          }));
+              infoError: "fee-collector mismatch with on-chain registry",
+            });
+            return;
+          }
+          apply({
+            url,
+            // Prefer the registry-recorded name when registry-resolved
+            // so a hostile relayer can't social-engineer via display.
+            name: registryAddr ? registryName : info.name ?? registryName,
+            feeStr: info.gasless_fees?.[row.token.symbol] ?? null,
+            feeCollector: info.address ?? null,
+            infoError: null,
+          });
+        } catch (e) {
+          if (ac.signal.aborted) return;
+          apply({
+            url,
+            name: registryName,
+            feeStr: null,
+            feeCollector: null,
+            infoError: e instanceof Error ? e.message : String(e),
+          });
         }
       })();
     }
     return () => {
-      cancelled = true;
+      ac.abort();
     };
   }, [
     gaslessEligible,
     mode,
     candidateUrls,
-    candidatesByUrl,
-    onlineRegistryRelayers,
+    registryAddrByUrl,
+    registryNameByUrl,
     row.token.symbol,
   ]);
 
-  // Pick a default selected relayer once the first candidate's
-  // policy lands. Prefer ones that actually published a fee for the
-  // row's token; fall back to the first probed otherwise so the
-  // picker isn't blank.
+  // Auto-pick a default once a candidate resolves. Prefer ones with
+  // a published fee + collector; fall back to first probed otherwise
+  // so the picker isn't empty.
   useEffect(() => {
     if (mode !== "gasless") return;
     if (selectedRelayerUrl && candidatesByUrl[selectedRelayerUrl]) return;
@@ -514,17 +534,9 @@ export function SendModal({
                 >
                   {candidateUrls.map((url) => {
                     const c = candidatesByUrl[url];
-                    const baseLabel = c?.name ?? url;
-                    const feeLabel = c
-                      ? c.feeStr
-                        ? `${c.feeStr} ${formatTokenLabel(row.token.symbol)} fee`
-                        : c.infoError
-                          ? "unreachable"
-                          : "no fee published"
-                      : "loading…";
                     return (
                       <option key={url} value={url} disabled={!c?.feeStr || !c.feeCollector}>
-                        {baseLabel} · {feeLabel}
+                        {(c?.name ?? url) + " · " + relayerOptionFeeLabel(c, row.token.symbol)}
                       </option>
                     );
                   })}
@@ -648,15 +660,7 @@ export function SendModal({
                 disabled={!canRun}
                 className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-40"
               >
-                {phase === "signing"
-                  ? "Signing…"
-                  : phase === "submitting"
-                    ? "Submitting…"
-                    : phase === "confirming"
-                      ? "Confirming…"
-                      : mode === "gasless"
-                        ? "Send (gasless)"
-                        : "Send"}
+                {sendButtonLabel(phase, mode)}
               </button>
             </>
           )}
@@ -673,6 +677,27 @@ export function SendModal({
       </div>
     </Modal>
   );
+}
+
+const PHASE_LABEL: Record<SendPhase, string> = {
+  idle: "",
+  signing: "Signing…",
+  submitting: "Submitting…",
+  confirming: "Confirming…",
+  done: "",
+  error: "",
+};
+
+function sendButtonLabel(phase: SendPhase, mode: Mode): string {
+  if (PHASE_LABEL[phase]) return PHASE_LABEL[phase];
+  return mode === "gasless" ? "Send (gasless)" : "Send";
+}
+
+function relayerOptionFeeLabel(c: GaslessCandidate | undefined, symbol: string): string {
+  if (!c) return "loading…";
+  if (c.feeStr) return `${c.feeStr} ${formatTokenLabel(symbol)} fee`;
+  if (c.infoError) return "unreachable";
+  return "no fee published";
 }
 
 function Row({
