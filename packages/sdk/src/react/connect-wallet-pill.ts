@@ -41,13 +41,33 @@ export function useConnectWalletPill(network: NetworkConfig): ConnectWalletPillS
     try {
       await provider.send("wallet_switchEthereumChain", [{ chainId: hexId }]);
     } catch (err) {
-      // EIP-3326 error code 4902 = chain not configured. Re-derive
-      // an addEthereumChain payload from `NetworkConfig` so the
-      // wallet picks it up without the operator having to enter
-      // RPC URL / chain ID by hand.
-      const code = (err as { code?: number; data?: { originalError?: { code?: number } } })?.code
-        ?? (err as { data?: { originalError?: { code?: number } } })?.data?.originalError?.code;
-      if (code !== 4902 && code !== -32603) {
+      // EIP-3326 error code 4902 = "chain not configured". Add the
+      // chain via wallet_addEthereumChain so the operator doesn't
+      // have to enter RPC URL / chain ID by hand. Ethers v6 wraps
+      // wallet errors in a "could not coalesce error" envelope and
+      // the original 4902 lives at one of several nested paths
+      // depending on the wallet — walk all of them rather than
+      // committing to a single shape.
+      const e = err as Record<string, unknown> & {
+        error?: { code?: number };
+        data?: { originalError?: { code?: number } };
+      };
+      const nestedCodes = [
+        e?.code,
+        e?.error?.code,
+        e?.data?.originalError?.code,
+        // Some wallets serialize the inner JSON-RPC error in
+        // `info.error.code`; check there too.
+        (e as { info?: { error?: { code?: number } } })?.info?.error?.code,
+      ];
+      const isUnrecognised =
+        nestedCodes.includes(4902) ||
+        // String fallback — ethers' UNKNOWN_ERROR coalesce wrap
+        // sometimes loses the nested code on stringify but keeps
+        // the message verbatim.
+        (typeof (e?.message ?? "") === "string" &&
+          /unrecognized chain id|chain.*not.*added|4902/i.test(String(e.message ?? "")));
+      if (!isUnrecognised) {
         throw err;
       }
       await provider.send("wallet_addEthereumChain", [
