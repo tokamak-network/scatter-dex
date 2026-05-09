@@ -1,12 +1,12 @@
 "use client";
 
 import { ethers } from "ethers";
+import { COMMITMENT_POOL_ABI } from "@zkscatter/sdk";
 import {
-  COMMITMENT_POOL_ABI,
   computeNullifier,
   generateWithdrawProof,
   type CommitmentNote,
-} from "@zkscatter/sdk";
+} from "@zkscatter/sdk/zk";
 import type { CommitmentTreeState, VaultNote } from "@zkscatter/sdk/react";
 import {
   CommitmentProofUnavailableError,
@@ -64,6 +64,19 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
   if (amountRaw > note.note.amount) {
     throw new Error("Withdraw amount exceeds the note balance.");
   }
+  // v1 ships full-amount only. The change-UTXO path is correct
+  // end-to-end at the proof layer (newSalt is generated and the
+  // commitment round-trip-checks), but the change preimage isn't
+  // persisted until *after* `tx.wait()` resolves — a crash or
+  // reload between broadcast and receipt would lose the salt and
+  // strand the change UTXO permanently. Lock to full-amount here
+  // until we adopt the same pre-broadcast persistence pattern as
+  // realDeposit.
+  if (amountRaw !== note.note.amount) {
+    throw new Error(
+      "Partial withdraws aren't supported yet — withdraw the full note amount.",
+    );
+  }
   if (!ethers.isAddress(recipient) || recipient === ethers.ZeroAddress) {
     throw new Error("Recipient must be a valid non-zero address.");
   }
@@ -90,11 +103,15 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     computeNullifier(note.note),
   ]);
 
-  // Pre-flight `isSpent` probe — saves the ~5–10 s prover run when a
-  // re-attempt would revert anyway (e.g. the operator double-clicks
-  // through a tab refresh, or the same note is held by two browser
-  // contexts). The contract is the authoritative guard; this is a
-  // UX optimisation, not a security check.
+  // Pre-flight contract-side guards before the ~5–10 s prover run:
+  // - `nullifiers(nullifierHash)` mirrors the on-chain double-spend
+  //   check; saves prover work on a tab-double / page-refresh re-try.
+  // - `isKnownRoot(merkleProof.root)` catches a tree-out-of-sync
+  //   scenario (local hydrate is one block behind) so we don't burn
+  //   compute on a proof the contract is going to reject.
+  // The contract is the authoritative guard; these are UX
+  // optimisations. Network blips fall through to the on-chain
+  // submit, which reverts authoritatively.
   const readProvider = signer.provider;
   if (readProvider) {
     try {
@@ -103,16 +120,22 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
         COMMITMENT_POOL_ABI,
         readProvider,
       );
-      const spent = (await pool.isSpent(nullifierHash)) as boolean;
+      const [spent, knownRoot] = await Promise.all([
+        pool.nullifiers(nullifierHash) as Promise<boolean>,
+        pool.isKnownRoot(merkleProof.root) as Promise<boolean>,
+      ]);
       if (spent) {
         throw new Error("This commitment was already withdrawn — refresh the pool card.");
       }
-    } catch (err) {
-      // Network blip / unsupported provider — let the on-chain
-      // submit revert authoritatively rather than blocking the UX.
-      if (err instanceof Error && err.message.includes("already withdrawn")) {
-        throw err;
+      if (!knownRoot) {
+        throw new Error(
+          "Local merkle tree is out of sync with the pool — Refresh and retry.",
+        );
       }
+    } catch (err) {
+      const m = err instanceof Error ? err.message : "";
+      if (m.includes("already withdrawn") || m.includes("out of sync")) throw err;
+      // Other errors → let the on-chain submit speak authoritatively.
     }
   }
 

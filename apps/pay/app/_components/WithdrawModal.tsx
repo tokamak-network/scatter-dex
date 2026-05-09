@@ -63,7 +63,18 @@ export function WithdrawModal({
   }, [account, recipient]);
 
   const recipientValid = ethers.isAddress(recipient) && recipient !== ethers.ZeroAddress;
-  const canRun = !running && !done && !!signer && recipientValid && note.leafIndex >= 0;
+  // `tree.ready` gates the live merkle-proof resolver; without it
+  // `submitWithdraw` would throw `CommitmentProofUnavailableError`
+  // mid-flow. `leafIndex >= 0` alone isn't enough — a note loaded
+  // from disk while the tree is still hydrating satisfies that
+  // check but can't yet be proved against the live root.
+  const canRun =
+    !running &&
+    !done &&
+    !!signer &&
+    recipientValid &&
+    note.leafIndex >= 0 &&
+    tree.ready;
 
   async function run() {
     if (!signer) {
@@ -81,18 +92,10 @@ export function WithdrawModal({
         tree,
         onPhase: setPhase,
       });
-      // Spent note no longer spendable — drop from local vault. Any
-      // change UTXO (impossible in v1's full-amount path, but we
-      // future-proof the persistence) is appended in the same step.
-      if (result.change) {
-        await vault.add({
-          symbol: note.symbol,
-          amount: ethers.formatUnits(result.change.amount, note.note.amount === 0n ? 18 : guessDecimals(note)),
-          note: result.change.note,
-          commitment: result.change.commitment,
-          txHash: result.txHash,
-        });
-      }
+      // Spent note no longer spendable — drop from local vault.
+      // v1 is full-amount only (the helper enforces this), so
+      // `result.change` is always null here; partial-withdraw
+      // persistence will land alongside the partial-amount UI.
       await vault.remove(note.id);
       setDone({ txHash: result.txHash });
     } catch (e) {
@@ -242,16 +245,3 @@ export function WithdrawModal({
   );
 }
 
-/** Best-effort token decimals lookup for the change-UTXO display
- *  string written into the vault. v1's full-amount path leaves
- *  `result.change === null` so this is dead in practice — kept as a
- *  hook for the future partial-withdraw UI so the persistence write
- *  doesn't have to thread `decimals` through the args.
- *
- *  We can't read decimals off `note.note.token` (it's a poseidon
- *  field, not an address with metadata); guess 18 as the EVM-default
- *  to keep the display row readable. Math against `note.note.amount`
- *  (the canonical raw value) stays correct regardless. */
-function guessDecimals(_note: VaultNote): number {
-  return 18;
-}
