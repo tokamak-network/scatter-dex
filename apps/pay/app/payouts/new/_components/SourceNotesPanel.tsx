@@ -38,6 +38,13 @@ export interface SourceNotesPanelProps {
   /** Replace the selection with the given id. Required when
    *  `singleSelect` is true; ignored otherwise. */
   onSelect?: (id: string) => void;
+  /** Total amount the run needs in a single covering note. Used in
+   *  `singleSelect` mode to grey out rows whose `note.amount` is
+   *  smaller than the run requires — since `scatterDirectAuth`
+   *  consumes one commitment, a too-small note can't fund the run
+   *  even if it's Ready. Ignored in multi-batch mode (the per-batch
+   *  picker decides fit then). */
+  requiredCoverageRaw?: bigint;
   /** Wired to FundsStep's deposit modal so the empty state can
    *  surface a primary CTA instead of the operator hunting for the
    *  shortfall banner below. Optional so other surfaces can reuse
@@ -88,6 +95,7 @@ export function SourceNotesPanel({
   onToggle,
   singleSelect = false,
   onSelect,
+  requiredCoverageRaw,
   onDeposit,
   depositConfigured = true,
   depositBusy = false,
@@ -171,10 +179,30 @@ export function SourceNotesPanel({
         </button>
       </div>
       <div className="mb-2 text-[var(--color-text-muted)]">
-        Ready to spend:{" "}
-        <span className="font-mono">
-          {fmt(availableRaw)} {token}
-        </span>
+        {singleSelect ? (
+          <>
+            {/* Single-batch settle consumes one commitment; the
+                operator can only spend the *largest* reconciled
+                note, not the sum. Showing the sum here misled
+                operators into thinking 50+50+2.306 = 102.306 was
+                spendable as a unit. */}
+            Largest spendable note:{" "}
+            <span className="font-mono">
+              {fmt(largestSpendableRaw(tokenNotes))} {token}
+            </span>
+            <span className="ml-1 text-[10px]">
+              (sum across {tokenNotes.length} reconciled note
+              {tokenNotes.length === 1 ? "" : "s"}: {fmt(availableRaw)} {token})
+            </span>
+          </>
+        ) : (
+          <>
+            Ready to spend:{" "}
+            <span className="font-mono">
+              {fmt(availableRaw)} {token}
+            </span>
+          </>
+        )}
         {pendingRaw > 0n && (
           <>
             {" · Confirming: "}
@@ -209,7 +237,21 @@ export function SourceNotesPanel({
           ✓ Deposit confirmed — pick the newly-spendable note(s) below to fund this run.
         </div>
       )}
-      {tokenNotes.length > 0 && (
+      {tokenNotes.length > 0 && (() => {
+        // Coverage gate is row-invariant; resolve the formatted
+        // tooltip + bigint comparison once instead of in every map
+        // iteration.
+        const coverageActive =
+          singleSelect &&
+          requiredCoverageRaw !== undefined &&
+          requiredCoverageRaw > 0n;
+        const coverageLabel = coverageActive
+          ? `${ethers.formatUnits(requiredCoverageRaw, decimals)} ${token}`
+          : "";
+        const insufficientTitle = coverageActive
+          ? `Note is smaller than the run total — single-batch settle needs one commitment that covers ${coverageLabel}.`
+          : undefined;
+        return (
         <>
           <div className="mb-1 text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
             Your deposits ({tokenNotes.length}) —{" "}
@@ -228,6 +270,20 @@ export function SourceNotesPanel({
               {tokenNotes.map((n) => {
                 const ready = n.leafIndex >= 0;
                 const checked = selectedIds.has(n.id);
+                // Single-select mode requires one commitment that
+                // covers the run by itself; smaller rows render
+                // disabled with the hoisted tooltip. The narrowed
+                // `coverageActive` flag ensures `requiredCoverageRaw`
+                // is non-undefined inside this branch without a
+                // non-null assertion.
+                const insufficient =
+                  coverageActive && n.note.amount < (requiredCoverageRaw as bigint);
+                const inputDisabled = !ready || insufficient;
+                const inputTitle = !ready
+                  ? "Confirming on-chain — selectable after one block"
+                  : insufficient
+                    ? insufficientTitle
+                    : undefined;
                 return (
                   <tr key={n.id} className="border-t border-[var(--color-border)]">
                     <td className="py-1.5 align-middle">
@@ -235,7 +291,7 @@ export function SourceNotesPanel({
                         type={singleSelect ? "radio" : "checkbox"}
                         name={singleSelect ? "source-note-pick" : undefined}
                         checked={checked}
-                        disabled={!ready}
+                        disabled={inputDisabled}
                         onChange={() => {
                           if (singleSelect) {
                             onSelect?.(n.id);
@@ -243,21 +299,24 @@ export function SourceNotesPanel({
                             onToggle(n.id);
                           }
                         }}
-                        title={
-                          !ready
-                            ? "Confirming on-chain — selectable after one block"
-                            : undefined
-                        }
+                        title={inputTitle}
                       />
                     </td>
                     <td className="py-1.5">
-                      {ready ? (
-                        <span className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]">
-                          Ready
-                        </span>
-                      ) : (
+                      {!ready ? (
                         <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
                           Confirming
+                        </span>
+                      ) : insufficient ? (
+                        <span
+                          title={insufficientTitle}
+                          className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]"
+                        >
+                          Too small
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]">
+                          Ready
                         </span>
                       )}
                     </td>
@@ -298,7 +357,8 @@ export function SourceNotesPanel({
             </tbody>
           </table>
         </>
-      )}
+        );
+      })()}
       {shortfallRaw > 0n && (() => {
         // The shortfall in `shortfallRaw` only counts what's spendable
         // RIGHT NOW (leafIndex ≥ 0). Pending deposits cover part of it
@@ -369,4 +429,17 @@ export function SourceNotesPanel({
       })()}
     </div>
   );
+}
+
+/** Largest reconciled note amount in the list. Used by single-batch
+ *  surfaces where the spendable cap is one commitment, not the sum.
+ *  Returns 0n when no note is reconciled — the caller's "no notes"
+ *  copy already handles that case so we just want a numeric default. */
+function largestSpendableRaw(notes: readonly VaultNote[]): bigint {
+  let max = 0n;
+  for (const n of notes) {
+    if (n.leafIndex < 0) continue;
+    if (n.note.amount > max) max = n.note.amount;
+  }
+  return max;
 }

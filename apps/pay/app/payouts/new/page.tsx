@@ -1050,11 +1050,44 @@ function NewPayout() {
         : autoSourcePick,
     [manualPick, notes, selectedNoteIds, tokenAddress, totalEscrowRaw, autoSourcePick],
   );
-  const shortfallRaw = sourcePick.covered
-    ? 0n
-    : totalEscrowRaw > availableRaw
-      ? totalEscrowRaw - availableRaw
-      : totalEscrowRaw - sourcePick.pickedRaw;
+  const batches = useMemo<PayoutBatch[]>(() => {
+    if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
+    try {
+      // Clamp before parsing so the displayed Tier / batch count
+      // matches `tier`, and a paste of 10k rows doesn't parse the
+      // overflow. Validation still flags the original row count and
+      // disables Sign — this clamp only affects the preview.
+      const cappedRows = rows.slice(0, MAX_RECIPIENTS_PER_RUN);
+      const recipients = parseRecipientRows(cappedRows, decimals, claimFrom);
+      return splitPayout(recipients, { token: tokenAddress });
+    } catch {
+      return [];
+    }
+  }, [rows, tokenAddress, decimals, claimFrom]);
+
+  // Single-batch settle consumes one commitment, so the actionable
+  // top-up is `totalEscrowRaw` (mint a self-sufficient new note) —
+  // not the sum gap, since a fresh deposit is an independent UTXO
+  // that doesn't merge with existing notes. Multi-batch keeps the
+  // per-sum shortfall; per-batch fit lives in `multiBatchFit` /
+  // `BatchFitWarning`.
+  const isSingleBatch = batches.length <= 1;
+  const largestEligibleRaw = useMemo<bigint>(() => {
+    let max = 0n;
+    for (const n of tokenNotes) {
+      if (n.leafIndex < 0) continue;
+      if (n.note.amount > max) max = n.note.amount;
+    }
+    return max;
+  }, [tokenNotes]);
+  const shortfallRaw = ((): bigint => {
+    if (isSingleBatch) {
+      return largestEligibleRaw >= totalEscrowRaw ? 0n : totalEscrowRaw;
+    }
+    if (sourcePick.covered) return 0n;
+    if (totalEscrowRaw > availableRaw) return totalEscrowRaw - availableRaw;
+    return totalEscrowRaw - sourcePick.pickedRaw;
+  })();
   const toggleNoteSelection = useCallback((id: string) => {
     setManualPick(true);
     setSelectedNoteIds((prev) => {
@@ -1071,21 +1104,6 @@ function NewPayout() {
     setManualPick(true);
     setSelectedNoteIds(new Set([id]));
   }, []);
-
-  const batches = useMemo<PayoutBatch[]>(() => {
-    if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
-    try {
-      // Clamp before parsing so the displayed Tier / batch count
-      // matches `tier`, and a paste of 10k rows doesn't parse the
-      // overflow. Validation still flags the original row count and
-      // disables Sign — this clamp only affects the preview.
-      const cappedRows = rows.slice(0, MAX_RECIPIENTS_PER_RUN);
-      const recipients = parseRecipientRows(cappedRows, decimals, claimFrom);
-      return splitPayout(recipients, { token: tokenAddress });
-    } catch {
-      return [];
-    }
-  }, [rows, tokenAddress, decimals, claimFrom]);
 
   // Pre-flight the multi-batch picker so the Funds step can warn
   // BEFORE Sign — without this, the user sees "covered" via
