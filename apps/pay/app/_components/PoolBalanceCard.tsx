@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
-import { LAUNCH_TOKENS } from "@zkscatter/sdk";
+import { LAUNCH_TOKENS, formatTokenLabel } from "@zkscatter/sdk";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
 import { useCommitmentTree } from "../_lib/commitmentTree";
@@ -244,12 +244,12 @@ export function PoolBalanceCard() {
                             <span className="inline-block w-3 text-[var(--color-text-subtle)]">
                               {open ? "▾" : "▸"}
                             </span>
-                            <span>{r.symbol}</span>
+                            <span>{formatTokenLabel(r.symbol)}</span>
                           </button>
                         ) : (
                           <span>
                             <span className="inline-block w-3" />{" "}
-                            {r.symbol}
+                            {formatTokenLabel(r.symbol)}
                           </span>
                         )}{" "}
                         {!r.pinned && (
@@ -369,7 +369,7 @@ function NotesDrawer({
                   {ready ? `#${n.leafIndex}` : "—"}
                 </td>
                 <td className="px-2 py-1.5 text-right font-mono">
-                  {formatBalance(n.note.amount, decimals)} {symbol}
+                  {formatBalance(n.note.amount, decimals)} {formatTokenLabel(symbol)}
                 </td>
                 <td className="px-2 py-1.5 font-mono text-[var(--color-text-muted)]">
                   {shortHex(n.commitment)}

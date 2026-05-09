@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
+import { formatTokenLabel } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { useVault } from "../_lib/vault";
@@ -154,7 +155,7 @@ export function WithdrawModal({
           <div className="mt-1 text-lg font-semibold">
             {note.amount}{" "}
             <span className="text-sm font-normal text-[var(--color-text-muted)]">
-              {note.symbol}
+              {formatTokenLabel(note.symbol)}
             </span>
           </div>
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
