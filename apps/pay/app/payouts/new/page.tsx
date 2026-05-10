@@ -1017,8 +1017,12 @@ function NewPayout() {
   }, [rows, decimals]);
 
   // Sanitize first — browser number inputs can carry transient decimal
-  // values (e.g. mid-typing "1.5"); `BigInt(1.5)` throws.
-  const safeMaxFeeBps = Number.isFinite(maxFeeBps) ? Math.max(0, Math.trunc(maxFeeBps)) : 0;
+  // values (e.g. mid-typing "1.5"); `BigInt(1.5)` throws. Upper clamp
+  // mirrors the protocol limit (uint16 bps cap) so a stale draft or
+  // non-UI write path can't push `serviceFeeRaw` past 100%.
+  const safeMaxFeeBps = Number.isFinite(maxFeeBps)
+    ? Math.max(0, Math.min(10_000, Math.trunc(maxFeeBps)))
+    : 0;
   // Native ETH runs are settled in the same currency the relayer
   // pays gas in, so there's nothing to pre-collect — bps service
   // fee already covers the relayer's economics. Skip the policy
@@ -1044,8 +1048,12 @@ function NewPayout() {
   })();
   // Run-wide breakdown used by FundsStep's UI (service / reserve /
   // total rows). Per-batch math at submit time recomputes the same
-  // values for each batch via the same helper so display and charge
-  // can't drift.
+  // values for each batch via the same helper. Integer division in
+  // `serviceFeeRaw` means `floor(sum × bps / 10000)` can differ from
+  // `Σ floor(batchᵢ × bps / 10000)` by at most one token-raw unit
+  // per batch — display drift is bounded by `batches.length` and
+  // sub-cent in practice; the on-chain charge is always the
+  // per-batch sum.
   const runFee = computeBatchFee({
     lockedAmount: requiredRaw,
     recipientCount: rows.length,

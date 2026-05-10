@@ -160,6 +160,11 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
   // over-collect (e.g. 3.05 USDC → 3.20 USDC at 32 bps). The
   // contract still enforces `fee × 10000 ≤ sellAmount × maxFee`;
   // catch a mismatched caller before wasting a ~5 s proof.
+  // Reject negative `feeRaw` upfront — would make `sellAmount <
+  // totalLocked` and flip the bps-cap inequality below.
+  if (feeRaw < 0n) {
+    throw new Error(`feeRaw must be non-negative; got ${feeRaw}`);
+  }
   const sellAmount = batch.totalAmount + feeRaw;
   if (feeRaw * BPS_DENOMINATOR > sellAmount * BigInt(maxFeeBps)) {
     throw new Error(

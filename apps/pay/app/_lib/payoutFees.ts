@@ -40,6 +40,17 @@ export interface BatchFeeInput {
 
 export function computeBatchFee(input: BatchFeeInput): BatchFeeBreakdown {
   const { lockedAmount, recipientCount, maxFeeBps, claimFeePerRecipientRaw } = input;
+  if (!Number.isInteger(recipientCount) || recipientCount < 0) {
+    throw new Error(`recipientCount must be a non-negative integer; got ${recipientCount}`);
+  }
+  if (!Number.isInteger(maxFeeBps) || maxFeeBps < 0 || maxFeeBps > 10_000) {
+    throw new Error(`maxFeeBps must be an integer in [0, 10000]; got ${maxFeeBps}`);
+  }
+  if (lockedAmount < 0n || claimFeePerRecipientRaw < 0n) {
+    throw new Error(
+      `lockedAmount and claimFeePerRecipientRaw must be non-negative; got ${lockedAmount}, ${claimFeePerRecipientRaw}`,
+    );
+  }
   const serviceFeeRaw = (lockedAmount * BigInt(maxFeeBps)) / BPS_DENOMINATOR;
   const claimReserveRaw = BigInt(recipientCount) * claimFeePerRecipientRaw;
   const feeRaw = serviceFeeRaw + claimReserveRaw;
