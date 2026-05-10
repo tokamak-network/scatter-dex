@@ -1271,22 +1271,22 @@ function NewPayout() {
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {CATEGORIES.map((t) => (
+              {CATEGORIES.map((c) => (
                 <button
-                  key={t.id}
+                  key={c.id}
                   disabled={!!resumeRecord}
-                  onClick={() => pickCategory(t.id)}
+                  onClick={() => pickCategory(c.id)}
                   className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                    categoryId === t.id
+                    categoryId === c.id
                       ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)]"
                       : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-strong)]"
                   }`}
                 >
                   <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-primary)]">
-                    {t.name}
+                    {c.name}
                   </div>
-                  <div className="mt-1 font-semibold">{t.tagline}</div>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{t.body}</p>
+                  <div className="mt-1 font-semibold">{c.tagline}</div>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{c.body}</p>
                 </button>
               ))}
             </div>
