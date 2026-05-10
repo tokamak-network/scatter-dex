@@ -34,7 +34,13 @@ export interface RelayerApiInfo {
   address: string;
   fee: number;
   orderCount: number;
-  settlement: string;
+  /** Address of the on-chain CommitmentPool the relayer reads from.
+   *  Mirrors `commitmentPool` in `zk-relayer/src/routes/info.ts` —
+   *  the older single `settlement` field was inaccurate (the response
+   *  has always returned the two contracts separately). */
+  commitmentPool: string;
+  /** Address of the PrivateSettlement contract the relayer submits to. */
+  privateSettlement: string;
   profile?: RelayerProfile;
   /** Per-token gasless-transfer fee policy. Symbol → decimal-string
    *  amount in token-units, e.g.
@@ -42,6 +48,14 @@ export interface RelayerApiInfo {
    *  when the relayer hasn't configured a policy, in which case its
    *  `/api/transfer-7702/relay` rejects with `token not supported`. */
   gasless_fees?: Record<string, string>;
+  /** Per-recipient claim-gasless reserve policy. Symbol → decimal-
+   *  string amount in token-units, e.g.
+   *  `{ USDC: "0.05", USDT: "0.05", TON: "0.5" }`. Multiplied by the
+   *  run's recipient count and added to the bps service fee at
+   *  settle time. Empty / missing when the platform hasn't published
+   *  a policy — operator UI falls back to legacy service-fee-only
+   *  behavior. */
+  claim_fees?: Record<string, string>;
 }
 
 /** Per-token settled volume (one row per `sell_token`). `totalVolume`

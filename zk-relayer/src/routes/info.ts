@@ -45,6 +45,13 @@ export function createInfoRoutes(submitter: PrivateSubmitter, db: PrivateOrderDB
       // published a policy — gasless transfer is unavailable
       // through this relayer in that case.
       gasless_fees: config.gaslessFees,
+      // Per-recipient claim-gasless reserve. Multiplied by the run's
+      // recipient count and added to the service fee at settle time
+      // — operators see a single combined "Relayer fee" line and the
+      // proof's `maxFee` cap stretches to cover the sum. Empty when
+      // the platform hasn't published a policy; in that case the Pay
+      // wizard falls back to service-fee-only behavior (legacy).
+      claim_fees: config.claimFees,
     });
   });
 
