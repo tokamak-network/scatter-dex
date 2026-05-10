@@ -5,7 +5,7 @@ import {
   type RunRecord,
 } from "@zkscatter/sdk/storage";
 import type { RecipientRow as WizardRow } from "../../_lib/format";
-import type { TemplateId } from "./_templates";
+import type { CategoryId } from "./_categories";
 
 export type { WizardRow };
 
@@ -31,7 +31,7 @@ export function formatTotal(n: number): string {
 }
 
 export interface BuildRunRecordInput {
-  templateId: TemplateId;
+  categoryId: CategoryId;
   label: string;
   token: string;
   tokenAddress: string | undefined;
@@ -120,10 +120,10 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
     };
   });
 
-  // RunCategory has an "other" bucket the wizard's TemplateId set
-  // doesn't include; the assignment is safe because the four template
+  // RunCategory has an "other" bucket the wizard's CategoryId set
+  // doesn't include; the assignment is safe because the four wizard
   // ids are a subset of the category union.
-  const category: RunCategory = input.templateId;
+  const category: RunCategory = input.categoryId;
 
   return {
     id: mintRunId(),

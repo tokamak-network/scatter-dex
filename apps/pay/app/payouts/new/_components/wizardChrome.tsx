@@ -1,7 +1,7 @@
 "use client";
 
 import { Modal } from "@zkscatter/ui";
-import { STEPPER_LABELS } from "../_templates";
+import { STEPPER_LABELS } from "../_categories";
 
 export function Stepper({ step, onJump }: { step: number; onJump: (n: number) => void }) {
   return (
