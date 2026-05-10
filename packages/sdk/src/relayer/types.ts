@@ -34,7 +34,13 @@ export interface RelayerApiInfo {
   address: string;
   fee: number;
   orderCount: number;
-  settlement: string;
+  /** Address of the on-chain CommitmentPool the relayer reads from.
+   *  Mirrors `commitmentPool` in `zk-relayer/src/routes/info.ts` —
+   *  the older single `settlement` field was inaccurate (the response
+   *  has always returned the two contracts separately). */
+  commitmentPool: string;
+  /** Address of the PrivateSettlement contract the relayer submits to. */
+  privateSettlement: string;
   profile?: RelayerProfile;
   /** Per-token gasless-transfer fee policy. Symbol → decimal-string
    *  amount in token-units, e.g.
