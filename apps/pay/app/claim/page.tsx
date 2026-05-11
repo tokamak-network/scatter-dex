@@ -125,7 +125,8 @@ function ClaimInner() {
     !isStealth &&
     !!account &&
     (claimerIdentity.kind === "unverified" ||
-      claimerIdentity.kind === "expired");
+      claimerIdentity.kind === "expired" ||
+      claimerIdentity.kind === "error");
 
   useEffect(() => {
     if (typeof window === "undefined") return;

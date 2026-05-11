@@ -173,20 +173,17 @@ export function IdentityBatchProvider({ children }: { children: ReactNode }) {
             });
             return next;
           });
-        } catch {
+        } catch (e) {
           if (genRef.current !== gen) return;
-          // Surface as "unverified" rather than spamming console —
-          // gate misconfig is observable via the primary
-          // IdentityPill anyway.
-          setCache((prev) => {
-            const next = new Map(prev);
-            next.set(key, {
-              isVerified: false,
-              verifiedUntil: 0,
-              state: { kind: "unverified" },
-            });
-            return next;
-          });
+          // Don't conflate "RPC failed" with "address is unverified"
+          // — that would falsely block recipients during a transient
+          // registry outage. Leave the entry absent and let the
+          // next probe retry; UI / validation treats `null` as
+          // "unknown, don't block". The primary IdentityPill
+          // surfaces gate misconfig at the operator level.
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("[pay] identity probe failed", key, e);
+          }
         } finally {
           inFlight.current.delete(key);
         }

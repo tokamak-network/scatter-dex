@@ -5,9 +5,10 @@ import type { IdentityState } from "../_lib/identity";
 
 /** Blocking modal shown when the connected wallet doesn't meet
  *  the verification requirements for the action the user is
- *  trying to take (create a payout, claim, etc). Renders nothing
- *  when the state is verified — caller still owns the decision
- *  of when to open this. */
+ *  trying to take (create a payout, claim, etc). The caller
+ *  decides when to mount this — usually wrapped in a state-check
+ *  conditional. Always renders the underlying `Modal` when
+ *  mounted; no internal short-circuit on `state.kind === "verified"`. */
 export function IdentityGateModal({
   state,
   title,
@@ -61,7 +62,7 @@ function defaultTitle(state: IdentityState): string {
     case "expired":
       return "Verification expired";
     case "expiring":
-      return "Verification renewing soon";
+      return "Verification expiring soon";
     case "unverified":
     case "error":
     default:
