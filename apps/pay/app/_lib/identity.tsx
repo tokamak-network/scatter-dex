@@ -255,7 +255,7 @@ export function useIdentityForAddresses(addresses: readonly string[]): {
 
 // ---------------------------------------------------------------
 // Admin read — gate owner + trusted registries. Hoisted into a
-// provider so the header's `AdminNavLink` (mounted on every page)
+// provider so the header's `IdentityMenu` (mounted on every page)
 // and the `/admin/identity` page share one snapshot — without
 // this each consumer fired its own owner()+getRegistries() pair.
 // Refresh from any consumer propagates to all.
@@ -281,18 +281,23 @@ export function IdentityGateAdminProvider({ children }: { children: ReactNode })
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
+    // Clear any prior snapshot when the wallet disconnects or the
+    // (account, gate) tuple changes. Without this an owner→non-
+    // owner switch would briefly render admin UI keyed on the old
+    // owner address while the new read was in flight.
+    setSnapshot(null);
+    setError(null);
+    setLoading(false);
     // Skip the read entirely before wallet connect — the admin
     // page renders nothing actionable for an unconnected user,
     // and the header link only cares about admin === true. This
     // avoids one RPC pair per route-mount in the unconnected
     // browsing case.
     if (!account || !readProvider || noGate) {
-      setSnapshot(null);
       return;
     }
     let cancelled = false;
     setLoading(true);
-    setError(null);
     loadIdentityGateAdmin(gate, readProvider)
       .then((s) => {
         if (cancelled) return;

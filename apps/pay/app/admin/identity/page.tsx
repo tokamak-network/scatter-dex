@@ -78,6 +78,10 @@ export default function AdminIdentityPage() {
             >
               Connect wallet
             </button>
+          ) : loading && !snapshot ? (
+            <span className="text-[var(--color-text-muted)]">
+              ⏳ Checking ownership…
+            </span>
           ) : isOwner ? (
             <span className="text-[var(--color-success)]">
               ✓ You are the gate owner — admin actions enabled.
@@ -200,14 +204,21 @@ function RegistryRow({
 }) {
   const cfg = useMemo(() => getNetworkConfig(), []);
   const gateWriter = useMemo(
-    () => (signer ? new ethers.Contract(gate, IDENTITY_GATE_ABI, signer) : null),
+    () =>
+      signer && gate
+        ? new ethers.Contract(gate, IDENTITY_GATE_ABI, signer)
+        : null,
     [signer, gate],
   );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [doneTx, setDoneTx] = useState<string | null>(null);
   async function remove() {
-    if (!gateWriter) return;
+    // `isOwner` is also enforced via the button's `disabled`, but
+    // double-check here so a programmatic click path can't slip
+    // past — the on-chain `OnlyOwner` would still revert, but we
+    // skip the wallet popup + tx submission.
+    if (!gateWriter || !isOwner) return;
     setBusy(true);
     setErr(null);
     setDoneTx(null);
@@ -278,7 +289,10 @@ function AddRegistrySection({
 }) {
   const cfg = useMemo(() => getNetworkConfig(), []);
   const gateWriter = useMemo(
-    () => (signer ? new ethers.Contract(gate, IDENTITY_GATE_ABI, signer) : null),
+    () =>
+      signer && gate
+        ? new ethers.Contract(gate, IDENTITY_GATE_ABI, signer)
+        : null,
     [signer, gate],
   );
   const [input, setInput] = useState("");
@@ -291,7 +305,11 @@ function AddRegistrySection({
     valid && existing.some((a) => a.toLowerCase() === trimmed.toLowerCase());
 
   async function add() {
-    if (!gateWriter || !valid || duplicate) return;
+    // `isOwner` enforced visually via the button's `disabled`,
+    // but mirror the check here for the same reason as remove()
+    // — keeps programmatic dispatches from hitting the wallet
+    // popup just to be rejected on-chain.
+    if (!gateWriter || !valid || duplicate || !isOwner) return;
     setBusy(true);
     setErr(null);
     setDoneTx(null);
