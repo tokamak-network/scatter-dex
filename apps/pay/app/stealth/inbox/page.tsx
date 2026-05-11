@@ -32,7 +32,7 @@ import {
 import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
 import { ERC20_ABI, formatTokenLabel, type NetworkConfig } from "@zkscatter/sdk";
-import { RedepositSplitModal } from "./_RedepositSplitModal";
+import { RedepositSplitModal } from "../../_components/RedepositSplitModal";
 
 /** True when `token` is the chain's WETH — claims auto-unwrap to
  *  native ETH on payout, so native send-tx and `getBalance` are the
@@ -294,7 +294,7 @@ function InboxBody() {
       )}
       {activeRedeposit && (
         <RedepositSplitModal
-          entry={activeRedeposit.entry}
+          pkg={activeRedeposit.entry.pkg}
           privkey={activeRedeposit.privkey}
           onClose={() => setActiveRedeposit(null)}
           onDone={async (txHash) => {
