@@ -324,7 +324,11 @@ function RecipientForm({
           <Field
             label={
               <>
-                {isNew ? "Default wallet address **" : "Default wallet address"}
+                {isNew
+                  ? STEALTH_ENABLED
+                    ? "Default wallet address **"
+                    : "Default wallet address *"
+                  : "Default wallet address"}
                 <InfoTip
                   text={
                     isNew
