@@ -6,6 +6,7 @@ import { Field, Modal } from "@zkscatter/ui";
 import { shortAddr } from "@zkscatter/sdk/react";
 import { type WalletEntry } from "@zkscatter/sdk/storage";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
+import { IdentityBadge } from "../_components/IdentityBadge";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { useWalletBook } from "../_lib/walletBook";
 import { csvEscape, downloadCsv } from "../_lib/csv";
@@ -186,7 +187,10 @@ function RecipientTable({
                 </td>
                 <td className="px-5 py-3 font-mono text-xs">
                   {e.address ? (
-                    shortAddr(e.address)
+                    <span className="inline-flex items-center gap-1.5">
+                      {shortAddr(e.address)}
+                      <IdentityBadge address={e.address} />
+                    </span>
                   ) : (
                     <span className="text-[var(--color-text-muted)]">—</span>
                   )}
@@ -352,6 +356,11 @@ function RecipientForm({
                   : "border-[var(--color-border-strong)]"
               }`}
             />
+            {address.trim().length > 0 && (
+              <div className="mt-1.5">
+                <IdentityBadge address={address.trim()} />
+              </div>
+            )}
           </Field>
         </FormSection>
 
