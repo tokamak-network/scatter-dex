@@ -116,7 +116,9 @@ function chipIcon(state: IdentityState): string {
 function chipLabel(state: IdentityState): string {
   switch (state.kind) {
     case "verified":
-      return `Verified · ${formatRemaining(state.remainingMs)}`;
+      return state.indefinite
+        ? "Verified · no expiry"
+        : `Verified · ${formatRemaining(state.remainingMs)}`;
     case "expiring":
       return `Verified · ${formatRemaining(state.remainingMs)}`;
     case "expired":
@@ -133,7 +135,12 @@ function chipLabel(state: IdentityState): string {
 }
 
 function chipTitle(state: IdentityState): string {
-  if (state.kind === "verified" || state.kind === "expiring") {
+  if (state.kind === "verified") {
+    return state.indefinite
+      ? "zk-X509 verified · no expiry on file"
+      : `zk-X509 verified · expires ${new Date(state.expiresAt * 1000).toLocaleString()}`;
+  }
+  if (state.kind === "expiring") {
     return `zk-X509 verified · expires ${new Date(state.expiresAt * 1000).toLocaleString()}`;
   }
   if (state.kind === "expired") {
@@ -145,10 +152,11 @@ function chipTitle(state: IdentityState): string {
 function detailLines(state: IdentityState): string[] {
   switch (state.kind) {
     case "verified":
+      return state.indefinite
+        ? ["No expiry on file — registry treats this attestation as indefinite."]
+        : [`Expires: ${new Date(state.expiresAt * 1000).toLocaleString()}`];
     case "expiring":
-      return [
-        `Expires: ${new Date(state.expiresAt * 1000).toLocaleString()}`,
-      ];
+      return [`Expires: ${new Date(state.expiresAt * 1000).toLocaleString()}`];
     case "expired":
       return [
         `Was valid until ${new Date(state.expiresAt * 1000).toLocaleString()}.`,
@@ -161,10 +169,7 @@ function detailLines(state: IdentityState): string[] {
     case "loading":
       return ["Reading registry…"];
     case "error":
-      return [
-        "Couldn't reach the identity registry.",
-        state.message,
-      ];
+      return ["Couldn't reach the identity registry.", state.message];
     default:
       return [];
   }

@@ -12,7 +12,11 @@ import {
 } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
-import { loadIdentityVerification } from "@zkscatter/sdk/relayer";
+import {
+  loadIdentityVerification,
+  loadIdentityGateAdmin,
+  type IdentityGateAdminSnapshot,
+} from "@zkscatter/sdk/relayer";
 import { getNetworkConfig } from "./network";
 import { classifyIdentity, type IdentityState } from "./identityState";
 
@@ -39,7 +43,7 @@ export function IdentityStatusProvider({ children }: { children: ReactNode }) {
   const { account, readProvider } = useWallet();
   const cfg = useMemo(() => getNetworkConfig(), []);
   const gate = cfg.contracts.identityGate;
-  const noGate = !gate || gate === "0x0000000000000000000000000000000000000000";
+  const noGate = !gate || gate === ethers.ZeroAddress;
 
   const [state, setState] = useState<IdentityState>({ kind: "disconnected" });
   const [refreshTick, setRefreshTick] = useState(0);
@@ -121,7 +125,7 @@ export function IdentityBatchProvider({ children }: { children: ReactNode }) {
   const { readProvider } = useWallet();
   const cfg = useMemo(() => getNetworkConfig(), []);
   const gate = cfg.contracts.identityGate;
-  const noGate = !gate || gate === "0x0000000000000000000000000000000000000000";
+  const noGate = !gate || gate === ethers.ZeroAddress;
 
   const [cache, setCache] = useState<Map<string, AddressVerification>>(
     () => new Map(),
@@ -247,4 +251,94 @@ export function useIdentityForAddresses(addresses: readonly string[]): {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx, keys]);
   return { get: (a: string) => ctx?.get(a) ?? null };
+}
+
+// ---------------------------------------------------------------
+// Admin read — gate owner + trusted registries. Hoisted into a
+// provider so the header's `IdentityMenu` (mounted on every page)
+// and the `/admin/identity` page share one snapshot — without
+// this each consumer fired its own owner()+getRegistries() pair.
+// Refresh from any consumer propagates to all.
+// ---------------------------------------------------------------
+
+interface AdminValue {
+  snapshot: IdentityGateAdminSnapshot | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+const AdminContext = createContext<AdminValue | null>(null);
+
+export function IdentityGateAdminProvider({ children }: { children: ReactNode }) {
+  const { account, readProvider } = useWallet();
+  const cfg = useMemo(() => getNetworkConfig(), []);
+  const gate = cfg.contracts.identityGate;
+  const noGate = !gate || gate === ethers.ZeroAddress;
+  const [snapshot, setSnapshot] = useState<IdentityGateAdminSnapshot | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    // Clear any prior snapshot when the wallet disconnects or the
+    // (account, gate) tuple changes. Without this an owner→non-
+    // owner switch would briefly render admin UI keyed on the old
+    // owner address while the new read was in flight.
+    setSnapshot(null);
+    setError(null);
+    setLoading(false);
+    // Skip the read entirely before wallet connect — the admin
+    // page renders nothing actionable for an unconnected user,
+    // and the header link only cares about admin === true. This
+    // avoids one RPC pair per route-mount in the unconnected
+    // browsing case.
+    if (!account || !readProvider || noGate) {
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    loadIdentityGateAdmin(gate, readProvider)
+      .then((s) => {
+        if (cancelled) return;
+        setSnapshot(s);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "admin lookup failed");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [account, readProvider, gate, noGate, tick]);
+
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
+  const value = useMemo<AdminValue>(
+    () => ({ snapshot, loading, error, refresh }),
+    [snapshot, loading, error, refresh],
+  );
+  return <AdminContext.Provider value={value}>{children}</AdminContext.Provider>;
+}
+
+export function useIdentityGateAdmin(): AdminValue {
+  const ctx = useContext(AdminContext);
+  if (!ctx) {
+    throw new Error(
+      "useIdentityGateAdmin must be used within IdentityGateAdminProvider",
+    );
+  }
+  return ctx;
+}
+
+/** True when the connected wallet matches the gate owner. Returns
+ *  `null` while the snapshot is still loading so callers don't
+ *  briefly render a "not admin" view before the read resolves. */
+export function useIsIdentityGateAdmin(): boolean | null {
+  const { account } = useWallet();
+  const { snapshot } = useIdentityGateAdmin();
+  if (!snapshot || !account) return null;
+  return account.toLowerCase() === snapshot.owner.toLowerCase();
 }

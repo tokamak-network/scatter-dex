@@ -87,4 +87,29 @@ describe("classifyIdentity", () => {
       expect(result.kind).toBe("expired");
     });
   });
+
+  describe("indefinite expiry sentinel", () => {
+    it("flags `indefinite=true` when verifiedUntil is essentially never (>100y away)", () => {
+      // type(uint64).max ≈ 1.8e19 seconds — far past JS Date range.
+      // The classifier must not classify this as `expiring` and must
+      // not produce nonsense remaining-days that would render as
+      // "213503982314016d left".
+      const sentinel = Number((2n ** 64n - 1n).toString());
+      const result = classifyIdentity(true, sentinel, NOW);
+      expect(result.kind).toBe("verified");
+      if (result.kind === "verified") {
+        expect(result.indefinite).toBe(true);
+        expect(result.expiresAt).toBe(sentinel);
+      }
+    });
+
+    it("flags `indefinite=false` for a normal ~7-day expiry", () => {
+      const future = Math.floor(NOW / 1000) + 7 * ONE_DAY_S;
+      const result = classifyIdentity(true, future, NOW);
+      expect(result.kind).toBe("verified");
+      if (result.kind === "verified") {
+        expect(result.indefinite).toBe(false);
+      }
+    });
+  });
 });

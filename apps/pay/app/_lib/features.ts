@@ -12,3 +12,12 @@
  *  `NEXT_PUBLIC_PAY_STEALTH_ENABLED=true`. */
 export const STEALTH_ENABLED =
   process.env.NEXT_PUBLIC_PAY_STEALTH_ENABLED === "true";
+
+/** Deep-link to the external zk-X509 registration / inspection
+ *  app. Surfaced on the user-facing /identity page and next to
+ *  the admin "Add registry" form so operators can paste the
+ *  resulting contract address straight in. Empty string = no
+ *  link is rendered. Default `http://localhost:3000` matches
+ *  zk-X509's `next dev` default. */
+export const ZK_X509_URL =
+  process.env.NEXT_PUBLIC_PAY_ZK_X509_URL ?? "http://localhost:3000";

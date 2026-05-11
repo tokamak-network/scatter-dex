@@ -34,6 +34,15 @@ export const RELAYER_REGISTRY_ABI = [
 export const IDENTITY_GATE_ABI = [
   "function isVerified(address user) external view returns (bool)",
   "function verifiedUntil(address user) external view returns (uint64)",
+  // Owner-only management — exposed read-side here for admin UIs;
+  // mutating calls require the connected wallet to match `owner()`.
+  "function owner() external view returns (address)",
+  "function getRegistryCount() external view returns (uint256)",
+  "function getRegistries() external view returns (address[])",
+  "function addRegistry(address registry) external",
+  "function removeRegistry(address registry) external",
+  "event RegistryAdded(address indexed registry)",
+  "event RegistryRemoved(address indexed registry)",
 ] as const;
 
 export const ERC20_ABI = [
