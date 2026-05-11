@@ -353,7 +353,11 @@ function NewPayout() {
     }
     void loadWizardDraft(account, draftLabelParam).then((d) => {
       if (d) {
-        setCategoryId(d.templateId as CategoryId);
+        // Drafts persist `templateId` as a free string; an old or
+        // hand-edited value outside the current CategoryId union would
+        // crash the render via `CATEGORIES.find(...)!` on line 201.
+        const draftCat = CATEGORIES.find((c) => c.id === d.templateId);
+        if (draftCat) setCategoryId(draftCat.id);
         setLabel(d.label);
         setToken(d.token);
         setCsv(d.csv);
