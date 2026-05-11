@@ -4,15 +4,15 @@ import { useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { useEdDSAKey, useWallet } from "@zkscatter/sdk/react";
-import type { StealthInboxEntry } from "@zkscatter/sdk/storage";
+import type { ClaimPackage } from "@zkscatter/sdk/notes";
 import { MAX_CLAIM_TO_POOL_SLICES } from "@zkscatter/sdk/contracts";
 import { formatTokenLabel } from "@zkscatter/sdk";
 import {
   submitRedeposit,
   type RedepositPhase,
   type RedepositSliceSpec,
-} from "../../_lib/redepositSubmit";
-import { useVault } from "../../_lib/vault";
+} from "../_lib/redepositSubmit";
+import { useVault } from "../_lib/vault";
 
 type Mode = "preset" | "manual";
 
@@ -71,28 +71,30 @@ const PHASE_DETAIL: Record<RedepositPhase, string> = {
 };
 
 export function RedepositSplitModal({
-  entry,
+  pkg,
   privkey,
   onClose,
   onDone,
 }: {
-  entry: StealthInboxEntry;
-  /** Stealth privkey resolved by the inbox row from either an
-   *  embedded `stealthPrivateKey` or a derive-from-meta-keys path.
-   *  Required — the EIP-712 auth must be signed by this. */
+  pkg: ClaimPackage;
+  /** Stealth privkey resolved by the caller — either from an
+   *  embedded `stealthPrivateKey` on an inbox entry, or derived from
+   *  the recipient's meta-keys on the public claim page. Required —
+   *  the EIP-712 auth must be signed by this. */
   privkey: string;
   onClose: () => void;
-  /** Notify the inbox to mark the entry claimed once the redeposit
-   *  lands. Mirrors the regular Claim flow's `onClaimed`. */
+  /** Notify the caller once the redeposit lands so they can run
+   *  flow-specific bookkeeping (mark the inbox entry claimed, flip
+   *  the claim page into its done state, etc.). */
   onDone: (txHash: string) => Promise<void>;
 }) {
   const { signer } = useWallet();
   const eddsa = useEdDSAKey();
   const vault = useVault();
 
-  const totalRaw = BigInt(entry.pkg.amount);
-  const tokenSymbol = entry.pkg.tokenSymbol;
-  const tokenDecimals = entry.pkg.tokenDecimals;
+  const totalRaw = BigInt(pkg.amount);
+  const tokenSymbol = pkg.tokenSymbol;
+  const tokenDecimals = pkg.tokenDecimals;
 
   const [mode, setMode] = useState<Mode>("preset");
   const [presetN, setPresetN] = useState(2);
@@ -156,7 +158,7 @@ export function RedepositSplitModal({
       const kp = await eddsa.derive();
       const sliceSpecs: RedepositSliceSpec[] = slices.map((amountRaw) => ({ amountRaw }));
       const result = await submitRedeposit({
-        pkg: entry.pkg,
+        pkg,
         stealthPrivkey: privkey,
         signer,
         eddsaKeypair: kp,

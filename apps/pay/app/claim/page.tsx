@@ -17,6 +17,7 @@ import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { deriveStealthForPackage } from "../_lib/stealthDerive";
+import { RedepositSplitModal } from "../_components/RedepositSplitModal";
 
 /** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
  *  as a static export, so the link id moves to a `?id=` query param
@@ -83,6 +84,7 @@ function ClaimInner() {
    *  small confirmation footer so the user knows where to find this
    *  claim later. Stays null on the non-stealth / no-folder paths. */
   const [savedInboxId, setSavedInboxId] = useState<string | null>(null);
+  const [showRedeposit, setShowRedeposit] = useState(false);
   // null = unknown / not yet probed, true = up, false = down. Drives
   // the gasless button's disabled state so the recipient doesn't
   // burn a proof generation just to hit a connection refused.
@@ -509,6 +511,25 @@ function ClaimInner() {
                       Submit with my wallet instead (you pay gas)
                     </button>
                   )}
+                  {/* Redeposit is only valid when the recipient holds the
+                      stealth privkey (stealthVerified), has a connected
+                      wallet to pay gas + sign the redeposit tx, and the
+                      slot isn't already spent. The button replaces the
+                      claim flow — funds land in the pool as fresh
+                      commitments owned by the recipient's trading key. */}
+                  {stealthVerified &&
+                    !!signer &&
+                    isAvailable === true &&
+                    alreadyClaimed !== true &&
+                    phase.kind === "idle" && (
+                      <button
+                        onClick={() => setShowRedeposit(true)}
+                        title="Redirect the claim into the pool as N fresh commitments owned by your trading key. Observers see N small deposits instead of one large claim."
+                        className="w-full rounded-md border border-[var(--color-border-strong)] py-2 text-xs hover:bg-[var(--color-primary-soft)]"
+                      >
+                        Redeposit (split into pool)
+                      </button>
+                    )}
                 </>
               );
             })()}
@@ -523,6 +544,23 @@ function ClaimInner() {
           <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">{link}</span>
         </div>
       </div>
+      {showRedeposit && parsed && stealthDerivation?.privateKey && (
+        <RedepositSplitModal
+          pkg={parsed.pkg}
+          privkey={stealthDerivation.privateKey}
+          onClose={() => setShowRedeposit(false)}
+          onDone={async (txHash) => {
+            // Mirror the regular Claim flow's done-state transition so
+            // the page collapses to the success card — the slot is now
+            // spent on-chain either way. Funds live in the pool rather
+            // than at the stealth EOA; the post-claim address line
+            // still points at the original recipient since the proof
+            // is bound to that leaf.
+            setPhase({ kind: "done", txHash });
+            setShowRedeposit(false);
+          }}
+        />
+      )}
     </div>
   );
 }
