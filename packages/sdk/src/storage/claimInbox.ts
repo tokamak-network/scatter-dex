@@ -119,6 +119,15 @@ export function parseClaimInboxInput(rawInput: string): {
 } {
   const trimmed = rawInput.trim();
   if (!trimmed) throw new Error("Empty input");
+  // Privkey+package hand-off (stealth-only) — detect early so the
+  // user gets a clear pointer to the stealth inbox instead of an
+  // opaque base64 decode error from a token concatenation.
+  if (/[|\s]/.test(trimmed) && trimmed.split(/[|\s]+/).filter(Boolean).length > 1) {
+    throw new Error(
+      "This inbox accepts a single claim link or fragment. " +
+        "Privkey + package hand-offs belong in the Stealth inbox.",
+    );
+  }
   if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
     let url: URL;
     try {
@@ -134,13 +143,15 @@ export function parseClaimInboxInput(rawInput: string): {
   return { rawInput: trimmed, pkg: decodeClaimPackage(stripped) };
 }
 
-/** Insert one entry. Dedupes by `claimsRoot + leafIndex` so re-pasting
- *  the same link doesn't create duplicates. Returns the inserted
- *  entry or `null` when the entry already existed. */
+/** Insert one entry, deduping by `claimsRoot + leafIndex`. Always
+ *  returns the entry that now represents the (root, leaf) pair so
+ *  callers can mark it claimed regardless of whether they inserted
+ *  fresh or hit a pre-saved row. `isNew` distinguishes the two for
+ *  UI copy. */
 export async function addClaimInboxEntry(input: {
   rawInput: string;
   pkg: ClaimPackage;
-}): Promise<ClaimInboxEntry | null> {
+}): Promise<{ entry: ClaimInboxEntry; isNew: boolean }> {
   return withLock(async () => {
     const entries = await loadClaimInbox();
     const existing = entries.find(
@@ -148,7 +159,7 @@ export async function addClaimInboxEntry(input: {
         e.pkg.claimsRoot === input.pkg.claimsRoot &&
         e.pkg.leafIndex === input.pkg.leafIndex,
     );
-    if (existing) return null;
+    if (existing) return { entry: existing, isNew: false };
     const entry: ClaimInboxEntry = {
       id: newId(),
       addedAt: Math.floor(Date.now() / 1000),
@@ -157,7 +168,7 @@ export async function addClaimInboxEntry(input: {
       status: "available",
     };
     await writeInbox([...entries, entry]);
-    return entry;
+    return { entry, isNew: true };
   });
 }
 

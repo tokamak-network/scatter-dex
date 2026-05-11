@@ -11,6 +11,7 @@ import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
   addClaimInboxEntry,
   addStealthInboxEntry,
+  loadStealthInbox,
   markClaimInboxEntryClaimed,
   markStealthInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
@@ -218,15 +219,15 @@ function ClaimInner() {
     try {
       const rawInput =
         typeof window !== "undefined" ? window.location.href : "";
-      const inserted = isStealth
-        ? await addStealthInboxEntry({
+      const isNew = isStealth
+        ? !!(await addStealthInboxEntry({
             source: "link",
             rawInput,
             pkg: parsed.pkg,
             ephemeralPubKey: parsed.pkg.ephemeralPubKey,
-          })
-        : await addClaimInboxEntry({ rawInput, pkg: parsed.pkg });
-      setPreSaveState(inserted ? "saved" : "duplicate");
+          }))
+        : (await addClaimInboxEntry({ rawInput, pkg: parsed.pkg })).isNew;
+      setPreSaveState(isNew ? "saved" : "duplicate");
     } catch (err) {
       console.warn("[Pay] pre-claim save failed", err);
       setPreSaveState("idle");
@@ -272,21 +273,28 @@ function ClaimInner() {
               pkg: parsed.pkg,
               ephemeralPubKey: parsed.pkg.ephemeralPubKey,
             });
-            const id = inserted?.id;
+            // A pre-claim Save (or any prior paste of the same link)
+            // returns null from the insert path; look the existing
+            // entry up by (claimsRoot, leafIndex) so it still flips
+            // from available → claimed.
+            const id =
+              inserted?.id ??
+              (await loadStealthInbox()).find(
+                (e) =>
+                  e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
+                  e.pkg.leafIndex === parsed.pkg.leafIndex,
+              )?.id;
             if (id) {
               await markStealthInboxEntryClaimed(id, txHash);
               setSavedInboxId(id);
             }
           } else {
-            const inserted = await addClaimInboxEntry({
+            const { entry } = await addClaimInboxEntry({
               rawInput,
               pkg: parsed.pkg,
             });
-            const id = inserted?.id;
-            if (id) {
-              await markClaimInboxEntryClaimed(id, txHash);
-              setSavedInboxId(id);
-            }
+            await markClaimInboxEntryClaimed(entry.id, txHash);
+            setSavedInboxId(entry.id);
           }
         } catch (saveErr) {
           console.warn("[Pay] save-to-inbox after claim failed", saveErr);
@@ -635,7 +643,16 @@ function ClaimInner() {
                   pkg: parsed.pkg,
                   ephemeralPubKey: parsed.pkg.ephemeralPubKey,
                 });
-                const id = inserted?.id;
+                // Pre-saved entries take the lookup path; mirrors the
+                // doClaim branch so a pre-Save followed by Redeposit
+                // still flips the row to claimed.
+                const id =
+                  inserted?.id ??
+                  (await loadStealthInbox()).find(
+                    (e) =>
+                      e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
+                      e.pkg.leafIndex === parsed.pkg.leafIndex,
+                  )?.id;
                 if (id) {
                   await markStealthInboxEntryClaimed(id, txHash);
                   setSavedInboxId(id);

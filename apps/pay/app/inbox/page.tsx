@@ -26,8 +26,9 @@ function claimHrefFor(e: ClaimInboxEntry): string {
   return `/claim?id=saved_${e.pkg.leafIndex}#${fragment}`;
 }
 
-function rowStatusLabel(e: ClaimInboxEntry, nowSec: number): string {
+function rowStatusLabel(e: ClaimInboxEntry, nowSec: number | undefined): string {
   if (e.status === "claimed") return "Claimed";
+  if (nowSec === undefined) return "…";
   return nowSec >= Number(BigInt(e.pkg.releaseTime)) ? "Claimable" : "Locked";
 }
 
@@ -38,7 +39,10 @@ export default function ClaimInbox() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pasteValue, setPasteValue] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
-  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  // Initialize to undefined and set the actual time inside an effect
+  // — Date.now() at module/init time produces SSR/CSR drift and
+  // triggers a Next.js hydration mismatch on first paint.
+  const [nowSec, setNowSec] = useState<number | undefined>(undefined);
 
   const refresh = useCallback(async () => {
     if (!folder.ready) {
@@ -68,8 +72,9 @@ export default function ClaimInbox() {
   }, [refresh]);
 
   useEffect(() => {
-    // Refresh the "now" clock once a minute so Locked → Claimable
-    // flips without the user manually reloading.
+    // First hydration tick sets the real wall clock; the minute
+    // interval afterwards flips Locked → Claimable without a reload.
+    setNowSec(Math.floor(Date.now() / 1000));
     const t = window.setInterval(
       () => setNowSec(Math.floor(Date.now() / 1000)),
       60_000,
@@ -81,8 +86,8 @@ export default function ClaimInbox() {
     setPasteError(null);
     try {
       const parsed = parseClaimInboxInput(pasteValue);
-      const inserted = await addClaimInboxEntry(parsed);
-      if (!inserted) {
+      const { isNew } = await addClaimInboxEntry(parsed);
+      if (!isNew) {
         setPasteError("This claim is already in your inbox.");
         return;
       }
@@ -197,7 +202,10 @@ export default function ClaimInbox() {
                         </span>
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
-                        From {e.pkg.senderLabel ?? shortAddr(e.pkg.recipient)} ·{" "}
+                        {/* ClaimPackage carries no sender address — fall
+                            back to a neutral label rather than rendering
+                            the recipient (i.e. the viewer themselves). */}
+                        From {e.pkg.senderLabel ?? "unknown sender"} ·{" "}
                         {e.pkg.runLabel ?? "Private payout"}
                       </div>
                       <div className="text-[10px] text-[var(--color-text-subtle)]">
