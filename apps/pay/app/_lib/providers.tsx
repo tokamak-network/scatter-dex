@@ -10,7 +10,11 @@ import { FolderStorageProvider, useFolderStorage } from "./folderStorage";
 import { WalletBookProvider } from "./walletBook";
 import { CommitmentTreeProvider } from "./commitmentTree";
 import { VaultReconciler } from "./vaultReconciler";
-import { IdentityBatchProvider, IdentityStatusProvider } from "./identity";
+import {
+  IdentityBatchProvider,
+  IdentityGateAdminProvider,
+  IdentityStatusProvider,
+} from "./identity";
 
 /** Bridge component — mounts the SDK's `MetaAddressProvider` under
  *  the `<FolderStorageProvider>` and reactively passes `folderReady`
@@ -44,7 +48,9 @@ export function PayProviders({ children }: { children: React.ReactNode }) {
                   <VaultReconciler />
                   <WalletBookProvider>
                     <IdentityStatusProvider>
-                      <IdentityBatchProvider>{children}</IdentityBatchProvider>
+                      <IdentityGateAdminProvider>
+                        <IdentityBatchProvider>{children}</IdentityBatchProvider>
+                      </IdentityGateAdminProvider>
                     </IdentityStatusProvider>
                   </WalletBookProvider>
                 </CommitmentTreeProvider>

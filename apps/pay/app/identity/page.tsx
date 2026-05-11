@@ -1,7 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useIdentityStatus } from "../_lib/identity";
+import { shortAddr, useWallet } from "@zkscatter/sdk/react";
+import {
+  useIdentityStatus,
+  useIdentityGateAdmin,
+} from "../_lib/identity";
+import { getNetworkConfig } from "../_lib/network";
+import { ZK_X509_URL } from "../_lib/features";
+
+/** Build a per-registry deep-link to the external zk-X509 site
+ *  so users can see the CA's certificate detail / registration
+ *  flow. Returns null when `NEXT_PUBLIC_PAY_ZK_X509_URL` is
+ *  empty — we'd rather omit the link than dangle a broken target. */
+function zkX509RegistryUrl(address: string): string | null {
+  if (!ZK_X509_URL) return null;
+  return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}`;
+}
 
 /** Placeholder identity hub. Scatter Pay reads zk-X509
  *  verification status from the on-chain `IdentityGate`, but the
@@ -12,6 +27,10 @@ import { useIdentityStatus } from "../_lib/identity";
  *  proof generation inside Pay. */
 export default function IdentityPage() {
   const { state, refresh } = useIdentityStatus();
+  const { account } = useWallet();
+  const cfg = getNetworkConfig();
+  const { snapshot, loading: adminLoading } = useIdentityGateAdmin();
+
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <div>
@@ -26,6 +45,10 @@ export default function IdentityPage() {
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
         <h2 className="text-base font-medium">Your status</h2>
+        <dl className="mt-3 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-[var(--color-text-muted)]">Connected wallet</dt>
+          <dd className="font-mono text-xs">{account ?? "—"}</dd>
+        </dl>
         <div className="mt-3 text-sm">
           <StatusLine state={state} />
         </div>
@@ -36,6 +59,67 @@ export default function IdentityPage() {
         >
           Refresh status
         </button>
+      </section>
+
+      <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+        <h2 className="text-base font-medium">Trusted authorities</h2>
+        <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+          This deployment recognises the following{" "}
+          <code className="font-mono">IdentityRegistry</code> contracts.
+          Verifying through any of them satisfies the gate.
+        </p>
+        <dl className="mt-3 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-[var(--color-text-muted)]">IdentityGate</dt>
+          <dd className="font-mono text-xs">
+            {cfg.contracts.identityGate || "—"}
+          </dd>
+        </dl>
+        {adminLoading && !snapshot ? (
+          <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+            Loading registries…
+          </p>
+        ) : !snapshot ? (
+          <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+            Connect a wallet to load the registry list.
+          </p>
+        ) : snapshot.registries.length === 0 ? (
+          <p className="mt-3 text-xs text-[var(--color-text-muted)]">
+            No registries configured.
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-1.5 text-sm">
+            {snapshot.registries.map((addr) => {
+              const zkUrl = zkX509RegistryUrl(addr);
+              return (
+                <li
+                  key={addr}
+                  className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+                >
+                  <span className="font-mono text-xs">{shortAddr(addr)}</span>
+                  <span className="flex items-center gap-3">
+                    <span
+                      className="font-mono text-[10px] text-[var(--color-text-subtle)]"
+                      title={addr}
+                    >
+                      {addr}
+                    </span>
+                    {zkUrl && (
+                      <a
+                        href={zkUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open this registry on zk-X509 (new tab)"
+                        className="whitespace-nowrap text-[10px] text-[var(--color-primary)] underline-offset-2 hover:underline"
+                      >
+                        Open on zk-X509 ↗
+                      </a>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -81,7 +165,10 @@ function StatusLine({ state }: { state: ReturnType<typeof useIdentityStatus>["st
     case "verified":
       return (
         <span className="text-[var(--color-success)]">
-          ✓ Verified · expires {new Date(state.expiresAt * 1000).toLocaleString()}
+          ✓ Verified ·{" "}
+          {state.indefinite
+            ? "no expiry on file"
+            : `expires ${new Date(state.expiresAt * 1000).toLocaleString()}`}
         </span>
       );
     case "expiring":

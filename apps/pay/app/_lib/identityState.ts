@@ -6,7 +6,12 @@ export type IdentityState =
   | { kind: "disconnected" }
   | { kind: "loading" }
   | { kind: "unverified" }
-  | { kind: "verified"; expiresAt: number; remainingMs: number }
+  | {
+      kind: "verified";
+      expiresAt: number;
+      remainingMs: number;
+      indefinite: boolean;
+    }
   | { kind: "expiring"; expiresAt: number; remainingMs: number }
   | { kind: "expired"; expiresAt: number }
   | { kind: "error"; message: string };
@@ -15,6 +20,13 @@ export type IdentityState =
  *  `expiring` so the UI can surface a renew CTA before the user
  *  hits the wall. */
 export const EXPIRING_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+
+/** Cutoff above which we treat the expiry as "never" (sentinel).
+ *  Mock registries return `type(uint64).max` (~1.8e19) which
+ *  overflows JS Number precision and produces Invalid Date /
+ *  nonsense remaining-days. Anything more than 100 years out is
+ *  presented as "no expiry" rather than a literal calendar date. */
+const INDEFINITE_THRESHOLD_MS = 100 * 365 * 24 * 60 * 60 * 1000;
 
 /** Convert the raw on-chain pair `(isVerified, verifiedUntilSec)`
  *  into a UI state. `verifiedUntilSec=0` means the registry has
@@ -39,5 +51,14 @@ export function classifyIdentity(
   if (remainingMs < EXPIRING_THRESHOLD_MS) {
     return { kind: "expiring", expiresAt: verifiedUntilSec, remainingMs };
   }
-  return { kind: "verified", expiresAt: verifiedUntilSec, remainingMs };
+  // `indefinite` lets the UI swap a literal expiry date / day
+  // count for a "never" copy when the registry effectively
+  // says "no expiry" (mock or test fixtures).
+  const indefinite = remainingMs > INDEFINITE_THRESHOLD_MS;
+  return {
+    kind: "verified",
+    expiresAt: verifiedUntilSec,
+    remainingMs,
+    indefinite,
+  };
 }
