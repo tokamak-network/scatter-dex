@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { STEALTH_ENABLED } from "../_lib/features";
 
 /** Top-nav "Stealth" dropdown — opens on hover, focus, or click;
  *  closes on click outside, Escape, or focus leaving the wrapper.
@@ -9,8 +10,17 @@ import { useEffect, useRef, useState } from "react";
  *  because the contents are just two `<Link>`s — implementing the
  *  full menu keyboard pattern (roving focus, arrow-key nav) would
  *  add complexity without screen-reader benefit, and an
- *  `aria-expanded` toggle on the button is enough. */
+ *  `aria-expanded` toggle on the button is enough.
+ *
+ *  Returns `null` when the deploy hasn't enabled stealth via
+ *  `NEXT_PUBLIC_PAY_STEALTH_ENABLED=true`. The constant is
+ *  build-time so the entire dropdown body tree-shakes out when the
+ *  flag is off. */
 export function StealthMenu() {
+  return STEALTH_ENABLED ? <StealthMenuImpl /> : null;
+}
+
+function StealthMenuImpl() {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
