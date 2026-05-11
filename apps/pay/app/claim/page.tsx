@@ -519,9 +519,10 @@ function ClaimInner() {
                       commitments owned by the recipient's trading key. */}
                   {stealthVerified &&
                     !!signer &&
+                    !wrongWalletChain &&
                     isAvailable === true &&
                     alreadyClaimed !== true &&
-                    phase.kind === "idle" && (
+                    (phase.kind === "idle" || phase.kind === "error") && (
                       <button
                         onClick={() => setShowRedeposit(true)}
                         title="Redirect the claim into the pool as N fresh commitments owned by your trading key. Observers see N small deposits instead of one large claim."
@@ -558,6 +559,28 @@ function ClaimInner() {
             // is bound to that leaf.
             setPhase({ kind: "done", txHash });
             setShowRedeposit(false);
+            // Same best-effort inbox mirror as doClaim — keeps the
+            // recipient's local history consistent regardless of which
+            // exit path they took. Save failure must not surface as a
+            // claim error since the on-chain spend already succeeded.
+            if (isStealth && folder.ready && parsed) {
+              try {
+                const inserted = await addStealthInboxEntry({
+                  source: "link",
+                  rawInput:
+                    typeof window !== "undefined" ? window.location.href : "",
+                  pkg: parsed.pkg,
+                  ephemeralPubKey: parsed.pkg.ephemeralPubKey,
+                });
+                const id = inserted?.id;
+                if (id) {
+                  await markStealthInboxEntryClaimed(id, txHash);
+                  setSavedInboxId(id);
+                }
+              } catch (saveErr) {
+                console.warn("[Pay] save-to-inbox after redeposit failed", saveErr);
+              }
+            }
           }}
         />
       )}
