@@ -9,7 +9,9 @@ import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
+  addClaimInboxEntry,
   addStealthInboxEntry,
+  markClaimInboxEntryClaimed,
   markStealthInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
 import { getNetworkConfig } from "../_lib/network";
@@ -84,6 +86,9 @@ function ClaimInner() {
    *  small confirmation footer so the user knows where to find this
    *  claim later. Stays null on the non-stealth / no-folder paths. */
   const [savedInboxId, setSavedInboxId] = useState<string | null>(null);
+  const [preSaveState, setPreSaveState] = useState<
+    "idle" | "saving" | "saved" | "duplicate"
+  >("idle");
   const [showRedeposit, setShowRedeposit] = useState(false);
   // null = unknown / not yet probed, true = up, false = down. Drives
   // the gasless button's disabled state so the recipient doesn't
@@ -207,6 +212,27 @@ function ClaimInner() {
   // or the relayer rejects, fall back to the recipient's wallet.
   // Both paths share everything up to packing the call: chain probe,
   // proof generation, meta validation. Only the final submit differs.
+  async function saveToInbox() {
+    if (!parsed || !folder.ready || preSaveState !== "idle") return;
+    setPreSaveState("saving");
+    try {
+      const rawInput =
+        typeof window !== "undefined" ? window.location.href : "";
+      const inserted = isStealth
+        ? await addStealthInboxEntry({
+            source: "link",
+            rawInput,
+            pkg: parsed.pkg,
+            ephemeralPubKey: parsed.pkg.ephemeralPubKey,
+          })
+        : await addClaimInboxEntry({ rawInput, pkg: parsed.pkg });
+      setPreSaveState(inserted ? "saved" : "duplicate");
+    } catch (err) {
+      console.warn("[Pay] pre-claim save failed", err);
+      setPreSaveState("idle");
+    }
+  }
+
   async function doClaim() {
     if (!parsed) return;
     // For verified stealth claims, swap the connected wallet's
@@ -231,19 +257,36 @@ function ClaimInner() {
       // they can see it again next session — best-effort: the claim
       // already succeeded on-chain, so a save failure shouldn't be
       // surfaced as a claim error.
-      if (isStealth && folder.ready) {
+      if (folder.ready) {
         try {
-          const inserted = await addStealthInboxEntry({
-            source: "link",
-            rawInput:
-              typeof window !== "undefined" ? window.location.href : "",
-            pkg: parsed.pkg,
-            ephemeralPubKey: parsed.pkg.ephemeralPubKey,
-          });
-          const id = inserted?.id;
-          if (id) {
-            await markStealthInboxEntryClaimed(id, txHash);
-            setSavedInboxId(id);
+          const rawInput =
+            typeof window !== "undefined" ? window.location.href : "";
+          // Stealth and non-stealth claims land in different inboxes so
+          // the stealth inbox keeps its tighter shape (ephemeralPubKey,
+          // privkey hand-off path, etc.) — the EOA inbox is for plain
+          // wallet-bound claims that don't carry those extras.
+          if (isStealth) {
+            const inserted = await addStealthInboxEntry({
+              source: "link",
+              rawInput,
+              pkg: parsed.pkg,
+              ephemeralPubKey: parsed.pkg.ephemeralPubKey,
+            });
+            const id = inserted?.id;
+            if (id) {
+              await markStealthInboxEntryClaimed(id, txHash);
+              setSavedInboxId(id);
+            }
+          } else {
+            const inserted = await addClaimInboxEntry({
+              rawInput,
+              pkg: parsed.pkg,
+            });
+            const id = inserted?.id;
+            if (id) {
+              await markClaimInboxEntryClaimed(id, txHash);
+              setSavedInboxId(id);
+            }
           }
         } catch (saveErr) {
           console.warn("[Pay] save-to-inbox after claim failed", saveErr);
@@ -385,10 +428,10 @@ function ClaimInner() {
                 <div className="mt-2 text-[10px]">
                   Saved to your{" "}
                   <a
-                    href="/stealth/inbox"
+                    href={isStealth ? "/stealth/inbox" : "/inbox"}
                     className="font-medium underline-offset-2 hover:underline"
                   >
-                    Stealth inbox
+                    {isStealth ? "Stealth inbox" : "Claims inbox"}
                   </a>
                   .
                 </div>
@@ -509,6 +552,26 @@ function ClaimInner() {
                       className="w-full rounded-md border border-[var(--color-border-strong)] py-2 text-xs hover:bg-[var(--color-primary-soft)]"
                     >
                       Submit with my wallet instead (you pay gas)
+                    </button>
+                  )}
+                  {folder.ready && (phase.kind === "idle" || phase.kind === "error") && (
+                    <button
+                      onClick={() => void saveToInbox()}
+                      disabled={preSaveState === "saving"}
+                      title={
+                        isStealth
+                          ? "Save this link to your stealth inbox so you can re-open it later without re-pasting."
+                          : "Save this link to your claims inbox so you can re-open it later without re-pasting."
+                      }
+                      className="w-full rounded-md border border-[var(--color-border-strong)] py-2 text-xs hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
+                    >
+                      {preSaveState === "saving"
+                        ? "Saving…"
+                        : preSaveState === "saved"
+                          ? `✓ Saved to ${isStealth ? "Stealth inbox" : "Claims inbox"}`
+                          : preSaveState === "duplicate"
+                            ? "Already in your inbox"
+                            : `Save to ${isStealth ? "Stealth inbox" : "Claims inbox"}`}
                     </button>
                   )}
                   {/* Redeposit is only valid when the recipient holds the
