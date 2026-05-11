@@ -9,6 +9,7 @@ import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { useWalletBook } from "../_lib/walletBook";
 import { csvEscape, downloadCsv } from "../_lib/csv";
+import { STEALTH_ENABLED } from "../_lib/features";
 
 /** Lightweight email shape check — RFC-5322 in full would be
  *  overkill; we just want "has an at-sign with something on either
@@ -40,7 +41,8 @@ export default function RecipientsPage() {
         (e.email?.toLowerCase().includes(q) ?? false) ||
         (e.telegramHandle?.toLowerCase().includes(q) ?? false) ||
         (e.kakaoId?.toLowerCase().includes(q) ?? false) ||
-        (e.metaAddress?.toLowerCase().includes(q) ?? false),
+        (STEALTH_ENABLED &&
+          (e.metaAddress?.toLowerCase().includes(q) ?? false)),
     );
   }, [book.entries, search]);
 
@@ -157,7 +159,9 @@ function RecipientTable({
           <tr>
             <th className="px-5 py-3 text-left">Label</th>
             <th className="px-5 py-3 text-left">Address</th>
-            <th className="px-5 py-3 text-left">Meta-address</th>
+            {STEALTH_ENABLED && (
+              <th className="px-5 py-3 text-left">Meta-address</th>
+            )}
             <th className="px-5 py-3 text-left">Email</th>
             <th className="px-5 py-3 text-left">Memo</th>
             <th className="px-5 py-3 text-right">Actions</th>
@@ -170,7 +174,7 @@ function RecipientTable({
                 <td className="px-5 py-3 font-medium">
                   <div className="flex items-center gap-2">
                     {e.label}
-                    {e.metaAddress && (
+                    {STEALTH_ENABLED && e.metaAddress && (
                       <span
                         title={`Stealth-ready: ${e.metaAddress}`}
                         className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]"
@@ -187,16 +191,18 @@ function RecipientTable({
                     <span className="text-[var(--color-text-muted)]">—</span>
                   )}
                 </td>
-                <td
-                  className="px-5 py-3 font-mono text-xs"
-                  title={e.metaAddress ?? undefined}
-                >
-                  {e.metaAddress ? (
-                    shortMeta(e.metaAddress)
-                  ) : (
-                    <span className="text-[var(--color-text-muted)]">—</span>
-                  )}
-                </td>
+                {STEALTH_ENABLED && (
+                  <td
+                    className="px-5 py-3 font-mono text-xs"
+                    title={e.metaAddress ?? undefined}
+                  >
+                    {e.metaAddress ? (
+                      shortMeta(e.metaAddress)
+                    ) : (
+                      <span className="text-[var(--color-text-muted)]">—</span>
+                    )}
+                  </td>
+                )}
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">
                   {e.email ?? "—"}
                 </td>
@@ -318,7 +324,11 @@ function RecipientForm({
           <Field
             label={
               <>
-                {isNew ? "Default wallet address **" : "Default wallet address"}
+                {isNew
+                  ? STEALTH_ENABLED
+                    ? "Default wallet address **"
+                    : "Default wallet address *"
+                  : "Default wallet address"}
                 <InfoTip
                   text={
                     isNew
@@ -401,30 +411,32 @@ function RecipientForm({
           </Field>
         </FormSection>
 
-        <FormSection
-          title="Stealth"
-          hint="Optional. Paste the recipient's stealth meta-address (st:eth:0x…) so payouts to them go to a one-time stealth address derived per send. The recipient mints this in their own Stealth wallet and shares the public string with you."
-        >
-          <Field label={isNew ? "Meta-address **" : "Meta-address"}>
-            <input
-              value={metaAddress}
-              onChange={(e) => setMetaAddress(e.target.value)}
-              placeholder="st:eth:0x…"
-              className={`w-full rounded-md border bg-white px-3 py-2 font-mono text-xs ${
-                missingTarget
-                  ? "border-[var(--color-warning)]"
-                  : "border-[var(--color-border-strong)]"
-              }`}
-            />
-            {metaAddress.trim().length > 0 &&
-              !metaAddress.trim().startsWith("st:eth:0x") && (
-                <p className="mt-1 text-xs text-[var(--color-warning)]">
-                  Meta-address should start with{" "}
-                  <code className="font-mono">st:eth:0x</code>.
-                </p>
-              )}
-          </Field>
-        </FormSection>
+        {STEALTH_ENABLED && (
+          <FormSection
+            title="Stealth"
+            hint="Optional. Paste the recipient's stealth meta-address (st:eth:0x…) so payouts to them go to a one-time stealth address derived per send. The recipient mints this in their own Stealth wallet and shares the public string with you."
+          >
+            <Field label={isNew ? "Meta-address **" : "Meta-address"}>
+              <input
+                value={metaAddress}
+                onChange={(e) => setMetaAddress(e.target.value)}
+                placeholder="st:eth:0x…"
+                className={`w-full rounded-md border bg-white px-3 py-2 font-mono text-xs ${
+                  missingTarget
+                    ? "border-[var(--color-warning)]"
+                    : "border-[var(--color-border-strong)]"
+                }`}
+              />
+              {metaAddress.trim().length > 0 &&
+                !metaAddress.trim().startsWith("st:eth:0x") && (
+                  <p className="mt-1 text-xs text-[var(--color-warning)]">
+                    Meta-address should start with{" "}
+                    <code className="font-mono">st:eth:0x</code>.
+                  </p>
+                )}
+            </Field>
+          </FormSection>
+        )}
 
         <FormSection title="Notes">
           <Field label="Memo (optional)">
