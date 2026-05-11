@@ -21,6 +21,7 @@ import {
 } from "../../_lib/realSettle";
 import { useCommitmentTree } from "../../_lib/commitmentTree";
 import { authorizeProver } from "../../_lib/authorizeProver";
+import { computeBatchFee } from "../../_lib/payoutFees";
 import { type ClaimPackage } from "@zkscatter/sdk/notes";
 import { Field } from "@zkscatter/ui";
 import { buildRunRecord } from "./_buildRunRecord";
@@ -628,33 +629,41 @@ function NewPayout() {
         // forfeit batch k's source — every fulfilled finalize gets
         // its vault update applied.
         const settlementAddress = cfg.contracts.privateSettlement;
-        const settleArgs = (i: number) => ({
-          batch: submitBatches[i]!,
-          tokenAddress,
-          tokenSymbol: token,
-          tokenDecimals: decimals,
-          source: multiBatchFit.byBatch[i]!,
-          relayer,
-          chain: { signer, settlementAddress, chainId: cfg.chainId },
-          // Sign the proof against the *effective* cap (service + claim
-          // reserve), not the operator's bare service-bps input. The
-          // contract validates `fee × 10000 ≤ sellAmount × maxFee` and
-          // our `feeRaw` already includes the reserve; without this
-          // bump the validator would reject the inflated total.
-          maxFeeBps: effectiveMaxFeeBps,
-          eddsaPrivateKey: kp.privateKey,
-          eddsaPublicKey: kp.publicKey,
-          tree,
-          labels: { sender: account ?? undefined, run: label },
-          // Merge picker-time ephPubs (stealth-only address-book entries
-          // chosen via the recipient picker) with the routing pass's
-          // entries-with-metaAddress swaps. RunRecord's row-level
-          // `ephemeralPubKey` already used the union; sending the same
-          // union into the proof builder keeps the encoded
-          // `claimPackage` aligned so receivers can derive the
-          // per-claim privkey from the URL alone.
-          ephPubByAddress: submittedEphPubByAddress,
-        });
+        const settleArgs = (i: number) => {
+          const b = submitBatches[i]!;
+          // Per-batch exact fee mirrors the run-wide breakdown so the
+          // proof's sellAmount equals the on-chain charge — no bps
+          // round-up over-collection.
+          const batchFee = computeBatchFee({
+            lockedAmount: b.totalAmount,
+            recipientCount: b.claims.length,
+            maxFeeBps: safeMaxFeeBps,
+            claimFeePerRecipientRaw,
+          });
+          return {
+            batch: b,
+            tokenAddress,
+            tokenSymbol: token,
+            tokenDecimals: decimals,
+            source: multiBatchFit.byBatch[i]!,
+            relayer,
+            chain: { signer, settlementAddress, chainId: cfg.chainId },
+            maxFeeBps: batchFee.effectiveMaxFeeBps,
+            feeRaw: batchFee.feeRaw,
+            eddsaPrivateKey: kp.privateKey,
+            eddsaPublicKey: kp.publicKey,
+            tree,
+            labels: { sender: account ?? undefined, run: label },
+            // Merge picker-time ephPubs (stealth-only address-book entries
+            // chosen via the recipient picker) with the routing pass's
+            // entries-with-metaAddress swaps. RunRecord's row-level
+            // `ephemeralPubKey` already used the union; sending the same
+            // union into the proof builder keeps the encoded
+            // `claimPackage` aligned so receivers can derive the
+            // per-claim privkey from the URL alone.
+            ephPubByAddress: submittedEphPubByAddress,
+          };
+        };
 
         const preparePromises: Promise<PreparedSettle>[] = submitBatches.map((_, i) =>
           prepareRealSettle(settleArgs(i)),
@@ -1008,25 +1017,18 @@ function NewPayout() {
   }, [rows, decimals]);
 
   // Sanitize first — browser number inputs can carry transient decimal
-  // values (e.g. mid-typing "1.5"); `BigInt(1.5)` throws.
-  const safeMaxFeeBps = Number.isFinite(maxFeeBps) ? Math.max(0, Math.trunc(maxFeeBps)) : 0;
-  // Service portion: bps × locked amount, the operator's chosen cap
-  // for the relayer's revenue line. Same formula as the legacy
-  // single-fee model.
-  const serviceFeeRaw = (requiredRaw * BigInt(safeMaxFeeBps)) / 10_000n;
-  // Claim-gasless reserve: platform-set per-token amount × recipient
-  // count, sourced from the selected relayer's published policy
-  // (`api.claim_fees[symbol]` on /api/info). Adds N × per-recipient
-  // to the relayer's revenue so it can cover the eventual claim
-  // gas without losing money on big-N runs at gas spikes. Falls
-  // back to 0 when the platform hasn't published a policy or the
-  // selected token isn't in the table — keeps legacy runs working.
+  // values (e.g. mid-typing "1.5"); `BigInt(1.5)` throws. Upper clamp
+  // mirrors the protocol limit (uint16 bps cap) so a stale draft or
+  // non-UI write path can't push `serviceFeeRaw` past 100%.
+  const safeMaxFeeBps = Number.isFinite(maxFeeBps)
+    ? Math.max(0, Math.min(10_000, Math.trunc(maxFeeBps)))
+    : 0;
+  // Native ETH runs are settled in the same currency the relayer
+  // pays gas in, so there's nothing to pre-collect — bps service
+  // fee already covers the relayer's economics. Skip the policy
+  // lookup so a stray `CLAIM_FEE_ETH` env doesn't accidentally
+  // double-charge an ETH payout.
   const claimFeePerRecipientRaw = (() => {
-    // Native ETH runs are settled in the same currency the relayer
-    // pays gas in, so there's nothing to pre-collect — bps service
-    // fee already covers the relayer's economics. Skip the policy
-    // lookup so a stray `CLAIM_FEE_ETH` env doesn't accidentally
-    // double-charge an ETH payout.
     if (token === "ETH") return 0n;
     const str = relayer?.api?.claim_fees?.[token];
     if (!str) return 0n;
@@ -1044,19 +1046,21 @@ function NewPayout() {
       return 0n;
     }
   })();
-  const claimReserveRaw = BigInt(rows.length) * claimFeePerRecipientRaw;
-  const feeRaw = serviceFeeRaw + claimReserveRaw;
-  const totalEscrowRaw = requiredRaw + feeRaw;
-  // Effective bps the proof commits to. The contract enforces
-  // `fee × 10000 ≤ sellAmount × maxFee`, so the cap signal must be
-  // at least `ceil(feeRaw × 10000 / totalEscrowRaw)` for the
-  // service+reserve sum to clear validation. Falls back to the
-  // user-input bps when the run has no escrow yet (degenerate case
-  // — the form's other guards prevent submit).
-  const effectiveMaxFeeBps =
-    totalEscrowRaw > 0n
-      ? Number((feeRaw * 10_000n + totalEscrowRaw - 1n) / totalEscrowRaw)
-      : safeMaxFeeBps;
+  // Run-wide breakdown used by FundsStep's UI (service / reserve /
+  // total rows). Per-batch math at submit time recomputes the same
+  // values for each batch via the same helper. Integer division in
+  // `serviceFeeRaw` means `floor(sum × bps / 10000)` can differ from
+  // `Σ floor(batchᵢ × bps / 10000)` by at most one token-raw unit
+  // per batch — display drift is bounded by `batches.length` and
+  // sub-cent in practice; the on-chain charge is always the
+  // per-batch sum.
+  const runFee = computeBatchFee({
+    lockedAmount: requiredRaw,
+    recipientCount: rows.length,
+    maxFeeBps: safeMaxFeeBps,
+    claimFeePerRecipientRaw,
+  });
+  const { serviceFeeRaw, claimReserveRaw, feeRaw, sellAmount: totalEscrowRaw } = runFee;
 
   // Operator-controlled checklist of vault notes to spend. Defaults
   // to whatever auto-pick would have chosen but switches to manual

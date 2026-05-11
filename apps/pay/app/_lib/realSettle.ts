@@ -16,6 +16,7 @@ import { RelayerClient, type AuthorizeOrderBody, type RelayerInfo } from "@zksca
 import type { ClaimPackage } from "@zkscatter/sdk/notes";
 import { authorizeProver } from "./authorizeProver";
 import type { CommitmentTreeState } from "./commitmentTree";
+import { BPS_DENOMINATOR } from "./payoutFees";
 import type { PickedNote } from "./sourceNotes";
 
 export interface RealSettleArgs {
@@ -35,6 +36,13 @@ export interface RealSettleArgs {
    *  hands no fee through (`fee=0`), but the cap still binds the
    *  proof so the relayer can't claim more later. */
   maxFeeBps: number;
+  /** Exact fee the relayer will charge for this batch in token-raw
+   *  units (`serviceFee + per-batch claim reserve`). Threaded from the
+   *  caller so the proof's `sellAmount` matches the on-chain charge
+   *  (`fee = sellAmount − totalLocked`) exactly — no `ceil(maxFeeBps)`
+   *  over-collection. Must satisfy `feeRaw × 10000 ≤ sellAmount ×
+   *  maxFeeBps` (validated below). */
+  feeRaw: bigint;
   eddsaPrivateKey: Uint8Array;
   /** Public key matching `eddsaPrivateKey` (BabyJub `[ax, ay]`).
    *  Surfaced to the wire body so the relayer can re-verify the
@@ -122,6 +130,7 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     eddsaPublicKey,
     chain,
     maxFeeBps,
+    feeRaw,
     eddsaPrivateKey,
     tree,
   } = args;
@@ -138,8 +147,6 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
       "Source note isn't in the on-chain commitment tree yet — try again once the tree finishes syncing.",
     );
   }
-  // Source note must cover sellAmount = totalLocked + max-fee cushion
-  // (computed below). We re-check after deriving sellAmount.
   // Solidity encodes maxFee as uint16 and the circuit reads it as bps;
   // clamp before proving so a stale UI input can't (a) authorize a
   // >100% fee or (b) overflow the ABI encoder.
@@ -147,10 +154,23 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     throw new Error(`maxFeeBps must be an integer in [0, 10000]; got ${maxFeeBps}`);
   }
 
-  // sellAmount = totalLocked + fee. The relayer charges exactly
-  // `sellAmount − totalLocked`, so this lands as a clean token amount.
-  const feeRaw = (batch.totalAmount * BigInt(maxFeeBps)) / 10_000n;
+  // sellAmount = totalLocked + feeRaw. `feeRaw` is the caller-composed
+  // exact fee (service + claim reserve); re-deriving it from
+  // `maxFeeBps` here would round up to the next bps boundary and
+  // over-collect (e.g. 3.05 USDC → 3.20 USDC at 32 bps). The
+  // contract still enforces `fee × 10000 ≤ sellAmount × maxFee`;
+  // catch a mismatched caller before wasting a ~5 s proof.
+  // Reject negative `feeRaw` upfront — would make `sellAmount <
+  // totalLocked` and flip the bps-cap inequality below.
+  if (feeRaw < 0n) {
+    throw new Error(`feeRaw must be non-negative; got ${feeRaw}`);
+  }
   const sellAmount = batch.totalAmount + feeRaw;
+  if (feeRaw * BPS_DENOMINATOR > sellAmount * BigInt(maxFeeBps)) {
+    throw new Error(
+      `feeRaw=${feeRaw} exceeds bps cap (sellAmount=${sellAmount}, maxFeeBps=${maxFeeBps})`,
+    );
+  }
   const buyAmount = sellAmount;
   if (stored.note.amount < sellAmount) {
     throw new Error(
