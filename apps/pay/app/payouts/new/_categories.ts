@@ -1,13 +1,13 @@
-/** Wizard-step-1 template catalog. Each entry pre-fills the
+/** Wizard-step-1 category catalog. Each entry pre-fills the
  *  follow-on steps (label, token, sample CSV) and the export-step
  *  hint. The `id` set is a strict subset of `RunCategory` so the
- *  built RunRecord can carry the chosen template forward into the
+ *  built RunRecord can carry the chosen category forward into the
  *  dashboard tabs without an extra mapping table. `reasonLabel` is
  *  optional — payroll runs don't ask for a reason. */
-export type TemplateId = "payroll" | "grants" | "bonus" | "contractor";
+export type CategoryId = "payroll" | "grants" | "bonus" | "contractor";
 
-export interface Template {
-  id: TemplateId;
+export interface Category {
+  id: CategoryId;
   name: string;
   tagline: string;
   body: string;
@@ -19,7 +19,7 @@ export interface Template {
   exportNote: string;
 }
 
-export const TEMPLATES: readonly Template[] = [
+export const CATEGORIES: readonly Category[] = [
   {
     id: "payroll",
     name: "Payroll",
@@ -69,7 +69,7 @@ export const TEMPLATES: readonly Template[] = [
   },
 ];
 
-export const REASON_PLACEHOLDER: Record<TemplateId, string> = {
+export const REASON_PLACEHOLDER: Record<CategoryId, string> = {
   payroll: "",
   grants: "https://snapshot.org/#/acme.eth/proposal/0x…",
   bonus: "Approved by CEO · EOY review cycle",
@@ -77,7 +77,7 @@ export const REASON_PLACEHOLDER: Record<TemplateId, string> = {
 };
 
 export const STEPPER_LABELS = [
-  "Template",
+  "Category",
   "Token",
   "Recipients",
   "Funds",

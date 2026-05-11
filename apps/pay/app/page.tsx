@@ -115,7 +115,7 @@ export default function Landing() {
               <Compare label="Recipients can't see each other's amounts" us />
               <Compare label="One on-chain transaction for N recipients" left us />
               <Compare label="Gasless claim for recipients" us />
-              <Compare label="Templates for payroll / grants / bonuses" us />
+              <Compare label="Categories for payroll / grants / bonuses" us />
               <Compare label="Audit-grade signed export" us />
             </tbody>
           </table>

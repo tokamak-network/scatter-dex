@@ -100,7 +100,7 @@ import { type WalletEntry } from "@zkscatter/sdk/storage";
 import { generateStealthAddress } from "@zkscatter/sdk/zk";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 
-import { REASON_PLACEHOLDER, TEMPLATES, type TemplateId } from "./_templates";
+import { REASON_PLACEHOLDER, CATEGORIES, type CategoryId } from "./_categories";
 
 import type { RecipientRow as Row } from "../../_lib/format";
 
@@ -198,11 +198,11 @@ function NewPayout() {
   const resumeUnsettled = resume.kind === "ready" ? resume.unsettled : null;
 
   const [step, setStep] = useState(1);
-  const [templateId, setTemplateId] = useState<TemplateId>("payroll");
-  const template = TEMPLATES.find((t) => t.id === templateId)!;
+  const [categoryId, setCategoryId] = useState<CategoryId>("payroll");
+  const category = CATEGORIES.find((c) => c.id === categoryId)!;
 
-  const [label, setLabel] = useState(template.defaultLabel);
-  const [token, setToken] = useState(template.defaultToken);
+  const [label, setLabel] = useState(category.defaultLabel);
+  const [token, setToken] = useState(category.defaultToken);
   // Chain selection used to be a free-form dropdown across multiple
   // testnets, but settle is wired to the build-time `cfg.chainId` —
   // changing the dropdown didn't actually change anything. Lock the
@@ -210,7 +210,7 @@ function NewPayout() {
   // tx target. When we add a multi-chain switcher this becomes a
   // dropdown again, sourced from `cfg.supportedChains`.
   const chain = chainName(getNetworkConfig().chainId);
-  const [csv, setCsv] = useState(template.sampleCsv);
+  const [csv, setCsv] = useState(category.sampleCsv);
   // Stealth toggle was removed from the UI — every recipient with a
   // metaAddress in the address book is auto-routed to a one-time
   // stealth address; entries without one fall through to their EOA.
@@ -354,7 +354,11 @@ function NewPayout() {
     }
     void loadWizardDraft(account, draftLabelParam).then((d) => {
       if (d) {
-        setTemplateId(d.templateId as TemplateId);
+        // Drafts persist `templateId` as a free string; an old or
+        // hand-edited value outside the current CategoryId union would
+        // crash the render via `CATEGORIES.find(...)!` on line 201.
+        const draftCat = CATEGORIES.find((c) => c.id === d.templateId);
+        if (draftCat) setCategoryId(draftCat.id);
         setLabel(d.label);
         setToken(d.token);
         setCsv(d.csv);
@@ -406,7 +410,7 @@ function NewPayout() {
   }, []);
 
   // Resume only starts once the notes folder is mounted — the run
-  // lives there. Template / token / label / claim-from edits are
+  // lives there. Category / token / label / claim-from edits are
   // locked downstream so the merged record stays a faithful
   // continuation of the original.
   useEffect(() => {
@@ -430,8 +434,8 @@ function NewPayout() {
           });
           return;
         }
-        const tpl = TEMPLATES.find((t) => t.id === r.category) ?? TEMPLATES[0]!;
-        setTemplateId(tpl.id);
+        const cat = CATEGORIES.find((c) => c.id === r.category) ?? CATEGORIES[0]!;
+        setCategoryId(cat.id);
         setLabel(r.label);
         setToken(r.tokenSymbol);
         setCsv(recipientsToCsv(unsettled));
@@ -509,7 +513,7 @@ function NewPayout() {
               settledAt: advanced ? Math.floor(Date.now() / 1000) : resumeRecord.settledAt,
             })
           : buildRunRecord({
-              templateId,
+              categoryId,
               label,
               token,
               tokenAddress,
@@ -919,15 +923,15 @@ function NewPayout() {
     }
     const block = csvLines.join("\n");
     // Functional setCsv guards against stale closure state: the user can
-    // edit the textarea or switch templates while async parse is in
+    // edit the textarea or switch categories while async parse is in
     // flight, and `prev` always reflects the latest committed value.
-    // Match against ANY template's sample so a mid-parse template switch
+    // Match against ANY category's sample so a mid-parse category switch
     // still replaces the (newly swapped-in) placeholder cleanly.
     let shouldReplace = false;
     setCsv((prev) => {
       const trimmed = prev.trimEnd();
-      const isUntouchedSample = TEMPLATES.some(
-        (t) => t.sampleCsv.trimEnd() === trimmed,
+      const isUntouchedSample = CATEGORIES.some(
+        (c) => c.sampleCsv.trimEnd() === trimmed,
       );
       shouldReplace = trimmed.length === 0 || isUntouchedSample;
       return shouldReplace ? block : `${trimmed}\n${block}`;
@@ -946,12 +950,12 @@ function NewPayout() {
     });
   }
 
-  function pickTemplate(id: TemplateId) {
-    const t = TEMPLATES.find((x) => x.id === id)!;
-    setTemplateId(id);
-    setLabel(t.defaultLabel);
-    setToken(t.defaultToken);
-    setCsv(t.sampleCsv);
+  function pickCategory(id: CategoryId) {
+    const c = CATEGORIES.find((x) => x.id === id)!;
+    setCategoryId(id);
+    setLabel(c.defaultLabel);
+    setToken(c.defaultToken);
+    setCsv(c.sampleCsv);
     setReason("");
   }
 
@@ -1242,7 +1246,7 @@ function NewPayout() {
             package
           </div>
           <div className="mt-1 text-[var(--color-text-muted)]">
-            Template, label, token, and recipient list are locked so the
+            Category, label, token, and recipient list are locked so the
             merged record stays a faithful continuation. Pick fresh source
             notes in the Funds step — vault state has shifted since the
             original run.
@@ -1269,28 +1273,28 @@ function NewPayout() {
         {step === 1 && (
           <div className="space-y-5">
             <div>
-              <h2 className="text-lg font-semibold">Choose a template</h2>
+              <h2 className="text-lg font-semibold">Choose a category</h2>
               <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                Templates pre-fill the run label, default token, and export format. You can change anything later.
+                Categories pre-fill the run label, default token, and export format. You can change anything later.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              {TEMPLATES.map((t) => (
+              {CATEGORIES.map((c) => (
                 <button
-                  key={t.id}
+                  key={c.id}
                   disabled={!!resumeRecord}
-                  onClick={() => pickTemplate(t.id)}
+                  onClick={() => pickCategory(c.id)}
                   className={`rounded-xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                    templateId === t.id
+                    categoryId === c.id
                       ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)]"
                       : "border-[var(--color-border)] bg-[var(--color-bg)] hover:border-[var(--color-border-strong)]"
                   }`}
                 >
                   <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-primary)]">
-                    {t.name}
+                    {c.name}
                   </div>
-                  <div className="mt-1 font-semibold">{t.tagline}</div>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{t.body}</p>
+                  <div className="mt-1 font-semibold">{c.tagline}</div>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{c.body}</p>
                 </button>
               ))}
             </div>
@@ -1407,7 +1411,7 @@ function NewPayout() {
                   Format:{" "}
                   <span className="font-mono">
                     <span className={empty ? warnClass : ""}>
-                      {template.identifierLabel.toLowerCase()}
+                      {category.identifierLabel.toLowerCase()}
                     </span>
                     ,
                     <span className={empty ? warnClass : ""}>address</span>
@@ -1482,7 +1486,7 @@ function NewPayout() {
                         ? "border-[var(--color-warning)]"
                         : "border-[var(--color-border-strong)]"
                     }`}
-                    placeholder={`${template.identifierLabel.toLowerCase()},address,amount`}
+                    placeholder={`${category.identifierLabel.toLowerCase()},address,amount`}
                   />
                 );
               })()
@@ -1493,12 +1497,12 @@ function NewPayout() {
                 readOnly={!!resumeRecord}
               />
             )}
-            {template.reasonLabel && (
-              <Field label={template.reasonLabel}>
+            {category.reasonLabel && (
+              <Field label={category.reasonLabel}>
                 <input
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder={REASON_PLACEHOLDER[template.id]}
+                  placeholder={REASON_PLACEHOLDER[category.id]}
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
                 />
               </Field>
@@ -1546,7 +1550,7 @@ function NewPayout() {
               <table className="w-full text-sm">
                 <thead className="text-xs text-[var(--color-text-subtle)]">
                   <tr>
-                    <th className="text-left">{template.identifierLabel}</th>
+                    <th className="text-left">{category.identifierLabel}</th>
                     <th className="text-left">Address</th>
                     <th className="text-right">Amount</th>
                     <th className="text-left pl-3">Available from</th>
@@ -1716,12 +1720,12 @@ function NewPayout() {
             <h2 className="text-lg font-semibold">Review & sign</h2>
 
             <ReviewSection title="Run">
-              <ReviewRow k="Template" v={template.name} />
+              <ReviewRow k="Category" v={category.name} />
               <ReviewRow k="Label" v={label} />
               <ReviewRow k="Chain" v={chain} />
               <ReviewRow k="Token" v={token} />
               <ReviewRow k="Recipients" v={`${rows.length}`} />
-              {template.reasonLabel && <ReviewRow k={template.reasonLabel} v={reason || "—"} />}
+              {category.reasonLabel && <ReviewRow k={category.reasonLabel} v={reason || "—"} />}
             </ReviewSection>
 
             <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -1999,7 +2003,7 @@ function NewPayout() {
                       setDraftSaveError(null);
                       saveWizardDraft(account, lastSavedLabelRef.current, {
                         step,
-                        templateId,
+                        templateId: categoryId,
                         label,
                         token,
                         csv,
