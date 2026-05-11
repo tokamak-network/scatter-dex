@@ -14,44 +14,11 @@ import { ethers } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import { loadIdentityVerification } from "@zkscatter/sdk/relayer";
 import { getNetworkConfig } from "./network";
+import { classifyIdentity, type IdentityState } from "./identityState";
 
-export type IdentityState =
-  | { kind: "disconnected" }
-  | { kind: "loading" }
-  | { kind: "unverified" }
-  | { kind: "verified"; expiresAt: number; remainingMs: number }
-  | { kind: "expiring"; expiresAt: number; remainingMs: number }
-  | { kind: "expired"; expiresAt: number }
-  | { kind: "error"; message: string };
-
-/** Threshold below which a verified status is reclassified as
- *  `expiring` so the UI can surface a renew CTA before the user
- *  hits the wall. */
-const EXPIRING_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+export type { IdentityState } from "./identityState";
 
 const REFRESH_INTERVAL_MS = 30_000;
-
-function classify(
-  isVerified: boolean,
-  verifiedUntilSec: number,
-  nowMs: number,
-): IdentityState {
-  if (!isVerified) {
-    if (verifiedUntilSec > 0 && verifiedUntilSec * 1000 < nowMs) {
-      return { kind: "expired", expiresAt: verifiedUntilSec };
-    }
-    return { kind: "unverified" };
-  }
-  const expiresMs = verifiedUntilSec * 1000;
-  const remainingMs = expiresMs - nowMs;
-  if (remainingMs <= 0) {
-    return { kind: "expired", expiresAt: verifiedUntilSec };
-  }
-  if (remainingMs < EXPIRING_THRESHOLD_MS) {
-    return { kind: "expiring", expiresAt: verifiedUntilSec, remainingMs };
-  }
-  return { kind: "verified", expiresAt: verifiedUntilSec, remainingMs };
-}
 
 // ---------------------------------------------------------------
 // Provider — single poll loop, shared across all useIdentityStatus
@@ -93,7 +60,7 @@ export function IdentityStatusProvider({ children }: { children: ReactNode }) {
           readProvider!,
         );
         if (cancelled) return;
-        setState(classify(isVerified, verifiedUntil, Date.now()));
+        setState(classifyIdentity(isVerified, verifiedUntil, Date.now()));
       } catch (e) {
         if (cancelled) return;
         setState({
@@ -202,7 +169,7 @@ export function IdentityBatchProvider({ children }: { children: ReactNode }) {
             next.set(key, {
               isVerified,
               verifiedUntil,
-              state: classify(isVerified, verifiedUntil, Date.now()),
+              state: classifyIdentity(isVerified, verifiedUntil, Date.now()),
             });
             return next;
           });
