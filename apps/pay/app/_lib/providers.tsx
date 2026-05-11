@@ -10,6 +10,7 @@ import { FolderStorageProvider, useFolderStorage } from "./folderStorage";
 import { WalletBookProvider } from "./walletBook";
 import { CommitmentTreeProvider } from "./commitmentTree";
 import { VaultReconciler } from "./vaultReconciler";
+import { PreferencesProvider } from "./preferences";
 
 /** Bridge component — mounts the SDK's `MetaAddressProvider` under
  *  the `<FolderStorageProvider>` and reactively passes `folderReady`
@@ -33,21 +34,23 @@ function FolderAwareMetaAddressProvider({ children }: { children: ReactNode }) {
 export function PayProviders({ children }: { children: React.ReactNode }) {
   const network = useMemo(() => getNetworkConfig(), []);
   return (
-    <FolderStorageProvider>
-      <FolderAwareMetaAddressProvider>
-        <WalletProvider network={network}>
-          <EdDSAKeyProvider>
-            <RelayersProvider>
-              <VaultProvider>
-                <CommitmentTreeProvider>
-                  <VaultReconciler />
-                  <WalletBookProvider>{children}</WalletBookProvider>
-                </CommitmentTreeProvider>
-              </VaultProvider>
-            </RelayersProvider>
-          </EdDSAKeyProvider>
-        </WalletProvider>
-      </FolderAwareMetaAddressProvider>
-    </FolderStorageProvider>
+    <PreferencesProvider>
+      <FolderStorageProvider>
+        <FolderAwareMetaAddressProvider>
+          <WalletProvider network={network}>
+            <EdDSAKeyProvider>
+              <RelayersProvider>
+                <VaultProvider>
+                  <CommitmentTreeProvider>
+                    <VaultReconciler />
+                    <WalletBookProvider>{children}</WalletBookProvider>
+                  </CommitmentTreeProvider>
+                </VaultProvider>
+              </RelayersProvider>
+            </EdDSAKeyProvider>
+          </WalletProvider>
+        </FolderAwareMetaAddressProvider>
+      </FolderStorageProvider>
+    </PreferencesProvider>
   );
 }

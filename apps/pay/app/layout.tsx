@@ -32,6 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/payouts/new" className="hover:text-[var(--color-text)]">New payout</Link>
                 <Link href="/address-book" className="hover:text-[var(--color-text)]">Address book</Link>
                 <StealthMenu />
+                <Link href="/settings" className="hover:text-[var(--color-text)]">Settings</Link>
               </>
             }
           />

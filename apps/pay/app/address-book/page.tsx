@@ -9,6 +9,7 @@ import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { useWalletBook } from "../_lib/walletBook";
 import { csvEscape, downloadCsv } from "../_lib/csv";
+import { usePreferences } from "../_lib/preferences";
 
 /** Lightweight email shape check — RFC-5322 in full would be
  *  overkill; we just want "has an at-sign with something on either
@@ -25,6 +26,8 @@ type EditingState = { mode: "new" } | { mode: "edit"; entry: WalletEntry };
 export default function RecipientsPage() {
   const folder = useFolderStorage();
   const book = useWalletBook();
+  const { prefs } = usePreferences();
+  const stealthEnabled = prefs.stealthEnabled;
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<WalletEntry | null>(null);
@@ -40,9 +43,9 @@ export default function RecipientsPage() {
         (e.email?.toLowerCase().includes(q) ?? false) ||
         (e.telegramHandle?.toLowerCase().includes(q) ?? false) ||
         (e.kakaoId?.toLowerCase().includes(q) ?? false) ||
-        (e.metaAddress?.toLowerCase().includes(q) ?? false),
+        (stealthEnabled && (e.metaAddress?.toLowerCase().includes(q) ?? false)),
     );
-  }, [book.entries, search]);
+  }, [book.entries, search, stealthEnabled]);
 
   return (
     <div className="space-y-6">
@@ -106,6 +109,7 @@ export default function RecipientsPage() {
               entries={filtered}
               onEdit={(e) => setEditing({ mode: "edit", entry: e })}
               onRemove={setConfirmRemove}
+              stealthEnabled={stealthEnabled}
             />
           )}
 
@@ -119,6 +123,7 @@ export default function RecipientsPage() {
 
       {editing && (
         <RecipientForm
+          stealthEnabled={stealthEnabled}
           // Identity-keyed so the form remounts (and clears its
           // local input state) when the user switches between
           // editing different entries without closing the modal.
@@ -145,10 +150,12 @@ function RecipientTable({
   entries,
   onEdit,
   onRemove,
+  stealthEnabled,
 }: {
   entries: WalletEntry[];
   onEdit: (e: WalletEntry) => void;
   onRemove: (e: WalletEntry) => void;
+  stealthEnabled: boolean;
 }) {
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -157,7 +164,9 @@ function RecipientTable({
           <tr>
             <th className="px-5 py-3 text-left">Label</th>
             <th className="px-5 py-3 text-left">Address</th>
-            <th className="px-5 py-3 text-left">Meta-address</th>
+            {stealthEnabled && (
+              <th className="px-5 py-3 text-left">Meta-address</th>
+            )}
             <th className="px-5 py-3 text-left">Email</th>
             <th className="px-5 py-3 text-left">Memo</th>
             <th className="px-5 py-3 text-right">Actions</th>
@@ -170,7 +179,7 @@ function RecipientTable({
                 <td className="px-5 py-3 font-medium">
                   <div className="flex items-center gap-2">
                     {e.label}
-                    {e.metaAddress && (
+                    {stealthEnabled && e.metaAddress && (
                       <span
                         title={`Stealth-ready: ${e.metaAddress}`}
                         className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]"
@@ -187,16 +196,18 @@ function RecipientTable({
                     <span className="text-[var(--color-text-muted)]">—</span>
                   )}
                 </td>
-                <td
-                  className="px-5 py-3 font-mono text-xs"
-                  title={e.metaAddress ?? undefined}
-                >
-                  {e.metaAddress ? (
-                    shortMeta(e.metaAddress)
-                  ) : (
-                    <span className="text-[var(--color-text-muted)]">—</span>
-                  )}
-                </td>
+                {stealthEnabled && (
+                  <td
+                    className="px-5 py-3 font-mono text-xs"
+                    title={e.metaAddress ?? undefined}
+                  >
+                    {e.metaAddress ? (
+                      shortMeta(e.metaAddress)
+                    ) : (
+                      <span className="text-[var(--color-text-muted)]">—</span>
+                    )}
+                  </td>
+                )}
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">
                   {e.email ?? "—"}
                 </td>
@@ -229,9 +240,11 @@ function RecipientTable({
 function RecipientForm({
   state,
   onClose,
+  stealthEnabled,
 }: {
   state: EditingState;
   onClose: () => void;
+  stealthEnabled: boolean;
 }) {
   const book = useWalletBook();
   const isNew = state.mode === "new";
@@ -242,6 +255,9 @@ function RecipientForm({
   const [email, setEmail] = useState(initial?.email ?? "");
   const [telegramHandle, setTelegramHandle] = useState(initial?.telegramHandle ?? "");
   const [kakaoId, setKakaoId] = useState(initial?.kakaoId ?? "");
+  // Always initialise from `initial` even when stealth is disabled —
+  // toggling stealth off shouldn't destroy an existing meta-address
+  // on the next save (the field is just hidden from the form).
   const [metaAddress, setMetaAddress] = useState(initial?.metaAddress ?? "");
   const [submitting, setSubmitting] = useState(false);
 
@@ -401,30 +417,32 @@ function RecipientForm({
           </Field>
         </FormSection>
 
-        <FormSection
-          title="Stealth"
-          hint="Optional. Paste the recipient's stealth meta-address (st:eth:0x…) so payouts to them go to a one-time stealth address derived per send. The recipient mints this in their own Stealth wallet and shares the public string with you."
-        >
-          <Field label={isNew ? "Meta-address **" : "Meta-address"}>
-            <input
-              value={metaAddress}
-              onChange={(e) => setMetaAddress(e.target.value)}
-              placeholder="st:eth:0x…"
-              className={`w-full rounded-md border bg-white px-3 py-2 font-mono text-xs ${
-                missingTarget
-                  ? "border-[var(--color-warning)]"
-                  : "border-[var(--color-border-strong)]"
-              }`}
-            />
-            {metaAddress.trim().length > 0 &&
-              !metaAddress.trim().startsWith("st:eth:0x") && (
-                <p className="mt-1 text-xs text-[var(--color-warning)]">
-                  Meta-address should start with{" "}
-                  <code className="font-mono">st:eth:0x</code>.
-                </p>
-              )}
-          </Field>
-        </FormSection>
+        {stealthEnabled && (
+          <FormSection
+            title="Stealth"
+            hint="Optional. Paste the recipient's stealth meta-address (st:eth:0x…) so payouts to them go to a one-time stealth address derived per send. The recipient mints this in their own Stealth wallet and shares the public string with you."
+          >
+            <Field label={isNew ? "Meta-address **" : "Meta-address"}>
+              <input
+                value={metaAddress}
+                onChange={(e) => setMetaAddress(e.target.value)}
+                placeholder="st:eth:0x…"
+                className={`w-full rounded-md border bg-white px-3 py-2 font-mono text-xs ${
+                  missingTarget
+                    ? "border-[var(--color-warning)]"
+                    : "border-[var(--color-border-strong)]"
+                }`}
+              />
+              {metaAddress.trim().length > 0 &&
+                !metaAddress.trim().startsWith("st:eth:0x") && (
+                  <p className="mt-1 text-xs text-[var(--color-warning)]">
+                    Meta-address should start with{" "}
+                    <code className="font-mono">st:eth:0x</code>.
+                  </p>
+                )}
+            </Field>
+          </FormSection>
+        )}
 
         <FormSection title="Notes">
           <Field label="Memo (optional)">
