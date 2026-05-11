@@ -5,6 +5,7 @@ import { ConnectWalletPill } from "./_components/ConnectWalletPill";
 import { Brand } from "./_components/Brand";
 import { WrongChainBanner } from "./_components/WrongChainBanner";
 import { StealthMenu } from "./_components/StealthMenu";
+import { IdentityPill } from "./_components/IdentityPill";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
 import { chainName } from "@zkscatter/sdk";
 import { getNetworkConfig } from "./_lib/network";
@@ -24,7 +25,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <AppShellHeader
             brand={<Brand />}
             chainPill={<PayNetworkPill />}
-            walletSlot={<ConnectWalletPill />}
+            walletSlot={
+              <div className="flex items-center gap-2">
+                <IdentityPill />
+                <ConnectWalletPill />
+              </div>
+            }
             navLinks={
               <>
                 <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>

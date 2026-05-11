@@ -22,6 +22,8 @@ import {
 import { useCommitmentTree } from "../../_lib/commitmentTree";
 import { authorizeProver } from "../../_lib/authorizeProver";
 import { computeBatchFee } from "../../_lib/payoutFees";
+import { useIdentityStatus, useIdentityForAddresses } from "../../_lib/identity";
+import { IdentityGateModal } from "../../_components/IdentityGateModal";
 import { type ClaimPackage } from "@zkscatter/sdk/notes";
 import { Field } from "@zkscatter/ui";
 import { buildRunRecord } from "./_buildRunRecord";
@@ -177,9 +179,35 @@ export default function NewPayoutPage() {
         <p className="text-sm text-[var(--color-text-muted)]">Loading payout…</p>
       }
     >
-      <NewPayout />
+      <NewPayoutGate />
     </Suspense>
   );
+}
+
+/** Identity gate. Blocks the wizard when the connected wallet
+ *  isn't zk-X509 verified. Wallet-disconnected and loading states
+ *  fall through to the wizard body — the wizard's existing
+ *  "connect wallet" prompt handles the former, and the latter
+ *  resolves within seconds without flashing a modal. */
+function NewPayoutGate() {
+  const router = useRouter();
+  const { state } = useIdentityStatus();
+  const blocking =
+    state.kind === "unverified" ||
+    state.kind === "expired" ||
+    state.kind === "error";
+  if (blocking) {
+    return (
+      <>
+        <div className="mx-auto max-w-3xl py-6 text-center text-sm text-[var(--color-text-muted)]">
+          Verify your identity to start a payout. The wizard unlocks once
+          your wallet's zk-X509 status checks out.
+        </div>
+        <IdentityGateModal state={state} onClose={() => router.push("/")} />
+      </>
+    );
+  }
+  return <NewPayout />;
 }
 
 type ResumeState =
@@ -1187,6 +1215,16 @@ function NewPayout() {
     return pickActiveTier(Math.min(rows.length, MAX_RECIPIENTS_PER_RUN));
   }, [rows.length]);
 
+  // Probe every recipient against the identity registry. The
+  // bulk hook fans out one RPC per uncached address; the cache is
+  // shared across the address book and claim page so re-visiting
+  // the same recipient doesn't refetch.
+  const recipientAddresses = useMemo(
+    () => rows.map((r) => r.address).filter(Boolean),
+    [rows],
+  );
+  const recipientIdentity = useIdentityForAddresses(recipientAddresses);
+
   const validation = useMemo(() => {
     const issues: string[] = [];
     // Cap-exceeded comes first because it blocks the run regardless of
@@ -1204,11 +1242,22 @@ function NewPayout() {
       );
     }
     const seen = new Set<string>();
+    const unverifiedLabels: string[] = [];
     for (const r of rows) {
       if (!/^0x[a-fA-F0-9]{40}$/.test(r.address)) {
         issues.push(`Invalid address: ${r.address || "(empty)"}`);
       } else if (seen.has(r.address.toLowerCase())) {
         issues.push(`Duplicate address: ${r.address}`);
+      } else {
+        // Only addresses that pass shape + duplicate checks are
+        // worth probing — invalid strings would always return null.
+        const v = recipientIdentity.get(r.address);
+        // `null` = lookup pending; treat as OK at submit-time so a
+        // slow RPC doesn't block valid runs. Once it resolves and
+        // surfaces an unverified state, validation re-runs.
+        if (v && !v.isVerified) {
+          unverifiedLabels.push(r.name || r.address);
+        }
       }
       seen.add(r.address.toLowerCase());
       const n = parseAmount(r.amount);
@@ -1216,8 +1265,18 @@ function NewPayout() {
         issues.push(`Invalid amount for ${r.name || r.address}`);
       }
     }
+    if (unverifiedLabels.length > 0) {
+      const preview = unverifiedLabels.slice(0, 3).join(", ");
+      const tail =
+        unverifiedLabels.length > 3
+          ? ` and ${unverifiedLabels.length - 3} more`
+          : "";
+      issues.push(
+        `Unverified recipient${unverifiedLabels.length === 1 ? "" : "s"}: ${preview}${tail}. They must complete zk-X509 verification before they can claim.`,
+      );
+    }
     return issues.slice(0, 5);
-  }, [rows]);
+  }, [rows, recipientIdentity]);
 
   return (
     <div className="space-y-8">

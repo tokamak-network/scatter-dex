@@ -9,6 +9,8 @@
     "build": "next build",
     "start": "next start -p 4001",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "e2e:install": "playwright install chromium",
@@ -35,6 +37,7 @@
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
     "typescript": "^5",
+    "vitest": "^2.1.0",
     "write-excel-file": "^4.0.5"
   }
 }

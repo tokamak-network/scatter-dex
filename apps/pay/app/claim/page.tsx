@@ -18,6 +18,7 @@ import {
 import { getNetworkConfig } from "../_lib/network";
 import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
+import { useIdentityStatus } from "../_lib/identity";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { deriveStealthForPackage } from "../_lib/stealthDerive";
 import { RedepositSplitModal } from "../_components/RedepositSplitModal";
@@ -115,6 +116,17 @@ function ClaimInner() {
   );
   const isStealth = !!parsed?.pkg.ephemeralPubKey;
   const stealthVerified = stealthDerivation?.matches === true;
+  // EOA claims require the connecting wallet (= recipient) to be
+  // zk-X509 verified. Stealth claims are exempt: the stealth EOA
+  // is one-time and never registers a cert; the stealth scheme's
+  // own derivation proof is what binds the claim.
+  const { state: claimerIdentity } = useIdentityStatus();
+  const recipientUnverified =
+    !isStealth &&
+    !!account &&
+    (claimerIdentity.kind === "unverified" ||
+      claimerIdentity.kind === "expired" ||
+      claimerIdentity.kind === "error");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -510,6 +522,18 @@ function ClaimInner() {
                       switch wallets to claim.
                     </div>
                   )}
+                  {recipientUnverified && (
+                    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
+                      Your wallet isn&apos;t zk-X509 verified yet. Recipients
+                      must verify before claiming.{" "}
+                      <a
+                        href="/identity"
+                        className="font-medium underline underline-offset-2"
+                      >
+                        Verify with phone →
+                      </a>
+                    </div>
+                  )}
                   <button
                     onClick={() => void doClaim()}
                     disabled={
@@ -517,6 +541,7 @@ function ClaimInner() {
                       !isAvailable ||
                       (needWallet && wrongWalletChain) ||
                       (needWallet && wrongRecipient) ||
+                      recipientUnverified ||
                       busy ||
                       (gasless && relayerUp === false) ||
                       alreadyClaimed === true

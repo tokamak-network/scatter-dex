@@ -202,11 +202,11 @@ export default function ClaimInbox() {
                         </span>
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
-                        {/* ClaimPackage carries no sender address — fall
-                            back to a neutral label rather than rendering
-                            the recipient (i.e. the viewer themselves). */}
                         From {e.pkg.senderLabel ?? "unknown sender"} ·{" "}
                         {e.pkg.runLabel ?? "Private payout"}
+                      </div>
+                      <div className="text-xs text-[var(--color-text-muted)]">
+                        To <span className="font-mono">{shortAddr(e.pkg.recipient)}</span>
                       </div>
                       <div className="text-[10px] text-[var(--color-text-subtle)]">
                         Available {formatLocalStampSec(releaseSec)}
