@@ -6,12 +6,17 @@ import { useActiveNetwork } from "../lib/activeNetwork";
 
 export function WrongChainBanner() {
   const { network } = useActiveNetwork();
-  const { wrongChain, networkLabel, connect } = useConnectWalletPill(network);
+  // `switchChain` (not `connect`) is the helper that actually calls
+  // `wallet_switchEthereumChain` and falls back to
+  // `wallet_addEthereumChain` for unknown chains (e.g. Localhost
+  // 31337 which MetaMask doesn't ship). Wiring `connect` here was
+  // why the banner button silently no-op'd.
+  const { wrongChain, networkLabel, switchChain } = useConnectWalletPill(network);
   return (
     <WrongChainBannerView
       wrongChain={wrongChain}
       networkLabel={networkLabel}
-      switchChain={connect}
+      switchChain={switchChain}
     />
   );
 }
