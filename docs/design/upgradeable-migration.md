@@ -35,7 +35,7 @@ For each contract:
 - [ ] All `__X_init()` chained inside `initialize()` in the same order as inheritance
 - [ ] Add `uint256[50] private __gap;` at end of state (decrement when new state added)
 - [ ] `renounceOwnership` override uses `override(OwnableUpgradeable)` not the non-upgradeable parent
-- [ ] All inline storage that previously used `immutable` becomes regular state vars (immutables are not preserved across proxy)
+- [ ] All inline storage that previously used `immutable` becomes regular state vars (immutables themselves are accessible through a proxy — they live in the implementation's bytecode — but they can only be set in the constructor, and the proxy never runs the implementation's constructor; per-instance values must therefore move to regular state and be assigned inside `initialize()`)
 
 ## Deploy Script (`DeployLocal.s.sol`) Pattern
 For each convertible contract `X`:
