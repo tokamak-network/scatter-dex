@@ -217,9 +217,14 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     ///         each side's circuit-bound `maxFee`.
     uint256 public constant FEE_BPS_DENOMINATOR = 10_000;
 
-    // `paused` is now provided by `PausableUpgradeable` (ERC-7201 namespaced
-    // storage). The public `paused()` view stays ABI-compatible; admin
-    // entrypoints moved from `setPaused(bool)` to `pause()` / `unpause()`.
+    /// @dev DEPRECATED: was `bool public paused` in v0. Live pause state now
+    ///      lives in `PausableUpgradeable`'s ERC-7201 namespaced storage; this
+    ///      placeholder preserves the slot/offset of every downstream variable
+    ///      so an existing v0 proxy can upgrade without corrupting storage.
+    ///      Never read or write this field. The public `paused()` getter is
+    ///      provided by `PausableUpgradeable`; admin entrypoints moved from
+    ///      `setPaused(bool)` to `pause()` / `unpause()`.
+    bool private __deprecated_paused;
 
     mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers
     mapping(bytes32 => bool) public nonceNullifiers;   // nonce nullifiers

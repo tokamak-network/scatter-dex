@@ -71,10 +71,14 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     ///      verifier call on values that cannot possibly verify.
     uint256 internal constant BN254_FIELD_MODULUS =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
-    // `paused` is now provided by `PausableUpgradeable` (ERC-7201 namespaced
-    // storage) instead of a local `bool`. The public `paused()` view stays
-    // ABI-compatible; admin entrypoints moved from `setPaused(bool)` to
-    // `pause()` / `unpause()`.
+    /// @dev DEPRECATED: was `bool public paused` in v0. Live pause state now
+    ///      lives in `PausableUpgradeable`'s ERC-7201 namespaced storage; this
+    ///      placeholder preserves the slot/offset of every downstream variable
+    ///      so an existing v0 proxy can upgrade without corrupting storage.
+    ///      Never read or write this field. The public `paused()` getter is
+    ///      provided by `PausableUpgradeable`; admin entrypoints moved from
+    ///      `setPaused(bool)` to `pause()` / `unpause()`.
+    bool private __deprecated_paused;
 
     mapping(uint256 => bool) public nullifiers;
     mapping(address => bool) public whitelistedTokens;
@@ -168,8 +172,11 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     }
 
     /// @notice Pause the pool. Flip this on right before an upgrade or in
-    ///         response to an incident — every deposit / withdraw / fast-claim
-    ///         path is `whenNotPaused`-gated.
+    ///         response to an incident — `deposit` and the user-facing
+    ///         `withdraw` are `whenNotPaused`-gated. The settlement-only
+    ///         `withdrawFor` is intentionally NOT gated: in-flight settlement
+    ///         flows must complete once started, since the user has already
+    ///         lost their commitment to the settle path.
     function pause() external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
 
