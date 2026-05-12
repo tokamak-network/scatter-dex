@@ -35,6 +35,7 @@ import {
 import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
 import { ERC20_ABI, eqAddr, formatTokenLabel, type NetworkConfig } from "@zkscatter/sdk";
+import { getSharedProvider } from "../../_lib/sharedProvider";
 
 /** True when `token` is the chain's WETH — claims auto-unwrap to
  *  native ETH on payout, so native send-tx and `getBalance` are the
@@ -47,15 +48,10 @@ function isWrappedNative(token: string, cfg: NetworkConfig): boolean {
 // One provider per RPC URL across the whole inbox. Without this each
 // row creates its own JsonRpcProvider + 30s interval, multiplying
 // connection overhead linearly with the number of claimed rows.
-const sharedProviders = new Map<string, ethers.JsonRpcProvider>();
-function getSharedProvider(rpcUrl: string): ethers.JsonRpcProvider {
-  let p = sharedProviders.get(rpcUrl);
-  if (!p) {
-    p = new ethers.JsonRpcProvider(rpcUrl);
-    sharedProviders.set(rpcUrl, p);
-  }
-  return p;
-}
+//
+// The shared-provider cache itself lives in `../../_lib/sharedProvider`
+// so other Pay pages (e.g. /identity's registry-name lookup) reuse
+// the same singletons.
 
 export default function StealthInboxPage() {
   return (
