@@ -214,8 +214,18 @@ async function main() {
     next();
   });
 
-  // Security: body size limit
-  app.use(express.json({ limit: "10kb" }));
+  // Security: body size limit + capture raw bytes for relayer-auth
+  // signature verification (see routes/p2p.ts `verifyRelayerAuth`).
+  // The verify hook runs before JSON.parse so the bytes we hash are
+  // exactly what the peer signed.
+  app.use(
+    express.json({
+      limit: "10kb",
+      verify: (req, _res, buf) => {
+        (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+      },
+    }),
+  );
 
   // Security: rate limiting — two layers to mitigate multi-IP bypass.
   // Layer 1: IP-based global limiter (catches naive floods)

@@ -483,16 +483,50 @@ export class OrderbookDB {
    */
   private aggregateSettlementRows(rows: Iterable<Record<string, unknown>>): {
     tokenAgg: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>;
+    /** Same shape as `tokenAgg`, restricted to rows where `verified=1`.
+     *  Surfaced separately because relayer-pushed rows arrive as
+     *  unverified by default — a malicious relayer can otherwise
+     *  inflate `volumeByToken` and the leaderboard by posting fake
+     *  rows with itself as `makerRelayer` (security review #36). */
+    tokenAggVerified: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>;
     pairAgg: Map<string, { sellToken: string; buyToken: string; count: number }>;
+    pairAggVerified: Map<string, { sellToken: string; buyToken: string; count: number }>;
     txCount: number;
     txCountVerified: number;
     lastSettleAt: number | null;
   } {
     let txCount = 0;
     const tokenAgg = new Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>();
+    const tokenAggVerified = new Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>();
     const pairAgg = new Map<string, { sellToken: string; buyToken: string; count: number }>();
+    const pairAggVerified = new Map<string, { sellToken: string; buyToken: string; count: number }>();
     let txCountVerified = 0;
     let lastSettleAt: number | null = null;
+
+    // Hoisted out of the loop — defining a closure per row materially
+    // hurts perf on relayer histories with tens of thousands of rows
+    // (each closure boxes the captured locals into a fresh frame).
+    // `bumpToken` is now a pure function over its arguments.
+    const bumpToken = (
+      target: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>,
+      sellToken: string | null,
+      buyToken: string | null,
+      sellAmount: string | null,
+      buyAmount: string | null,
+    ): void => {
+      if (sellToken) {
+        const cur = target.get(sellToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
+        if (sellAmount) cur.sell += BigInt(sellAmount);
+        cur.sellCount++;
+        target.set(sellToken, cur);
+      }
+      if (buyToken) {
+        const cur = target.get(buyToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
+        if (buyAmount) cur.buy += BigInt(buyAmount);
+        cur.buyCount++;
+        target.set(buyToken, cur);
+      }
+    };
 
     for (const r of rows) {
       txCount++;
@@ -508,26 +542,22 @@ export class OrderbookDB {
       const buyToken = r.buy_token as string | null;
       const sellAmount = r.sell_amount as string | null;
       const buyAmount = r.buy_amount as string | null;
-      if (sellToken) {
-        const cur = tokenAgg.get(sellToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
-        if (sellAmount) cur.sell += BigInt(sellAmount);
-        cur.sellCount++;
-        tokenAgg.set(sellToken, cur);
-      }
-      if (buyToken) {
-        const cur = tokenAgg.get(buyToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
-        if (buyAmount) cur.buy += BigInt(buyAmount);
-        cur.buyCount++;
-        tokenAgg.set(buyToken, cur);
-      }
+      bumpToken(tokenAgg, sellToken, buyToken, sellAmount, buyAmount);
+      if (verified) bumpToken(tokenAggVerified, sellToken, buyToken, sellAmount, buyAmount);
+
       if (sellToken && buyToken) {
         const key = `${sellToken}-${buyToken}`;
         const cur = pairAgg.get(key) ?? { sellToken, buyToken, count: 0 };
         cur.count++;
         pairAgg.set(key, cur);
+        if (verified) {
+          const curV = pairAggVerified.get(key) ?? { sellToken, buyToken, count: 0 };
+          curV.count++;
+          pairAggVerified.set(key, curV);
+        }
       }
     }
-    return { tokenAgg, pairAgg, txCount, txCountVerified, lastSettleAt };
+    return { tokenAgg, tokenAggVerified, pairAgg, pairAggVerified, txCount, txCountVerified, lastSettleAt };
   }
 
   private materialiseTokenVolume(
@@ -568,7 +598,8 @@ export class OrderbookDB {
     const rows: Record<string, unknown>[] = [];
     for (const r of rowIter) rows.push(r);
 
-    const { tokenAgg, pairAgg, txCount, txCountVerified, lastSettleAt } = this.aggregateSettlementRows(rows);
+    const { tokenAgg, tokenAggVerified, pairAgg, pairAggVerified, txCount, txCountVerified, lastSettleAt } =
+      this.aggregateSettlementRows(rows);
 
     // Mean realised fee bps across both sides of every row the relayer
     // participated in. Only sides with present fee + buy > 0 contribute
@@ -594,7 +625,9 @@ export class OrderbookDB {
       txCount,
       txCountVerified,
       volumeByToken: this.materialiseTokenVolume(tokenAgg),
+      volumeByTokenVerified: this.materialiseTokenVolume(tokenAggVerified),
       pairs: Array.from(pairAgg.values()).sort((x, y) => y.count - x.count),
+      pairsVerified: Array.from(pairAggVerified.values()).sort((x, y) => y.count - x.count),
       avgFeeBps: feeBpsDen > 0 ? feeBpsNum / feeBpsDen : null,
       // Until at least one row is verified, the ratio is unknown — return
       // null rather than a misleading 0 so the dashboard can render
@@ -646,12 +679,13 @@ export class OrderbookDB {
     const rows = this.db.prepare(
       `SELECT sell_token, buy_token, sell_amount, buy_amount, verified, block_time, created_at FROM settlements ${where}`,
     ).iterate(...args) as Iterable<Record<string, unknown>>;
-    const { tokenAgg } = this.aggregateSettlementRows(rows);
+    const { tokenAgg, tokenAggVerified } = this.aggregateSettlementRows(rows);
 
     return {
       txCount: counters.tx_count as number,
       txCountVerified: counters.tx_count_verified as number,
       volumeByToken: this.materialiseTokenVolume(tokenAgg),
+      volumeByTokenVerified: this.materialiseTokenVolume(tokenAggVerified),
       activePairs: counters.active_pairs as number,
       activeRelayers: relayerCount.c,
       lastSettleAt: (counters.last_settle_at as number | null) ?? null,

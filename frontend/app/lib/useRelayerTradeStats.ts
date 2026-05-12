@@ -16,8 +16,17 @@ export interface RelayerTradeStats {
   address: string;
   txCount: number;
   txCountVerified: number;
+  /** Volume across all rows the relayer participated in. Includes
+   *  unverified relayer-pushed rows — a malicious relayer can inflate
+   *  this by pushing fake settlements. Prefer `volumeByTokenVerified`
+   *  for public dashboards. */
   volumeByToken: TokenVolumeRow[];
+  /** Verified-only counterpart of `volumeByToken`. Use this for any
+   *  surface where a self-reported aggregate could be abused. */
+  volumeByTokenVerified?: TokenVolumeRow[];
   pairs: Array<{ sellToken: string; buyToken: string; count: number }>;
+  /** Verified-only counterpart of `pairs`. */
+  pairsVerified?: Array<{ sellToken: string; buyToken: string; count: number }>;
   avgFeeBps: number | null;
   successRate: number | null;
   lastSettleAt: number | null;

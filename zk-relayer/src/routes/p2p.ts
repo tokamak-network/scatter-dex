@@ -1,7 +1,16 @@
+import { createHash } from "crypto";
 import { Router } from "express";
 import { verifyMessage } from "ethers";
 import type { OrderSummary } from "../types/order.js";
 import { eqAddr } from "../lib/address.js";
+
+const EMPTY_BODY_SHA256 =
+  "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+function bodyHashOf(rawBody: Buffer | undefined): string {
+  if (!rawBody || rawBody.length === 0) return EMPTY_BODY_SHA256;
+  return "0x" + createHash("sha256").update(rawBody).digest("hex");
+}
 import type {
   AuthorizeTradeOfferRequest,
   AuthorizeTradeOfferResponse,
@@ -44,13 +53,31 @@ export function createP2PRoutes(
     const now = Math.floor(Date.now() / 1000);
     if (Number.isNaN(ts) || Math.abs(now - ts) > 300) return false;
 
+    const method = req.method.toUpperCase();
+    const path = req.originalUrl.split("?")[0];
+    const relayerUrl = (req.headers["x-relayer-url"] as string) || "";
+    const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody;
+    const bodyHash = bodyHashOf(rawBody);
+
+    // Try the body-bound message first, fall back to the legacy
+    // (no body hash) shape for one release. Set REQUIRE_BODY_HASH=1
+    // to disable the fallback once every peer is upgraded.
+    const messageWithBody = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}:${bodyHash}`;
     try {
-      const method = req.method.toUpperCase();
-      const path = req.originalUrl.split("?")[0];
-      const relayerUrl = (req.headers["x-relayer-url"] as string) || "";
-      const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
-      const recovered = verifyMessage(message, signature);
-      return eqAddr(recovered, address);
+      if (eqAddr(verifyMessage(messageWithBody, signature), address)) return true;
+    } catch {
+      // fall through
+    }
+    if (process.env.REQUIRE_BODY_HASH === "1") return false;
+    const messageLegacy = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
+    try {
+      const ok = eqAddr(verifyMessage(messageLegacy, signature), address);
+      if (ok) {
+        console.warn(
+          `[deprecated-body-hash] peer ${address} signed ${method} ${path} without body binding; upgrade peer.`,
+        );
+      }
+      return ok;
     } catch {
       return false;
     }
