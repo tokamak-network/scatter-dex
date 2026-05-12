@@ -79,7 +79,18 @@ export class RelayerClient {
     });
     if (!res.ok) throw await httpError("submit", res);
     const result = (await res.json()) as { status: string; txHash?: string; nonce?: string };
-    if (result.txHash !== undefined) assertTxHash(result.txHash, "submitOrder");
+    // `submitOrder` returns either `{status:"settled", txHash}` or
+    // `{status:"pending", nonce}`. When the status implies the relayer
+    // already broadcast the tx (anything other than pending/queued),
+    // a missing or malformed `txHash` means we have nothing to track —
+    // fail loudly instead of returning success to the caller.
+    if (result.txHash !== undefined) {
+      assertTxHash(result.txHash, "submitOrder");
+    } else if (result.status !== "pending" && result.status !== "queued") {
+      throw new Error(
+        `submitOrder: relayer returned status=${result.status} without a txHash`,
+      );
+    }
     return result;
   }
 

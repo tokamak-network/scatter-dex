@@ -56,12 +56,40 @@ function isForbiddenIp(addr: string): boolean {
   }
   if (net.isIPv6(addr)) {
     const lower = addr.toLowerCase();
-    if (lower === "::1" || lower === "::" || lower === "::ffff:127.0.0.1") return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // ULA
-    if (lower.startsWith("fe80")) return true; // link-local
+    if (lower === "::1" || lower === "::") return true;
+
+    // Unique local (fc00::/7) — both `fc..` and `fd..` first byte.
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+
+    // Link-local fe80::/10 covers the entire `fe80::` .. `febf::` band,
+    // so a prefix-on-`fe80` check would miss `fe9*` / `fea*` / `feb*`.
+    // The first hextet is `fe` + a hex nibble whose top two bits are
+    // `10` → 0x80..0xbf, i.e. characters 8..b. We tolerate any zero-
+    // pad form by reading just the two chars after `fe`.
+    if (lower.startsWith("fe") && lower.length >= 4) {
+      const c = lower.charCodeAt(2);
+      // hex 8 (0x38) .. b (0x62) — covers '8','9','a','b'
+      if ((c >= 0x38 && c <= 0x39) || (c >= 0x61 && c <= 0x62)) return true;
+    }
+
+    // IPv4-mapped IPv6 — accept both dotted-quad (`::ffff:127.0.0.1`)
+    // and hex (`::ffff:7f00:1`) forms. Inspect the last 32 bits regardless
+    // of representation: split on `:` and grab the trailing two hextets.
     if (lower.startsWith("::ffff:")) {
-      const v4 = lower.slice(7);
-      if (net.isIPv4(v4)) return isForbiddenIp(v4);
+      const tail = lower.slice(7);
+      if (net.isIPv4(tail)) return isForbiddenIp(tail);
+      const segs = tail.split(":");
+      if (segs.length === 2) {
+        const hi = parseInt(segs[0] ?? "", 16);
+        const lo = parseInt(segs[1] ?? "", 16);
+        if (Number.isFinite(hi) && Number.isFinite(lo)) {
+          const a = (hi >> 8) & 0xff;
+          const b = hi & 0xff;
+          const c = (lo >> 8) & 0xff;
+          const d = lo & 0xff;
+          return isForbiddenIp(`${a}.${b}.${c}.${d}`);
+        }
+      }
     }
     return false;
   }

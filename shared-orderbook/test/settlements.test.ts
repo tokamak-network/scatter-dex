@@ -56,6 +56,8 @@ describe("/api/settlements", () => {
   let db: OrderbookDB;
 
   beforeAll(async () => {
+    // SSRF guard rejects localhost URLs; opt in for the test harness.
+    process.env.ALLOW_PRIVATE_RELAYER_URLS = "1";
     try { fs.unlinkSync(TEST_DB); } catch {}
     db = new OrderbookDB(TEST_DB);
     const app = express();
