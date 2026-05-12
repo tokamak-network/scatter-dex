@@ -282,6 +282,43 @@ contract SanctionsListTest is Test {
         sanctions.setExternalOracle(address(oracle));
     }
 
+    function test_renounceOwnership_disabled() public {
+        vm.expectRevert(SanctionsList.RenounceOwnershipDisabled.selector);
+        sanctions.renounceOwnership();
+    }
+
+    function test_removeSanctionsBatch() public {
+        address[] memory addrs = new address[](3);
+        addrs[0] = address(0x111);
+        addrs[1] = address(0x222);
+        addrs[2] = address(0x333);
+        sanctions.addSanctionsBatch(addrs);
+        assertTrue(sanctions.isSanctioned(address(0x111)));
+
+        // Mix in an unsanctioned address to exercise the silent-skip branch
+        address[] memory remove = new address[](3);
+        remove[0] = address(0x111);
+        remove[1] = address(0xFFFF); // never sanctioned — skipped
+        remove[2] = address(0x222);
+        sanctions.removeSanctionsBatch(remove);
+
+        assertFalse(sanctions.isSanctioned(address(0x111)));
+        assertFalse(sanctions.isSanctioned(address(0x222)));
+        assertTrue(sanctions.isSanctioned(address(0x333)));
+    }
+
+    function test_removeSanctionsBatch_tooLarge_reverts() public {
+        address[] memory addrs = new address[](201);
+        vm.expectRevert(SanctionsList.BatchTooLarge.selector);
+        sanctions.removeSanctionsBatch(addrs);
+    }
+
+    function test_addSanctionsBatch_tooLarge_reverts() public {
+        address[] memory addrs = new address[](201);
+        vm.expectRevert(SanctionsList.BatchTooLarge.selector);
+        sanctions.addSanctionsBatch(addrs);
+    }
+
     function test_externalOracle_eoa_reverts() public {
         vm.expectRevert(SanctionsList.NotAContract.selector);
         sanctions.setExternalOracle(alice);
