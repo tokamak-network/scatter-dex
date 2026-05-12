@@ -30,6 +30,12 @@ contract DeployLocal is Script {
     address internal _authorizeVerifier;
     address internal _authorizeVerifier64;
     address internal _authorizeVerifier128;
+    /// @dev Resolved once per `run()` (in `_resolveUpgradeOwner`) and used by
+    ///      every `_deployXProxy` helper. `address(0)` is treated as "not
+    ///      resolved yet" — the helpers read this directly instead of calling
+    ///      `vm.envOr` themselves, so we don't re-print the default warning
+    ///      five times per deploy.
+    address internal _upgradeOwner;
 
     struct Deployed {
         address relayerRegistry;
@@ -50,6 +56,7 @@ contract DeployLocal is Script {
 
         vm.startBroadcast(deployerKey);
         address deployer = msg.sender;
+        _resolveUpgradeOwner(deployer);
 
         // 1. Identity registries (Dual-CA: User CA + Relayer CA)
         //    If IDENTITY_REGISTRY env is set, use real registries (integration mode).
@@ -231,24 +238,40 @@ contract DeployLocal is Script {
         );
     }
 
+    /// @dev Resolve `UPGRADE_OWNER` once per deploy. Defaults to the deployer
+    ///      for convenient local runs and prints a loud warning so a CI /
+    ///      mainnet operator notices the missing env var before the proxies
+    ///      end up admin'd by an EOA hot key.
+    function _resolveUpgradeOwner(address deployer) internal {
+        address envOwner = vm.envOr("UPGRADE_OWNER", address(0));
+        if (envOwner == address(0)) {
+            console.log("");
+            console.log("[WARN] UPGRADE_OWNER unset - defaulting ProxyAdmin owner to deployer");
+            console.log("       OK for local anvil; mainnet/CI MUST set UPGRADE_OWNER to a multisig.");
+            console.log("");
+            _upgradeOwner = deployer;
+        } else {
+            _upgradeOwner = envOwner;
+        }
+        console.log("UPGRADE_OWNER (ProxyAdmin):", _upgradeOwner);
+    }
+
     /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.
     ///      Vault owner = deployer (so the script can finish wiring).
-    ///      ProxyAdmin owner = UPGRADE_OWNER env (or deployer when unset).
+    ///      ProxyAdmin owner = `_upgradeOwner` resolved in `_resolveUpgradeOwner`.
     function _deployFeeVaultProxy(address deployer) internal returns (FeeVault) {
-        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
         FeeVault impl = new FeeVault();
         bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, deployer, 500));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("FeeVault impl:", address(impl));
         console.log("FeeVault proxy:", address(proxy));
         return FeeVault(address(proxy));
     }
 
     function _deployIdentityGateProxy(address deployer, address initialRegistry) internal returns (IdentityGate) {
-        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
         IdentityGate impl = new IdentityGate();
         bytes memory initData = abi.encodeCall(IdentityGate.initialize, (deployer, initialRegistry));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("IdentityGate impl:", address(impl));
         console.log("IdentityGate proxy:", address(proxy));
         return IdentityGate(address(proxy));
@@ -259,11 +282,10 @@ contract DeployLocal is Script {
         returns (PrivateSettlement)
     {
         address deployer = msg.sender;
-        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
         PrivateSettlement impl = new PrivateSettlement();
         bytes memory initData =
             abi.encodeCall(PrivateSettlement.initialize, (deployer, pool_, claimVerifier, weth_));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("PrivateSettlement impl:", address(impl));
         console.log("PrivateSettlement proxy:", address(proxy));
         return PrivateSettlement(payable(address(proxy)));
@@ -274,12 +296,11 @@ contract DeployLocal is Script {
         returns (CommitmentPool)
     {
         address deployer = msg.sender;
-        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
         CommitmentPool impl = new CommitmentPool();
         bytes memory initData = abi.encodeCall(
             CommitmentPool.initialize, (deployer, withdrawVerifier, depositVerifier, uint32(20), uint32(30))
         );
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("CommitmentPool impl:", address(impl));
         console.log("CommitmentPool proxy:", address(proxy));
         return CommitmentPool(address(proxy));
@@ -289,11 +310,10 @@ contract DeployLocal is Script {
         internal
         returns (RelayerRegistry)
     {
-        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
         RelayerRegistry impl = new RelayerRegistry();
         bytes memory initData =
             abi.encodeCall(RelayerRegistry.initialize, (deployer, deployer, relayerIdRegistry, address(0)));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("RelayerRegistry impl:", address(impl));
         console.log("RelayerRegistry proxy:", address(proxy));
         return RelayerRegistry(payable(address(proxy)));

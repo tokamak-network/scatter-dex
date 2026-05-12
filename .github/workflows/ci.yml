@@ -55,6 +55,15 @@ jobs:
         # step would just double the work. Skipping it.
         run: forge test --no-match-contract Fork -vvv
 
+      - name: storage-layout check
+        # Diff every upgradeable contract's current layout against the
+        # committed baseline in `storage-layouts/`. Fails CI if a slot
+        # has shifted — that's the safety net that catches an upgrade
+        # that would corrupt mainnet state. `normalize()` inside the
+        # script strips solc-version-dependent fields so unrelated
+        # source edits don't trigger phantom drift.
+        run: ./script/storage-layout/check.sh
+
       - name: forge snapshot (gas diff)
         # Doubles the contracts-job wall time and isn't gating anything;
         # opt-in via the manual workflow_dispatch trigger.
