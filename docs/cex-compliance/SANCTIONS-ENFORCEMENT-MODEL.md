@@ -14,9 +14,14 @@ address. It does not hide anything.**
 Specifically:
 
 - A sanctioned address cannot **deposit** to the commitment pool.
-- A sanctioned address cannot be the **recipient of a claim**
-  (already-settled funds bound to that address become unclaimable
-  — they stay in the pool as committed-but-locked state).
+- A sanctioned address cannot be the **recipient of a claim**.
+  At settle time the relevant amount has already been transferred
+  from `CommitmentPool` to `PrivateSettlement` (via
+  `CommitmentPool.transferToSettlement`) and is tracked under
+  `PrivateSettlement.claimsGroups[claimsRoot]`. The recipient
+  refusal at `claimWithProof` time leaves that balance sitting on
+  `PrivateSettlement` — claimable in principle, but only by the
+  bound recipient, so the leaf becomes effectively dead state.
 - A sanctioned address cannot **withdraw** from the pool, nor can
   funds be withdrawn *to* a sanctioned address.
 - A sanctioned relayer cannot **match orders** or **submit
@@ -33,10 +38,21 @@ What stays the same regardless of sanctions status:
   erase past activity from the chain. It only refuses the *next*
   action that involves that address.
 
-Funds already deposited by an address that later gets sanctioned
-remain in the pool — they're not moved, hidden, or zeroed. They
-simply become **frozen**: the on-chain state is unchanged, but no
-entry point will accept a transaction that would move them.
+Funds an address held before sanctions are not moved, hidden, or
+zeroed by the sanctions event. They simply become **frozen**:
+
+- If they're still in `CommitmentPool` (as a commitment the address
+  has not yet spent), they sit there indefinitely — the deposit
+  remains on chain, but withdraw / settle paths refuse to act on
+  it.
+- If they were already settled to that address (i.e. moved to
+  `PrivateSettlement.claimsGroups[...]` at settle time, awaiting
+  a `claimWithProof` call), the balance stays on the settlement
+  contract — `claimWithProof` refuses the now-sanctioned recipient.
+
+In both cases the on-chain state is unchanged at the moment the
+address is sanctioned. The gate refuses the *next* action that
+would move those funds.
 
 ## Where the check fires
 
@@ -135,9 +151,14 @@ and no rewriting of history.
 Consequences:
 
 - Funds already settled to a now-sanctioned address stay locked
-  in the `CommitmentPool`. The leaf preimage and the on-chain
-  commitment are unchanged; only the `claimWithProof` call for
-  that leaf now reverts.
+  on `PrivateSettlement` under `claimsGroups[claimsRoot]`. (At
+  settle time, `CommitmentPool.transferToSettlement` moves the
+  ERC-20 token balance from the pool into the settlement
+  contract; the per-leaf entitlement lives in
+  `PrivateSettlement.claimsGroups[...]` until claimed.) The leaf
+  preimage and the on-chain state are unchanged by the sanctions
+  event; only the `claimWithProof` call for that leaf now
+  reverts.
 - The original sender cannot reclaim those funds either (the
   claim circuit binds the recipient inside the leaf preimage; a
   third party — sender or anyone else — cannot substitute a
@@ -145,8 +166,10 @@ Consequences:
   check).
 - An OFAC SDN listing that lands between settlement and claim
   effectively turns the routed amount into a frozen on-chain
-  balance: it remains visible on-chain, but no entry point will
-  accept a transaction that would move it.
+  balance on `PrivateSettlement`: it remains visible on-chain
+  (the contract's ERC-20 holdings, and the matching
+  `claimsGroups[...]` storage), but no entry point will accept a
+  transaction that would move it to the sanctioned recipient.
 
 This is intentional. From an exchange's risk perspective the
 property to subscribe to is:
