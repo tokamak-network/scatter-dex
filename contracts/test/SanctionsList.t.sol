@@ -319,6 +319,21 @@ contract SanctionsListTest is Test {
         sanctions.addSanctionsBatch(addrs);
     }
 
+    function test_addSanctionsBatch_skipsZeroAndDuplicate() public {
+        // Mixes the three branches inside addSanctionsBatch's loop:
+        //   - zero address      → skipped silently
+        //   - already sanctioned → skipped silently (sanctionedAddr from setUp)
+        //   - fresh address     → added + AddressSanctioned event
+        address[] memory addrs = new address[](3);
+        addrs[0] = address(0);
+        addrs[1] = sanctionedAddr;
+        addrs[2] = address(0xFEED);
+        sanctions.addSanctionsBatch(addrs);
+        assertFalse(sanctions.isSanctioned(address(0)));
+        assertTrue(sanctions.isSanctioned(sanctionedAddr));
+        assertTrue(sanctions.isSanctioned(address(0xFEED)));
+    }
+
     function test_externalOracle_eoa_reverts() public {
         vm.expectRevert(SanctionsList.NotAContract.selector);
         sanctions.setExternalOracle(alice);
