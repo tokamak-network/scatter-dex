@@ -1,6 +1,7 @@
 import {
   LAUNCH_TOKENS,
   ZERO_ADDRESS,
+  chainName,
   type NetworkConfig,
   type TokenInfo,
 } from "@zkscatter/sdk";
@@ -68,9 +69,13 @@ function buildNetworkConfig(): NetworkConfig {
     return addr && addr !== ZERO_ADDRESS ? { ...t, address: addr } : t;
   });
 
+  const chainId = pickInt(process.env.NEXT_PUBLIC_CHAIN_ID, 11155111);
   return {
-    chainId: pickInt(process.env.NEXT_PUBLIC_CHAIN_ID, 11155111),
-    name: pick(process.env.NEXT_PUBLIC_NETWORK_NAME, "Local / Sepolia"),
+    chainId,
+    // Derive the human-readable name from `chainName(chainId)` so a
+    // chainId=31337 deploy doesn't render "Sepolia" in the header
+    // pill. Env can still override for vanity labels.
+    name: pick(process.env.NEXT_PUBLIC_NETWORK_NAME, chainName(chainId)),
     rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, "https://rpc.sepolia.org"),
     explorerBase: pick(
       process.env.NEXT_PUBLIC_EXPLORER_BASE,
