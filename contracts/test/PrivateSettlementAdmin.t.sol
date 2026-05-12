@@ -215,7 +215,7 @@ contract PrivateSettlementAdminTest is Test {
         assertEq(settlement.dexPlatformFeeBps(), 0);
     }
 
-    // ─── claimWithProof paused / unknown group reverts ──────────
+    // ─── claimWithProof: paused + unknown-group reverts ────────
 
     function test_claimWithProof_paused_reverts() public {
         settlement.pause();
