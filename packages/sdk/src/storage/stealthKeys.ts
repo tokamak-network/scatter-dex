@@ -1,4 +1,10 @@
 /**
+ * @deprecated Phase 2 stealth removal — see
+ * `docs/architecture-decisions/0001-stealth-deprecation.md`. The
+ * persisted meta-address keypair will be retired from the SDK
+ * once consumers stop reading from this module; the file remains
+ * for backward compatibility during the deprecation window.
+ *
  * Stealth meta-address keypair persisted in the user's notes folder
  * — the same File System Access API directory that backs the wallet
  * book and run records.
@@ -36,6 +42,7 @@ interface StealthKeysFile {
   keys: MetaAddress;
 }
 
+/** @deprecated Phase 2 stealth removal — see ADR 0001. */
 export class StealthKeysCorruptError extends Error {
   constructor(message: string) {
     super(message);
@@ -45,7 +52,10 @@ export class StealthKeysCorruptError extends Error {
 
 /** Validate the shape of a `MetaAddress` payload before persisting it.
  *  Throws on malformed input so callers don't silently store garbage
- *  that fails later inside `stealthWallet` / `deriveStealthPrivateKey`. */
+ *  that fails later inside `stealthWallet` / `deriveStealthPrivateKey`.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function assertValidStealthKeys(keys: MetaAddress): void {
   if (!HEX_64_RE.test(keys.spendingKey)) {
     throw new StealthKeysCorruptError("spendingKey must be 64 hex characters");
@@ -62,7 +72,10 @@ export function assertValidStealthKeys(keys: MetaAddress): void {
  *  no file exists. Throws `StealthKeysCorruptError` when the file
  *  exists but JSON-parses to an unexpected shape — surfacing this as
  *  a thrown error lets the UI offer a "wipe and start over" path
- *  rather than silently treating the user as un-keyed. */
+ *  rather than silently treating the user as un-keyed.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function loadStealthKeys(): Promise<MetaAddress | null> {
   const raw = await loadFile(STEALTH_KEYS_FILENAME);
   if (raw === null) return null;
@@ -95,7 +108,10 @@ export async function loadStealthKeys(): Promise<MetaAddress | null> {
 
 /** Persist the keypair to the active folder. Throws when no folder
  *  is selected (callers should gate the UI on `hasFolder()` first)
- *  or when the input is malformed. */
+ *  or when the input is malformed.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function saveStealthKeys(keys: MetaAddress): Promise<void> {
   assertValidStealthKeys(keys);
   const file: StealthKeysFile = { version: 1, keys };
@@ -104,7 +120,10 @@ export async function saveStealthKeys(keys: MetaAddress): Promise<void> {
 
 /** Wipe the stored file. Stealth funds already sent to the cleared
  *  keys become unrecoverable from this device unless the user has
- *  exported the spending/viewing keys elsewhere. */
+ *  exported the spending/viewing keys elsewhere.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function clearStealthKeys(): Promise<void> {
   await removeFile(STEALTH_KEYS_FILENAME);
 }
@@ -117,7 +136,10 @@ export async function clearStealthKeys(): Promise<void> {
  *  Safe to call on every app start: a no-op once the folder file
  *  already exists. The legacy `localStorage` entry is removed only
  *  on a successful folder write so a permission revocation mid-
- *  migration leaves the legacy copy intact. */
+ *  migration leaves the legacy copy intact.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function migrateFromLocalStorage(): Promise<MetaAddress | null> {
   if (typeof window === "undefined") return null;
   // Don't clobber an existing folder copy — that's the canonical one.

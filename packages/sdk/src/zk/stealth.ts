@@ -1,5 +1,12 @@
 /** Stealth address — EIP-5564-style on secp256k1.
  *
+ *  @deprecated The stealth-address surface is being retired from the
+ *  ScatterDEX SDK as part of the Phase 2 stealth removal track (see
+ *  `docs/architecture-decisions/0001-stealth-deprecation.md`).
+ *  Applications should migrate to plain-EOA claim recipients; the
+ *  helpers in this module remain functional for the current release
+ *  but will be removed in a future major version.
+ *
  *  Recipient publishes a meta-address once. Sender generates a
  *  one-time stealth address per claim using only the public part.
  *  Only the recipient can derive the spending private key for any
@@ -28,7 +35,10 @@ import { ethers } from "ethers";
 
 const POINT = secp256k1.Point;
 
-/** A meta-address pair the recipient publishes once. */
+/** A meta-address pair the recipient publishes once.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export interface MetaAddress {
   /** Hex secp256k1 private key — keep secret. */
   spendingKey: string;
@@ -41,7 +51,10 @@ export interface MetaAddress {
 
 /** Generate a fresh meta-address. The recipient stores all three
  *  fields: the spending/viewing private keys never leave the
- *  recipient, the meta-address can be shared publicly. */
+ *  recipient, the meta-address can be shared publicly.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function generateMetaAddress(): MetaAddress {
   const spendingKeyBytes = secp256k1.utils.randomSecretKey();
   const viewingKeyBytes = secp256k1.utils.randomSecretKey();
@@ -54,7 +67,10 @@ export function generateMetaAddress(): MetaAddress {
 
 /** Parse a meta-address into the two compressed pubkeys. Throws on
  *  malformed input — the prefix and length checks catch the most
- *  common copy/paste mistakes. */
+ *  common copy/paste mistakes.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function parseMetaAddress(metaAddress: string): {
   spendingPubKey: Uint8Array;
   viewingPubKey: Uint8Array;
@@ -83,12 +99,18 @@ const META_ADDRESS_RE = /^st:eth:0x[0-9a-fA-F]{132}$/;
  *  `st:eth:0x` prefix plus 132 hex characters (66 + 66 bytes
  *  compressed). Hex-strict — non-hex characters fail here instead
  *  of bubbling up later as a less-friendly `hexToBytes` error from
- *  `parseMetaAddress` / `generateStealthAddress`. */
+ *  `parseMetaAddress` / `generateStealthAddress`.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function isMetaAddress(input: string): boolean {
   return META_ADDRESS_RE.test(input);
 }
 
-/** Output of `generateStealthAddress`. */
+/** Output of `generateStealthAddress`.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export interface StealthResult {
   /** Checksummed Ethereum address that only the recipient can spend. */
   stealthAddress: string;
@@ -100,7 +122,10 @@ export interface StealthResult {
 
 /** Sender side: build a one-time stealth address from a recipient's
  *  meta-address. Each call uses fresh ephemeral randomness; never
- *  reuse the returned `ephemeralPubKey` across recipients. */
+ *  reuse the returned `ephemeralPubKey` across recipients.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function generateStealthAddress(metaAddress: string): StealthResult {
   const { spendingPubKey, viewingPubKey } = parseMetaAddress(metaAddress);
 
@@ -133,7 +158,10 @@ export function generateStealthAddress(metaAddress: string): StealthResult {
 /** Recipient side: derive the spending private key for a stealth
  *  address that was generated against the recipient's meta-address.
  *  Mirror of the sender's ECDH — `v * R` produces the same shared
- *  secret as the sender's `r * V`. */
+ *  secret as the sender's `r * V`.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function deriveStealthPrivateKey(
   spendingKey: string,
   viewingKey: string,
@@ -154,7 +182,10 @@ export function deriveStealthPrivateKey(
 
 /** Convenience: build an `ethers.Wallet` from the derived stealth
  *  private key. Pass a `provider` if you want to immediately read
- *  state / send transactions. */
+ *  state / send transactions.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function stealthWallet(
   spendingKey: string,
   viewingKey: string,

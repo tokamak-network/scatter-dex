@@ -1,6 +1,12 @@
 "use client";
 
 /**
+ * @deprecated Phase 2 stealth removal — see
+ * `docs/architecture-decisions/0001-stealth-deprecation.md`. The
+ * meta-address provider will be retired once consumers migrate to
+ * plain-EOA claim recipients; the provider remains for backward
+ * compatibility during the deprecation window.
+ *
  * Meta-address React provider — folder-storage-backed.
  *
  * Replaces apps/pro's old `localStorage`-based provider. Two apps
@@ -48,7 +54,10 @@ import {
 /** State surface exposed to consumers. Keeping this minimal —
  *  presentational concerns (copy-to-clipboard buttons, secret reveal
  *  toggles, danger confirmations) live in app code so the SDK
- *  doesn't grow a UI stack of its own. */
+ *  doesn't grow a UI stack of its own.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export interface MetaAddressState {
   /** The current keypair. `null` means "no keys yet" (user hasn't
    *  minted or imported, or the folder file was wiped). */
@@ -79,7 +88,10 @@ const Ctx = createContext<MetaAddressState | null>(null);
 
 /** Hook to consume the meta-address state. Throws when used outside
  *  a `<MetaAddressProvider>` — easier to surface a misconfiguration
- *  than to silently render with `keys = null`. */
+ *  than to silently render with `keys = null`.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function useMetaAddress(): MetaAddressState {
   const ctx = useContext(Ctx);
   if (!ctx) {
@@ -91,7 +103,10 @@ export function useMetaAddress(): MetaAddressState {
 /** Mount this under a folder-storage provider. The provider doesn't
  *  itself manage folder selection — it expects `hasFolder()` to flip
  *  true once the user has picked a directory; it then loads (or
- *  migrates) the keypair on the next render. */
+ *  migrates) the keypair on the next render.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function MetaAddressProvider({
   children,
   /** Reactive folder-readiness signal the host app passes from its
