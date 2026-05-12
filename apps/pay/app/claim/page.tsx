@@ -20,7 +20,10 @@ import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
 import { useIdentityStatus } from "../_lib/identity";
 import { useFolderStorage } from "../_lib/folderStorage";
-import { deriveStealthForPackage } from "../_lib/stealthDerive";
+import {
+  deriveStealthAddressForPackage,
+  deriveStealthForPackage,
+} from "../_lib/stealthDerive";
 
 /** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
  *  as a static export, so the link id moves to a `?id=` query param
@@ -108,12 +111,17 @@ function ClaimInner() {
     return () => ctrl.abort();
   }, [parsed?.pkg.relayerUrl]);
 
-  const stealthDerivation = useMemo(
-    () => (parsed ? deriveStealthForPackage(parsed.pkg, metaKeys) : null),
+  // Address-only check for UI gating — keeps the stealth privkey
+  // out of this component's memoized state. The privkey is resolved
+  // lazily inside the self-pay branch of `doClaim` below.
+  const stealthVerified = useMemo(
+    () =>
+      parsed
+        ? deriveStealthAddressForPackage(parsed.pkg, metaKeys)?.matches === true
+        : false,
     [parsed, metaKeys],
   );
   const isStealth = !!parsed?.pkg.ephemeralPubKey;
-  const stealthVerified = stealthDerivation?.matches === true;
   // EOA claims require the connecting wallet (= recipient) to be
   // zk-X509 verified. Stealth claims are exempt: the stealth EOA
   // is one-time and never registers a cert; the stealth scheme's
@@ -250,10 +258,21 @@ function ClaimInner() {
     // signer for an in-memory wallet bound to the derived stealth
     // private key. The connected EOA can't sign for a stealth
     // address, so the self-pay fallback would otherwise fail with a
-    // recipient mismatch even when the proof is valid.
-    const claimSigner = stealthVerified && stealthDerivation && readProvider
-      ? new ethers.Wallet(stealthDerivation.privateKey, readProvider)
-      : (signer ?? undefined);
+    // recipient mismatch even when the proof is valid. Resolve the
+    // full derivation here (lazy) so the privkey doesn't live in
+    // memoized component state across the page's lifetime.
+    const stealthFull =
+      stealthVerified && readProvider
+        ? deriveStealthForPackage(parsed.pkg, metaKeys)
+        : null;
+    // Defense in depth: even though `stealthVerified` already gated us
+    // through an address-only match, re-check `stealthFull.matches`
+    // before signing. Guards against any future drift between the
+    // address-only and full derivation implementations.
+    const claimSigner =
+      stealthFull?.matches && readProvider
+        ? new ethers.Wallet(stealthFull.privateKey, readProvider)
+        : (signer ?? undefined);
     if (!gasless && !claimSigner) return;
     try {
       const { txHash } = await submitClaim({

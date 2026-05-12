@@ -7,7 +7,10 @@ import { Modal } from "@zkscatter/ui";
 import { useMetaAddress, useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
-import { deriveStealthForPackage } from "../../_lib/stealthDerive";
+import {
+  deriveStealthAddressForPackage,
+  deriveStealthForPackage,
+} from "../../_lib/stealthDerive";
 import {
   addStealthInboxEntry,
   loadStealthInbox,
@@ -31,7 +34,7 @@ import {
 } from "../../_lib/relay7702";
 import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
-import { ERC20_ABI, formatTokenLabel, type NetworkConfig } from "@zkscatter/sdk";
+import { ERC20_ABI, eqAddr, formatTokenLabel, type NetworkConfig } from "@zkscatter/sdk";
 
 /** True when `token` is the chain's WETH — claims auto-unwrap to
  *  native ETH on payout, so native send-tx and `getBalance` are the
@@ -537,20 +540,20 @@ function RowActions({
   const canDeriveLocally =
     Boolean(entry.stealthPrivateKey) || Boolean(entry.ephemeralPubKey);
 
-  // Guards against keys-don't-match-sender cases: privkey path
-  // verifies via ethers.Wallet, ephPub path via the shared
-  // deriveStealthForPackage helper.
+  // Guards against keys-don't-match-sender cases. The address-only
+  // helper avoids pinning the derived stealth privkey on this
+  // component's memoized state for the page lifetime — the Claim
+  // button only needs to know whether a match exists, not the key.
   const derivedMismatch = useMemo(() => {
     if (entry.stealthPrivateKey) {
       try {
-        const w = new ethers.Wallet(entry.stealthPrivateKey);
-        return w.address.toLowerCase() !== entry.pkg.recipient.toLowerCase();
+        return !eqAddr(ethers.computeAddress(entry.stealthPrivateKey), entry.pkg.recipient);
       } catch {
         return true;
       }
     }
     if (entry.ephemeralPubKey) {
-      const derived = deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey });
+      const derived = deriveStealthAddressForPackage(entry.pkg, { spendingKey, viewingKey });
       return !derived || !derived.matches;
     }
     return false;
@@ -625,18 +628,41 @@ function ClaimExecuteModal({
   const { readProvider } = useWallet();
   const [phase, setPhase] = useState<ClaimPhase | "idle">("idle");
   const [error, setError] = useState<string | null>(null);
-  const [revealKey, setRevealKey] = useState(false);
+  // `revealedPriv` holds the stealth privkey only once the user has
+  // explicitly clicked Reveal. Before that, the key is not pinned in
+  // React state — we only carry a cheap boolean that says "a key is
+  // derivable for this entry" so the UI can show the right affordance.
+  const [revealedPriv, setRevealedPriv] = useState<string | null>(null);
 
-  // Resolve the stealth privkey once per modal open so the reveal UX
-  // can show it post-claim (funds land at the stealth address, not
-  // the user's EOA — they need the privkey to import).
-  const stealthPriv = useMemo(() => {
-    if (entry.stealthPrivateKey) return entry.stealthPrivateKey;
-    return (
-      deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey })
-        ?.privateKey ?? null
-    );
+  // Cheap address-only check: does either the embedded
+  // stealthPrivateKey or the meta-keys + ephemeralPubKey derive to
+  // the package's recipient? Avoids materializing the privkey until
+  // the user actually needs it.
+  const canDerivePrivkey = useMemo(() => {
+    if (entry.stealthPrivateKey) {
+      try {
+        return eqAddr(ethers.computeAddress(entry.stealthPrivateKey), entry.pkg.recipient);
+      } catch {
+        return false;
+      }
+    }
+    if (entry.ephemeralPubKey) {
+      const derived = deriveStealthAddressForPackage(entry.pkg, { spendingKey, viewingKey });
+      return !!derived?.matches;
+    }
+    return false;
   }, [entry, spendingKey, viewingKey]);
+
+  // Lazy: materialise the privkey on the call stack only. Used by
+  // the self-pay signer fallback and the Reveal click handler. The
+  // `matches` guard mirrors the canDerivePrivkey gate above so a
+  // package whose ephemeralPubKey doesn't agree with the user's
+  // meta-keys never returns a stale / wrong key here.
+  function resolveStealthPriv(): string | null {
+    if (entry.stealthPrivateKey) return entry.stealthPrivateKey;
+    const derived = deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey });
+    return derived?.matches ? derived.privateKey : null;
+  }
 
   async function run() {
     setError(null);
@@ -650,9 +676,8 @@ function ClaimExecuteModal({
       // package has no relayerUrl, fall back to a self-signed tx
       // with the derived stealth wallet — but that only works if the
       // stealth address was pre-funded for gas, which is rare.
-      const signer = stealthPriv
-        ? new ethers.Wallet(stealthPriv, readProvider)
-        : undefined;
+      const priv = resolveStealthPriv();
+      const signer = priv ? new ethers.Wallet(priv, readProvider) : undefined;
       const { txHash } = await submitClaim({
         pkg: entry.pkg,
         readProvider,
@@ -702,7 +727,7 @@ function ClaimExecuteModal({
           </p>
         )}
 
-        {stealthPriv && (
+        {canDerivePrivkey && (
           <div className="rounded-md border border-dashed border-[var(--color-border-strong)] p-3 text-xs">
             <div className="flex items-center justify-between">
               <span className="font-semibold text-[var(--color-text)]">
@@ -710,29 +735,31 @@ function ClaimExecuteModal({
               </span>
               <button
                 onClick={() => {
-                  if (!revealKey) {
-                    const ok = window.confirm(
-                      "Reveal stealth private key?\n\n" +
-                        "Anyone with this key can spend the funds at the stealth " +
-                        "address. Only reveal it on a device you trust, with no " +
-                        "screen-sharing / recording active. Confirm to continue.",
-                    );
-                    if (!ok) return;
+                  if (revealedPriv) {
+                    setRevealedPriv(null);
+                    return;
                   }
-                  setRevealKey((v) => !v);
+                  const ok = window.confirm(
+                    "Reveal stealth private key?\n\n" +
+                      "Anyone with this key can spend the funds at the stealth " +
+                      "address. Only reveal it on a device you trust, with no " +
+                      "screen-sharing / recording active. Confirm to continue.",
+                  );
+                  if (!ok) return;
+                  setRevealedPriv(resolveStealthPriv());
                 }}
                 className="text-[var(--color-primary)] hover:underline"
               >
-                {revealKey ? "Hide" : "Reveal"}
+                {revealedPriv ? "Hide" : "Reveal"}
               </button>
             </div>
-            {revealKey ? (
+            {revealedPriv ? (
               <>
                 <div className="mt-1 break-all rounded bg-[var(--color-bg)] p-2 font-mono text-[11px]">
-                  {stealthPriv}
+                  {revealedPriv}
                 </div>
                 <div className="mt-2 flex items-center justify-between">
-                  <CopyButton value={stealthPriv} label="Copy private key" />
+                  <CopyButton value={revealedPriv} label="Copy private key" />
                   <span className="text-[var(--color-text-muted)]">
                     Funds land here. Import to a wallet to spend.
                   </span>
@@ -759,7 +786,7 @@ function ClaimExecuteModal({
         </button>
         <button
           onClick={() => void run()}
-          disabled={busy || !stealthPriv}
+          disabled={busy || !canDerivePrivkey}
           className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
         >
           {busy ? "Claiming…" : "Claim"}
@@ -795,15 +822,31 @@ function ClaimedRowActions({
   onRemove: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  // Privkey is derivable when either: (a) the entry was hand-off-
-  // delivered with a pre-derived privkey, or (b) the package carries
-  // ephemeralPubKey and the user's meta-keys produce the matching
-  // stealth address.
-  const privkey = useMemo(() => {
+  // Cheap derivability check — does either the embedded privkey or
+  // the meta-keys + ephemeralPubKey reach the recipient address? The
+  // actual privkey is resolved lazily on the click handler that
+  // needs it, so it isn't pinned in React state for every claimed
+  // row's lifetime.
+  const canDerivePrivkey = useMemo(() => {
+    if (entry.stealthPrivateKey) {
+      try {
+        return eqAddr(ethers.computeAddress(entry.stealthPrivateKey), entry.pkg.recipient);
+      } catch {
+        return false;
+      }
+    }
+    const derived = deriveStealthAddressForPackage(entry.pkg, { spendingKey, viewingKey });
+    return !!derived?.matches;
+  }, [entry, spendingKey, viewingKey]);
+
+  // Resolved on-click and held only while the modal that needs it is open.
+  const [transferPrivkey, setTransferPrivkey] = useState<string | null>(null);
+  const [revealPrivkey, setRevealPrivkey] = useState<string | null>(null);
+  function resolvePrivkey(): string | null {
     if (entry.stealthPrivateKey) return entry.stealthPrivateKey;
     const derived = deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey });
     return derived?.matches ? derived.privateKey : null;
-  }, [entry, spendingKey, viewingKey]);
+  }
 
   // Fetch the stealth balance so a row whose tokens have already been
   // transferred out (or never funded) can't open the modal — there's
@@ -833,20 +876,24 @@ function ClaimedRowActions({
     };
   }, [entry.pkg.recipient, entry.pkg.token, cfg]);
   const hasBalance = balance !== null && balance > 0n;
-  const transferDisabled = !privkey || !hasBalance;
-  const transferTitle = !privkey
+  const transferDisabled = !canDerivePrivkey || !hasBalance;
+  const transferTitle = !canDerivePrivkey
     ? "Cannot derive stealth privkey for this entry"
     : !hasBalance
       ? `Stealth address has no ${entry.pkg.tokenSymbol} to transfer`
       : undefined;
 
-  const [showKey, setShowKey] = useState(false);
   return (
     <div className="flex items-center justify-end gap-2">
       {entry.txHash && <ClaimTxLink txHash={entry.txHash} />}
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          const p = resolvePrivkey();
+          if (!p) return;
+          setTransferPrivkey(p);
+          setOpen(true);
+        }}
         disabled={transferDisabled}
         title={transferTitle}
         className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white disabled:opacity-40"
@@ -855,9 +902,13 @@ function ClaimedRowActions({
       </button>
       <button
         type="button"
-        onClick={() => setShowKey(true)}
-        disabled={!privkey}
-        title={privkey ? "Reveal the stealth private key for this address" : "Cannot derive stealth privkey for this entry"}
+        onClick={() => {
+          const p = resolvePrivkey();
+          if (!p) return;
+          setRevealPrivkey(p);
+        }}
+        disabled={!canDerivePrivkey}
+        title={canDerivePrivkey ? "Reveal the stealth private key for this address" : "Cannot derive stealth privkey for this entry"}
         className="rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-bg)] disabled:opacity-40"
       >
         Privkey
@@ -868,18 +919,21 @@ function ClaimedRowActions({
       >
         Remove
       </button>
-      {open && privkey && (
+      {open && transferPrivkey && (
         <TransferOutModal
           entry={entry}
-          privkey={privkey}
-          onClose={() => setOpen(false)}
+          privkey={transferPrivkey}
+          onClose={() => {
+            setOpen(false);
+            setTransferPrivkey(null);
+          }}
         />
       )}
-      {showKey && privkey && (
+      {revealPrivkey && (
         <PrivkeyRevealModal
           address={entry.pkg.recipient}
-          privkey={privkey}
-          onClose={() => setShowKey(false)}
+          privkey={revealPrivkey}
+          onClose={() => setRevealPrivkey(null)}
         />
       )}
     </div>
