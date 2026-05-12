@@ -188,16 +188,24 @@ export class AuthorizeCrossRelayerMatchService {
       throw e;
     }
     const url = `${remoteMaker.relayerUrl}/api/p2p/authorize-trade-offer`;
+    // Serialize once and pass the same bytes to both `authHeaders`
+    // (so the signature binds the body) and `fetch` (so the peer
+    // hashes the same bytes). Without this the peer would reject
+    // the request once `REQUIRE_BODY_HASH=1` is set, and even
+    // before then the legacy fallback would log a deprecation
+    // warning on every cross-relayer trade offer.
+    const bodyBytes = JSON.stringify(body);
     const headers = await this.sharedClient.authHeaders(
       "POST",
       "/api/p2p/authorize-trade-offer",
+      bodyBytes,
     );
 
     try {
       const res = await fetch(url, {
         method: "POST",
         headers,
-        body: JSON.stringify(body),
+        body: bodyBytes,
         signal: AbortSignal.timeout(30_000),
       });
 

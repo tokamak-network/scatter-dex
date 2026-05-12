@@ -503,6 +503,31 @@ export class OrderbookDB {
     let txCountVerified = 0;
     let lastSettleAt: number | null = null;
 
+    // Hoisted out of the loop — defining a closure per row materially
+    // hurts perf on relayer histories with tens of thousands of rows
+    // (each closure boxes the captured locals into a fresh frame).
+    // `bumpToken` is now a pure function over its arguments.
+    const bumpToken = (
+      target: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>,
+      sellToken: string | null,
+      buyToken: string | null,
+      sellAmount: string | null,
+      buyAmount: string | null,
+    ): void => {
+      if (sellToken) {
+        const cur = target.get(sellToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
+        if (sellAmount) cur.sell += BigInt(sellAmount);
+        cur.sellCount++;
+        target.set(sellToken, cur);
+      }
+      if (buyToken) {
+        const cur = target.get(buyToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
+        if (buyAmount) cur.buy += BigInt(buyAmount);
+        cur.buyCount++;
+        target.set(buyToken, cur);
+      }
+    };
+
     for (const r of rows) {
       txCount++;
       const verified = ((r.verified as number) ?? 0) === 1;
@@ -517,24 +542,8 @@ export class OrderbookDB {
       const buyToken = r.buy_token as string | null;
       const sellAmount = r.sell_amount as string | null;
       const buyAmount = r.buy_amount as string | null;
-      const bumpToken = (
-        target: Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>,
-      ): void => {
-        if (sellToken) {
-          const cur = target.get(sellToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
-          if (sellAmount) cur.sell += BigInt(sellAmount);
-          cur.sellCount++;
-          target.set(sellToken, cur);
-        }
-        if (buyToken) {
-          const cur = target.get(buyToken) ?? { sell: 0n, buy: 0n, sellCount: 0, buyCount: 0 };
-          if (buyAmount) cur.buy += BigInt(buyAmount);
-          cur.buyCount++;
-          target.set(buyToken, cur);
-        }
-      };
-      bumpToken(tokenAgg);
-      if (verified) bumpToken(tokenAggVerified);
+      bumpToken(tokenAgg, sellToken, buyToken, sellAmount, buyAmount);
+      if (verified) bumpToken(tokenAggVerified, sellToken, buyToken, sellAmount, buyAmount);
 
       if (sellToken && buyToken) {
         const key = `${sellToken}-${buyToken}`;
