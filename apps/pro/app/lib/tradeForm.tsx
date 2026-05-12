@@ -17,14 +17,13 @@ import {
 const FEATURED = LAUNCH_PAIRS.find((p) => p.featured)?.display ?? "ETH/USDC";
 
 /** Per-claim recipient row. Mirrors `frontend/`'s ClaimRow shape so
- *  porting the per-claim UX (regular / stealth, address, amount,
- *  delay) translates straight into our SDK's `ClaimEntry`. */
+ *  porting the per-claim UX (address, amount, delay) translates
+ *  straight into our SDK's `ClaimEntry`. */
 export interface RecipientRow {
   /** Stable id for React keys; set on push. */
   id: number;
-  mode: "regular" | "stealth";
-  /** Address (regular) or `st:eth:...` meta-address (stealth).
-   *  Empty = "send to my own connected wallet" (same-wallet shortcut). */
+  /** Recipient EOA. Empty = "send to my own connected wallet"
+   *  (same-wallet shortcut). */
   address: string;
   /** Amount in the **buy-side** token (display string, decimals
    *  applied at submit). Sum across rows must cover the post-fee
@@ -38,7 +37,7 @@ export interface RecipientRow {
 let nextRowId = 1;
 
 function freshRow(): RecipientRow {
-  return { id: nextRowId++, mode: "regular", address: "", amount: "", delay: "0", delayUnit: "hr" };
+  return { id: nextRowId++, address: "", amount: "", delay: "0", delayUnit: "hr" };
 }
 
 interface TradeFormState {

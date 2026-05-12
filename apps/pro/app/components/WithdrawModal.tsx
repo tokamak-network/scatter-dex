@@ -7,7 +7,7 @@ import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { PreSignPreview } from "./PreSignPreview";
 import { abortableSleep, isAbortError } from "../lib/abort";
 
-type DestKind = "self" | "stealth" | "custom";
+type DestKind = "self" | "custom";
 
 type Phase =
   | { kind: "idle" }
@@ -56,19 +56,14 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
 
   const note = useMemo(() => notes.find((n) => n.id === noteId) ?? null, [notes, noteId]);
   /** Resolved destination, or null when the choice can't yet produce
-   *  one (no wallet for `self`, invalid custom address). The stealth
-   *  branch resolves to null until the stealth-derive integration
-   *  ships — the preview uses `destKind` to label that case. */
+   *  one (no wallet for `self`, invalid custom address). */
   const destAddr: string | null = useMemo(() => {
     if (destKind === "self") return account ?? null;
-    if (destKind === "custom") {
-      const trimmed = customAddr.trim();
-      return ADDR_RE.test(trimmed) ? trimmed : null;
-    }
-    return null;
+    const trimmed = customAddr.trim();
+    return ADDR_RE.test(trimmed) ? trimmed : null;
   }, [destKind, account, customAddr]);
 
-  const destValid = destKind === "stealth" || destAddr !== null;
+  const destValid = destAddr !== null;
 
   const submit = useCallback(async () => {
     if (!note) {
@@ -102,10 +97,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       toast.push({
         kind: "success",
         title: `Withdrew ${note.amount} ${note.symbol}`,
-        description:
-          destKind === "stealth"
-            ? "Sent to a fresh stealth address."
-            : `Sent to ${shortAddr(destAddr)}.`,
+        description: `Sent to ${shortAddr(destAddr)}.`,
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
@@ -149,12 +141,6 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
             disabled={!account}
           />
           <Radio
-            checked={destKind === "stealth"}
-            onChange={() => setDestKind("stealth")}
-            label="Fresh stealth address"
-            hint="Generates a one-time recipient — recommended for privacy"
-          />
-          <Radio
             checked={destKind === "custom"}
             onChange={() => setDestKind("custom")}
             label="Custom address"
@@ -183,12 +169,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
           secondary={[
             {
               label: "Destination",
-              value:
-                destKind === "stealth"
-                  ? "Fresh stealth"
-                  : destAddr
-                  ? shortAddr(destAddr)
-                  : "—",
+              value: destAddr ? shortAddr(destAddr) : "—",
             },
             { label: "Network gas", value: "≈ $0.42", muted: true },
             { label: "Privacy", value: destKind === "self" ? "Linkable to wallet" : "Unlinkable" },
@@ -196,7 +177,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
           footer={
             destKind === "self"
               ? "Withdrawing to your connected wallet links the funds to your public balance."
-              : "Withdrawing to a fresh address keeps the funds unlinkable from your wallet."
+              : "Withdrawing to a custom address keeps the funds unlinkable from your wallet."
           }
         />
       </div>

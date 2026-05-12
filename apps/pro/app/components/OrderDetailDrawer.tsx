@@ -143,14 +143,6 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
               />
               <Row k="Leaf index" v={displayed.claim.leafIndex.toString()} mono />
               <Row k="Secret" v={formatField(displayed.claim.secret)} mono secret />
-              {displayed.claim.ephemeralPubKey && (
-                <Row
-                  k="Stealth ephemeral pubkey"
-                  v={displayed.claim.ephemeralPubKey}
-                  mono
-                  truncate
-                />
-              )}
             </Section>
           )}
 

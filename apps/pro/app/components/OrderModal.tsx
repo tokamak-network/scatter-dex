@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  generateStealthAddress,
-  isMetaAddress,
   randomFieldElement,
   type AuthorizeProofInput,
   type ClaimEntry,
@@ -92,24 +90,8 @@ function estimateFill(price: string, size: string): string {
  *  amount needed.
  *
  *  Multi-row case: every row needs an explicit amount; the sum must
- *  equal `buyAmount` (no auto-fill — fill-rest UX is a follow-up).
- *
- *  Stealth mode: row carries an `st:eth:0x...` meta-address. We
- *  derive a fresh one-time recipient via `generateStealthAddress`
- *  per row; the returned `ephemeralPubKey` is surfaced parallel to
- *  the claim so the caller can persist it (the recipient needs it
- *  to derive their stealth private key later). Each call uses
- *  fresh ephemeral randomness — never reuse across recipients. */
+ *  equal `buyAmount` (no auto-fill — fill-rest UX is a follow-up). */
 const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
-
-interface ResolvedClaim {
-  claim: ClaimEntry;
-  /** Set when the recipient was derived from a stealth meta-address.
-   *  The recipient needs this to spend the resulting stealth
-   *  address (`deriveStealthPrivateKey`). */
-  ephemeralPubKey?: string;
-}
-
 
 function resolveClaims(
   rows: readonly RecipientRow[],
@@ -117,7 +99,7 @@ function resolveClaims(
   buyTokenAddress: string,
   buyTokenDecimals: number,
   buyAmount: bigint,
-): ResolvedClaim[] {
+): ClaimEntry[] {
   // Auto-fill convention: a single row with no amount = "send the
   // entire buyAmount to this recipient". In every other case (single
   // row with explicit amount, or multi-row), the sum of all
@@ -153,40 +135,10 @@ function resolveClaims(
   // Trim once; reuse for both validation and build.
   const trimmedAddrs = rows.map((r) => r.address.trim());
 
-  // Block stealth rows beyond row 0 until per-recipient claim
-  // history surfaces (A.3). The OrderRecord only carries one
-  // ephemeralPubKey today; persisting only the first would
-  // permanently strand funds for stealth rows 2+ since the key
-  // isn't recoverable from chain. Single-stealth and multi-regular
-  // remain fully functional.
-  for (let i = 1; i < rows.length; i++) {
-    if (rows[i]!.mode === "stealth") {
-      throw new Error(
-        `Recipient #${i + 1} uses stealth, but multi-recipient stealth orders aren't supported yet (the ephemeralPubKey for rows 2+ would be lost). Move the stealth row to position 1, or use regular addresses for the others.`,
-      );
-    }
-  }
-
   // Validate recipient addresses up front so a typo doesn't surface
-  // mid-prove with a cryptic BigInt parse error. Stealth rows must
-  // carry a well-formed meta-address; regular rows must be a 0x…
-  // wallet address (or empty for self).
+  // mid-prove with a cryptic BigInt parse error.
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i]!;
     const trimmed = trimmedAddrs[i]!;
-    if (r.mode === "stealth") {
-      if (!trimmed) {
-        throw new Error(
-          `Recipient #${i + 1} (stealth) is missing a meta-address. Paste an "st:eth:0x…" address.`,
-        );
-      }
-      if (!isMetaAddress(trimmed)) {
-        throw new Error(
-          `Recipient #${i + 1} stealth meta-address is malformed. Expected "st:eth:0x" followed by 132 hex characters.`,
-        );
-      }
-      continue;
-    }
     if (!trimmed) continue; // empty = self
     if (!ADDR_RE.test(trimmed)) {
       throw new Error(
@@ -195,26 +147,13 @@ function resolveClaims(
     }
   }
 
-  return rows.map((r, i) => {
+  return rows.map((_r, i) => {
     const trimmed = trimmedAddrs[i]!;
-    let recipient: string;
-    let ephemeralPubKey: string | undefined;
-    if (r.mode === "stealth") {
-      // Each call mints a fresh ephemeral pubkey — calling twice
-      // for the same meta-address yields different stealth
-      // addresses, which is exactly the unlinkability we want.
-      const stealth = generateStealthAddress(trimmed);
-      recipient = stealth.stealthAddress;
-      ephemeralPubKey = stealth.ephemeralPubKey;
-    } else if (!trimmed) {
-      recipient = defaultRecipient;
-    } else {
-      recipient = trimmed;
-    }
+    const recipient = trimmed || defaultRecipient;
     const amount = autoFillSingle
       ? buyAmount
-      : parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
-    const claim: ClaimEntry = {
+      : parseUnits(rows[i]!.amount.replace(/,/g, ""), buyTokenDecimals);
+    return {
       secret: randomFieldElement(),
       recipient,
       token: buyTokenAddress,
@@ -222,7 +161,6 @@ function resolveClaims(
       // releaseTime is patched in the submit flow with `nowSec + delaySeconds(row)`.
       releaseTime: 0n,
     };
-    return ephemeralPubKey ? { claim, ephemeralPubKey } : { claim };
   });
 }
 
@@ -344,7 +282,7 @@ export function OrderModal({
     // Default (single empty row) is interpreted as "send everything
     // to my own connected wallet". Multi-row mode requires explicit
     // amount entry per row; the sum must equal `buyAmount` post-fee.
-    let resolved: ResolvedClaim[];
+    let resolved: ClaimEntry[];
     try {
       resolved = resolveClaims(
         recipients,
@@ -376,7 +314,7 @@ export function OrderModal({
 
       // Apply per-claim release delays on top of `nowSec`.
       const claims: ClaimEntry[] = resolved.map((r, i) => ({
-        ...r.claim,
+        ...r,
         releaseTime: nowSec + BigInt(delaySeconds(recipients[i]!)),
       }));
 
@@ -428,12 +366,7 @@ export function OrderModal({
       // OrderRecord — sufficient to drive the single-recipient claim
       // flow that today's UI exercises. Multi-claim history surfaces
       // when a per-recipient drawer / inbox lands.
-      // Persist the first claim only — `resolveClaims` rejects any
-      // non-first stealth row, so the persisted ephemeralPubKey (if
-      // present) is the order's only stealth recipient. Per-recipient
-      // claim history lands with A.3.
       const firstClaim = claims[0]!;
-      const firstEphemeralPubKey = resolved[0]!.ephemeralPubKey;
       // Pre-compute the claims-tree root the same way the authorize
       // circuit will when the order eventually settles on-chain.
       // Stored on the order record so the claim reconciler can match
@@ -459,7 +392,6 @@ export function OrderModal({
           releaseTime: firstClaim.releaseTime,
           leafIndex: 0,
           claimsRoot: toBytes32Hex(claimsRoot),
-          ...(firstEphemeralPubKey && { ephemeralPubKey: firstEphemeralPubKey }),
         },
       });
       setPhase({ kind: "success", orderLabel: order.label });
