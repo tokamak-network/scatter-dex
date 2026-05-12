@@ -8,7 +8,6 @@ import { PrivateOrderDB } from "./core/db.js";
 import { createPrivateOrderRoutes } from "./routes/orders.js";
 import { createInfoRoutes } from "./routes/info.js";
 import { createPrivateClaimRoutes } from "./routes/claim.js";
-import { createTransfer7702Routes } from "./routes/transfer-7702.js";
 import { createVaultRoutes } from "./routes/vault.js";
 import { createRelayerStatsRoutes } from "./routes/relayer-stats.js";
 import { SharedOrderbookClient } from "./core/shared-orderbook-client.js";
@@ -270,26 +269,6 @@ async function main() {
   app.use("/api/private-orders", readLimiter, pauseGuard, createPrivateOrderRoutes(writeLimiter));
   app.use("/api/info", readLimiter, createInfoRoutes(submitter, db));
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
-  // Gasless stealth-transfer endpoint — only mounted when the
-  // operator has deployed StealthTransferAccount and set the env
-  // var. Older deployments simply 404 on the route.
-  if (config.stealthTransferAccountAddress) {
-    app.use(
-      "/api/transfer-7702",
-      pauseGuard,
-      createTransfer7702Routes(
-        submitter,
-        {
-          stealthTransferAccountAddress: config.stealthTransferAccountAddress,
-          // tokenEntries / gaslessFees default to env-derived state
-          // inside the factory; explicit injection is reserved for
-          // tests so the route can be exercised without touching
-          // process.env.
-        },
-        writeLimiter,
-      ),
-    );
-  }
   app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
   app.use("/api/relayer", createRelayerStatsRoutes(db, submitter, readLimiter));
 

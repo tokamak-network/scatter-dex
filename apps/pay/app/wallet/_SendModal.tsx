@@ -12,7 +12,6 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 
 type SendPhase =
   | "idle"
-  | "signing"
   | "submitting"
   | "confirming"
   | "done"
@@ -78,7 +77,7 @@ export function SendModal({
   }
 
   const running =
-    phase === "signing" || phase === "submitting" || phase === "confirming";
+    phase === "submitting" || phase === "confirming";
   const canRun =
     !running &&
     phase !== "done" &&
@@ -216,11 +215,9 @@ export function SendModal({
                 aria-hidden
               />
               <span className="font-medium">
-                {phase === "signing"
-                  ? "Signing in your wallet…"
-                  : phase === "submitting"
-                    ? "Sign in your wallet to broadcast…"
-                    : "Waiting for on-chain confirmation…"}
+                {phase === "submitting"
+                  ? "Sign in your wallet to broadcast…"
+                  : "Waiting for on-chain confirmation…"}
               </span>
             </div>
           </div>
@@ -291,7 +288,6 @@ export function SendModal({
 
 const PHASE_LABEL: Record<SendPhase, string> = {
   idle: "",
-  signing: "Signing…",
   submitting: "Submitting…",
   confirming: "Confirming…",
   done: "",
