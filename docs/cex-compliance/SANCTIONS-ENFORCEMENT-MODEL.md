@@ -322,8 +322,13 @@ cast call $SANCTIONS_LIST "externalOracle()(address)"
 # Live check for a specific address (OR-combined across sources)
 cast call $SANCTIONS_LIST "isSanctioned(address)(bool)" $TARGET
 
-# Behavioural check via eth_call — no funds moved
-cast call $POOL "deposit(...)" --from $SANCTIONED_ADDR    # → reverts
+# Behavioural check via eth_call — no funds moved. Use the real
+# deposit signature; this line is a placeholder for the typed call.
+# Real form (pseudocode — fill the proof/commitment args from a fixture):
+#   cast call $POOL \
+#     "deposit((uint256[2],uint256[2][2],uint256[2]),uint256,address,uint256)" \
+#     "<encodedProof>" "<commitment>" "$TOKEN" "<amount>" \
+#     --from $SANCTIONED_ADDR    # → reverts with AddressSanctioned
 
 # Change history (self-managed entries)
 cast logs --address $SANCTIONS_LIST \

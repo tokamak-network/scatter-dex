@@ -36,6 +36,7 @@ contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList
     error BatchTooLarge();
     error RenounceOwnershipDisabled();
     error OracleUnchanged();
+    error NotAContract();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -54,16 +55,28 @@ contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList
 
     /// @notice Check if an address is sanctioned by either the self-managed
     ///         list or the external oracle (if configured).
+    /// @dev    External oracle failures (revert / non-conforming return data)
+    ///         are treated as `false` rather than propagated, so a
+    ///         misbehaving oracle cannot DoS deposits / withdrawals /
+    ///         claims. The self-managed map remains authoritative for
+    ///         entries we explicitly added.
     function isSanctioned(address addr) external view override returns (bool) {
         if (sanctioned[addr]) return true;
         ISanctionsList oracle = externalOracle;
-        if (address(oracle) != address(0) && oracle.isSanctioned(addr)) return true;
-        return false;
+        if (address(oracle) == address(0)) return false;
+        try oracle.isSanctioned(addr) returns (bool flagged) {
+            return flagged;
+        } catch {
+            return false;
+        }
     }
 
     /// @notice Point at an external blocklist (e.g. Chainalysis SDN Oracle).
-    ///         Pass address(0) to disable the fallback.
+    ///         Pass address(0) to disable the fallback. Non-zero values must
+    ///         be deployed contract code — setting an EOA would silently
+    ///         break the OR-combine path (ABI decode on empty return data).
     function setExternalOracle(address oracle) external onlyOwner {
+        if (oracle != address(0) && oracle.code.length == 0) revert NotAContract();
         address prev = address(externalOracle);
         if (prev == oracle) revert OracleUnchanged();
         externalOracle = ISanctionsList(oracle);

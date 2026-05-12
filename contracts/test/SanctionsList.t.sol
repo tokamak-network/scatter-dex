@@ -29,6 +29,15 @@ contract MockOracle is ISanctionsList {
     function isSanctioned(address a) external view returns (bool) { return flagged[a]; }
 }
 
+/// @dev Stand-in for a misbehaving external oracle — reverts on every probe.
+///      Verifies SanctionsList's try/catch wrapper degrades gracefully
+///      rather than DoS-ing the boundary contracts.
+contract RevertingOracle is ISanctionsList {
+    function isSanctioned(address) external pure returns (bool) {
+        revert("oracle down");
+    }
+}
+
 /// @title SanctionsListTest
 /// @notice Tests for SanctionsList + integration with CommitmentPool and PrivateSettlement.
 contract SanctionsListTest is Test {
@@ -271,6 +280,20 @@ contract SanctionsListTest is Test {
         sanctions.setExternalOracle(address(oracle));
         vm.expectRevert(SanctionsList.OracleUnchanged.selector);
         sanctions.setExternalOracle(address(oracle));
+    }
+
+    function test_externalOracle_eoa_reverts() public {
+        vm.expectRevert(SanctionsList.NotAContract.selector);
+        sanctions.setExternalOracle(alice);
+    }
+
+    function test_externalOracle_revertingOracle_treatedAsFalse() public {
+        RevertingOracle oracle = new RevertingOracle();
+        sanctions.setExternalOracle(address(oracle));
+        // Self-managed entry still wins
+        assertTrue(sanctions.isSanctioned(sanctionedAddr));
+        // Unflagged elsewhere returns false rather than propagating revert
+        assertFalse(sanctions.isSanctioned(alice));
     }
 
     function test_externalOracle_propagatesThroughBoundary() public {
