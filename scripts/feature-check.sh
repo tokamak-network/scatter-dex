@@ -25,7 +25,10 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 # ─── Args ─────────────────────────────────────────────────────────
-DO_STATIC=0; DO_UNIT=0; DO_LIVE=0; VERBOSE=0
+# --quick is "fastest sanity check" — file integrity + invariants + the
+# storage-layout drift check (a single forge call). It does NOT run the
+# full forge test suite or vitest.
+DO_STATIC=0; DO_UNIT=0; DO_LIVE=0; DO_QUICK_ONLY=0; VERBOSE=0
 if [ $# -eq 0 ]; then
     DO_STATIC=1; DO_UNIT=1; DO_LIVE=1
 fi
@@ -35,14 +38,30 @@ for arg in "$@"; do
         --unit)   DO_UNIT=1 ;;
         --live)   DO_LIVE=1 ;;
         --all)    DO_STATIC=1; DO_UNIT=1; DO_LIVE=1 ;;
-        --quick)  DO_STATIC=1 ;;
+        --quick)  DO_STATIC=1; DO_QUICK_ONLY=1 ;;
         -v|--verbose) VERBOSE=1 ;;
         -h|--help)
-            sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '3,22p' "$0" | sed 's/^# \{0,1\}//'
             exit 0 ;;
         *) echo "unknown arg: $arg (try --help)"; exit 2 ;;
     esac
 done
+
+# ─── Dependency probe ─────────────────────────────────────────────
+# Fail fast (exit 2 — usage error) when a required tool is missing.
+# Live mode is the only one that needs `cast`; we don't probe it
+# unconditionally so a contributor running `--quick` doesn't need
+# foundry installed.
+require_tool() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        echo "ERROR: required tool '$1' not found on PATH ($2)" >&2
+        exit 2
+    fi
+}
+[ $DO_UNIT -eq 1 ] || [ $DO_STATIC -eq 1 ] && require_tool forge "install foundry: https://book.getfoundry.sh/getting-started/installation"
+[ $DO_UNIT -eq 1 ] && require_tool npm "install Node.js"
+[ $DO_LIVE -eq 1 ] && require_tool curl "comes with macOS / most distros"
+[ $DO_LIVE -eq 1 ] && require_tool cast "install foundry (cast ships with forge)"
 
 # ─── Output helpers ───────────────────────────────────────────────
 PASS_COUNT=0; FAIL_COUNT=0; SKIP_COUNT=0
@@ -52,27 +71,6 @@ pass() { printf "  \033[32m[PASS]\033[0m %s\n" "$1"; PASS_COUNT=$((PASS_COUNT+1)
 fail() { printf "  \033[31m[FAIL]\033[0m %s — %s\n" "$1" "$2"; FAIL_COUNT=$((FAIL_COUNT+1)); FAILED+=("$1"); }
 skip() { printf "  \033[33m[SKIP]\033[0m %s — %s\n" "$1" "$2"; SKIP_COUNT=$((SKIP_COUNT+1)); }
 section() { printf "\n\033[1;36m── %s ──\033[0m\n" "$1"; }
-
-# Run a quiet sub-check; pass label + command. Stdout/stderr discarded
-# unless --verbose. Test result by exit code.
-check() {
-    local label="$1"; shift
-    if [ $VERBOSE -eq 1 ]; then
-        if "$@"; then pass "$label"; else fail "$label" "exit $?"; fi
-    else
-        local out
-        if out=$("$@" 2>&1); then pass "$label"
-        else fail "$label" "$(echo "$out" | tail -1)"
-        fi
-    fi
-}
-
-# Same but failure marker is "must NOT contain". Used for greps.
-check_grep_absent() {
-    local label="$1" pattern="$2" path="$3"
-    if ! grep -q "$pattern" "$path" 2>/dev/null; then pass "$label"
-    else fail "$label" "found '$pattern' in $path"; fi
-}
 
 # Curl reachability — returns true on HTTP 2xx.
 http_ok() {
@@ -165,12 +163,27 @@ run_static() {
     fi
 }
 
+# Run storage-layout drift check (used by both --quick and --unit).
+run_storage_layout_check() {
+    section "storage-layout drift"
+    local out
+    if out=$(cd contracts && ./script/storage-layout/check.sh 2>&1); then
+        pass "storage-layout check (6 contracts)"
+    else
+        # check.sh prints the offending diff before exiting non-zero;
+        # surface the first ✗ line so the operator can see which contract drifted.
+        local first_bad; first_bad=$(echo "$out" | grep '✗' | head -1 | sed 's/^[[:space:]]*//')
+        fail "storage-layout check" "${first_bad:-baseline diff (see check.sh output)}"
+    fi
+}
+
 # ─── UNIT: forge + vitest suites ──────────────────────────────────
 run_unit() {
     section "unit · solidity (forge)"
     local out
     if out=$(cd contracts && forge test --no-match-contract Fork 2>&1); then
-        local n_pass; n_pass=$(echo "$out" | grep -oE '[0-9]+ tests passed' | head -1 | awk '{print $1}')
+        # `tests?` to handle the singular form ("1 test passed").
+        local n_pass; n_pass=$(echo "$out" | grep -oE '[0-9]+ tests? passed' | head -1 | awk '{print $1}')
         local n_fail; n_fail=$(echo "$out" | grep -oE '[0-9]+ failed' | head -1 | awk '{print $1}')
         n_pass=${n_pass:-0}; n_fail=${n_fail:-0}
         if [ "$n_fail" = "0" ] || [ -z "$n_fail" ]; then
@@ -182,12 +195,7 @@ run_unit() {
         fail "forge test" "compile or run failed"
     fi
 
-    section "unit · storage-layout drift"
-    if (cd contracts && ./script/storage-layout/check.sh 2>&1 | grep -q "✗"); then
-        fail "storage-layout check" "slot drift detected"
-    else
-        pass "storage-layout check (6 contracts)"
-    fi
+    run_storage_layout_check
 
     section "unit · zk-relayer (vitest)"
     if [ ! -d zk-relayer/node_modules ]; then
@@ -218,12 +226,11 @@ run_unit() {
     fi
 
     section "unit · upgrade simulation"
-    if cd contracts && out=$(forge test --match-contract UpgradeSim 2>&1); then
-        local n; n=$(echo "$out" | grep -oE '[0-9]+ tests passed' | head -1 | awk '{print $1}')
+    local out
+    if out=$(cd contracts && forge test --match-contract UpgradeSim 2>&1); then
+        local n; n=$(echo "$out" | grep -oE '[0-9]+ tests? passed' | head -1 | awk '{print $1}')
         pass "upgrade-sim: V1→V2 state preservation ($n cases)"
-        cd "$ROOT_DIR"
     else
-        cd "$ROOT_DIR"
         fail "upgrade-sim" "V1→V2 test failed"
     fi
 }
@@ -312,6 +319,10 @@ run_live() {
 echo "scatter-dex · feature health check"
 echo "$(date '+%Y-%m-%d %H:%M:%S')"
 [ $DO_STATIC -eq 1 ] && run_static
+# --quick = static + storage-layout drift (the single forge call most
+# likely to catch a deployment regression). Skip the full forge / vitest
+# suites which are owned by --unit / --all.
+[ $DO_QUICK_ONLY -eq 1 ] && run_storage_layout_check
 [ $DO_UNIT   -eq 1 ] && run_unit
 [ $DO_LIVE   -eq 1 ] && run_live
 
