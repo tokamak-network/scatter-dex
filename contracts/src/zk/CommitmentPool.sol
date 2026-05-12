@@ -104,6 +104,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
         uint32 _treeLevels,
         uint32 _rootHistorySize
     ) external initializer {
+        if (initialOwner == address(0)) revert ZeroAddress();
         if (_withdrawVerifier == address(0)) revert ZeroAddress();
         if (_depositVerifier == address(0)) revert ZeroAddress();
         // [PR #123 review] Reject EOAs at deploy-time so a fat-fingered

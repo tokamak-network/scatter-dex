@@ -11,7 +11,7 @@ import {PoseidonT3} from "poseidon-solidity/PoseidonT3.sol";
 ///      migration; they are now regular state vars locked in by `__IncrementalMerkleTree_init`
 ///      and never reassigned (the implementation contract's constructor never runs through
 ///      the proxy, so `immutable` values are unreachable on the proxy side).
-contract IncrementalMerkleTree is Initializable {
+abstract contract IncrementalMerkleTree is Initializable {
     uint256 public constant FIELD_SIZE = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
     uint32 public levels;
@@ -25,9 +25,14 @@ contract IncrementalMerkleTree is Initializable {
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
     uint256[50] private __gap;
 
+    error InvalidLevels();
+    error InvalidRootHistorySize();
+    error TreeFull();
+    error LevelOutOfRange();
+
     function __IncrementalMerkleTree_init(uint32 _levels, uint32 _rootHistorySize) internal onlyInitializing {
-        require(_levels > 0 && _levels <= 20, "invalid levels");
-        require(_rootHistorySize > 0, "invalid root history size");
+        if (_levels == 0 || _levels > 20) revert InvalidLevels();
+        if (_rootHistorySize == 0) revert InvalidRootHistorySize();
         levels = _levels;
         ROOT_HISTORY_SIZE = _rootHistorySize;
 
@@ -52,7 +57,7 @@ contract IncrementalMerkleTree is Initializable {
     function _insert(uint256 leaf) internal returns (uint32 index) {
         uint32 _nextIndex = nextIndex;
         uint32 _levels = levels;
-        require(_nextIndex < uint32(2) ** _levels, "tree full");
+        if (_nextIndex >= uint32(1) << _levels) revert TreeFull();
 
         uint32 currentIndex = _nextIndex;
         uint256 currentHash = leaf;
@@ -125,6 +130,6 @@ contract IncrementalMerkleTree is Initializable {
         if (i == 17) return 0x2e8186e558698ec1c67af9c14d463ffc470043c9c2988b954d75dd643f36b992;
         if (i == 18) return 0x0f57c5571e9a4eab49e2c8cf050dae948aef6ead647392273546249d1c1ff10f;
         if (i == 19) return 0x1830ee67b5fb554ad5f63d4388800e1cfe78e310697d46e43c9ce36134f72cca;
-        revert("level too high");
+        revert LevelOutOfRange();
     }
 }
