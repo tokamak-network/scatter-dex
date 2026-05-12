@@ -1,49 +1,121 @@
-import { ZERO_ADDRESS, type NetworkConfig, type TokenInfo } from "@zkscatter/sdk";
+import {
+  LAUNCH_TOKENS,
+  ZERO_ADDRESS,
+  type NetworkConfig,
+  type TokenInfo,
+} from "@zkscatter/sdk";
 
-/** Launch-token addresses on Sepolia testnet. Sentinels until the
- *  contracts deploy — the placeholder values still let the UI thread
- *  symbol + decimals through every flow. Replace with real addresses
- *  before mainnet launch.
- *
- *  ETH↔WETH: the on-chain ERC-20 is WETH, but every UX surface
- *  shows "ETH" because that's how traders think. We surface a single
- *  entry symboled `"ETH"` with `isNative: true` whose address is the
- *  WETH ERC-20 — token-symbol lookups (e.g. for the active pair's
- *  base token) match cleanly with `pair.base === "ETH"` while the
- *  underlying contract calls and note material reference WETH. */
-const WETH_ADDRESS = "0x0000000000000000000000000000000000000010";
+// Pro's network config. Built at module load from `NEXT_PUBLIC_*`
+// envs that `scripts/dev.sh --apps pro` writes after `forge script
+// DeployLocal` so the running anvil's contract addresses flow into
+// the UI without manual editing. Production (Sepolia, mainnet) reads
+// the same keys from the deploy pipeline's env. When a key is unset,
+// the entry falls back to ZERO_ADDRESS — `isConfiguredAddress` and
+// `isNetworkConfigured` then short-circuit dispatch to the simulated
+// path so the UI stays usable without a live chain.
+//
+// Each `process.env.NEXT_PUBLIC_*` access has to be a *literal* key
+// for Next to inline the value into the client bundle; a dynamic
+// lookup like `process.env[name]` is not statically analysable and
+// would silently evaluate to `undefined` in the browser.
 
-const SEPOLIA_TOKENS: TokenInfo[] = [
-  { address: WETH_ADDRESS, symbol: "ETH", decimals: 18, isNative: true },
-  { address: "0x0000000000000000000000000000000000000011", symbol: "USDC", decimals: 6,  isNative: false },
-  { address: "0x0000000000000000000000000000000000000012", symbol: "USDT", decimals: 6,  isNative: false },
-  { address: "0x0000000000000000000000000000000000000013", symbol: "TON",  decimals: 18, isNative: false },
-];
+function pick(value: string | undefined, fallback = ""): string {
+  return value && value.length > 0 ? value : fallback;
+}
 
-/** Demo network — Sepolia stand-in until contract addresses land.
- *  The trade form pulls token addresses + decimals from `tokens`,
- *  so the UI flows correctly even while contracts are placeholder.
- *  When the deployed addresses arrive, replacing the entries here
- *  is the only mainnet-readiness change needed in this file. */
-export const DEMO_NETWORK: NetworkConfig = {
-  chainId: 11155111,
-  name: "Sepolia",
-  rpcUrl: "https://rpc.sepolia.org",
-  explorerBase: "https://sepolia.etherscan.io",
-  contracts: {
-    privateSettlement: ZERO_ADDRESS,
-    commitmentPool: ZERO_ADDRESS,
-    identityGate: ZERO_ADDRESS,
-    relayerRegistry: ZERO_ADDRESS,
-    weth: WETH_ADDRESS,
-  },
-  tokens: SEPOLIA_TOKENS,
-};
+/** Parse the comma-separated `NEXT_PUBLIC_TOKENS` list emitted by
+ *  `scripts/dev.sh write_app_env`. Format: `<addr>:<SYMBOL>:<decimals>`
+ *  per entry. Returns a symbol→address map. WETH is folded into
+ *  "ETH" because Pro's UX uses ETH while the on-chain ERC-20 is
+ *  WETH — `LAUNCH_TOKENS.ETH` already carries `isNative: true`. */
+function parseTokenList(raw: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!raw) return out;
+  for (const entry of raw.split(",")) {
+    const [addr, sym] = entry.split(":");
+    if (!addr || !sym) continue;
+    const symbol = sym.toUpperCase() === "WETH" ? "ETH" : sym.toUpperCase();
+    out[symbol] = addr;
+  }
+  return out;
+}
+
+function buildNetworkConfig(): NetworkConfig {
+  const overlay = parseTokenList(process.env.NEXT_PUBLIC_TOKENS);
+  // Also accept the dedicated `NEXT_PUBLIC_WETH_ADDRESS` key — it's
+  // emitted whether or not the symbol-list is, and supplying it
+  // independently lets a deploy provide WETH without re-stating it
+  // in `NEXT_PUBLIC_TOKENS`.
+  const wethAddress = pick(
+    process.env.NEXT_PUBLIC_WETH_ADDRESS,
+    overlay.ETH ?? ZERO_ADDRESS,
+  );
+  if (!overlay.ETH && wethAddress !== ZERO_ADDRESS) overlay.ETH = wethAddress;
+
+  const tokens: TokenInfo[] = Object.values(LAUNCH_TOKENS).map((t) => {
+    const addr = overlay[t.symbol];
+    return addr && addr !== ZERO_ADDRESS ? { ...t, address: addr } : t;
+  });
+
+  return {
+    chainId: Number(pick(process.env.NEXT_PUBLIC_CHAIN_ID, "11155111")),
+    name: pick(process.env.NEXT_PUBLIC_NETWORK_NAME, "Local / Sepolia"),
+    rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, "https://rpc.sepolia.org"),
+    explorerBase: pick(
+      process.env.NEXT_PUBLIC_EXPLORER_BASE,
+      "https://sepolia.etherscan.io",
+    ),
+    contracts: {
+      privateSettlement: pick(
+        process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS,
+        ZERO_ADDRESS,
+      ),
+      commitmentPool: pick(
+        process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS,
+        ZERO_ADDRESS,
+      ),
+      identityGate: pick(
+        process.env.NEXT_PUBLIC_IDENTITY_GATE_ADDRESS,
+        ZERO_ADDRESS,
+      ),
+      relayerRegistry: pick(
+        process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS,
+        ZERO_ADDRESS,
+      ),
+      feeVault: pick(process.env.NEXT_PUBLIC_FEE_VAULT_ADDRESS) || undefined,
+      weth: wethAddress,
+    },
+    tokens,
+    sharedOrderbookUrl:
+      pick(process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL) || undefined,
+    relayer: process.env.NEXT_PUBLIC_ZK_RELAYER_URL
+      ? { url: process.env.NEXT_PUBLIC_ZK_RELAYER_URL }
+      : undefined,
+  };
+}
+
+/** Demo / active network. Computed at module load from
+ *  `NEXT_PUBLIC_*` envs (see `scripts/dev.sh write_app_env`). When
+ *  the envs are unset the entries fall back to `ZERO_ADDRESS`, which
+ *  the dispatch layer reads as "simulate, don't broadcast". */
+export const DEMO_NETWORK: NetworkConfig = buildNetworkConfig();
+
+/** Whether the active network has its core contracts wired up.
+ *  Dispatch helpers in `lib/dispatch.ts` branch on this to fall
+ *  back to a simulated path when running against unconfigured
+ *  placeholders. */
+export function isNetworkConfigured(cfg: NetworkConfig = DEMO_NETWORK): boolean {
+  return (
+    cfg.contracts.privateSettlement !== ZERO_ADDRESS &&
+    cfg.contracts.commitmentPool !== ZERO_ADDRESS &&
+    cfg.contracts.relayerRegistry !== ZERO_ADDRESS
+  );
+}
 
 /** Full network list for the header switcher. Today this is just
- *  Sepolia + a "Mainnet (coming soon)" disabled entry — but the
- *  list shape is what the switcher consumes, so adding networks
- *  later is a one-line edit. */
+ *  the active network + a "Mainnet (coming soon)" disabled entry —
+ *  but the list shape is what the switcher consumes, so adding
+ *  networks later is a one-line edit. */
 export interface NetworkChoice {
   config: NetworkConfig;
   /** Whether the network is selectable from the switcher today. */
@@ -53,11 +125,8 @@ export interface NetworkChoice {
 }
 
 export const NETWORKS: readonly NetworkChoice[] = [
-  { config: DEMO_NETWORK, available: true, label: "Sepolia" },
+  { config: DEMO_NETWORK, available: true, label: DEMO_NETWORK.name ?? "Active" },
   {
-    // Mainnet config — same token list shape, real addresses TBD.
-    // Disabled until contracts deploy; the switcher renders it grey
-    // with "soon" so users see the roadmap from the picker itself.
     config: {
       chainId: 1,
       name: "Ethereum mainnet",

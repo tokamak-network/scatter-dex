@@ -6,15 +6,17 @@ import {
   toBytes32Hex,
   type CommitmentNote,
 } from "@zkscatter/sdk/zk";
+import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { DEMO_NETWORK } from "../lib/network";
+import { dispatchDeposit } from "../lib/dispatch";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
-import { abortableSleep, isAbortError } from "../lib/abort";
+import { isAbortError } from "../lib/abort";
 
 // Depositable tokens come straight from the active network's
 // whitelist — every entry that can be a sell-side or quote-side
@@ -39,7 +41,7 @@ interface DepositModalProps {
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
   const { add: addNote } = useVault();
-  const { account } = useWallet();
+  const { account, signer } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState("ETH");
@@ -133,9 +135,23 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
       const commitment = proveResult.publicSignals[0]!;
 
       setPhase({ kind: "submitting" });
-      // Phase 5+ wires CommitmentPool.deposit(); the abortable
-      // sleep stands in for it now and respects cancel.
-      await abortableSleep(600, ctrl.signal);
+      // The prove result carries snarkjs's raw-shaped proof; the
+      // dispatch layer expects the SDK's `DepositProofResult` shape
+      // (commitment + Groth16Proof tuples). Reconstruct it from
+      // `proveResult` — the prover already formatted the proof in
+      // the right shape, so this is purely a re-pack.
+      const depositProof: DepositProofResult = {
+        commitment,
+        proof: proveResult.proof,
+        publicSignals: proveResult.publicSignals,
+      };
+      const dispatch = await dispatchDeposit(
+        signer,
+        depositProof,
+        token.address,
+        amountWei,
+      );
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       await addNote({
         symbol: token.symbol,
@@ -144,10 +160,14 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
         commitment,
       });
       setPhase({ kind: "success", commitment });
+      const description =
+        dispatch.kind === "onchain"
+          ? `On-chain tx ${dispatch.txHash.slice(0, 10)}… · note added to your private vault.`
+          : "Note added to your private vault (simulated — pool not configured).";
       toast.push({
         kind: "success",
         title: `Deposited ${amount} ${token.symbol}`,
-        description: "Note added to your private vault.",
+        description,
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) {

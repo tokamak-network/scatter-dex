@@ -11,6 +11,9 @@ import { OrderModal } from "../components/OrderModal";
 import { MyPositionPanel } from "../components/MyPositionPanel";
 import { PairSelector } from "../components/PairSelector";
 import { AdvancedSettings } from "../components/AdvancedSettings";
+import { RecipientsSection } from "../components/RecipientsSection";
+import { NoteSelect } from "../components/NoteSelect";
+import { RelayerPill } from "../components/RelayerPill";
 import { DEMO_NETWORK } from "../lib/network";
 import { useReferencePrice } from "../lib/useReferencePrice";
 import { formatUsd, parseLooseNumber } from "../lib/format";
@@ -69,6 +72,7 @@ function projectOrderbook(
 export default function Workbench() {
   const { pair, side, setSide, price, setPrice, size, setSize } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const { notes } = useVault();
   const ob = useSharedOrderbook(pair.display);
 
@@ -80,6 +84,33 @@ export default function Workbench() {
     return t?.address ?? "0x0000000000000000000000000000000000000001";
   }, [pair.base]);
 
+  // Sell-side token address — drives the funding-note filter. Sell
+  // side means "sell `pair.base`" (sellToken = base); buy side flips
+  // it to the quote token. OrderModal validates the same mapping;
+  // pre-filtering here just keeps the dropdown honest.
+  const sellTokenAddress = useMemo(() => {
+    const symbol = side === "sell" ? pair.base : pair.quote;
+    const t = DEMO_NETWORK.tokens.find((x) => x.symbol === symbol);
+    return t?.address ?? "0x0000000000000000000000000000000000000001";
+  }, [side, pair.base, pair.quote]);
+
+  // Active funding note: explicit pick wins; otherwise the first
+  // note whose token matches the sell side. Falls back to null when
+  // no note matches — submit button disables itself in that case.
+  const selectedNote = useMemo(() => {
+    if (selectedNoteId) {
+      const found = notes.find((n) => n.id === selectedNoteId);
+      if (found && found.note.token === BigInt(sellTokenAddress.toLowerCase())) {
+        return found;
+      }
+    }
+    return (
+      notes.find(
+        (n) => n.note.token === BigInt(sellTokenAddress.toLowerCase()),
+      ) ?? null
+    );
+  }, [notes, selectedNoteId, sellTokenAddress]);
+
   const projected = useMemo(
     () => (ob.orders ? projectOrderbook(ob.orders, baseAddress) : null),
     [ob.orders, baseAddress],
@@ -89,7 +120,11 @@ export default function Workbench() {
   const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
   const fillFraction = (frac: number) => {
-    const n = notes[0];
+    // Source the % buttons from the *selected* funding note instead
+    // of `notes[0]` — when the user picks a different note (or sides
+    // flips to the quote token), Max should reflect that pick, not
+    // the legacy first-deposit slot.
+    const n = selectedNote;
     if (!n) return;
     const num = Number(n.amount.replace(/,/g, ""));
     if (!Number.isFinite(num)) return;
@@ -139,6 +174,12 @@ export default function Workbench() {
             </button>
           </div>
           <div className="space-y-3 text-sm">
+            <NoteSelect
+              sellTokenAddress={sellTokenAddress}
+              notes={notes}
+              selectedId={selectedNote?.id ?? null}
+              onSelect={setSelectedNoteId}
+            />
             <Field label={`Price (${pair.quote} / ${pair.base})`}>
               <input
                 value={price}
@@ -152,7 +193,7 @@ export default function Workbench() {
                 onChange={(e) => setSize(e.target.value)}
                 className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
               />
-              {notes.length > 0 && (
+              {selectedNote && (
                 <div className="mt-1.5 flex gap-1">
                   {[0.25, 0.5, 0.75, 1].map((f) => (
                     <button
@@ -169,6 +210,7 @@ export default function Workbench() {
             </Field>
           </div>
 
+          <RecipientsSection />
           <AdvancedSettings />
 
           <FillEstimate side={side} price={price} size={size} baseSymbol={pair.base} quoteSymbol={pair.quote} />
@@ -177,7 +219,18 @@ export default function Workbench() {
             generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
             mobile. Post-launch fee schedule set by governance.
           </div>
-          <Button onClick={() => setOrderOpen(true)} block size="lg" className="mt-4">
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <span className="text-xs text-[var(--color-text-muted)]">Route via</span>
+            <RelayerPill />
+          </div>
+          <Button
+            onClick={() => setOrderOpen(true)}
+            block
+            size="lg"
+            className="mt-3"
+            disabled={!selectedNote}
+            title={!selectedNote ? "No funding note for this side — deposit first." : undefined}
+          >
             Sign &amp; submit
           </Button>
         </section>
@@ -225,7 +278,7 @@ export default function Workbench() {
         pair={pair.display}
         price={price}
         size={size}
-        note={notes[0] ?? null}
+        note={selectedNote}
       />
     </div>
   );
