@@ -30,6 +30,10 @@ state clearly what the protocol does and does not do.
 - **[Security and Audit Status](./SECURITY-AND-AUDIT.md)** — current
   audit status (unaudited, pre-launch), known limitations and trust
   assumptions, vulnerability-disclosure channels, bug-bounty position.
+- **[Sanctions Enforcement Model](./SANCTIONS-ENFORCEMENT-MODEL.md)** —
+  which entry points check the sanctions list, retroactive
+  enforcement behaviour, why the claim-time gate is the
+  load-bearing piece of the compliance posture.
 
 ## What ScatterDEX is not
 
