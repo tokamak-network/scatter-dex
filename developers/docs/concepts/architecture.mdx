@@ -21,18 +21,13 @@ The engine is built around four primitives:
    that controls who can deposit or claim, without revealing the
    identity on-chain.
 
-**Stealth addresses (EIP-5564) are an opt-in option** on top — users
-who want unlinkable payouts can publish a meta-address; users who
-prefer a regular wallet address are free to use one. The protocol
-supports both routes; pick per claim.
-
 ## Where the four flows fit
 
 | Flow | Reference app | What's specific to it | What's shared |
 |---|---|---|---|
 | Private OTC trading | [Pro](https://pro.zkscatter.xyz) | peer-to-peer order match, dual half-proofs (`settleAuth`), shared orderbook | pool, identity, relayer |
-| Private payments | [Pay](https://pay.zkscatter.xyz) | one-sided send, recipient claims later (stealth or regular address) | pool, identity, relayer |
-| Identity-gated drops | [Drop](https://drop.zkscatter.xyz) | bulk distribution, one-sided claim (no maker), batch claims (stealth optional) | pool, identity, relayer |
+| Private payments | [Pay](https://pay.zkscatter.xyz) | one-sided send, recipient claims later to their wallet | pool, identity, relayer |
+| Identity-gated drops | [Drop](https://drop.zkscatter.xyz) | bulk distribution, one-sided claim (no maker), batch claims | pool, identity, relayer |
 | Mobile wallet | Mobile | native ZK prover, on-device key custody, biometric unlock | all of the above |
 
 If you're building something new on zkScatter, you're almost certainly
@@ -115,23 +110,6 @@ then withdraws their bond. See [Run a relayer](/docs/operate/run-a-relayer-node)
 
 Apps discover relayers with `loadRelayersWithApiInfo` — combining
 on-chain registry rows with live `/api/info` probes.
-
-## Stealth addresses
-
-Order payouts and drop claims **may** route through stealth addresses
-(EIP-5564) when the recipient opts in. A recipient who wants
-unlinkability publishes a meta-address once; senders derive a fresh
-stealth address per payout from `ephemeralPubKey × viewingKey`. The
-result is unlinkable: even with the meta-address, an observer cannot
-tell which on-chain commitments belong to whom without the viewing key.
-
-Recipients who don't need unlinkability — internal treasuries, KYC'd
-counterparties, audited workflows — can take payouts at a regular
-address. The same `claim` circuit works for both; only the spending
-key derivation differs.
-
-See [Stealth addresses](/docs/concepts/stealth-addresses) for the math and
-the SDK helpers.
 
 ## Failure modes
 

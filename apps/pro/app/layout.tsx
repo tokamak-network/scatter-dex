@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
-import { StealthMenu } from "./components/StealthMenu";
 import { WrongChainBanner } from "./components/WrongChainBanner";
 import { AppShellHeader } from "@zkscatter/ui";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
@@ -58,7 +57,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
-                                  <StealthMenu />
                                 </>
                               }
                             />

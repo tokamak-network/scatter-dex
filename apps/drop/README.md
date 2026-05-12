@@ -14,8 +14,7 @@ are bot-farmed within minutes and dumped immediately.
 - `/` — campaign list + "new campaign" CTA
 - `/campaigns/new` — 4-step wizard: token & supply → recipients (CSV /
   snapshot import) → sybil policy → claim window
-- `/claim/[campaign]` — recipient-facing claim page (gasless, optional
-  stealth address)
+- `/claim/[campaign]` — recipient-facing claim page (gasless)
 
 All routes use mock data. No SDK calls yet.
 
@@ -42,3 +41,11 @@ npm run dev   # http://localhost:4002
 - Recipient amounts hidden on-chain — reduces immediate dump pressure
 - Gasless claim — typical claim rate +30–40%
 - Embeddable claim widget (project keeps users on their own site)
+
+## Compliance
+
+Scatter Drop is **not a mixer or anonymity tool**. Use is prohibited
+for money laundering, terrorist financing, sanctions evasion, evasion
+of statutory reporting, or any other illegal activity. Anti-sybil
+zk-X509 attestation is a first-class control. Operators may decline
+service and report suspicious activity as required by applicable law.

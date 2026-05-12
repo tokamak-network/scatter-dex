@@ -78,7 +78,6 @@ export default function MobilePage() {
               <Row label="Runtime" value="React Native (Expo, dev client + new arch)" />
               <Row label="Storage" value="expo-secure-store (keys) + expo-sqlite (history) + AsyncStorage" />
               <Row label="Prover" value="Native Rust (groth16) over snarkjs-compatible witness" />
-              <Row label="Stealth" value="EIP-5564 sender + recipient (PR #252 / #256)" />
               <Row label="Identity" value="zk-X509 IdentityGate, on-device verification" />
             </tbody>
           </table>
@@ -91,8 +90,7 @@ export default function MobilePage() {
         <p className="mx-auto mt-2 max-w-xl text-sm text-[var(--color-text-muted)]">
           Public beta opens with v1 launch. Phase C native prover (deposit
           / authorize / claim / cancel) shipped; PIN auth + Cancel UI
-          shipped; transport stall handling and stealth recipient porting
-          in flight.
+          shipped; transport stall handling in flight.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <Link

@@ -71,7 +71,7 @@ export default function Landing() {
         </p>
         <div className="grid grid-cols-4 gap-4">
           <Step n={1} title="Pick a recipient source" body="Snapshot voters, NFT holders, or upload a CSV. We compute the merkle root." />
-          <Step n={2} title="Set sybil & privacy policy" body="Require zk-X509 (real 1 person = 1 claim). Toggle gasless. Toggle stealth-address claim." />
+          <Step n={2} title="Set sybil & privacy policy" body="Require zk-X509 (real 1 person = 1 claim). Toggle gasless claim." />
           <Step n={3} title="Launch the campaign" body="One transaction commits the campaign on-chain. Share the claim URL or embed the widget on your site." />
           <Step n={4} title="Monitor live" body="See claim rate, sybil attempts blocked, and per-day curve — share the live counter on Twitter." />
         </div>
@@ -122,7 +122,7 @@ export default function Landing() {
           🎉 Launch event: zero fees on drops that launch before Dec 31, 2026.
         </p>
         <div className="grid grid-cols-3 gap-4">
-          <PriceCard plan="Small drop" price="$99" sub="Per campaign · up to $50K distributed" features={["zk-X509 anti-sybil", "Gasless claim", "Stealth claim", "Standard claim page"]} />
+          <PriceCard plan="Small drop" price="$99" sub="Per campaign · up to $50K distributed" features={["zk-X509 anti-sybil", "Gasless claim", "Standard claim page"]} />
           <PriceCard plan="Standard" price="0.2%" sub="Of distributed token value (no minimum)" features={["Everything in Small", "Live dashboard + Twitter widget", "Snapshot / NFT import", "Sybil block report"]} featured />
           <PriceCard plan="Launch partner" price="Custom" sub="From $2K · white-label" features={["Everything in Standard", "Custom domain & branding", "Embeddable widget for your site", "Co-marketing"]} />
         </div>

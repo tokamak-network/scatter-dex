@@ -23,7 +23,7 @@ lives in `docs/product/PRO_REPOSITION.md` §7–§8.
 - `/orders` — order history (matched / pending / settled)
 
 **Routes / surfaces planned (launch-blockers):**
-- `/inbox` — stealth-receive scan + claim
+- `/inbox` — receive scan + claim
 - `/settings` — network, RPC, default relayer, expiry, theme
 - `WithdrawModal`, `CancelOrderModal`
 - Pair selector + network switcher in workbench header
@@ -55,3 +55,12 @@ npm run dev   # http://localhost:4003
 - Provable MEV-free (limit-order matching, not AMM)
 - Regulator-ready (Dual-CA, zk-X509 — not a mixer)
 - Same balance accessible from web Pro and mobile companion
+
+## Compliance
+
+Scatter Pro is **not a mixer or anonymity tool**. Use is prohibited
+for money laundering, terrorist financing, sanctions evasion, evasion
+of statutory reporting (including Travel Rule), or any other illegal
+activity. The protocol is designed for compliant private limit-order
+trading with optional zk-X509 identity gating. Operators may decline
+service and report suspicious activity as required by applicable law.

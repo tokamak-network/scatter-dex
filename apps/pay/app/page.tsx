@@ -84,7 +84,7 @@ export default function Landing() {
           <Step
             n={2}
             title="Sign once"
-            body="One signature, one on-chain transaction. Funds escrow into a private vault and are split into per-recipient stealth addresses."
+            body="One signature, one on-chain transaction. Funds escrow into a private vault and are split into per-recipient payouts."
           />
           <Step
             n={3}
