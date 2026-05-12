@@ -8,6 +8,7 @@ import {SanctionsList} from "../../src/SanctionsList.sol";
 import {IdentityGate} from "../../src/IdentityGate.sol";
 import {RelayerRegistry} from "../../src/RelayerRegistry.sol";
 import {CommitmentPool} from "../../src/zk/CommitmentPool.sol";
+import {PrivateSettlement} from "../../src/zk/PrivateSettlement.sol";
 
 /// @dev Centralised proxy boilerplate for upgradeable contracts under test.
 ///      Deploys a fresh implementation + TransparentUpgradeableProxy and
@@ -71,5 +72,19 @@ library ProxyDeployer {
         );
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
         return CommitmentPool(address(proxy));
+    }
+
+    function deployPrivateSettlement(
+        address proxyAdminOwner,
+        address initialOwner,
+        address pool,
+        address claimVerifier,
+        address weth
+    ) internal returns (PrivateSettlement) {
+        PrivateSettlement impl = new PrivateSettlement();
+        bytes memory initData =
+            abi.encodeCall(PrivateSettlement.initialize, (initialOwner, pool, claimVerifier, weth));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
+        return PrivateSettlement(payable(address(proxy)));
     }
 }

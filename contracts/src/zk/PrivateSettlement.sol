@@ -3,8 +3,10 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {CommitmentPool} from "./CommitmentPool.sol";
 import {IClaimVerifier} from "./IClaimVerifier.sol";
 import {IAuthorizeVerifier} from "./IAuthorizeVerifier.sol";
@@ -25,7 +27,7 @@ import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 ///         same-token scatters via `scatterDirectAuth`. Claims are
 ///         distributed via `claimWithProof` — a ZK proof of membership in
 ///         a per-settle `claimsRoot` without revealing which settle.
-contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
+contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
 
     // ─── Errors ──────────────────────────────────────────────────
@@ -166,14 +168,17 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
 
     // ─── State ───────────────────────────────────────────────────
     // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
-    CommitmentPool public immutable pool;
+    /// @dev Was `immutable` before the proxy migration; now a state var set
+    ///      once in `initialize()` and never reassigned.
+    CommitmentPool public pool;
     /// @notice Verifier registry for `circuits/claim.circom`, keyed by
     ///         the originating settlement's tier. Each tier has its
     ///         own `claimsTreeDepth` (4 / 6 / 7) so a single claim
     ///         verifier cannot serve all tiers. Constructor seeds
     ///         tier 16; new tiers register via `setClaimVerifier`.
     mapping(uint8 => IClaimVerifier) public claimVerifierByTier;
-    address public immutable weth;
+    /// @dev See `pool` — was `immutable` pre-proxy.
+    address public weth;
 
     /// @notice Optional relayer registry — if set, only active relayers can settle.
     RelayerRegistry public relayerRegistry;
@@ -223,14 +228,28 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
     /// @notice Optional sanctions list. If set, sanctioned addresses cannot claim or settle.
     ISanctionsList public sanctionsList;
 
-    // ─── Constructor ─────────────────────────────────────────────
-    constructor(
+    /// @dev Reserved storage for future upgrades. Decrement when new state added.
+    uint256[50] private __gap;
+
+    // ─── Initializer ─────────────────────────────────────────────
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address initialOwner,
         address _pool,
         address _claimVerifier,
         address _weth
-    ) Ownable(msg.sender) {
+    ) external initializer {
+        if (initialOwner == address(0)) revert ZeroAddress();
         if (_pool == address(0) || _claimVerifier == address(0) || _weth == address(0))
             revert ZeroAddress();
+        __Ownable_init(initialOwner);
+        __Ownable2Step_init();
+        __ReentrancyGuard_init();
         pool = CommitmentPool(_pool);
         // Seed the claim-verifier registry with tier 16 — the only live
         // circuit today. New tiers attach post-deploy via setClaimVerifier.
@@ -238,7 +257,7 @@ contract PrivateSettlement is ReentrancyGuard, Ownable2Step {
         weth = _weth;
     }
 
-    function renounceOwnership() public pure override { revert RenounceOwnershipDisabled(); }
+    function renounceOwnership() public pure override(OwnableUpgradeable) { revert RenounceOwnershipDisabled(); }
     function setPaused(bool _paused) external onlyOwner { paused = _paused; emit PausedUpdated(_paused); }
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();

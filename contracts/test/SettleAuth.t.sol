@@ -67,10 +67,8 @@ contract SettleAuthTest is Test {
 
         pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
         weth = new MockWETH();
-        settlement = new PrivateSettlement(
-            address(pool),
-            address(claimVerifier),
-            address(weth)
+        settlement = ProxyDeployer.deployPrivateSettlement(
+            address(this), address(this), address(pool), address(claimVerifier), address(weth)
         );
         usdc = new SAToken("USDC", "USDC");
 
@@ -435,8 +433,8 @@ contract SettleAuthTest is Test {
         thinPool.setTokenWhitelist(address(usdc), true);
 
         MockAuthorizeVerifier thinAuthVerifier = new MockAuthorizeVerifier();
-        PrivateSettlement thinSettlement = new PrivateSettlement(
-            address(thinPool), address(claimVerifier), address(weth)
+        PrivateSettlement thinSettlement = ProxyDeployer.deployPrivateSettlement(
+            address(this), address(this), address(thinPool), address(claimVerifier), address(weth)
         );
         thinSettlement.setTokenWhitelist(address(weth), true);
         thinSettlement.setTokenWhitelist(address(usdc), true);

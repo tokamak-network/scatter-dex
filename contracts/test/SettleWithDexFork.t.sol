@@ -60,8 +60,8 @@ contract SettleWithDexForkTest is Test {
         authVerifier = new MockAuthorizeVerifier();
 
         pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
-        settlement = new PrivateSettlement(
-            address(pool), address(claimVerifier), WETH
+        settlement = ProxyDeployer.deployPrivateSettlement(
+            address(this), address(this), address(pool), address(claimVerifier), WETH
         );
 
         feeVault = ProxyDeployer.deployFeeVault(address(this), address(this), treasury, 0);

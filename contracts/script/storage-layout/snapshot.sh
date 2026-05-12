@@ -15,7 +15,7 @@ CONTRACTS=(
   IdentityGate
   RelayerRegistry
   CommitmentPool
-  # Future PRs append here: PrivateSettlement.
+  PrivateSettlement
 )
 
 for c in "${CONTRACTS[@]}"; do

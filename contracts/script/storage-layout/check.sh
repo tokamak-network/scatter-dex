@@ -21,6 +21,7 @@ CONTRACTS=(
   IdentityGate
   RelayerRegistry
   CommitmentPool
+  PrivateSettlement
 )
 
 normalize() {

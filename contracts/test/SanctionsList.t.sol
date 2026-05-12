@@ -47,8 +47,8 @@ contract SanctionsListTest is Test {
 
         pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
         weth = new MockWETH();
-        settlement = new PrivateSettlement(
-            address(pool), address(claimVerifier), address(weth)
+        settlement = ProxyDeployer.deployPrivateSettlement(
+            address(this), address(this), address(pool), address(claimVerifier), address(weth)
         );
         token = new SLToken();
 
