@@ -210,7 +210,10 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      `bondAmount` from caller via `safeTransferFrom` and returns the same value
     ///      (`msg.value` MUST be 0).
     function _pullBond(uint256 bondAmount) internal returns (uint256) {
-        if (address(bondToken) == address(0)) {
+        // `bondToken` is a storage var post-upgradeable migration (was `immutable`);
+        // cache to avoid a redundant SLOAD on the ERC20 path.
+        IERC20 _bondToken = bondToken;
+        if (address(_bondToken) == address(0)) {
             // Native mode
             if (bondAmount != 0) revert WrongPaymentMode();
             return msg.value;
@@ -218,7 +221,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         // ERC20 mode
         if (msg.value != 0) revert WrongPaymentMode();
         if (bondAmount != 0) {
-            bondToken.safeTransferFrom(msg.sender, address(this), bondAmount);
+            _bondToken.safeTransferFrom(msg.sender, address(this), bondAmount);
         }
         return bondAmount;
     }
@@ -226,11 +229,12 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     /// @dev Push bond back to recipient. Skips no-op transfers so a 0-bond exit is gas-efficient.
     function _pushBond(address to, uint256 amount) internal {
         if (amount == 0) return;
-        if (address(bondToken) == address(0)) {
+        IERC20 _bondToken = bondToken;
+        if (address(_bondToken) == address(0)) {
             (bool sent,) = to.call{value: amount}("");
             if (!sent) revert BondTransferFailed();
         } else {
-            bondToken.safeTransfer(to, amount);
+            _bondToken.safeTransfer(to, amount);
         }
     }
 
