@@ -15,10 +15,9 @@ import {
 } from "react";
 import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
-import { shortAddr, useMetaAddress, useMounted, useWallet } from "@zkscatter/sdk/react";
+import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import { decodeClaimPackage } from "@zkscatter/sdk/notes";
 import { formatTokenLabel } from "@zkscatter/sdk";
-import { deriveStealthForPackage } from "../../_lib/stealthDerive";
 import { submitClaim } from "../../_lib/claimSubmit";
 import {
   indexLatestNotifications,
@@ -203,10 +202,7 @@ function PayoutBody({
   const logsByRow = useMemo(() => indexLatestNotifications(record), [record]);
 
   // Hooks needed for the inline gasless claim path. Read-provider is
-  // always available once the WalletProvider mounts; meta keys come
-  // from the user's stealth wallet (only valid when the recipient
-  // row was derived from this wallet's meta-address).
-  const { keys, ready: keysReady } = useMetaAddress();
+  // always available once the WalletProvider mounts.
   const { readProvider } = useWallet();
   const [claimingRow, setClaimingRow] = useState<number | null>(null);
   const [claimError, setClaimError] = useState<string | null>(null);
@@ -237,12 +233,9 @@ function PayoutBody({
     [markSent, setBusy, setOpenMenu],
   );
 
-  /** Inline gasless claim. Decodes the row's encoded `ClaimPackage`,
-   *  derives the stealth privkey from the operator's meta-keys (only
-   *  succeeds when the recipient address came from this wallet's
-   *  meta-address — i.e. operator's own `my-stealth-*` rows), and
-   *  pushes the claim through the run's bundled relayer URL. The
-   *  claim reconciler effect picks the claimed-flag up via
+  /** Inline gasless claim. Decodes the row's encoded `ClaimPackage`
+   *  and pushes the claim through the run's bundled relayer URL.
+   *  The claim reconciler effect picks the claimed-flag up via
    *  `markClaimed` once the tx mines, so the row badge flips
    *  Available → Claimed without an extra refresh. */
   const onClaimRow = useCallback(
@@ -256,10 +249,6 @@ function PayoutBody({
         setClaimError("Read provider not ready — connect to a network first.");
         return;
       }
-      // No `keysReady` gate: the gasless path doesn't need the
-      // operator's stealth keys (proof binds to the package's claim
-      // secret). Stealth-key derivation below is best-effort and
-      // only used for the self-pay fallback signer.
       setClaimingRow(row.rowIndex);
       setClaimPhase("validating");
       setLastClaimTx(null);
@@ -280,21 +269,9 @@ function PayoutBody({
             "This run wasn't bundled with a relayer URL, so the operator can't claim on behalf — the recipient must self-pay from their own wallet.",
           );
         }
-        // Stealth rows: derive the recipient's spending key from the
-        // operator's meta keys so we can pass a signer for the
-        // self-pay fallback (relayer rejection / 5xx). Non-stealth
-        // rows skip this — the gasless path doesn't need a signer.
-        let signer: ethers.Wallet | undefined;
-        if (pkg.ephemeralPubKey && keysReady) {
-          const derived = deriveStealthForPackage(pkg, keys);
-          if (derived?.matches) {
-            signer = new ethers.Wallet(derived.privateKey, readProvider);
-          }
-        }
         const { txHash } = await submitClaim({
           pkg,
           readProvider,
-          signer,
           onPhase: setClaimPhase,
         });
         setLastClaimTx({ rowIndex: row.rowIndex, txHash });
@@ -352,7 +329,7 @@ function PayoutBody({
         setClaimPhase(null);
       }
     },
-    [keys, keysReady, readProvider, refresh, markClaimed, setOpenMenu],
+    [readProvider, refresh, markClaimed, setOpenMenu],
   );
 
   return (
@@ -440,7 +417,6 @@ function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
             <th className="py-1 pr-3">#</th>
             <th className="py-1 pr-3">Recipient</th>
             <th className="py-1 pr-3">Email</th>
-            <th className="py-1 pr-3">Stealth</th>
             <th className="py-1">Claim link</th>
           </tr>
         </thead>
@@ -452,7 +428,6 @@ function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
                 <td className="py-1 pr-3 font-mono">{r.rowIndex + 1}</td>
                 <td className="py-1 pr-3">{r.name || "—"}</td>
                 <td className="py-1 pr-3 break-all">{r.email ?? "—"}</td>
-                <td className="py-1 pr-3">{r.ephemeralPubKey ? "yes" : "no"}</td>
                 <td className="break-all py-1 font-mono">
                   {url ? (
                     <a href={url} className="text-blue-700 underline">
@@ -467,37 +442,6 @@ function PrintOnlyClaimLinks({ record }: { record: RunRecord }) {
           })}
         </tbody>
       </table>
-      {record.recipients.some((r) => r.ephemeralPubKey) && (
-        <>
-          <h3 className="mt-5 border-b border-gray-400 pb-1 text-[11px] font-semibold uppercase tracking-wide">
-            Stealth ephemeral pubkeys
-          </h3>
-          <p className="mt-1 text-[10px] text-gray-600">
-            Required for the recipient to derive the spending private key.
-            Pair each row with the matching meta-address (kept off-record).
-          </p>
-          <table className="mt-2 w-full text-[10px]">
-            <thead>
-              <tr className="border-b border-gray-300 text-left">
-                <th className="py-1 pr-3">#</th>
-                <th className="py-1 pr-3">Stealth address</th>
-                <th className="py-1">Ephemeral pubkey</th>
-              </tr>
-            </thead>
-            <tbody>
-              {record.recipients
-                .filter((r) => r.ephemeralPubKey)
-                .map((r) => (
-                  <tr key={r.rowIndex} className="border-b border-gray-200 align-top">
-                    <td className="py-1 pr-3 font-mono">{r.rowIndex + 1}</td>
-                    <td className="break-all py-1 pr-3 font-mono">{r.address}</td>
-                    <td className="break-all py-1 font-mono">{r.ephemeralPubKey}</td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </>
-      )}
     </section>
   );
 }
@@ -512,7 +456,7 @@ function PayoutHeader({ record }: { record: RunRecord }) {
       <div>
         <h1 className="text-2xl font-semibold">{record.label}</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          Submitted {submitted} · One on-chain tx · Stealth claim links · No expiry
+          Submitted {submitted} · One on-chain tx · Per-recipient claim links · No expiry
         </p>
       </div>
       <div data-print="hide" className="flex gap-2">
@@ -816,7 +760,7 @@ function RecipientTable({
           <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
             <tr>
               <th className="px-5 py-3 text-left">Name</th>
-              <th className="px-5 py-3 text-left">Stealth address</th>
+              <th className="px-5 py-3 text-left">Recipient address</th>
               <th className="px-5 py-3 text-right">Amount</th>
               <th className="px-5 py-3 text-left">Claim status</th>
               <th className="px-5 py-3 text-left">Notification</th>
@@ -873,7 +817,7 @@ function RecipientTable({
       </div>
       <p className="mt-3 text-xs text-[var(--color-text-muted)]">
         Each recipient sees only their own amount when they claim. The on-chain transaction
-        reveals only the stealth addresses, not the mapping to names or per-recipient amounts.
+        reveals only the recipient addresses, not the mapping to names or per-recipient amounts.
         Claim links never expire.
       </p>
     </section>
@@ -1132,9 +1076,9 @@ function TxHashChip({
 }
 
 /** Inline cell: short address + copy button + optional explorer link.
- *  Operators routinely need to spot-check a stealth address against
- *  their wallet/explorer; making the truncated text actionable saves
- *  the "select-then-Cmd-C" dance. Copy uses the clipboard API and a
+ *  Operators routinely need to spot-check a recipient against their
+ *  wallet/explorer; making the truncated text actionable saves the
+ *  "select-then-Cmd-C" dance. Copy uses the clipboard API and a
  *  brief check-mark so the click registers visibly. */
 function AddressCell({ address }: { address: string }) {
   const explorerBase = getNetworkConfig().explorerBase;
@@ -1188,9 +1132,7 @@ interface RowMenuProps {
   alreadySent: boolean;
   busy: boolean;
   payslipHref: string;
-  /** Trigger the inline gasless claim. Only succeeds when the
-   *  recipient's stealth address was derived from the connected
-   *  wallet's meta-address — the parent surfaces a warning otherwise. */
+  /** Trigger the inline gasless claim. */
   onClaim: () => void;
   /** True for the row currently mid-claim. Disables the button +
    *  swaps the label to "Claiming…". */

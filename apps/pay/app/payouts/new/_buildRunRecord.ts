@@ -46,18 +46,11 @@ export interface BuildRunRecordInput {
   /** Per-recipient claim payloads from `realSettle`. Aligned with
    *  `rows` by index. Absent for env-not-configured demo runs. */
   claimPackages?: ClaimPackage[];
-  /** Stealth address → ephemeral pubkey map produced by
-   *  `applyStealthRouting`. When `rows[i].address` is a stealth
-   *  address present here, the matching ephPub is mirrored onto
-   *  `RecipientRow.ephemeralPubKey` so a re-issued claim link still
-   *  carries the right value. */
-  ephPubByAddress?: Record<string, string>;
   /** Lower-cased recipient address → email captured at picker /
-   *  upload / stealth-routing time. Becomes the **only** source of
-   *  email for the run record; buildRunRecord no longer reads the
-   *  live address book. Keeping this immutable at submit time means
-   *  later book edits never mutate a historical run record's contact
-   *  fields. */
+   *  upload time. Becomes the **only** source of email for the run
+   *  record; buildRunRecord no longer reads the live address book.
+   *  Keeping this immutable at submit time means later book edits
+   *  never mutate a historical run record's contact fields. */
   emailByAddress?: Record<string, string>;
   /** Same picker-time snapshot pattern for telegram / kakao. The
    *  address book is shared mutable state across runs; reading it at
@@ -97,7 +90,6 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
   const recipients: RecipientRow[] = input.rows.map((r, i) => {
     const lower = r.address.toLowerCase();
     const pkg = input.claimPackages?.[i];
-    const ephPub = input.ephPubByAddress?.[lower];
     const email = input.emailByAddress?.[lower];
     const telegramHandle = input.telegramByAddress?.[lower];
     const kakaoId = input.kakaoByAddress?.[lower];
@@ -115,7 +107,6 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
       ...(email ? { email } : {}),
       ...(telegramHandle ? { telegramHandle } : {}),
       ...(kakaoId ? { kakaoId } : {}),
-      ...(ephPub ? { ephemeralPubKey: ephPub } : {}),
       ...(pkg ? { claimPackage: encodeClaimPackage(pkg) } : {}),
     };
   });

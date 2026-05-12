@@ -109,11 +109,8 @@ export default function ClaimInbox() {
         <h1 className="text-2xl font-semibold">Claims</h1>
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text-muted)]">
           Pick a working folder first so received-claim history can be
-          stored locally. Use{" "}
-          <Link href="/stealth/wallet" className="text-[var(--color-primary)] hover:underline">
-            Stealth → Wallet
-          </Link>{" "}
-          or any page with the folder picker.
+          stored locally. Use the dashboard's folder picker on the home
+          page.
         </div>
       </div>
     );
@@ -124,15 +121,7 @@ export default function ClaimInbox() {
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Claims</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Tracks claims sent to your regular wallet address. Stealth
-          claims live in{" "}
-          <Link
-            href="/stealth/inbox"
-            className="text-[var(--color-primary)] hover:underline"
-          >
-            Stealth → Inbox
-          </Link>
-          .
+          Tracks claims sent to your wallet address.
           {account && (
             <>
               {" "}Connected as <span className="font-mono">{shortAddr(account)}</span>.
