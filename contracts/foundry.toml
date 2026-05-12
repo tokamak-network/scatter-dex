@@ -8,6 +8,10 @@ solc_version = "0.8.28"
 via_ir = false
 optimizer = true
 optimizer_runs = 200
+# Emit storageLayout so `forge inspect <contract> storage` (used by
+# script/storage-layout/{check,snapshot}.sh) works without a separate
+# `--extra-output` build pass.
+extra_output = ["storageLayout"]
 
 remappings = [
     "forge-std/=lib/forge-std/src/",

@@ -14,7 +14,7 @@
       "label": "identityRegistry",
       "offset": 0,
       "slot": "1",
-      "type": "t_contract(IIdentityRegistry)2357"
+      "type": "t_contract(IIdentityRegistry)2379"
     },
     {
       "astId": 1467,
@@ -93,7 +93,7 @@
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(IIdentityRegistry)2357": {
+    "t_contract(IIdentityRegistry)2379": {
       "encoding": "inplace",
       "label": "contract IIdentityRegistry",
       "numberOfBytes": "20"
