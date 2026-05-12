@@ -80,7 +80,6 @@ import { csvSafeLabel, formatRecipientCsvRow, formatRelativeAgo, parseAmount, pa
 import { csvEscape, downloadCsv } from "../../_lib/csv";
 import { parseRecipientFile } from "../../_lib/parseRecipientFile";
 import { SpreadsheetEditor } from "./_components/SpreadsheetEditor";
-import { applyStealthRouting } from "../../_lib/stealthRouting";
 import {
   clearWizardDraft,
   loadWizardDraft,
@@ -99,7 +98,6 @@ import { AddressBookPicker } from "../../_components/AddressBookPicker";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import { type WalletEntry } from "@zkscatter/sdk/storage";
-import { generateStealthAddress } from "@zkscatter/sdk/zk";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
 
 import { REASON_PLACEHOLDER, CATEGORIES, type CategoryId } from "./_categories";
@@ -239,27 +237,9 @@ function NewPayout() {
   // dropdown again, sourced from `cfg.supportedChains`.
   const chain = chainName(getNetworkConfig().chainId);
   const [csv, setCsv] = useState(category.sampleCsv);
-  // Stealth toggle was removed from the UI — every recipient with a
-  // metaAddress in the address book is auto-routed to a one-time
-  // stealth address; entries without one fall through to their EOA.
-  // Kept as a constant so `applyStealthRouting` keeps its existing
-  // shape and a future per-run override can resurface here.
-  const stealth = true;
-  // Picker-time stealth derivations for entries that have ONLY a
-  // metaAddress (no default EOA). The picker generates a fresh
-  // one-time stealth address per pick and stows the matching
-  // ephemeral pubkey here keyed by lowercase stealth address; the
-  // map flows into `applyStealthRouting`'s output at submit time so
-  // the ClaimPackage gets the right ephPub. Walletbook entries with
-  // a default address still go through the per-render lookup path,
-  // so this map only carries the stealth-only pickups.
-  const [pickerEphPubs, setPickerEphPubs] = useState<Record<string, string>>({});
-  // Mirror of pickerEphPubs but for email — captured at picker-time so a
-  // stealth-only book entry's email survives into the run record. Without
-  // it, `buildRunRecord`'s `bookByAddress` lookup misses the entry (it
-  // keys on `e.address`, undefined for stealth-only) and the recipient
-  // ends up with `email: undefined` — the detail page then disables
-  // "Send via email" even though the book has the address.
+  // Per-recipient email captured at picker-time so a book entry's
+  // email survives into the run record even if the book is later
+  // edited. Keyed by lowercase recipient address.
   const [pickerEmails, setPickerEmails] = useState<Record<string, string>>({});
   // Picker-time snapshot maps for the other contact channels — see
   // BuildRunRecordInput for the why (book is mutable shared state).
@@ -499,8 +479,6 @@ function NewPayout() {
     let txHash: string | undefined;
     let claimPackages: ClaimPackage[] | undefined;
     let totalRelayerFeeRaw: bigint | undefined;
-    let submittedRows: typeof rows | undefined;
-    let submittedEphPubByAddress: Record<string, string> | undefined;
     let submittedEmailByAddress: Record<string, string> | undefined;
     // Whether `persist(allowFailure: true)` succeeded on the partial
     // path. The helper swallows save errors and returns null, so a
@@ -547,16 +525,11 @@ function NewPayout() {
               tokenAddress,
               operatorAddress: account,
               chainId,
-              // Persist the stealth-routed rows so RunRecord recipients
-              // mirror the on-chain claim recipients. `submittedRows`
-              // is set inside the settle branch below; default to the
-              // user-typed rows for the demo / no-settle path.
-              rows: submittedRows ?? rows,
+              rows,
               total,
               claimFrom,
               txHash,
               claimPackages,
-              ephPubByAddress: submittedEphPubByAddress,
               emailByAddress: submittedEmailByAddress,
               telegramByAddress: pickerTelegrams,
               kakaoByAddress: pickerKakaos,
@@ -576,49 +549,12 @@ function NewPayout() {
       };
 
       if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
-        // Stealth routing only runs on the real-settle path: the
-        // demo / env-not-configured branch persists the user-typed
-        // rows verbatim so the saved RunRecord doesn't claim it
-        // settled to a stealth address that nothing on-chain knows
-        // about. The routed rows replace each address-book recipient
-        // that has a metaAddress with a one-time stealth address;
-        // non-stealth recipients pass through unchanged.
-        const stealthRouted = applyStealthRouting(
-          rows,
-          walletBook.entries,
-          { stealth },
-        );
-        submittedRows = stealthRouted.rows;
-        // Merge picker-time ephPubs (stealth-only entries the user
-        // added via the address book picker) with the routing pass's
-        // entries-with-metaAddress swaps. Both sets are keyed by
-        // lowercase stealth address and stealth addresses are
-        // unique per generation, so the union is well-defined.
-        submittedEphPubByAddress = {
-          ...pickerEphPubs,
-          ...stealthRouted.ephPubByAddress,
-        };
-        // Same merge for email: picker captured emails for stealth-only
-        // book entries; stealthRouting captured emails for entries with
-        // both default address + metaAddress that got routed at submit.
-        submittedEmailByAddress = {
-          ...pickerEmails,
-          ...stealthRouted.emailByAddress,
-        };
-        // Rebuild batches for the actual settle path. Pre-flight
-        // checks above (multiBatchFit / coverage) used the unrouted
-        // batches so the user-shown coverage matches what they typed;
-        // amounts/totals are unchanged, only the recipient field.
-        // Always rebuild from the full submitted row set (never reuse
-        // the preview `batches`, which is clamped to MAX_RECIPIENTS_PER_RUN
-        // for display). If validation drifts and >cap rows reach this
-        // point, the guard below catches it instead of silently
-        // truncating the payout while the RunRecord stores the full list.
-        const submitRows = Object.keys(stealthRouted.ephPubByAddress).length > 0
-          ? stealthRouted.rows
-          : rows;
+        // Email captured at picker time so a book-edit between pick
+        // and submit can't drop the recipient's contact info from
+        // the saved run record.
+        submittedEmailByAddress = { ...pickerEmails };
         const submitBatches: PayoutBatch[] = splitPayout(
-          parseRecipientRows(submitRows, decimals, claimFrom!),
+          parseRecipientRows(rows, decimals, claimFrom!),
           { token: tokenAddress },
         );
         if (submitBatches.length > MAX_BATCHES_PER_RUN) {
@@ -686,14 +622,6 @@ function NewPayout() {
             eddsaPublicKey: kp.publicKey,
             tree,
             labels: { sender: account ?? undefined, run: label },
-            // Merge picker-time ephPubs (stealth-only address-book entries
-            // chosen via the recipient picker) with the routing pass's
-            // entries-with-metaAddress swaps. RunRecord's row-level
-            // `ephemeralPubKey` already used the union; sending the same
-            // union into the proof builder keeps the encoded
-            // `claimPackage` aligned so receivers can derive the
-            // per-claim privkey from the URL alone.
-            ephPubByAddress: submittedEphPubByAddress,
           };
         };
 
@@ -838,7 +766,6 @@ function NewPayout() {
     if (picked.length === 0) return;
     const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
     const rowsToAdd: string[] = [];
-    const newEphPubs: Record<string, string> = {};
     const newEmails: Record<string, string> = {};
     const newTelegrams: Record<string, string> = {};
     const newKakaos: Record<string, string> = {};
@@ -854,37 +781,14 @@ function NewPayout() {
       if (e.label) newLabels[lower] = e.label;
     };
     for (const e of picked) {
-      if (e.address) {
-        // Regular path: a default EOA is in the book — use it
-        // verbatim. If the entry also has a metaAddress, the
-        // submit-time `applyStealthRouting` swap will replace this
-        // with a fresh stealth address based on the wizard toggle.
-        const lower = e.address.toLowerCase();
-        if (seen.has(lower)) continue;
-        seen.add(lower);
-        snapshot(lower, e);
-        rowsToAdd.push(formatRecipientCsvRow(e.label, e.address, ""));
-      } else if (e.metaAddress) {
-        // Stealth-only entry: derive a one-time stealth address now
-        // so the CSV holds a 0x EOA the parser accepts. The matching
-        // ephPub goes into the wizard-side map; submit threads it
-        // through to the ClaimPackage so the receiver can derive
-        // the spending key with their meta-address keys.
-        const { stealthAddress, ephemeralPubKey } = generateStealthAddress(
-          e.metaAddress,
-        );
-        const lower = stealthAddress.toLowerCase();
-        if (seen.has(lower)) continue;
-        seen.add(lower);
-        newEphPubs[lower] = ephemeralPubKey;
-        snapshot(lower, e);
-        rowsToAdd.push(formatRecipientCsvRow(e.label, stealthAddress, ""));
-      }
+      if (!e.address) continue;
+      const lower = e.address.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      snapshot(lower, e);
+      rowsToAdd.push(formatRecipientCsvRow(e.label, e.address, ""));
     }
     if (rowsToAdd.length === 0) return;
-    if (Object.keys(newEphPubs).length > 0) {
-      setPickerEphPubs((prev) => ({ ...prev, ...newEphPubs }));
-    }
     if (Object.keys(newEmails).length > 0) {
       setPickerEmails((prev) => ({ ...prev, ...newEmails }));
     }
@@ -921,30 +825,16 @@ function NewPayout() {
       });
       return;
     }
-    // For each parsed row: if metaAddress is present, derive a one-time
-    // stealth address + ephPub now so the textarea always shows the
-    // actual on-chain address (consistent with the address-book picker
-    // path) and so the run record carries email/ephPub without a later
-    // address-book lookup. Self-contained: file in → record out.
-    const newEphPubs: Record<string, string> = {};
+    // Snapshot email at file-import time so a later address-book edit
+    // can't rewrite a historical run's contact info. Self-contained:
+    // file in → record out.
     const newEmails: Record<string, string> = {};
     const csvLines: string[] = [];
     for (const r of result.rows) {
-      let addr = r.address;
-      if (r.metaAddress) {
-        const { stealthAddress, ephemeralPubKey } = generateStealthAddress(
-          r.metaAddress,
-        );
-        addr = stealthAddress;
-        newEphPubs[stealthAddress.toLowerCase()] = ephemeralPubKey;
+      if (r.email && r.address) {
+        newEmails[r.address.toLowerCase()] = r.email;
       }
-      if (r.email && addr) {
-        newEmails[addr.toLowerCase()] = r.email;
-      }
-      csvLines.push(formatRecipientCsvRow(r.name, addr, r.amount));
-    }
-    if (Object.keys(newEphPubs).length > 0) {
-      setPickerEphPubs((prev) => ({ ...prev, ...newEphPubs }));
+      csvLines.push(formatRecipientCsvRow(r.name, r.address, r.amount));
     }
     if (Object.keys(newEmails).length > 0) {
       setPickerEmails((prev) => ({ ...prev, ...newEmails }));
@@ -965,12 +855,8 @@ function NewPayout() {
       return shouldReplace ? block : `${trimmed}\n${block}`;
     });
     const action = shouldReplace ? "Loaded" : "Appended";
-    const stealthCount = Object.keys(newEphPubs).length;
     const emailCount = Object.keys(newEmails).length;
-    const meta: string[] = [];
-    if (stealthCount > 0) meta.push(`${stealthCount} stealth`);
-    if (emailCount > 0) meta.push(`${emailCount} with email`);
-    const metaSuffix = meta.length > 0 ? ` (${meta.join(", ")})` : "";
+    const metaSuffix = emailCount > 0 ? ` (${emailCount} with email)` : "";
     const warn = result.warnings[0];
     setUploadStatus({
       kind: warn ? "warn" : "ok",
@@ -1480,8 +1366,7 @@ function NewPayout() {
                     </span>
                   </span>{" "}
                   — one per line. Amounts are in the selected token (e.g. 3500.00 USDC).
-                  Optional columns via upload: <span className="font-mono">email</span>,{" "}
-                  <span className="font-mono">meta_address</span> (auto-stealth).
+                  Optional column via upload: <span className="font-mono">email</span>.
                   {empty ? (
                     <span className="ml-2 text-[var(--color-warning)]">
                       ← add at least one recipient line below.
@@ -1616,45 +1501,16 @@ function NewPayout() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.slice(0, MAX_RECIPIENTS_PER_RUN).map((r, i) => {
-                    const lower = r.address.toLowerCase();
-                    // The row will go through stealth at settle when
-                    // either (a) the user picked a stealth-only book
-                    // entry — the picker-time derivation lives in
-                    // `pickerEphPubs`, or (b) a walletbook entry with
-                    // both default address + metaAddress is going to
-                    // be swapped at submit time, which only happens
-                    // when the global stealth toggle is on.
-                    const isStealth =
-                      Boolean(pickerEphPubs[lower]) ||
-                      (stealth &&
-                        walletBook.entries.some(
-                          (e) =>
-                            e.address?.toLowerCase() === lower && !!e.metaAddress,
-                        ));
-                    return (
-                      <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
-                        <td className="py-1.5">
-                          <div className="flex items-center gap-2">
-                            <span>{r.name}</span>
-                            {isStealth && (
-                              <span
-                                title="Will be sent to a one-time stealth address; recipient derives the spending key from their meta-address"
-                                className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]"
-                              >
-                                Stealth
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
-                        <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
-                        <td className="py-1.5 pl-3 text-xs text-[var(--color-text-muted)]">
-                          {claimFrom ? formatClaimFrom(claimFrom) : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {rows.slice(0, MAX_RECIPIENTS_PER_RUN).map((r, i) => (
+                    <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
+                      <td className="py-1.5">{r.name}</td>
+                      <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
+                      <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
+                      <td className="py-1.5 pl-3 text-xs text-[var(--color-text-muted)]">
+                        {claimFrom ? formatClaimFrom(claimFrom) : "—"}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
               {rows.length > MAX_RECIPIENTS_PER_RUN && (

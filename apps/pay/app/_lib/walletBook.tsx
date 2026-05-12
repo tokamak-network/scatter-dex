@@ -35,13 +35,12 @@ interface WalletBookState {
     email?: string;
     telegramHandle?: string;
     kakaoId?: string;
-    metaAddress?: string;
     addressByChain?: Record<number, string>;
   }): Promise<WalletEntry | null>;
   update(
     id: string,
     patch: Partial<
-      Pick<WalletEntry, "label" | "memo" | "email" | "telegramHandle" | "kakaoId" | "metaAddress"> & {
+      Pick<WalletEntry, "label" | "memo" | "email" | "telegramHandle" | "kakaoId"> & {
         addressByChain?: Record<number, string>;
       }
     >,
@@ -114,7 +113,6 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
       email?: string;
       telegramHandle?: string;
       kakaoId?: string;
-      metaAddress?: string;
       addressByChain?: Record<number, string>;
     }) => {
       try {
@@ -134,7 +132,7 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
     async (
       id: string,
       patch: Partial<
-        Pick<WalletEntry, "label" | "memo" | "email" | "telegramHandle" | "kakaoId" | "metaAddress"> & {
+        Pick<WalletEntry, "label" | "memo" | "email" | "telegramHandle" | "kakaoId"> & {
           addressByChain?: Record<number, string>;
         }
       >,

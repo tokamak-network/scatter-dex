@@ -3,27 +3,20 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
-import { useMetaAddress, useWallet, shortAddr } from "@zkscatter/sdk/react";
+import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { decodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
 import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
   addClaimInboxEntry,
-  addStealthInboxEntry,
-  loadStealthInbox,
   markClaimInboxEntryClaimed,
-  markStealthInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
 import { getNetworkConfig } from "../_lib/network";
 import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
 import { useIdentityStatus } from "../_lib/identity";
 import { useFolderStorage } from "../_lib/folderStorage";
-import {
-  deriveStealthAddressForPackage,
-  deriveStealthForPackage,
-} from "../_lib/stealthDerive";
 
 /** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
  *  as a static export, so the link id moves to a `?id=` query param
@@ -77,7 +70,6 @@ function ClaimInner() {
   const link = searchParams?.get("id") ?? "";
   const { account, chainId: walletChainId, signer, readProvider, connect, connectError } = useWallet();
   const folder = useFolderStorage();
-  const { keys: metaKeys } = useMetaAddress();
   const [parsed, setParsed] = useState<ParsedClaim | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -88,7 +80,7 @@ function ClaimInner() {
   const [forceSelfPay, setForceSelfPay] = useState(false);
   /** Set when the post-claim "save to inbox" step succeeds — drives a
    *  small confirmation footer so the user knows where to find this
-   *  claim later. Stays null on the non-stealth / no-folder paths. */
+   *  claim later. */
   const [savedInboxId, setSavedInboxId] = useState<string | null>(null);
   const [preSaveState, setPreSaveState] = useState<
     "idle" | "saving" | "saved" | "duplicate"
@@ -111,24 +103,10 @@ function ClaimInner() {
     return () => ctrl.abort();
   }, [parsed?.pkg.relayerUrl]);
 
-  // Address-only check for UI gating — keeps the stealth privkey
-  // out of this component's memoized state. The privkey is resolved
-  // lazily inside the self-pay branch of `doClaim` below.
-  const stealthVerified = useMemo(
-    () =>
-      parsed
-        ? deriveStealthAddressForPackage(parsed.pkg, metaKeys)?.matches === true
-        : false,
-    [parsed, metaKeys],
-  );
-  const isStealth = !!parsed?.pkg.ephemeralPubKey;
   // EOA claims require the connecting wallet (= recipient) to be
-  // zk-X509 verified. Stealth claims are exempt: the stealth EOA
-  // is one-time and never registers a cert; the stealth scheme's
-  // own derivation proof is what binds the claim.
+  // zk-X509 verified.
   const { state: claimerIdentity } = useIdentityStatus();
   const recipientUnverified =
-    !isStealth &&
     !!account &&
     (claimerIdentity.kind === "unverified" ||
       claimerIdentity.kind === "expired" ||
@@ -208,23 +186,11 @@ function ClaimInner() {
   const wrongAppChain = parsed && parsed.pkg.chainId !== cfg.chainId;
   const wrongWalletChain =
     !!parsed && walletChainId !== null && walletChainId !== parsed.pkg.chainId;
-  // Stealth claims bind to the one-time stealth address, not the
-  // user's connected EOA — comparing those would always fire even
-  // when the receiver has correctly derived the matching key. Skip
-  // the check whenever the local stealth derivation matches the
-  // package recipient.
   const wrongRecipient =
     !!parsed &&
     !!account &&
-    !stealthVerified &&
     account.toLowerCase() !== parsed.recipientLower;
-  // Stealth recipients have no native gas at the one-time address,
-  // so the relayer is the only path that actually works. When a
-  // verified stealth claim has a relayer URL, ignore the user's
-  // sticky `forceSelfPay` toggle (relayer-error fallback) — it's not
-  // recoverable through self-pay.
-  const gasless =
-    !!parsed?.pkg.relayerUrl && (!forceSelfPay || stealthVerified);
+  const gasless = !!parsed?.pkg.relayerUrl && !forceSelfPay;
 
   // Phase 2b: prefer the operator's relayer to dispatch the claim
   // (no gas for the recipient). When the package has no relayerUrl,
@@ -237,14 +203,10 @@ function ClaimInner() {
     try {
       const rawInput =
         typeof window !== "undefined" ? window.location.href : "";
-      const isNew = isStealth
-        ? !!(await addStealthInboxEntry({
-            source: "link",
-            rawInput,
-            pkg: parsed.pkg,
-            ephemeralPubKey: parsed.pkg.ephemeralPubKey,
-          }))
-        : (await addClaimInboxEntry({ rawInput, pkg: parsed.pkg })).isNew;
+      const { isNew } = await addClaimInboxEntry({
+        rawInput,
+        pkg: parsed.pkg,
+      });
       setPreSaveState(isNew ? "saved" : "duplicate");
     } catch (err) {
       console.warn("[Pay] pre-claim save failed", err);
@@ -254,77 +216,31 @@ function ClaimInner() {
 
   async function doClaim() {
     if (!parsed) return;
-    // For verified stealth claims, swap the connected wallet's
-    // signer for an in-memory wallet bound to the derived stealth
-    // private key. The connected EOA can't sign for a stealth
-    // address, so the self-pay fallback would otherwise fail with a
-    // recipient mismatch even when the proof is valid. Resolve the
-    // full derivation here (lazy) so the privkey doesn't live in
-    // memoized component state across the page's lifetime.
-    const stealthFull =
-      stealthVerified && readProvider
-        ? deriveStealthForPackage(parsed.pkg, metaKeys)
-        : null;
-    // Defense in depth: even though `stealthVerified` already gated us
-    // through an address-only match, re-check `stealthFull.matches`
-    // before signing. Guards against any future drift between the
-    // address-only and full derivation implementations.
-    const claimSigner =
-      stealthFull?.matches && readProvider
-        ? new ethers.Wallet(stealthFull.privateKey, readProvider)
-        : (signer ?? undefined);
+    const claimSigner = signer ?? undefined;
     if (!gasless && !claimSigner) return;
     try {
       const { txHash } = await submitClaim({
         pkg: parsed.pkg,
         readProvider,
         signer: claimSigner,
-        forceSelfPay: forceSelfPay && !stealthVerified,
+        forceSelfPay,
         onPhase: (kind) => setPhase({ kind }),
       });
       setPhase({ kind: "done", txHash });
-      // Mirror the claim into the receiver's local stealth inbox so
-      // they can see it again next session — best-effort: the claim
-      // already succeeded on-chain, so a save failure shouldn't be
-      // surfaced as a claim error.
+      // Mirror the claim into the receiver's local inbox so they can
+      // see it again next session — best-effort: the claim already
+      // succeeded on-chain, so a save failure shouldn't be surfaced
+      // as a claim error.
       if (folder.ready) {
         try {
           const rawInput =
             typeof window !== "undefined" ? window.location.href : "";
-          // Stealth and non-stealth claims land in different inboxes so
-          // the stealth inbox keeps its tighter shape (ephemeralPubKey,
-          // privkey hand-off path, etc.) — the EOA inbox is for plain
-          // wallet-bound claims that don't carry those extras.
-          if (isStealth) {
-            const inserted = await addStealthInboxEntry({
-              source: "link",
-              rawInput,
-              pkg: parsed.pkg,
-              ephemeralPubKey: parsed.pkg.ephemeralPubKey,
-            });
-            // A pre-claim Save (or any prior paste of the same link)
-            // returns null from the insert path; look the existing
-            // entry up by (claimsRoot, leafIndex) so it still flips
-            // from available → claimed.
-            const id =
-              inserted?.id ??
-              (await loadStealthInbox()).find(
-                (e) =>
-                  e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
-                  e.pkg.leafIndex === parsed.pkg.leafIndex,
-              )?.id;
-            if (id) {
-              await markStealthInboxEntryClaimed(id, txHash);
-              setSavedInboxId(id);
-            }
-          } else {
-            const { entry } = await addClaimInboxEntry({
-              rawInput,
-              pkg: parsed.pkg,
-            });
-            await markClaimInboxEntryClaimed(entry.id, txHash);
-            setSavedInboxId(entry.id);
-          }
+          const { entry } = await addClaimInboxEntry({
+            rawInput,
+            pkg: parsed.pkg,
+          });
+          await markClaimInboxEntryClaimed(entry.id, txHash);
+          setSavedInboxId(entry.id);
         } catch (saveErr) {
           console.warn("[Pay] save-to-inbox after claim failed", saveErr);
         }
@@ -383,37 +299,6 @@ function ClaimInner() {
           </span>
         </div>
 
-        {isStealth && (
-          <div className="mt-3 rounded-md border border-dashed border-[var(--color-border-strong)] p-2 text-center text-[11px]">
-            {stealthVerified ? (
-              <span className="text-[var(--color-success)]">
-                ✓ Verified stealth claim — derived from your meta-address.
-                Funds land at the one-time stealth address; the matching
-                private key stays in your folder.
-              </span>
-            ) : metaKeys ? (
-              <span className="text-[var(--color-warning)]">
-                ⚠ This is a stealth claim, but your meta-address derives a
-                different stealth address than the one in this link. Either
-                the link belongs to someone else, or your keys don&apos;t
-                match the sender&apos;s records.
-              </span>
-            ) : (
-              <span className="text-[var(--color-text-muted)]">
-                This is a stealth claim. Open Pay on the device that holds
-                your meta-address (
-                <a
-                  href="/stealth/wallet"
-                  className="text-[var(--color-primary)] hover:underline"
-                >
-                  /stealth/wallet
-                </a>
-                ) so the page can derive your stealth key.
-              </span>
-            )}
-          </div>
-        )}
-
         <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-xs">
           {parsed === null ? (
             <span className="text-[var(--color-warning)]">
@@ -465,10 +350,10 @@ function ClaimInner() {
                 <div className="mt-2 text-[10px]">
                   Saved to your{" "}
                   <a
-                    href={isStealth ? "/stealth/inbox" : "/inbox"}
+                    href="/inbox"
                     className="font-medium underline-offset-2 hover:underline"
                   >
-                    {isStealth ? "Stealth inbox" : "Claims inbox"}
+                    Claims inbox
                   </a>
                   .
                 </div>
@@ -608,20 +493,16 @@ function ClaimInner() {
                     <button
                       onClick={() => void saveToInbox()}
                       disabled={preSaveState === "saving"}
-                      title={
-                        isStealth
-                          ? "Save this link to your stealth inbox so you can re-open it later without re-pasting."
-                          : "Save this link to your claims inbox so you can re-open it later without re-pasting."
-                      }
+                      title="Save this link to your claims inbox so you can re-open it later without re-pasting."
                       className="w-full rounded-md border border-[var(--color-border-strong)] py-2 text-xs hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
                     >
                       {preSaveState === "saving"
                         ? "Saving…"
                         : preSaveState === "saved"
-                          ? `✓ Saved to ${isStealth ? "Stealth inbox" : "Claims inbox"}`
+                          ? "✓ Saved to Claims inbox"
                           : preSaveState === "duplicate"
                             ? "Already in your inbox"
-                            : `Save to ${isStealth ? "Stealth inbox" : "Claims inbox"}`}
+                            : "Save to Claims inbox"}
                     </button>
                   )}
                 </>

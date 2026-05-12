@@ -7,11 +7,7 @@ import type { WalletEntry } from "@zkscatter/sdk/storage";
 /** Multi-select picker over the address book. The wizard's
  *  Recipients step calls this; future surfaces (claim-link
  *  recipient, dashboard quick-send) will hit it too — that's why it
- *  lives in `_components/` rather than co-located with the wizard.
- *
- *  Stealth-only entries (only `metaAddress`, no default address) are
- *  surfaced too — the wizard derives a one-time stealth address for
- *  each pick and threads its ephemeralPubKey into the run record. */
+ *  lives in `_components/` rather than co-located with the wizard. */
 export function AddressBookPicker({
   entries,
   onCancel,
@@ -30,7 +26,6 @@ export function AddressBookPicker({
       (e) =>
         e.label.toLowerCase().includes(q) ||
         (e.address?.includes(q) ?? false) ||
-        (e.metaAddress?.toLowerCase().includes(q) ?? false) ||
         (e.email?.toLowerCase().includes(q) ?? false) ||
         (e.telegramHandle?.toLowerCase().includes(q) ?? false) ||
         (e.kakaoId?.toLowerCase().includes(q) ?? false) ||
@@ -73,21 +68,11 @@ export function AddressBookPicker({
                   <div className="flex-1 text-sm">
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{e.label}</span>
-                      {e.metaAddress && (
-                        <span
-                          title={`Stealth meta-address: ${e.metaAddress}`}
-                          className="rounded-full bg-[var(--color-primary-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-primary)]"
-                        >
-                          Stealth
-                        </span>
-                      )}
                     </div>
                     <div className="font-mono text-xs text-[var(--color-text-muted)]">
                       {e.address
                         ? `${e.address.slice(0, 10)}…${e.address.slice(-4)}`
-                        : e.metaAddress
-                          ? `${e.metaAddress.slice(0, 14)}…${e.metaAddress.slice(-4)}`
-                          : "—"}
+                        : "—"}
                       {e.memo ? ` · ${e.memo}` : ""}
                     </div>
                     {e.email && (
