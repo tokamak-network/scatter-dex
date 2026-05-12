@@ -1,15 +1,15 @@
 {
   "storage": [
     {
-      "astId": 666,
+      "astId": 47142,
       "contract": "src/IdentityGate.sol:IdentityGate",
       "label": "registries",
       "offset": 0,
       "slot": "0",
-      "type": "t_array(t_contract(IIdentityRegistry)1125)dyn_storage"
+      "type": "t_array(t_contract(IIdentityRegistry)48898)dyn_storage"
     },
     {
-      "astId": 670,
+      "astId": 47146,
       "contract": "src/IdentityGate.sol:IdentityGate",
       "label": "registryExists",
       "offset": 0,
@@ -17,7 +17,7 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 675,
+      "astId": 47151,
       "contract": "src/IdentityGate.sol:IdentityGate",
       "label": "__gap",
       "offset": 0,
@@ -31,11 +31,11 @@
       "label": "address",
       "numberOfBytes": "20"
     },
-    "t_array(t_contract(IIdentityRegistry)1125)dyn_storage": {
+    "t_array(t_contract(IIdentityRegistry)48898)dyn_storage": {
       "encoding": "dynamic_array",
       "label": "contract IIdentityRegistry[]",
       "numberOfBytes": "32",
-      "base": "t_contract(IIdentityRegistry)1125"
+      "base": "t_contract(IIdentityRegistry)48898"
     },
     "t_array(t_uint256)50_storage": {
       "encoding": "inplace",
@@ -48,7 +48,7 @@
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "t_contract(IIdentityRegistry)1125": {
+    "t_contract(IIdentityRegistry)48898": {
       "encoding": "inplace",
       "label": "contract IIdentityRegistry",
       "numberOfBytes": "20"

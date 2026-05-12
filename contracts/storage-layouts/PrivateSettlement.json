@@ -1,23 +1,23 @@
 {
   "storage": [
     {
-      "astId": 6013,
+      "astId": 52139,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "pool",
       "offset": 0,
       "slot": "0",
-      "type": "t_contract(CommitmentPool)5108"
+      "type": "t_contract(CommitmentPool)51125"
     },
     {
-      "astId": 6019,
+      "astId": 52145,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "claimVerifierByTier",
       "offset": 0,
       "slot": "1",
-      "type": "t_mapping(t_uint8,t_contract(IClaimVerifier)5233)"
+      "type": "t_mapping(t_uint8,t_contract(IClaimVerifier)51359)"
     },
     {
-      "astId": 6022,
+      "astId": 52148,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "weth",
       "offset": 0,
@@ -25,47 +25,47 @@
       "type": "t_address"
     },
     {
-      "astId": 6026,
+      "astId": 52152,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "relayerRegistry",
       "offset": 0,
       "slot": "3",
-      "type": "t_contract(RelayerRegistry)3900"
+      "type": "t_contract(RelayerRegistry)48515"
     },
     {
-      "astId": 6030,
+      "astId": 52156,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "feeVault",
       "offset": 0,
       "slot": "4",
-      "type": "t_contract(FeeVault)2956"
+      "type": "t_contract(FeeVault)47121"
     },
     {
-      "astId": 6036,
+      "astId": 52162,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "authorizeVerifierByTier",
       "offset": 0,
       "slot": "5",
-      "type": "t_mapping(t_uint8,t_contract(IAuthorizeVerifier)5135)"
+      "type": "t_mapping(t_uint8,t_contract(IAuthorizeVerifier)51261)"
     },
     {
-      "astId": 6040,
+      "astId": 52166,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "cancelVerifier",
       "offset": 0,
       "slot": "6",
-      "type": "t_contract(ICancelVerifier)5207"
+      "type": "t_contract(ICancelVerifier)51333"
     },
     {
-      "astId": 6046,
+      "astId": 52172,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "batchAuthorizeVerifierByTier",
       "offset": 0,
       "slot": "7",
-      "type": "t_mapping(t_uint8,t_contract(IBatchAuthorizeVerifier)5180)"
+      "type": "t_mapping(t_uint8,t_contract(IBatchAuthorizeVerifier)51306)"
     },
     {
-      "astId": 6051,
+      "astId": 52177,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "whitelistedDexRouters",
       "offset": 0,
@@ -73,7 +73,7 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 6054,
+      "astId": 52180,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "dexPlatformFeeBps",
       "offset": 0,
@@ -81,7 +81,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 6061,
+      "astId": 52187,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "__deprecated_paused",
       "offset": 0,
@@ -89,7 +89,7 @@
       "type": "t_bool"
     },
     {
-      "astId": 6065,
+      "astId": 52191,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "nullifiers",
       "offset": 0,
@@ -97,7 +97,7 @@
       "type": "t_mapping(t_bytes32,t_bool)"
     },
     {
-      "astId": 6069,
+      "astId": 52195,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "nonceNullifiers",
       "offset": 0,
@@ -105,7 +105,7 @@
       "type": "t_mapping(t_bytes32,t_bool)"
     },
     {
-      "astId": 6073,
+      "astId": 52199,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "claimNullifiers",
       "offset": 0,
@@ -113,15 +113,15 @@
       "type": "t_mapping(t_bytes32,t_bool)"
     },
     {
-      "astId": 6078,
+      "astId": 52204,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "claimsGroups",
       "offset": 0,
       "slot": "14",
-      "type": "t_mapping(t_bytes32,t_struct(ClaimsGroup)8891_storage)"
+      "type": "t_mapping(t_bytes32,t_struct(ClaimsGroup)55017_storage)"
     },
     {
-      "astId": 6082,
+      "astId": 52208,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "whitelistedTokens",
       "offset": 0,
@@ -129,15 +129,15 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 6086,
+      "astId": 52212,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "sanctionsList",
       "offset": 0,
       "slot": "16",
-      "type": "t_contract(ISanctionsList)3937"
+      "type": "t_contract(ISanctionsList)48909"
     },
     {
-      "astId": 6091,
+      "astId": 52217,
       "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
       "label": "__gap",
       "offset": 0,
@@ -167,42 +167,42 @@
       "label": "bytes32",
       "numberOfBytes": "32"
     },
-    "t_contract(CommitmentPool)5108": {
+    "t_contract(CommitmentPool)51125": {
       "encoding": "inplace",
       "label": "contract CommitmentPool",
       "numberOfBytes": "20"
     },
-    "t_contract(FeeVault)2956": {
+    "t_contract(FeeVault)47121": {
       "encoding": "inplace",
       "label": "contract FeeVault",
       "numberOfBytes": "20"
     },
-    "t_contract(IAuthorizeVerifier)5135": {
+    "t_contract(IAuthorizeVerifier)51261": {
       "encoding": "inplace",
       "label": "contract IAuthorizeVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(IBatchAuthorizeVerifier)5180": {
+    "t_contract(IBatchAuthorizeVerifier)51306": {
       "encoding": "inplace",
       "label": "contract IBatchAuthorizeVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(ICancelVerifier)5207": {
+    "t_contract(ICancelVerifier)51333": {
       "encoding": "inplace",
       "label": "contract ICancelVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(IClaimVerifier)5233": {
+    "t_contract(IClaimVerifier)51359": {
       "encoding": "inplace",
       "label": "contract IClaimVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(ISanctionsList)3937": {
+    "t_contract(ISanctionsList)48909": {
       "encoding": "inplace",
       "label": "contract ISanctionsList",
       "numberOfBytes": "20"
     },
-    "t_contract(RelayerRegistry)3900": {
+    "t_contract(RelayerRegistry)48515": {
       "encoding": "inplace",
       "label": "contract RelayerRegistry",
       "numberOfBytes": "20"
@@ -221,41 +221,41 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_bytes32,t_struct(ClaimsGroup)8891_storage)": {
+    "t_mapping(t_bytes32,t_struct(ClaimsGroup)55017_storage)": {
       "encoding": "mapping",
       "key": "t_bytes32",
       "label": "mapping(bytes32 => struct SettleVerifyLib.ClaimsGroup)",
       "numberOfBytes": "32",
-      "value": "t_struct(ClaimsGroup)8891_storage"
+      "value": "t_struct(ClaimsGroup)55017_storage"
     },
-    "t_mapping(t_uint8,t_contract(IAuthorizeVerifier)5135)": {
+    "t_mapping(t_uint8,t_contract(IAuthorizeVerifier)51261)": {
       "encoding": "mapping",
       "key": "t_uint8",
       "label": "mapping(uint8 => contract IAuthorizeVerifier)",
       "numberOfBytes": "32",
-      "value": "t_contract(IAuthorizeVerifier)5135"
+      "value": "t_contract(IAuthorizeVerifier)51261"
     },
-    "t_mapping(t_uint8,t_contract(IBatchAuthorizeVerifier)5180)": {
+    "t_mapping(t_uint8,t_contract(IBatchAuthorizeVerifier)51306)": {
       "encoding": "mapping",
       "key": "t_uint8",
       "label": "mapping(uint8 => contract IBatchAuthorizeVerifier)",
       "numberOfBytes": "32",
-      "value": "t_contract(IBatchAuthorizeVerifier)5180"
+      "value": "t_contract(IBatchAuthorizeVerifier)51306"
     },
-    "t_mapping(t_uint8,t_contract(IClaimVerifier)5233)": {
+    "t_mapping(t_uint8,t_contract(IClaimVerifier)51359)": {
       "encoding": "mapping",
       "key": "t_uint8",
       "label": "mapping(uint8 => contract IClaimVerifier)",
       "numberOfBytes": "32",
-      "value": "t_contract(IClaimVerifier)5233"
+      "value": "t_contract(IClaimVerifier)51359"
     },
-    "t_struct(ClaimsGroup)8891_storage": {
+    "t_struct(ClaimsGroup)55017_storage": {
       "encoding": "inplace",
       "label": "struct SettleVerifyLib.ClaimsGroup",
       "numberOfBytes": "64",
       "members": [
         {
-          "astId": 8884,
+          "astId": 55010,
           "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
           "label": "totalLocked",
           "offset": 0,
@@ -263,7 +263,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 8886,
+          "astId": 55012,
           "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
           "label": "totalClaimed",
           "offset": 16,
@@ -271,7 +271,7 @@
           "type": "t_uint128"
         },
         {
-          "astId": 8888,
+          "astId": 55014,
           "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
           "label": "token",
           "offset": 0,
@@ -279,7 +279,7 @@
           "type": "t_address"
         },
         {
-          "astId": 8890,
+          "astId": 55016,
           "contract": "src/zk/PrivateSettlement.sol:PrivateSettlement",
           "label": "tier",
           "offset": 20,
