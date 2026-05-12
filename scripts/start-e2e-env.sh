@@ -101,7 +101,7 @@ echo "  [ok] deployed (CommitmentPool=$COMMITMENT_POOL)"
 echo ""
 echo "[3/5] Starting shared-orderbook (port 4000)..."
 cd "$ROOT_DIR/shared-orderbook"
-PORT=4000 npm run dev > "$LOG_DIR/orderbook.log" 2>&1 &
+PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/orderbook.log" 2>&1 &
 record_pid $!
 wait_for "http://localhost:4000/health" "shared-orderbook" 30 \
   || { tail -30 "$LOG_DIR/orderbook.log"; exit 1; }
@@ -122,7 +122,7 @@ start_relayer() {
   SHARED_ORDERBOOK_URL="http://localhost:4000" \
   RELAYER_PUBLIC_URL="http://localhost:$port" \
   RELAYER_NAME="$name" \
-  npm run dev > "$LOG_DIR/$log" 2>&1 &
+  ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/$log" 2>&1 &
   record_pid $!
   wait_for "http://localhost:$port/api/info" "$name" 30 \
     || { tail -30 "$LOG_DIR/$log"; return 1; }

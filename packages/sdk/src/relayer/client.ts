@@ -11,6 +11,19 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 
+/** 32-byte hex tx hash with the `0x` prefix. Validated on every
+ *  relayer response so a malicious or buggy relayer can't slip a
+ *  string into a slot the UI hands straight to ethers'
+ *  `waitForTransaction` or an explorer link. */
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+
+function assertTxHash(value: unknown, where: string): string {
+  if (typeof value !== "string" || !TX_HASH_RE.test(value)) {
+    throw new Error(`${where}: relayer returned a malformed txHash`);
+  }
+  return value;
+}
+
 interface ClientOpts {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -65,7 +78,9 @@ export class RelayerClient {
       signal: timeoutSignal(this.timeoutMs, signal),
     });
     if (!res.ok) throw await httpError("submit", res);
-    return res.json();
+    const result = (await res.json()) as { status: string; txHash?: string; nonce?: string };
+    if (result.txHash !== undefined) assertTxHash(result.txHash, "submitOrder");
+    return result;
   }
 
   async getOrders(address: string, signal?: AbortSignal): Promise<RelayerOrder[]> {
@@ -137,7 +152,9 @@ export class RelayerClient {
       signal: timeoutSignal(this.timeoutMs, signal),
     });
     if (!res.ok) throw await httpError("claim", res);
-    return (await res.json()) as { status: string; txHash: string };
+    const result = (await res.json()) as { status: string; txHash: string };
+    assertTxHash(result.txHash, "submitClaim");
+    return result;
   }
 
   /** Submit a same-token scatter authorize proof for the relayer to
@@ -158,7 +175,11 @@ export class RelayerClient {
       signal: timeoutSignal(this.timeoutMs, signal),
     });
     if (!res.ok) throw await httpError("authorize-order", res);
-    return (await res.json()) as AuthorizeOrderStatus;
+    const status = (await res.json()) as AuthorizeOrderStatus;
+    if (status.settleTxHash !== null && status.settleTxHash !== undefined) {
+      assertTxHash(status.settleTxHash, "submitAuthorizeOrder.settleTxHash");
+    }
+    return status;
   }
 
   /** Poll the order status. Used after {@link submitAuthorizeOrder}
@@ -173,7 +194,11 @@ export class RelayerClient {
       { signal: timeoutSignal(this.timeoutMs, signal) },
     );
     if (!res.ok) throw await httpError("authorize-order-status", res);
-    return (await res.json()) as AuthorizeOrderStatus;
+    const status = (await res.json()) as AuthorizeOrderStatus;
+    if (status.settleTxHash !== null && status.settleTxHash !== undefined) {
+      assertTxHash(status.settleTxHash, "pollAuthorizeOrder.settleTxHash");
+    }
+    return status;
   }
 }
 

@@ -393,7 +393,7 @@ if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
 fi
 ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
 cd "$ROOT_DIR/shared-orderbook"
-PORT=4000 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
+PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
 if ! wait_for "http://localhost:4000/health" "shared-orderbook" 20; then
@@ -431,7 +431,7 @@ echo "  Admin API key: $ADMIN_KEY"
 
 ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
 cd "$ROOT_DIR/zk-relayer"
-npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
+ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
 if ! wait_for "http://localhost:3002/api/info" "relayer-a" 30; then
@@ -463,6 +463,7 @@ SHARED_ORDERBOOK_URL=http://localhost:4000 \
 RELAYER_PUBLIC_URL=http://localhost:3003 \
 RELAYER_NAME=Relayer-B \
 DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
+ALLOW_PRIVATE_RELAYER_URLS=1 \
 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
