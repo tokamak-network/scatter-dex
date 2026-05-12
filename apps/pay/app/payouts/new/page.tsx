@@ -479,7 +479,6 @@ function NewPayout() {
     let txHash: string | undefined;
     let claimPackages: ClaimPackage[] | undefined;
     let totalRelayerFeeRaw: bigint | undefined;
-    let submittedEmailByAddress: Record<string, string> | undefined;
     // Whether `persist(allowFailure: true)` succeeded on the partial
     // path. The helper swallows save errors and returns null, so a
     // partial banner promising "saved" must check this flag rather
@@ -530,7 +529,7 @@ function NewPayout() {
               claimFrom,
               txHash,
               claimPackages,
-              emailByAddress: submittedEmailByAddress,
+              emailByAddress: pickerEmails,
               telegramByAddress: pickerTelegrams,
               kakaoByAddress: pickerKakaos,
               labelByAddress: pickerLabels,
@@ -549,10 +548,6 @@ function NewPayout() {
       };
 
       if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
-        // Email captured at picker time so a book-edit between pick
-        // and submit can't drop the recipient's contact info from
-        // the saved run record.
-        submittedEmailByAddress = { ...pickerEmails };
         const submitBatches: PayoutBatch[] = splitPayout(
           parseRecipientRows(rows, decimals, claimFrom!),
           { token: tokenAddress },
