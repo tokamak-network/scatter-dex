@@ -36,30 +36,38 @@ to confirm. They are documented up-front so an exchange's
 compliance review doesn't run into them mid-evaluation.
 
 ### Cryptographic
-- **Groth16 trusted setup.** Each circuit (`authorize`, `claim`,
-  `cancel`, `deposit`, `withdraw`, `splitPayout`) has its own
-  Powers-of-Tau-derived proving / verifying key pair. The
-  ceremony's transcript will be published alongside the audit
-  report so external parties can audit-verify the setup
-  contributions. Until then, trust the public PoT phase 1 and the
-  documented phase 2 contributors.
+- **Groth16 trusted setup.** Each circuit has its own
+  Powers-of-Tau-derived proving / verifying key pair. The current
+  active circuit set under `circuits/` is `authorize` (with
+  tier-16 / tier-64 / tier-128 instantiations of
+  `authorize_template`), `claim` (with the same three tier
+  instantiations of `claim_template`), `cancel`, `deposit`, and
+  `withdraw`. The ceremony's transcript will be published
+  alongside the audit report so external parties can
+  audit-verify the setup contributions. Until then, trust the
+  public PoT phase 1 and the documented phase 2 contributors.
 - **Soundness of the verifier contracts.** The on-chain Groth16
   verifier contracts are emitted by `snarkjs` from the
   circuit-specific `.zkey`. Their soundness rests on (a) the
   trusted setup above and (b) the verifier emitter producing a
   correct BN254 pairing check. Mismatches between the deployed
   verifier and the circuit it should verify would let invalid
-  proofs through. The CI workflow at
-  `.github/workflows/zk-asset-drift.yml` compares the SHA-256 of
-  the circuit artefacts shipped in `apps/*/public/zk/` against
-  the canonical `circuits/build/` outputs to catch
-  deployer-side drift.
+  proofs through. `scripts/check-zk-artifacts.sh` is the drift
+  checker — it compares the SHA-256 of the circuit artefacts
+  shipped in `apps/*/public/zk/` against the canonical
+  `circuits/build/` outputs and is invoked from the project's
+  deploy / sync flow. A CI workflow wrapping this script is a
+  follow-on item; the script is the single source of truth in
+  the meantime.
 - **Poseidon constants.** The hash uses the canonical iden3
-  Poseidon parameters over BN254. Substituting different round
-  constants would break circuit verification without invalidating
-  the on-chain bytecode — the constants are baked into the
-  `circuits/lib/poseidon_constants.circom` source and into the
-  SDK's `commitment.ts` / `merkle.ts` for off-chain parity.
+  Poseidon parameters over BN254. Circuits include
+  `node_modules/circomlib/circuits/poseidon.circom` from the
+  `circomlib` package; the SDK's `commitment.ts` / `merkle.ts`
+  pull the matching round-constants from `@iden3/circomlibjs` for
+  off-chain parity. Substituting different round constants would
+  break circuit verification without invalidating the on-chain
+  bytecode, so the pinned `circomlib` / `circomlibjs` versions
+  are the canonical reference.
 - **EdDSA on Baby Jubjub.** Order-of-operations decisions
   (compressed encoding, scalar reduction) follow the iden3
   reference. The auditor is expected to verify on-chain and
@@ -123,12 +131,15 @@ rather than a one-time decision.
 
 Use one of:
 
-1. **Email** — security@tokamak.network (encrypted with the PGP
-   key linked from the project's main README).
-2. **GitHub Security Advisories** — file a private advisory on
+1. **GitHub Security Advisories** — file a private advisory on
    the `tokamak-network/scatter-dex` repository. This is the
    preferred channel for issues that need a coordinated public
-   disclosure.
+   disclosure; the advisory thread stays private until the
+   project publishes it.
+2. **Email** — security@tokamak.network. A project PGP key for
+   encrypting reports is a follow-on item; until it's published,
+   use the GitHub Security Advisories path for findings whose
+   text shouldn't traverse unencrypted email.
 
 **Do not** open a public issue, file a public PR with a fix, or
 post to the operator chat. A coordinated-disclosure window

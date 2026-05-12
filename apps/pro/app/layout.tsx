@@ -66,8 +66,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
                             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
                               <div>Scatter Pro · Powered by zkScatter · Tokamak Network</div>
-                              <div className="mt-1 text-[var(--color-text-subtle)]">
-                                Not a mixer or anonymity tool. Use is prohibited for AML, terrorist financing, sanctions evasion, Travel Rule evasion, or any other illegal activity.
+                              <div className="mt-1">
+                                Not a mixer or anonymity tool. Use is prohibited for money laundering, terrorist financing, sanctions evasion, Travel Rule evasion, or any other illegal activity.
                               </div>
                             </footer>
                           </ToastProvider>
