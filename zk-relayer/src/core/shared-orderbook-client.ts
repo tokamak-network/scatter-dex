@@ -1,7 +1,16 @@
+import { createHash } from "crypto";
 import { Wallet } from "ethers";
 import WebSocket from "ws";
 import type { OrderSummary } from "../types/order.js";
 import { eqAddr } from "../lib/address.js";
+
+const EMPTY_BODY_SHA256 =
+  "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+function sha256HexBody(bodyBytes: string | undefined): string {
+  if (!bodyBytes || bodyBytes.length === 0) return EMPTY_BODY_SHA256;
+  return "0x" + createHash("sha256").update(bodyBytes, "utf8").digest("hex");
+}
 import { createLogger } from "./logger.js";
 
 const log = createLogger("shared-orderbook");
@@ -99,13 +108,28 @@ export class SharedOrderbookClient {
   // ─── Auth helpers ───
 
   /**
-   * Generate auth headers with method+path bound signature
-   * to prevent cross-endpoint replay attacks.
+   * Generate auth headers with method + path + url + body bound
+   * signature. Binding the body sha256 closes the replay-modify
+   * window where an in-path attacker could capture a valid signed
+   * write and re-send it with a different body before the 5-minute
+   * timestamp window expired.
+   *
+   * `bodyBytes` MUST be exactly the bytes the caller is about to
+   * send as the request body. The server hashes the raw bytes it
+   * receives via `express.json({ verify })`, so any divergence
+   * (whitespace, key order, encoding) fails verification. For GET
+   * and DELETE this argument is omitted and the empty-string hash
+   * is bound instead.
    */
-  async authHeaders(method: string, path: string): Promise<Record<string, string>> {
+  async authHeaders(
+    method: string,
+    path: string,
+    bodyBytes?: string,
+  ): Promise<Record<string, string>> {
     const ts = Math.floor(Date.now() / 1000).toString();
     const address = this.wallet.address.toLowerCase();
-    const message = `zkScatter-relay:${address}:${ts}:${method.toUpperCase()}:${path}:${this.relayerUrl}`;
+    const bodyHash = sha256HexBody(bodyBytes);
+    const message = `zkScatter-relay:${address}:${ts}:${method.toUpperCase()}:${path}:${this.relayerUrl}:${bodyHash}`;
     const signature = await this.wallet.signMessage(message);
     return {
       "x-relayer-address": this.wallet.address,
@@ -147,11 +171,12 @@ export class SharedOrderbookClient {
 
   async register(): Promise<void> {
     try {
-      const headers = await this.authHeaders("POST", "/api/relayers/register");
+      const body = JSON.stringify({ name: this.relayerName });
+      const headers = await this.authHeaders("POST", "/api/relayers/register", body);
       const res = await fetch(`${this.serverUrl}/api/relayers/register`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ name: this.relayerName }),
+        body,
       });
       if (res.ok) {
         this.serverOnline = true;
@@ -228,11 +253,12 @@ export class SharedOrderbookClient {
 
   private async heartbeat(): Promise<void> {
     try {
-      const headers = await this.authHeaders("POST", "/api/relayers/heartbeat");
+      const body = "{}";
+      const headers = await this.authHeaders("POST", "/api/relayers/heartbeat", body);
       const res = await fetch(`${this.serverUrl}/api/relayers/heartbeat`, {
         method: "POST",
         headers,
-        body: "{}",
+        body,
       });
       this.serverOnline = res.ok;
     } catch {
@@ -253,18 +279,19 @@ export class SharedOrderbookClient {
 
   private async postOrderToServer(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     try {
-      const headers = await this.authHeaders("POST", "/api/orders");
+      const body = JSON.stringify(order);
+      const headers = await this.authHeaders("POST", "/api/orders", body);
       const res = await fetch(`${this.serverUrl}/api/orders`, {
         method: "POST",
         headers,
-        body: JSON.stringify(order),
+        body,
       });
       if (res.ok) {
         const data = await res.json() as { id: string };
         return data.id;
       }
-      const body = await res.text().catch(() => "");
-      log.warn("postOrder rejected", { status: res.status, body: body.slice(0, 200) });
+      const errText = await res.text().catch(() => "");
+      log.warn("postOrder rejected", { status: res.status, body: errText.slice(0, 200) });
       return null;
     } catch (err) {
       this.serverOnline = false;
@@ -286,11 +313,12 @@ export class SharedOrderbookClient {
   async pushSettlement(payload: SettlementPushPayload): Promise<boolean> {
     if (!this.serverOnline) return false;
     try {
-      const headers = await this.authHeaders("POST", "/api/settlements");
+      const body = JSON.stringify(payload);
+      const headers = await this.authHeaders("POST", "/api/settlements", body);
       const res = await fetch(`${this.serverUrl}/api/settlements`, {
         method: "POST",
         headers,
-        body: JSON.stringify(payload),
+        body,
         // Bound the call so a hung shared-OB doesn't leak file descriptors —
         // matches the timeout posture of postOrderToPeers / broadcastCancel.
         signal: AbortSignal.timeout(5000),
@@ -412,11 +440,12 @@ export class SharedOrderbookClient {
 
     const promises = [...this.peers.values()].map(async (peer) => {
       try {
-        const headers = await this.authHeaders("POST", "/api/p2p/orders");
+        const body = JSON.stringify(summary);
+        const headers = await this.authHeaders("POST", "/api/p2p/orders", body);
         await fetch(`${peer.url}/api/p2p/orders`, {
           method: "POST",
           headers,
-          body: JSON.stringify(summary),
+          body,
           signal: AbortSignal.timeout(5000),
         });
       } catch {}

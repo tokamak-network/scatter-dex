@@ -60,7 +60,16 @@ export interface RelayerSettlementStats {
   txCount: number;          // total settlements where the relayer is submitter, maker, or taker
   txCountVerified: number;  // subset with verified=1
   volumeByToken: TokenVolumeRow[];
+  /** Same shape as `volumeByToken`, restricted to verified=1 rows.
+   *  Frontends that surface volume metrics SHOULD default to this
+   *  field — a malicious relayer can otherwise inflate
+   *  `volumeByToken` by pushing fake settlement rows with itself as
+   *  `makerRelayer` (security review #36 — Phase 2.5b verify job
+   *  pending). */
+  volumeByTokenVerified: TokenVolumeRow[];
   pairs: Array<{ sellToken: string; buyToken: string; count: number }>;
+  /** Verified-only counterpart of `pairs`. */
+  pairsVerified: Array<{ sellToken: string; buyToken: string; count: number }>;
   /**
    * Mean effective fee in bps (fee_token_amount × 10000 / buy_amount),
    * averaged across every side the relayer participated in. Both sides
@@ -113,6 +122,9 @@ export interface NetworkSettlementTotals {
   txCount: number;
   txCountVerified: number;
   volumeByToken: TokenVolumeRow[];
+  /** Verified-only volume — preferred for public dashboards.
+   *  See `RelayerSettlementStats.volumeByTokenVerified` for context. */
+  volumeByTokenVerified: TokenVolumeRow[];
   activePairs: number;
   activeRelayers: number;
   lastSettleAt: number | null;

@@ -35,8 +35,18 @@ async function main() {
     origin: corsWildcard ? "*" : config.corsOrigins,
   }));
 
-  // Body size limit
-  app.use(express.json({ limit: "10kb" }));
+  // Body size limit + capture raw bytes for `relayerAuth`. The auth
+  // middleware needs to hash the exact bytes the client signed; the
+  // `verify` callback fires before JSON.parse and gets us those
+  // bytes verbatim. See `middleware/auth.ts` for why this matters.
+  app.use(
+    express.json({
+      limit: "10kb",
+      verify: (req, _res, buf) => {
+        (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+      },
+    }),
+  );
 
   // Rate limiters — two layers to mitigate multi-IP bypass.
   const writeLimiter = rateLimit({

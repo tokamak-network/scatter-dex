@@ -116,11 +116,18 @@ export default function RelayerTradeStats({ address }: Props) {
             </div>
           )}
 
-          {/* Volume by token */}
-          {stats.volumeByToken.length > 0 && (
+          {/* Volume by token — prefer the verified-only aggregate when
+              the server supplies it (a malicious relayer can inflate
+              the unverified figure by pushing fake settlements; see
+              the SECURITY_ISSUES.md #36 row). Falls back to the legacy
+              `volumeByToken` when the server hasn't been upgraded. */}
+          {(() => {
+            const volume = stats.volumeByTokenVerified ?? stats.volumeByToken;
+            const labelSuffix = stats.volumeByTokenVerified ? " · verified" : "";
+            return volume.length > 0 && (
             <div className="mb-4">
               <div className="text-[10px] uppercase tracking-wider text-on-surface-variant/40 mb-2">
-                Volume by token
+                Volume by token{labelSuffix}
               </div>
               {/* overflow-x-auto + min-width lets the fixed-column grid
                   scroll horizontally on mobile rather than clipping or
@@ -134,7 +141,7 @@ export default function RelayerTradeStats({ address }: Props) {
                     <span className="text-right">Sell#</span>
                     <span className="text-right">Buy#</span>
                   </div>
-                  {stats.volumeByToken.map((v) => {
+                  {volume.map((v) => {
                     const dec = tokenDecimals(v.token);
                     const sellBig = safeBigInt(v.totalSell);
                     const buyBig = safeBigInt(v.totalBuy);
@@ -158,7 +165,8 @@ export default function RelayerTradeStats({ address }: Props) {
                 </div>
               </div>
             </div>
-          )}
+          );
+          })()}
 
           {stats.lastSettleAt !== null && (
             <div className="text-[10px] text-on-surface-variant/40">
