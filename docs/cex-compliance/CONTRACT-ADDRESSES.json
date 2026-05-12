@@ -1,0 +1,90 @@
+{
+  "$schema": "./CONTRACT-ADDRESSES.schema.json",
+  "_doc": "Canonical address pack per network. Mainnet block is intentionally empty until the production deployment lands; the testnet entries are the current reference deployment used by the live demo apps. Each entry lists the implementation address (for upgradeable contracts) alongside the proxy, so exchange-side monitoring can subscribe to both. Verification status is the latest known state on the named explorer; re-check before submitting to a CEX.",
+  "lastUpdated": "2026-05-12",
+  "ownerContact": "TBA — populated alongside the production deployment.",
+  "networks": {
+    "mainnet": {
+      "chainId": 1,
+      "explorer": "https://etherscan.io",
+      "status": "not-deployed",
+      "contracts": {}
+    },
+    "sepolia": {
+      "chainId": 11155111,
+      "explorer": "https://sepolia.etherscan.io",
+      "status": "reference-deployment",
+      "contracts": {
+        "CommitmentPool": {
+          "proxy": "TBA",
+          "implementation": "TBA",
+          "owner": "TBA (multisig)",
+          "proxyAdmin": "TBA",
+          "verified": false,
+          "_note": "Upgradeable via TransparentUpgradeableProxy (PR #659 / #661)."
+        },
+        "PrivateSettlement": {
+          "proxy": "TBA",
+          "implementation": "TBA",
+          "owner": "TBA (multisig)",
+          "proxyAdmin": "TBA",
+          "verified": false,
+          "_note": "Upgradeable via TransparentUpgradeableProxy."
+        },
+        "FeeVault": {
+          "proxy": "TBA",
+          "implementation": "TBA",
+          "owner": "TBA",
+          "proxyAdmin": "TBA",
+          "verified": false
+        },
+        "RelayerRegistry": {
+          "proxy": "TBA",
+          "implementation": "TBA",
+          "owner": "TBA",
+          "proxyAdmin": "TBA",
+          "verified": false
+        },
+        "SanctionsList": {
+          "proxy": "TBA",
+          "implementation": "TBA",
+          "owner": "TBA",
+          "proxyAdmin": "TBA",
+          "verified": false
+        },
+        "IdentityGate": {
+          "address": "TBA",
+          "owner": "TBA",
+          "verified": false,
+          "_note": "Multi-CA aggregator. Owner can add / remove zk-X509 IdentityRegistry instances."
+        },
+        "AuthorizeVerifier": {
+          "tier_16": "TBA",
+          "tier_64": "TBA",
+          "tier_128": "TBA",
+          "_note": "One Groth16 verifier per tier (16/64/128 max-claims-per-side). All registered on PrivateSettlement.authorizeVerifierByTier."
+        },
+        "ClaimVerifier": {
+          "tier_16": "TBA",
+          "tier_64": "TBA",
+          "tier_128": "TBA"
+        },
+        "BatchAuthorizeVerifier": {
+          "address": "TBA",
+          "_note": "Optional batched Groth16 verifier; PrivateSettlement falls back to per-side verification when this isn't set."
+        },
+        "CancelVerifier": "TBA",
+        "DepositVerifier": "TBA",
+        "WithdrawVerifier": "TBA",
+        "BatchExecutor": {
+          "address": "TBA",
+          "_note": "ERC-7579 + EIP-7702 batch executor for the deposit one-shot flow (wrap + approve + deposit). Not stealth-related — the previous StealthTransferAccount delegate was removed in PR #668."
+        }
+      }
+    }
+  },
+  "history": [
+    "2026-05-12 (PR #678) — initial schema. Mainnet block reserved; testnet placeholders carry the contract names and roles, addresses fill in as the upgrade-track PRs land their final deployments.",
+    "Prior context: the EIP-7702 stealth delegate (StealthTransferAccount.sol) and its zk-relayer transfer-7702 route were removed in PR #668. They are intentionally absent from this address pack."
+  ]
+}
