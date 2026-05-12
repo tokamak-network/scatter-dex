@@ -14,6 +14,7 @@ import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
 import { FolderProvider } from "./lib/folder";
+import { WalletBookProvider } from "./lib/walletBook";
 import { CommitmentTreeProvider } from "./lib/commitmentTree";
 import { ToastProvider } from "@zkscatter/ui";
 import { Brand } from "./components/Brand";
@@ -33,6 +34,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <WalletProvider network={DEMO_NETWORK}>
           <ActiveNetworkProvider>
             <FolderProvider>
+             <WalletBookProvider>
               <CommitmentTreeProvider>
                 <EdDSAKeyProvider>
                   <RelayersProvider>
@@ -56,6 +58,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
+                                  <Link href="/address-book" className="hover:text-[var(--color-text)]">Address book</Link>
                                 </>
                               }
                             />
@@ -71,6 +74,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </RelayersProvider>
                 </EdDSAKeyProvider>
               </CommitmentTreeProvider>
+             </WalletBookProvider>
             </FolderProvider>
           </ActiveNetworkProvider>
         </WalletProvider>

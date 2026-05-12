@@ -19,8 +19,8 @@ import { buildClaimsTree, computeCommitment, toBytes32Hex } from "@zkscatter/sdk
 import { formatTokenAmount } from "../lib/format";
 import type { VaultNote } from "../lib/vault";
 import {
-  delaySeconds,
-  expirySeconds,
+  expiryToUnixSec,
+  releaseAtToUnixSec,
   useTradeForm,
   type RecipientRow,
 } from "../lib/tradeForm";
@@ -183,7 +183,7 @@ export function OrderModal({
   // is still used for record-keeping (so the OrderRecord ends up
   // tagged with the user-facing label even if the form's active
   // pair changes mid-modal).
-  const { pair: activePair, recipients, expiry: expiryKey, maxFeeBps } = useTradeForm();
+  const { pair: activePair, recipients, expiry: expiryAtLocal, maxFeeBps } = useTradeForm();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // useRef instead of useState — we never need a re-render on
   // controller changes, only synchronous access from `close()`,
@@ -306,16 +306,17 @@ export function OrderModal({
       const eddsaKey = await deriveEdDSA();
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-      // Capture once — using `Date.now()` separately for releaseTime
-      // and expiry would race the second boundary in rare cases and
-      // produce a 1-second discrepancy.
+      // Capture a single `nowSec` and thread it through every
+      // timestamp helper so the order's expiry + each claim's
+      // release time can't drift across a second boundary mid-
+      // build. Falls back inside the helpers when the user left
+      // the corresponding input empty.
       const nowSec = BigInt(Math.floor(Date.now() / 1000));
-      const expirySec = nowSec + BigInt(expirySeconds(expiryKey));
+      const expirySec = expiryToUnixSec(expiryAtLocal, nowSec);
 
-      // Apply per-claim release delays on top of `nowSec`.
       const claims: ClaimEntry[] = resolved.map((r, i) => ({
         ...r,
-        releaseTime: nowSec + BigInt(delaySeconds(recipients[i]!)),
+        releaseTime: releaseAtToUnixSec(recipients[i]!, nowSec),
       }));
 
       const commitment = await computeCommitment(note.note);
@@ -442,7 +443,7 @@ export function OrderModal({
     }
   }, [
     side, pair, price, size, account, note,
-    activePair, recipients, expiryKey, maxFeeBps,
+    activePair, recipients, expiryAtLocal, maxFeeBps,
     deriveEdDSA, addOrder, toast, commitmentTree,
     selectedRelayer,
   ]);
