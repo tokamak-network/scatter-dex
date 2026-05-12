@@ -260,10 +260,10 @@ SERVICE_NAME="User CA (10 wallets/cert)" \
 bash script/deploy-on-existing-anvil.sh
 ```
 
-Knobs you typically don't need to set:
-- `MAX_WALLETS_PER_CERT` — how many wallets one certificate may bind (default 1 for strict 1:1, set to N for multi-wallet use cases like this example).
+Optional environment variables:
+- `MAX_WALLETS_PER_CERT=<n>` — how many wallets one certificate may bind (default 1 for strict 1:1, set to a higher value like the `10` above for multi-wallet use cases).
 - `SEED_TEST_CA=0` — skip the auto-`addCA` step (e.g. when you're going to wire CAs from a separate admin flow).
-- `CA_CERT_PATH=...` — point at a non-default CA cert; default is `certs/ca_pub.der`.
+- `CA_CERT_PATH=<path>` — point at a non-default CA cert; default is `certs/ca_pub.der`.
 
 Note the printed `IdentityRegistry (proxy)` address — that's the registry Pay will route through. The script also prints the resulting `caMerkleRoot`, which should be non-zero (= `sha256` of the seeded CA cert).
 
