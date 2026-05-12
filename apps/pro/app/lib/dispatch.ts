@@ -1,6 +1,6 @@
 "use client";
 
-import { isConfiguredAddress } from "@zkscatter/sdk";
+import { chainName, isConfiguredAddress } from "@zkscatter/sdk";
 import {
   callCancel,
   callDeposit,
@@ -37,7 +37,7 @@ async function assertChainMatch(signer: Signer): Promise<void> {
   const walletChainId = Number(net.chainId);
   if (walletChainId !== DEMO_NETWORK.chainId) {
     throw new Error(
-      `Wallet is on chain ${walletChainId}; this app is configured for chain ${DEMO_NETWORK.chainId}. Switch networks in your wallet and retry.`,
+      `Wallet is on ${chainName(walletChainId)} (${walletChainId}); this app is configured for ${chainName(DEMO_NETWORK.chainId)} (${DEMO_NETWORK.chainId}). Switch networks in your wallet and retry.`,
     );
   }
 }

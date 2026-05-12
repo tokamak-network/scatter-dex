@@ -1,4 +1,5 @@
 import {
+  KNOWN_EXPLORER_BASES,
   LAUNCH_TOKENS,
   ZERO_ADDRESS,
   chainName,
@@ -77,10 +78,12 @@ function buildNetworkConfig(): NetworkConfig {
     // pill. Env can still override for vanity labels.
     name: pick(process.env.NEXT_PUBLIC_NETWORK_NAME, chainName(chainId)),
     rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, "https://rpc.sepolia.org"),
-    explorerBase: pick(
-      process.env.NEXT_PUBLIC_EXPLORER_BASE,
-      "https://sepolia.etherscan.io",
-    ),
+    // Derive the explorer URL from the SDK's per-chain map so a
+    // chainId=31337 deploy doesn't link out to sepolia.etherscan.io.
+    // `undefined` is intentional: 31337 (Localhost) has no public
+    // explorer; `ExplorerLink` falls back to plain text.
+    explorerBase:
+      pick(process.env.NEXT_PUBLIC_EXPLORER_BASE) || KNOWN_EXPLORER_BASES[chainId],
     contracts: {
       privateSettlement: pick(
         process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS,
