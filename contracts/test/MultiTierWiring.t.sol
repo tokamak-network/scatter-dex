@@ -44,10 +44,8 @@ contract MultiTierWiringTest is Test {
             30
         );
         claimVerifier16 = new MockClaimVerifier();
-        settlement = new PrivateSettlement(
-            address(pool),
-            address(claimVerifier16),
-            address(weth)
+        settlement = ProxyDeployer.deployPrivateSettlement(
+            address(this), address(this), address(pool), address(claimVerifier16), address(weth)
         );
 
         authVerifier16 = new MockAuthorizeVerifier();

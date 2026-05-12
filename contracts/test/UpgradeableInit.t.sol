@@ -8,6 +8,8 @@ import {SanctionsList} from "../src/SanctionsList.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
+import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
+import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
@@ -76,5 +78,25 @@ contract UpgradeableInitTest is Test {
         CommitmentPool impl = new CommitmentPool();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(owner, address(wv), address(dv), 20, 30);
+    }
+
+    function test_privateSettlement_proxy_reinit_reverts() public {
+        MockVerifier wv = new MockVerifier();
+        MockDepositVerifier dv = new MockDepositVerifier();
+        MockClaimVerifier cv = new MockClaimVerifier();
+        CommitmentPool p = ProxyDeployer.deployCommitmentPool(
+            address(this), address(this), address(wv), address(dv), 20, 30
+        );
+        PrivateSettlement s = ProxyDeployer.deployPrivateSettlement(
+            address(this), owner, address(p), address(cv), address(0xBEEF)
+        );
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        s.initialize(owner, address(p), address(cv), address(0xBEEF));
+    }
+
+    function test_privateSettlement_impl_init_reverts() public {
+        PrivateSettlement impl = new PrivateSettlement();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        impl.initialize(owner, address(0xDEAD), address(0xCAFE), address(0xBEEF));
     }
 }

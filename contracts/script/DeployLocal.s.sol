@@ -254,6 +254,21 @@ contract DeployLocal is Script {
         return IdentityGate(address(proxy));
     }
 
+    function _deployPrivateSettlementProxy(address pool_, address claimVerifier, address weth_)
+        internal
+        returns (PrivateSettlement)
+    {
+        address deployer = msg.sender;
+        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
+        PrivateSettlement impl = new PrivateSettlement();
+        bytes memory initData =
+            abi.encodeCall(PrivateSettlement.initialize, (deployer, pool_, claimVerifier, weth_));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        console.log("PrivateSettlement impl:", address(impl));
+        console.log("PrivateSettlement proxy:", address(proxy));
+        return PrivateSettlement(payable(address(proxy)));
+    }
+
     function _deployCommitmentPoolProxy(address withdrawVerifier, address depositVerifier)
         internal
         returns (CommitmentPool)
@@ -386,9 +401,7 @@ contract DeployLocal is Script {
 
         pool = _deployCommitmentPoolProxy(withdrawVerifier, depositVerifier);
 
-        privateSettlement = new PrivateSettlement(
-            address(pool), claimVerifier, weth
-        );
+        privateSettlement = _deployPrivateSettlementProxy(address(pool), claimVerifier, weth);
         // settleAuth and scatterDirectAuth both require an authorize
         // verifier to be wired for the proof's tier before they accept
         // proofs; the constructor doesn't take it (set after deploy via
