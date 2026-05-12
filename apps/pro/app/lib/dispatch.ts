@@ -1,6 +1,6 @@
 "use client";
 
-import { isConfiguredAddress } from "@zkscatter/sdk";
+import { chainName, isConfiguredAddress } from "@zkscatter/sdk";
 import {
   callCancel,
   callDeposit,
@@ -23,6 +23,24 @@ import { DEMO_NETWORK } from "./network";
 // minimal and TypeScript happy when only @zkscatter/sdk is on the
 // resolution path.
 type Signer = Parameters<typeof callCancel>[0];
+
+/** Throw a clear "switch network" error when the signer's wallet is
+ *  on a different chain than the configured network. Without this,
+ *  ERC-20 / contract calls return `0x` on the wrong chain and the
+ *  user sees an opaque `could not decode result data` from ethers.
+ *  Callers let the error propagate to the toast so the user knows
+ *  exactly what to do. */
+async function assertChainMatch(signer: Signer): Promise<void> {
+  const provider = signer.provider;
+  if (!provider) return; // Can't check; let downstream fail with its own message.
+  const net = await provider.getNetwork();
+  const walletChainId = Number(net.chainId);
+  if (walletChainId !== DEMO_NETWORK.chainId) {
+    throw new Error(
+      `Wallet is on ${chainName(walletChainId)} (${walletChainId}); this app is configured for ${chainName(DEMO_NETWORK.chainId)} (${DEMO_NETWORK.chainId}). Switch networks in your wallet and retry.`,
+    );
+  }
+}
 
 export interface DispatchResultSimulated {
   kind: "simulated";
@@ -54,6 +72,7 @@ export async function dispatchCancel(
   if (!isConfiguredAddress(addr)) return { kind: "simulated", reason: "not_configured" };
   if (!signer) return { kind: "simulated", reason: "no_signer" };
 
+  await assertChainMatch(signer);
   const tx = await callCancel(signer, addr, proof);
   return { kind: "onchain", txHash: tx.hash };
 }
@@ -80,6 +99,12 @@ export async function dispatchDeposit(
     return { kind: "simulated", reason: "not_configured" };
   }
   if (!signer) return { kind: "simulated", reason: "no_signer" };
+
+  // Verify the wallet's chain matches the configured network before
+  // any contract read — otherwise `ensureAllowance` reads a non-
+  // existent contract and ethers throws "could not decode result
+  // data" with no actionable context for the user.
+  await assertChainMatch(signer);
 
   // Approve first (no-op when allowance already covers `amount`).
   // Wait on each approval tx so the deposit can't race ahead of the
