@@ -99,6 +99,20 @@ export function useIdentityStatus(): StatusValue {
   return ctx;
 }
 
+/** Convenience wrapper for "should I gate this action?". DRYs the
+ *  identical `state.kind === "unverified" | "expired" | "error"`
+ *  check that every transactional modal (Deposit/Order/Claim)
+ *  duplicates. `loading` / `disconnected` aren't blocking — the
+ *  modal's own connect-wallet guard handles those. */
+export function useIdentityGate(): { state: IdentityState; blocking: boolean } {
+  const { state } = useIdentityStatus();
+  const blocking =
+    state.kind === "unverified" ||
+    state.kind === "expired" ||
+    state.kind === "error";
+  return { state, blocking };
+}
+
 // ---------------------------------------------------------------
 // Batch lookups for arbitrary addresses (recipient badges).
 // One in-memory cache shared across address-book + wizard rows +

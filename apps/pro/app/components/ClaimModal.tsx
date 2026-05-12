@@ -1,5 +1,5 @@
 "use client";
-import { useIdentityStatus } from "../lib/identity";
+import { useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -24,11 +24,7 @@ interface ClaimModalProps {
 }
 
 export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
-  const { state: identityState } = useIdentityStatus();
-  const identityBlocking =
-    identityState.kind === "unverified" ||
-    identityState.kind === "expired" ||
-    identityState.kind === "error";
+  const { state: identityState, blocking: identityBlocking } = useIdentityGate();
   const { markClaimed } = useOrders();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });

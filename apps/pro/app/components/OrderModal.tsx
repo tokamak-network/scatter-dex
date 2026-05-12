@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZERO_ADDRESS } from "@zkscatter/sdk";
 import {
   randomFieldElement,
@@ -8,7 +8,7 @@ import {
   type ClaimEntry,
 } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
-import { useIdentityStatus } from "../lib/identity";
+import { useIdentityForAddresses, useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
@@ -174,11 +174,7 @@ export function OrderModal({
   size,
   note,
 }: OrderModalProps) {
-  const { state: identityState } = useIdentityStatus();
-  const identityBlocking =
-    identityState.kind === "unverified" ||
-    identityState.kind === "expired" ||
-    identityState.kind === "error";
+  const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addOrder } = useOrders();
   const { account } = useWallet();
@@ -192,6 +188,20 @@ export function OrderModal({
   // tagged with the user-facing label even if the form's active
   // pair changes mid-modal).
   const { pair: activePair, recipients, expiry: expiryAtLocal, maxFeeBps } = useTradeForm();
+
+  // Probe each non-empty recipient against the IdentityRegistry so
+  // we can short-circuit submit before paying the 1–2 s prove cost
+  // when a recipient hasn't completed zk-X509 verification. Empty
+  // rows = `account` (self) and inherit the connected wallet's
+  // status, which the parent gate already enforces. The batch hook
+  // is shared with the address book + claim flow, so re-checking
+  // the same address doesn't refetch.
+  const recipientAddresses = useMemo(
+    () => recipients.map((r) => r.address.trim()).filter(Boolean),
+    [recipients],
+  );
+  const recipientIdentity = useIdentityForAddresses(recipientAddresses);
+
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // useRef instead of useState — we never need a re-render on
   // controller changes, only synchronous access from `close()`,
@@ -282,6 +292,30 @@ export function OrderModal({
       setPhase({
         kind: "error",
         message: `Order size (${size}) exceeds the vault note's balance.`,
+      });
+      return;
+    }
+
+    // Recipient CA gate. The on-chain `claim` call reverts for
+    // wallets the `IdentityGate` doesn't see as verified, so reject
+    // the order before prove instead of letting the user pay the
+    // 1–2 s cost and the relayer pay the gas only to revert.
+    // `recipientIdentity.get(addr)` returns `null` while a lookup is
+    // pending (treated as OK so a slow RPC doesn't block); once it
+    // resolves and reports `isVerified: false` we surface it.
+    const unverified: string[] = [];
+    for (const r of recipients) {
+      const trimmed = r.address.trim();
+      if (!trimmed) continue; // empty = self; the parent gate covers this
+      const v = recipientIdentity.get(trimmed);
+      if (v && !v.isVerified) unverified.push(trimmed);
+    }
+    if (unverified.length > 0) {
+      const preview = unverified.slice(0, 3).join(", ");
+      const tail = unverified.length > 3 ? ` and ${unverified.length - 3} more` : "";
+      setPhase({
+        kind: "error",
+        message: `Unverified recipient${unverified.length === 1 ? "" : "s"}: ${preview}${tail}. Every recipient must complete zk-X509 verification before the order can settle.`,
       });
       return;
     }
@@ -453,7 +487,7 @@ export function OrderModal({
     side, pair, price, size, account, note,
     activePair, recipients, expiryAtLocal, maxFeeBps,
     deriveEdDSA, addOrder, toast, commitmentTree,
-    selectedRelayer,
+    selectedRelayer, recipientIdentity,
   ]);
 
   const busy =

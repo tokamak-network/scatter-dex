@@ -8,7 +8,7 @@ import {
 } from "@zkscatter/sdk/zk";
 import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
-import { useIdentityStatus } from "../lib/identity";
+import { useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
@@ -48,11 +48,7 @@ interface DepositModalProps {
 }
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
-  const { state: identityState } = useIdentityStatus();
-  const identityBlocking =
-    identityState.kind === "unverified" ||
-    identityState.kind === "expired" ||
-    identityState.kind === "error";
+  const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addNote } = useVault();
   const { account, signer } = useWallet();

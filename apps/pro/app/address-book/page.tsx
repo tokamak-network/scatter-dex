@@ -6,10 +6,7 @@ import { Field, Modal } from "@zkscatter/ui";
 import { shortAddr } from "@zkscatter/sdk/react";
 import { type WalletEntry } from "@zkscatter/sdk/storage";
 import { WorkspaceBar } from "../components/WorkspaceBar";
-// `IdentityBadge` (CA verification status indicator) lands once
-// Pay's identity surface is ported into Pro. Dropping the import
-// here keeps the address book usable in isolation; rows just don't
-// yet distinguish verified vs. unverified entries visually.
+import { IdentityBadge } from "../components/IdentityBadge";
 import { useFolder } from "../lib/folder";
 import { useWalletBook } from "../lib/walletBook";
 import { csvEscape, downloadCsv } from "../lib/csv";
@@ -176,7 +173,7 @@ function RecipientTable({
                   {e.address ? (
                     <span className="inline-flex items-center gap-1.5">
                       {shortAddr(e.address)}
-                      {/* IdentityBadge slot — wired once identity infra lands */}
+                      <IdentityBadge address={e.address} />
                     </span>
                   ) : (
                     <span className="text-[var(--color-text-muted)]">—</span>
@@ -321,7 +318,11 @@ function RecipientForm({
                   : "border-[var(--color-border-strong)]"
               }`}
             />
-            {/* IdentityBadge preview — wired once identity infra lands */}
+            {address.trim().length > 0 && (
+              <div className="mt-1.5">
+                <IdentityBadge address={address.trim()} />
+              </div>
+            )}
           </Field>
         </FormSection>
 
