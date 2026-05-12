@@ -5,6 +5,13 @@ import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { WrongChainBanner } from "./components/WrongChainBanner";
 import { AppShellHeader } from "@zkscatter/ui";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
+import { IdentityPill } from "./components/IdentityPill";
+import { IdentityMenu } from "./components/IdentityMenu";
+import {
+  IdentityBatchProvider,
+  IdentityGateAdminProvider,
+  IdentityStatusProvider,
+} from "./lib/identity";
 import { VaultProvider } from "./lib/vault";
 import { VaultReconciler } from "./lib/vaultReconciler";
 import { OrdersProvider } from "./lib/orders";
@@ -35,6 +42,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <ActiveNetworkProvider>
             <FolderProvider>
              <WalletBookProvider>
+              <IdentityStatusProvider>
+               <IdentityGateAdminProvider>
+                <IdentityBatchProvider>
               <CommitmentTreeProvider>
                 <EdDSAKeyProvider>
                   <RelayersProvider>
@@ -47,7 +57,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                             <AppShellHeader
                               brand={<Brand />}
                               chainPill={<NetworkSwitcher />}
-                              walletSlot={<ConnectWalletPill />}
+                              walletSlot={
+                                <div className="flex items-center gap-2">
+                                  <IdentityPill />
+                                  <ConnectWalletPill />
+                                </div>
+                              }
                               topRibbon={
                                 <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
                                   🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
@@ -59,6 +74,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
                                   <Link href="/address-book" className="hover:text-[var(--color-text)]">Address book</Link>
+                                  <IdentityMenu />
                                 </>
                               }
                             />
@@ -74,6 +90,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   </RelayersProvider>
                 </EdDSAKeyProvider>
               </CommitmentTreeProvider>
+                </IdentityBatchProvider>
+               </IdentityGateAdminProvider>
+              </IdentityStatusProvider>
              </WalletBookProvider>
             </FolderProvider>
           </ActiveNetworkProvider>
