@@ -13,12 +13,13 @@ import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 /// @dev Relayers may optionally stake a bond to register (minBond configurable by owner, default 0).
 ///      Bond is returned after a cooldown on exit.
 ///
-///      Bond token is configurable via `bondToken` (immutable):
+///      Bond token is configurable via `bondToken` (set once in `initialize()`,
+///      never reassigned — was `immutable` before the proxy migration):
 ///      - `address(0)` → **native mode** (e.g. TON on Tokamak L2): bond paid via `msg.value`.
 ///      - non-zero ERC20 → **token mode** (e.g. TON ERC20 on L1): bond pulled via
 ///        `transferFrom`; caller must `approve` first. `msg.value` MUST be 0.
-///      Choosing immutable lets one codebase deploy to both networks while
-///      making it impossible to "rug" existing bonds by switching tokens.
+///      The same codebase deploys to both networks; the init-only write barrier
+///      preserves the original "can't rug existing bonds by switching tokens" property.
 ///
 ///      NOTE (L-3): No bond slashing mechanism — malicious relayers lose only gas on
 ///      failed settle() attempts. Consider adding slashing for repeated violations.
@@ -260,19 +261,26 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     }
 
     function getActiveRelayers() external view returns (address[] memory) {
+        uint256 len = relayerList.length;
         uint256 count;
-        for (uint256 i; i < relayerList.length; ++i) {
+        for (uint256 i; i < len;) {
             Relayer storage r = relayers[relayerList[i]];
-            if (r.active && r.exitRequestedAt == 0) ++count;
+            if (r.active && r.exitRequestedAt == 0) {
+                unchecked { ++count; }
+            }
+            unchecked { ++i; }
         }
 
         address[] memory active = new address[](count);
         uint256 idx;
-        for (uint256 i; i < relayerList.length; ++i) {
-            Relayer storage r = relayers[relayerList[i]];
+        for (uint256 i; i < len;) {
+            address rAddr = relayerList[i];
+            Relayer storage r = relayers[rAddr];
             if (r.active && r.exitRequestedAt == 0) {
-                active[idx++] = relayerList[i];
+                active[idx] = rAddr;
+                unchecked { ++idx; }
             }
+            unchecked { ++i; }
         }
         return active;
     }

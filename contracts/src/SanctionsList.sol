@@ -66,23 +66,29 @@ contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList
     ///         Silently skips zero addresses and duplicates for convenience.
     ///         Emits individual AddressSanctioned events only for newly added.
     function addSanctionsBatch(address[] calldata addrs) external onlyOwner {
-        if (addrs.length > MAX_BATCH_SIZE) revert BatchTooLarge();
-        for (uint256 i = 0; i < addrs.length; i++) {
-            if (addrs[i] != address(0) && !sanctioned[addrs[i]]) {
-                sanctioned[addrs[i]] = true;
-                emit AddressSanctioned(addrs[i]);
+        uint256 len = addrs.length;
+        if (len > MAX_BATCH_SIZE) revert BatchTooLarge();
+        for (uint256 i; i < len;) {
+            address a = addrs[i];
+            if (a != address(0) && !sanctioned[a]) {
+                sanctioned[a] = true;
+                emit AddressSanctioned(a);
             }
+            unchecked { ++i; }
         }
     }
 
     /// @notice Batch-remove addresses (e.g. OFAC delisting).
     function removeSanctionsBatch(address[] calldata addrs) external onlyOwner {
-        if (addrs.length > MAX_BATCH_SIZE) revert BatchTooLarge();
-        for (uint256 i = 0; i < addrs.length; i++) {
-            if (sanctioned[addrs[i]]) {
-                sanctioned[addrs[i]] = false;
-                emit AddressUnsanctioned(addrs[i]);
+        uint256 len = addrs.length;
+        if (len > MAX_BATCH_SIZE) revert BatchTooLarge();
+        for (uint256 i; i < len;) {
+            address a = addrs[i];
+            if (sanctioned[a]) {
+                sanctioned[a] = false;
+                emit AddressUnsanctioned(a);
             }
+            unchecked { ++i; }
         }
     }
 }

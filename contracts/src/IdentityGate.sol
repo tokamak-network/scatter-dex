@@ -40,7 +40,10 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
     }
 
     function initialize(address initialOwner, address _initialRegistry) external initializer {
-        if (initialOwner == address(0) || _initialRegistry == address(0)) revert RegistryAddressZero();
+        // `__Ownable_init` already reverts with `OwnableInvalidOwner(0)` when
+        // `initialOwner == 0`; we only guard the registry parameter so the
+        // error name (`RegistryAddressZero`) actually matches the field.
+        if (_initialRegistry == address(0)) revert RegistryAddressZero();
         __Ownable_init(initialOwner);
         __Ownable2Step_init();
         registries.push(IIdentityRegistry(_initialRegistry));
@@ -66,21 +69,22 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
 
     function removeRegistry(address _registry) external onlyOwner {
         if (!registryExists[_registry]) revert RegistryNotFound();
-        if (registries.length == 1) revert NoRegistries();
+        uint256 len = registries.length;
+        if (len == 1) revert NoRegistries();
 
         // Swap-and-pop — find and remove from array
-        bool found = false;
-        for (uint256 i = 0; i < registries.length; i++) {
+        for (uint256 i; i < len;) {
             if (address(registries[i]) == _registry) {
-                registries[i] = registries[registries.length - 1];
+                registries[i] = registries[len - 1];
                 registries.pop();
-                found = true;
-                break;
+                registryExists[_registry] = false;
+                emit RegistryRemoved(_registry);
+                return;
             }
+            unchecked { ++i; }
         }
-        if (!found) revert RegistryNotFound();
-        registryExists[_registry] = false;
-        emit RegistryRemoved(_registry);
+        // Unreachable: `registryExists` guard above ensures the loop finds the entry.
+        revert RegistryNotFound();
     }
 
     function getRegistryCount() external view returns (uint256) {
@@ -88,9 +92,11 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
     }
 
     function getRegistries() external view returns (address[] memory) {
-        address[] memory addrs = new address[](registries.length);
-        for (uint256 i = 0; i < registries.length; i++) {
+        uint256 len = registries.length;
+        address[] memory addrs = new address[](len);
+        for (uint256 i; i < len;) {
             addrs[i] = address(registries[i]);
+            unchecked { ++i; }
         }
         return addrs;
     }
@@ -100,12 +106,14 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
     /// @notice Returns true if ANY registered CA has verified the user.
     /// @dev Skips registries that revert (e.g., misconfigured proxy) to prevent DoS.
     function isVerified(address user) external view override returns (bool) {
-        for (uint256 i = 0; i < registries.length; i++) {
+        uint256 len = registries.length;
+        for (uint256 i; i < len;) {
             try registries[i].isVerified(user) returns (bool verified) {
                 if (verified) return true;
             } catch {
-                continue; // skip reverting registry
+                // skip reverting registry
             }
+            unchecked { ++i; }
         }
         return false;
     }
@@ -114,12 +122,12 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
     /// @dev Skips registries that revert.
     function verifiedUntil(address user) external view override returns (uint64) {
         uint64 latest = 0;
-        for (uint256 i = 0; i < registries.length; i++) {
+        uint256 len = registries.length;
+        for (uint256 i; i < len;) {
             try registries[i].verifiedUntil(user) returns (uint64 until) {
                 if (until > latest) latest = until;
-            } catch {
-                continue;
-            }
+            } catch {}
+            unchecked { ++i; }
         }
         return latest;
     }
@@ -130,12 +138,12 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
     ///      isVerified() handles this because paused registries return false.
     ///      Skips registries that revert.
     function paused() external view override returns (bool) {
-        for (uint256 i = 0; i < registries.length; i++) {
+        uint256 len = registries.length;
+        for (uint256 i; i < len;) {
             try registries[i].paused() returns (bool isPaused) {
                 if (isPaused) return true;
-            } catch {
-                continue;
-            }
+            } catch {}
+            unchecked { ++i; }
         }
         return false;
     }

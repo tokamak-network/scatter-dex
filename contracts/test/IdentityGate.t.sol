@@ -58,7 +58,7 @@ contract IdentityGateTest is Test {
         registry2.setVerifiedUntil(user3, uint64(block.timestamp + 60 days));
     }
 
-    // ─── Constructor ─────────────────────────────────────────
+    // ─── Initializer ─────────────────────────────────────────
 
     function test_initialize_zero_registry_reverts() public {
         IdentityGate impl = new IdentityGate();
@@ -67,7 +67,7 @@ contract IdentityGateTest is Test {
         new TransparentUpgradeableProxy(address(impl), address(this), initData);
     }
 
-    function test_constructor_sets_initial_registry() public view {
+    function test_initialize_sets_initial_registry() public view {
         assertEq(gate.getRegistryCount(), 1);
         assertEq(address(gate.registries(0)), address(registry1));
     }
