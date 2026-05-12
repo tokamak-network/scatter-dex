@@ -90,8 +90,6 @@ discarded immediately. State: `idle` → `saving` → `saved` (or
 - **Inbox unification**: a single `/inbox` page that tabs/filters
   stealth vs EOA. Defer until the EOA flow has settled and we have
   signal on whether users want them merged.
-- **EOA inbox redeposit**: redeposit requires the stealth privkey to
-  sign the EIP-712 authorization, so it's stealth-only by construction.
 
 ## 5. Open questions
 
