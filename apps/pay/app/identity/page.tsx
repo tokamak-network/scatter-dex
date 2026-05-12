@@ -1,13 +1,29 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { ethers } from "ethers";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import {
   useIdentityStatus,
   useIdentityGateAdmin,
 } from "../_lib/identity";
 import { getNetworkConfig } from "../_lib/network";
+import { getSharedProvider } from "../_lib/sharedProvider";
 import { ZK_X509_URL } from "../_lib/features";
+
+/** Minimal ABI fragments to read the human-readable registry name.
+ *  zk-X509's IdentityRegistry stores its name on the parent
+ *  RegistryFactory (under `registryInfo[<registry>].name`), so we
+ *  hop registry → factory → registryInfo to surface a friendly
+ *  label here. Legacy registries deployed without a factory return
+ *  `address(0)` from `factory()` and fall back to address-only. */
+const REGISTRY_FACTORY_LINK_ABI = [
+  "function factory() view returns (address)",
+];
+const REGISTRY_FACTORY_INFO_ABI = [
+  "function registryInfo(address) view returns (address creator, string name, uint32 maxWallets, uint8 minDisclosureMask, uint256 maxProofAge, uint256 createdAt, uint256 vKeyVersion)",
+];
 
 /** Build a per-registry deep-link to the external zk-X509 site
  *  so users can see the CA's certificate detail / registration
@@ -16,6 +32,53 @@ import { ZK_X509_URL } from "../_lib/features";
 function zkX509RegistryUrl(address: string): string | null {
   if (!ZK_X509_URL) return null;
   return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}`;
+}
+
+/** Resolve `{addressLower → registryName}` for the trusted-authorities
+ *  list. Names come from each registry's factory metadata; legacy
+ *  registries (no factory) get `null` and the UI falls back to
+ *  showing the address only. Returns a stable map keyed by the
+ *  lowercased address, suitable for direct lookup during render. */
+function useRegistryNames(addresses: readonly string[]): Record<string, string | null> {
+  const [names, setNames] = useState<Record<string, string | null>>({});
+  const cfg = getNetworkConfig();
+  // Memoise on the canonical comma-joined list so a re-render with
+  // the same addresses in a different array reference doesn't refire.
+  const key = addresses.map((a) => a.toLowerCase()).join(",");
+  useEffect(() => {
+    if (!addresses.length) {
+      setNames({});
+      return;
+    }
+    let cancelled = false;
+    const provider = getSharedProvider(cfg.rpcUrl);
+    void (async () => {
+      const entries = await Promise.all(
+        addresses.map(async (addr) => {
+          try {
+            const reg = new ethers.Contract(addr, REGISTRY_FACTORY_LINK_ABI, provider);
+            const factoryAddr = (await reg.factory()) as string;
+            if (!factoryAddr || factoryAddr === ethers.ZeroAddress) {
+              return [addr.toLowerCase(), null] as const;
+            }
+            const factory = new ethers.Contract(factoryAddr, REGISTRY_FACTORY_INFO_ABI, provider);
+            const info = await factory.registryInfo(addr);
+            const name = (info?.name ?? info?.[1] ?? "") as string;
+            return [addr.toLowerCase(), name.trim() || null] as const;
+          } catch {
+            return [addr.toLowerCase(), null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setNames(Object.fromEntries(entries));
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, cfg.rpcUrl]);
+  return names;
 }
 
 /** Placeholder identity hub. Scatter Pay reads zk-X509
@@ -30,6 +93,12 @@ export default function IdentityPage() {
   const { account } = useWallet();
   const cfg = getNetworkConfig();
   const { snapshot, loading: adminLoading } = useIdentityGateAdmin();
+  const registryNames = useRegistryNames(snapshot?.registries ?? []);
+  const needsRegistration =
+    state.kind === "unverified" ||
+    state.kind === "expired" ||
+    state.kind === "expiring" ||
+    state.kind === "error";
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -52,13 +121,24 @@ export default function IdentityPage() {
         <div className="mt-3 text-sm">
           <StatusLine state={state} />
         </div>
-        <button
-          type="button"
-          onClick={refresh}
-          className="mt-3 rounded-md border border-[var(--color-border-strong)] px-3 py-1 text-xs hover:bg-[var(--color-primary-soft)]"
-        >
-          Refresh status
-        </button>
+        {needsRegistration && (
+          <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+            {state.kind === "expiring" || state.kind === "expired"
+              ? "Renew your registration on one of the trusted registries listed below."
+              : state.kind === "error"
+                ? "Open one of the trusted registries below to check your registration directly on zk-X509."
+                : "Pick a trusted registry below and complete registration on its zk-X509 site."}
+          </p>
+        )}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={refresh}
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1 text-xs hover:bg-[var(--color-primary-soft)]"
+          >
+            Refresh status
+          </button>
+        </div>
       </section>
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -90,31 +170,40 @@ export default function IdentityPage() {
           <ul className="mt-3 space-y-1.5 text-sm">
             {snapshot.registries.map((addr) => {
               const zkUrl = zkX509RegistryUrl(addr);
+              const name = registryNames[addr.toLowerCase()];
               return (
                 <li
                   key={addr}
-                  className="flex items-center justify-between gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+                  className="flex flex-col gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <span className="font-mono text-xs">{shortAddr(addr)}</span>
-                  <span className="flex items-center gap-3">
-                    <span
-                      className="font-mono text-[10px] text-[var(--color-text-subtle)]"
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium text-[var(--color-text)]">
+                      {name ?? <span className="text-[var(--color-text-muted)]">Unnamed registry</span>}
+                    </div>
+                    <div
+                      className="truncate font-mono text-[10px] text-[var(--color-text-subtle)]"
                       title={addr}
                     >
-                      {addr}
-                    </span>
-                    {zkUrl && (
-                      <a
-                        href={zkUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title="Open this registry on zk-X509 (new tab)"
-                        className="whitespace-nowrap text-[10px] text-[var(--color-primary)] underline-offset-2 hover:underline"
-                      >
-                        Open on zk-X509 ↗
-                      </a>
-                    )}
-                  </span>
+                      {shortAddr(addr)} · {addr}
+                    </div>
+                  </div>
+                  {zkUrl && (
+                    <a
+                      href={zkUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={
+                        state.kind === "verified"
+                          ? "View your registration on zk-X509 (new tab)"
+                          : "Register an identity with this CA on zk-X509 (new tab)"
+                      }
+                      className="whitespace-nowrap text-[10px] text-[var(--color-primary)] underline-offset-2 hover:underline"
+                    >
+                      {state.kind === "verified"
+                        ? "View on zk-X509 ↗"
+                        : "Register with zk-X509 ↗"}
+                    </a>
+                  )}
                 </li>
               );
             })}
@@ -123,22 +212,22 @@ export default function IdentityPage() {
       </section>
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <h2 className="text-base font-medium">Register or renew</h2>
+        <h2 className="text-base font-medium">How to register or renew</h2>
         <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-          Certificate verification runs in the dedicated zk-X509 app.
-          Generate a proof there, then return — your status updates
-          automatically within ~30 seconds, or use the refresh button
-          above.
+          Pay reads verification status on-chain but doesn't run the
+          certificate proof itself — that lives on each trusted
+          registry's zk-X509 site. Pick a registry from the list above
+          and follow its registration flow.
         </p>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-[var(--color-text-muted)]">
-          <li>Open the zk-X509 registration app on your phone or signing device.</li>
-          <li>Select your certificate (NPKI / corporate CA / etc.) and complete the proof.</li>
+          <li>Click <em>Register with zk-X509 ↗</em> next to a registry above.</li>
+          <li>On its site, select your certificate (NPKI / corporate CA / etc.) and complete the proof.</li>
           <li>Submit the on-chain registration tx (one-time, gas-paid by you).</li>
-          <li>Return here — your wallet is now verified.</li>
+          <li>Return here — your status updates within ~30 seconds, or click Refresh status above.</li>
         </ol>
         <p className="mt-3 text-xs text-[var(--color-text-subtle)]">
-          Don't have the zk-X509 app yet? Ask the service operator for the
-          deployment-specific registration URL.
+          Don't see a registry that matches your certificate? Ask the
+          service operator which CA they recognise for this deployment.
         </p>
       </section>
 
@@ -187,7 +276,8 @@ function StatusLine({ state }: { state: ReturnType<typeof useIdentityStatus>["st
     case "unverified":
       return (
         <span className="text-[var(--color-danger)]">
-          ⚠ Not verified — complete registration below.
+          ⚠ Not verified — pick a registry below and complete registration on
+          its zk-X509 site.
         </span>
       );
     case "loading":
