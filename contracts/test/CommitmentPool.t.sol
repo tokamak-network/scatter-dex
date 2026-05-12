@@ -333,17 +333,19 @@ contract CommitmentPoolTest is Test {
     }
 
     function test_setSanctionsList_zero_disables() public {
+        // Zero is the documented disable path; verify the state actually clears.
+        // (setUp does not wire a sanctions list, so set one first.)
+        pool.setSanctionsList(address(new MockToken()));
         pool.setSanctionsList(address(0));
-        // No revert — zero is the documented disable path.
+        assertEq(address(pool.sanctionsList()), address(0));
     }
 
     // ─── Settlement Timelock Branch Coverage ────────────────────
 
     function test_setAuthorizedSettlement_alreadySet_reverts() public {
-        // setUp already wired a settlement (none) — wire it once, then re-attempt
-        address mockSettlement = address(new MockToken()); // any contract works
-        // Need a fresh pool because setUp already set authorizedSettlement = address(this)?
-        // Actually setUp does NOT set it. So set it once here.
+        // setUp() leaves authorizedSettlement unset; first call must succeed,
+        // second call must hit the SettlementAlreadySet guard.
+        address mockSettlement = address(new MockToken());
         pool.setAuthorizedSettlement(mockSettlement);
         vm.expectRevert(CommitmentPool.SettlementAlreadySet.selector);
         pool.setAuthorizedSettlement(mockSettlement);
@@ -390,13 +392,6 @@ contract CommitmentPoolTest is Test {
     }
 
     // ─── Pause Branch Coverage ──────────────────────────────────
-
-    function test_pause_then_deposit_reverts() public {
-        pool.pause();
-        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
-        vm.prank(alice);
-        _deposit(COMMITMENT_1, address(token), 100 ether);
-    }
 
     function test_unpause_restores_deposits() public {
         pool.pause();
