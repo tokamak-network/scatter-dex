@@ -7,6 +7,7 @@ import {FeeVault} from "../src/FeeVault.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
+import {IncrementalMerkleTree} from "../src/zk/IncrementalMerkleTree.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
@@ -181,7 +182,7 @@ contract TrackDBranchCoverage is Test {
             CommitmentPool.initialize.selector,
             owner, address(withdraw_), address(deposit_), uint32(0), uint32(10)
         );
-        vm.expectRevert(); // InvalidLevels (declared on the IMT base)
+        vm.expectRevert(IncrementalMerkleTree.InvalidLevels.selector);
         new InitRevertProxy(address(impl), data);
     }
 
@@ -193,7 +194,7 @@ contract TrackDBranchCoverage is Test {
             CommitmentPool.initialize.selector,
             owner, address(withdraw_), address(deposit_), uint32(20), uint32(0)
         );
-        vm.expectRevert(); // InvalidRootHistorySize
+        vm.expectRevert(IncrementalMerkleTree.InvalidRootHistorySize.selector);
         new InitRevertProxy(address(impl), data);
     }
 
@@ -205,7 +206,7 @@ contract TrackDBranchCoverage is Test {
             CommitmentPool.initialize.selector,
             owner, address(withdraw_), address(deposit_), uint32(21), uint32(10)
         );
-        vm.expectRevert(); // InvalidLevels (>20)
+        vm.expectRevert(IncrementalMerkleTree.InvalidLevels.selector);
         new InitRevertProxy(address(impl), data);
     }
 
