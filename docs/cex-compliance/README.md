@@ -27,6 +27,9 @@ state clearly what the protocol does and does not do.
 - **[Selective Disclosure Design](./SELECTIVE-DISCLOSURE-DESIGN.md)** —
   what a user can prove about their own activity to a third party,
   what tooling ships today vs. what's roadmap.
+- **[Security and Audit Status](./SECURITY-AND-AUDIT.md)** — current
+  audit status (unaudited, pre-launch), known limitations and trust
+  assumptions, vulnerability-disclosure channels, bug-bounty position.
 
 ## What ScatterDEX is not
 

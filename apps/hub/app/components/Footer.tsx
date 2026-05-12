@@ -50,7 +50,10 @@ export function Footer() {
         />
       </div>
       <div className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
-        © <CurrentYear /> zkScatter · Tokamak Network
+        <div>© <CurrentYear /> zkScatter · Tokamak Network</div>
+        <div className="mt-1">
+          Not a mixer or anonymity tool. Use is prohibited for money laundering, terrorist financing, sanctions evasion, Travel Rule evasion, or any other illegal activity.
+        </div>
       </div>
     </footer>
   );
