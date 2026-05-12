@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
-import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title FeeVault
 /// @notice Accumulates settlement fees for relayers and deducts a platform fee on withdrawal.
 ///         PrivateSettlement deposits fees here during settle/scatterDirect.
 ///         Relayers claim their earned fees; platform fee (in bps) is deducted and sent to treasury.
-contract FeeVault is Ownable2Step, ReentrancyGuard {
+contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
 
     // ─── State ──────────────────────────────────────────────────
@@ -42,6 +44,9 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     /// @notice Only authorized depositors (PrivateSettlement) can credit fees.
     mapping(address => bool) public authorizedDepositors;
 
+    /// @dev Reserved storage for future upgrades. Decrement when new state added.
+    uint256[50] private __gap;
+
     // ─── Events ─────────────────────────────────────────────────
     event FeeDeposited(address indexed relayer, address indexed token, uint256 amount);
     event FeeClaimed(address indexed relayer, address indexed token, uint256 amount, uint256 platformFee);
@@ -69,14 +74,22 @@ contract FeeVault is Ownable2Step, ReentrancyGuard {
     error NoFeeChangePending();
     error FeeChangeNotReady();
 
-    constructor(address _treasury, uint256 _platformFeeBps) Ownable(msg.sender) {
-        if (_treasury == address(0)) revert ZeroAddress();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner, address _treasury, uint256 _platformFeeBps) external initializer {
+        if (initialOwner == address(0) || _treasury == address(0)) revert ZeroAddress();
         if (_platformFeeBps > MAX_PLATFORM_FEE) revert FeeTooHigh();
+        __Ownable_init(initialOwner);
+        __Ownable2Step_init();
+        __ReentrancyGuard_init();
         treasury = _treasury;
         platformFeeBps = _platformFeeBps;
     }
 
-    function renounceOwnership() public pure override { revert RenounceOwnershipDisabled(); }
+    function renounceOwnership() public pure override(OwnableUpgradeable) { revert RenounceOwnershipDisabled(); }
 
     // ─── Deposit (called by PrivateSettlement) ──────────────────
 

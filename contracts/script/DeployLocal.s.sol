@@ -7,6 +7,7 @@ import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {MockToken} from "./DeployTestTokens.s.sol";
 import {MockWETH} from "../test/mocks/MockWETH.sol";
@@ -126,10 +127,11 @@ contract DeployLocal is Script {
             privateSettlement.setTokenWhitelist(wtonAddr, true);
         }
 
-        // 11. Deploy FeeVault (5% platform fee, treasury = deployer)
-        FeeVault vault = new FeeVault(deployer, 500);
+        // 11. Deploy FeeVault behind TransparentUpgradeableProxy (5% platform fee, treasury = deployer).
+        //     Vault owner = deployer so this script can wire setAuthorizedDepositor below.
+        //     ProxyAdmin owner = UPGRADE_OWNER env (multisig on mainnet); falls back to deployer.
+        FeeVault vault = _deployFeeVaultProxy(deployer);
         vault.setAuthorizedDepositor(address(privateSettlement), true);
-        console.log("FeeVault:", address(vault));
 
         // 12. Wire relayer registry + fee vault to PrivateSettlement
         privateSettlement.setRelayerRegistry(address(relayerRegistry));
@@ -244,6 +246,19 @@ contract DeployLocal is Script {
             vm.toString(tonAddr), ":",
             useRealTokens ? "WTON:27" : "TON:18"
         );
+    }
+
+    /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.
+    ///      Vault owner = deployer (so the script can finish wiring).
+    ///      ProxyAdmin owner = UPGRADE_OWNER env (or deployer when unset).
+    function _deployFeeVaultProxy(address deployer) internal returns (FeeVault) {
+        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
+        FeeVault impl = new FeeVault();
+        bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, deployer, 500));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        console.log("FeeVault impl:", address(impl));
+        console.log("FeeVault proxy:", address(proxy));
+        return FeeVault(address(proxy));
     }
 
     function _deployCode(string memory what) internal returns (address addr) {
