@@ -28,8 +28,11 @@ import {
 
 /// @notice Per-contract upgrade simulation: deploy V1 → mutate state → upgrade to V2 →
 ///         assert v1 state survived AND v2's new state is independently writable.
-///         Catches the classic upgrade footguns (storage-slot drift, missing __gap,
-///         re-initializer mis-chaining) for every contract in the upgradeable series.
+///         The state-preservation half is the load-bearing check — slot drift in V2
+///         would corrupt inherited fields and surface immediately as a failed assert.
+///         A separate `test_feeVault_upgradeAndCall_runsReinitializer` exercises the
+///         `upgradeAndCall(impl, reinitData)` path (catches double-init, missing
+///         `reinitializer` modifier, etc.) on FeeVault as a representative case.
 contract UpgradeSimTest is Test {
     address admin = address(0xA0);   // ProxyAdmin owner (upgrade authority)
     address owner = address(0xB0);   // Contract owner
@@ -62,6 +65,30 @@ contract UpgradeSimTest is Test {
         // V2 new state is independently writable.
         v2.v2_setCounter(42);
         assertEq(v2.v2_counter(), 42, "v2 new field");
+    }
+
+    function test_feeVault_upgradeAndCall_runsReinitializer() public {
+        address treasury = address(0xCAFE);
+        FeeVault v1 = ProxyDeployer.deployFeeVault(admin, owner, treasury, 500);
+
+        // Upgrade + delegatecall `reinitializeV2(seed)` in one tx.
+        UpgradeHelper.upgradeAndCall(
+            address(v1),
+            address(new FeeVaultV2()),
+            admin,
+            abi.encodeWithSelector(FeeVaultV2.reinitializeV2.selector, uint256(0xBEEF))
+        );
+
+        FeeVaultV2 v2 = FeeVaultV2(address(v1));
+        // V1 state still there.
+        assertEq(v2.treasury(), treasury, "v1 treasury preserved through reinit");
+        assertEq(v2.platformFeeBps(), 500, "v1 fee bps preserved through reinit");
+        // Reinit body actually ran.
+        assertEq(v2.v2_counter(), 0xBEEF, "reinitializeV2 ran");
+
+        // Calling it again must revert (reinitializer(2) is one-shot).
+        vm.expectRevert();
+        v2.reinitializeV2(1);
     }
 
     // ─── SanctionsList ───────────────────────────────────────────
