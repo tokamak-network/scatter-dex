@@ -251,7 +251,11 @@ contract DeployLocal is Script {
             bool isLocalDevChain = cid == 31337 || cid == 1337;
             require(
                 isLocalDevChain,
-                "UPGRADE_OWNER unset on non-local chain. Set UPGRADE_OWNER to a multisig before deploy."
+                string.concat(
+                    "UPGRADE_OWNER unset on non-local chain (chainid=",
+                    vm.toString(cid),
+                    "). Set UPGRADE_OWNER to a multisig before deploy."
+                )
             );
             console.log("");
             console.log("[WARN] UPGRADE_OWNER unset - defaulting ProxyAdmin owner to deployer");
