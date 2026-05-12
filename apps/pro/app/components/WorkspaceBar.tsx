@@ -94,7 +94,7 @@ export function WorkspaceBar() {
           tone: "ok",
           text: `Imported ${written.length} file${
             written.length === 1 ? "" : "s"
-          }. Reload the page to see the new runs.`,
+          }. Reload the page to see the new orders.`,
         });
       } catch (err) {
         console.error("Workspace import failed:", err);
@@ -135,7 +135,7 @@ export function WorkspaceBar() {
             No notes folder selected
           </div>
           <div className="mt-0.5 text-[var(--color-text-muted)]">
-            Pay reads run records and the address book from a folder you choose. Pick once — the browser remembers it across sessions.
+            Pro reads order records and vault notes from a folder you choose. Pick once — the browser remembers it across sessions.
           </div>
         </div>
         <button
@@ -165,6 +165,9 @@ export function WorkspaceBar() {
       </span>
       <button
         onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Workspace actions"
         className="ml-auto rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
       >
         Change ▾
@@ -203,6 +206,7 @@ export function WorkspaceBar() {
                     disabled={anyBusy}
                     onClick={() => void folder.forget(r.id)}
                     title="Forget this workspace"
+                    aria-label={`Forget workspace ${r.name}`}
                     className="text-[var(--color-text-subtle)] hover:text-[var(--color-warning)] disabled:opacity-50"
                   >
                     ✕
