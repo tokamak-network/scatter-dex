@@ -5,9 +5,8 @@
  *
  * apps/pay has a more elaborate `useFolderStorage` that manages a
  * recent-folders list, restore on mount, and switching between
- * workspaces. Pro's surface area is smaller (just the inbox needs
- * the folder for stealth-keys storage), so a smaller provider is
- * enough — auto-restore on mount, prompt-and-pick when the user
+ * workspaces. Pro's surface area is smaller, so a smaller provider
+ * is enough — auto-restore on mount, prompt-and-pick when the user
  * clicks the picker, expose a single `ready` boolean.
  *
  * Lifted-up version of apps/pay's pattern; future PR can extract
@@ -30,7 +29,6 @@ import {
   restoreFolder,
   selectFolder,
 } from "@zkscatter/sdk/storage";
-import { MetaAddressProvider } from "@zkscatter/sdk/react";
 
 interface FolderState {
   /** `null` while the post-mount probe is pending — UI should treat
@@ -114,14 +112,4 @@ export function FolderProvider({ children }: { children: ReactNode }) {
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
-}
-
-/** Bridge component — mounts the SDK's `MetaAddressProvider` under
- *  the `<FolderProvider>` and reactively passes `folderReady` so the
- *  provider re-loads keys (or runs the localStorage migration) the
- *  moment a folder is picked. Rendered in the root layout so any
- *  page can `useMetaAddress()`. */
-export function FolderAwareMetaAddressProvider({ children }: { children: ReactNode }) {
-  const { ready } = useFolder();
-  return <MetaAddressProvider folderReady={ready}>{children}</MetaAddressProvider>;
 }

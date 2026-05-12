@@ -106,9 +106,7 @@ export function AdvancedSettings() {
         )}
         <p className="text-[11px] text-[var(--color-text-subtle)]">
           Up to 16 recipients in one private order. Empty address = your
-          own wallet. Stealth mode derives a fresh one-time recipient
-          from the recipient&apos;s meta-address (<code>st:eth:0x…</code>) per
-          order — only the recipient can spend it.
+          own wallet.
         </p>
       </section>
 
@@ -174,21 +172,13 @@ function RecipientRowItem({
   onChange: <K extends keyof RecipientRow>(id: number, field: K, value: RecipientRow[K]) => void;
   onRemove: () => void;
 }) {
-  // 7 columns: index · mode · address (fr) · amount · delay · delayUnit · remove
+  // 6 columns: index · address (fr) · amount · delay · delayUnit · remove
   return (
-    <div className="grid grid-cols-[auto_5rem_1fr_5rem_4rem_3rem_auto] items-center gap-1.5 text-xs">
+    <div className="grid grid-cols-[auto_1fr_5rem_4rem_3rem_auto] items-center gap-1.5 text-xs">
       <span className="font-mono text-[var(--color-text-subtle)]">#{index + 1}</span>
-      <select
-        value={row.mode}
-        onChange={(e) => onChange(row.id, "mode", e.target.value as RecipientRow["mode"])}
-        className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1"
-      >
-        <option value="regular">Regular</option>
-        <option value="stealth">Stealth</option>
-      </select>
       <input
         type="text"
-        placeholder={row.mode === "stealth" ? "st:eth:0x…" : "0x… (empty = self)"}
+        placeholder="0x… (empty = self)"
         value={row.address}
         onChange={(e) => onChange(row.id, "address", e.target.value)}
         className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono text-[11px]"

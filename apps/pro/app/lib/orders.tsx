@@ -33,12 +33,6 @@ export interface OrderClaim {
    *  on-chain `PrivateClaim` events. Optional because seeded demo
    *  rows don't carry it. */
   claimsRoot?: string;
-  /** Compressed secp256k1 ephemeral public key from
-   *  `generateStealthAddress`, when the recipient was derived from
-   *  a meta-address. The recipient needs this to derive their
-   *  stealth private key (`deriveStealthPrivateKey`). Absent when
-   *  the recipient is a regular wallet address. */
-  ephemeralPubKey?: string;
 }
 
 /** A submitted private limit order. Phase 3c stores everything in
