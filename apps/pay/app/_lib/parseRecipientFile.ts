@@ -6,7 +6,6 @@
  *  format keeps working without a header.
  */
 import { isAddress } from "ethers";
-import { isMetaAddress } from "@zkscatter/sdk/zk";
 
 export type ParsedRecipient = {
   name: string;
@@ -16,11 +15,6 @@ export type ParsedRecipient = {
    *  it on the recipient (not via address-book lookup) keeps RunRecord
    *  self-contained and immune to later address-book edits. */
   email?: string;
-  /** Optional EIP-5564 meta-address. When present, the wizard derives a
-   *  one-time stealth address + ephemeral pubkey at upload time and the
-   *  recipient's `address` is replaced with the derived stealth address.
-   *  Marks the row as "stealth" without needing a separate flag column. */
-  metaAddress?: string;
 };
 
 export type ParseResult = {
@@ -28,14 +22,13 @@ export type ParseResult = {
   warnings: string[];
 };
 
-type ColumnKind = "name" | "address" | "amount" | "email" | "metaAddress";
+type ColumnKind = "name" | "address" | "amount" | "email";
 
 const HEADER_PATTERNS: Record<ColumnKind, RegExp> = {
   name: /^(name|이름|직원|employee|label|alias|recipient|payee)$/i,
   address: /^(address|wallet|지갑|주소|to|payee[\s_-]?address|wallet[\s_-]?address)$/i,
   amount: /^(amount|금액|급여|salary|usdc|usdt|value|qty|quantity|payout|bonus)$/i,
   email: /^(email|메일|이메일|e[\s_-]?mail)$/i,
-  metaAddress: /^(meta[\s_-]?address|stealth[\s_-]?meta|stealth[\s_-]?address|메타[\s_-]?주소)$/i,
 };
 
 function classifyHeader(cell: unknown): ColumnKind | null {
@@ -64,12 +57,11 @@ function cellToString(c: unknown): string {
 function isCommentRow(row: unknown[]): boolean {
   // Treat a row as a comment when its first non-empty cell starts with
   // `#` AND none of the remaining cells holds something that looks like
-  // a recipient identifier (an address or a meta-address). Pure-text
-  // splatter from a comment whose prose contains commas (e.g.
-  // `# foo, bar, baz`) gets correctly classified — none of the
-  // fragments are addresses. A real data row whose name starts with
-  // `#` (e.g. `#1234,0x...,100`) still survives because the second
-  // cell IS an address.
+  // a recipient address. Pure-text splatter from a comment whose prose
+  // contains commas (e.g. `# foo, bar, baz`) gets correctly classified
+  // — none of the fragments are addresses. A real data row whose name
+  // starts with `#` (e.g. `#1234,0x...,100`) still survives because the
+  // second cell IS an address.
   let firstNonEmptyStartsWithHash = false;
   let seenFirstNonEmpty = false;
   let hasIdentifier = false;
@@ -81,18 +73,13 @@ function isCommentRow(row: unknown[]): boolean {
       firstNonEmptyStartsWithHash = s.startsWith("#");
       continue;
     }
-    if (looksLikeAddress(s) || isMetaAddress(s)) {
+    if (looksLikeAddress(s)) {
       hasIdentifier = true;
       break;
     }
   }
   return firstNonEmptyStartsWithHash && !hasIdentifier;
 }
-
-// EIP-5564 stealth meta-address validation is delegated to the SDK so
-// the parser accepts exactly what `parseMetaAddress` / `generateStealthAddress`
-// accept downstream. Canonical shape: `st:eth:0x` + 132 hex (two
-// concatenated 33-byte compressed pubkeys: spending + viewing).
 
 function looksLikeEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
@@ -116,7 +103,6 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
     address: -1,
     amount: -1,
     email: -1,
-    metaAddress: -1,
   };
   let dataStart = 0;
 
@@ -127,20 +113,18 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
     dataStart = 1;
   } else {
     // Positional fallback for header-less files: legacy 3-column shape
-    // (name / address / amount). Optional email + metaAddress columns
-    // are header-only — without a header we have no way to tell column
-    // 4 from a stray data column.
+    // (name / address / amount). Optional email column is header-only
+    // — without a header we have no way to tell column 4 from a stray
+    // data column.
     cols.name = 0;
     cols.address = 1;
     cols.amount = 2;
   }
 
-  // address+amount required; meta_address can substitute for address
-  // (stealth-only row → wizard derives the actual address from it).
-  if (cols.address < 0 && cols.metaAddress < 0) {
+  if (cols.address < 0) {
     return {
       rows: [],
-      warnings: ['Could not find an "address" or "meta_address" column. Add a header row.'],
+      warnings: ['Could not find an "address" column. Add a header row.'],
     };
   }
   if (cols.amount < 0) {
@@ -155,7 +139,6 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
   let skippedNoAddr = 0;
   let skippedBadAddr = 0;
   let skippedBadAmount = 0;
-  let skippedBadMeta = 0;
   let skippedBadEmail = 0;
   let skippedDup = 0;
   for (let i = dataStart; i < matrix.length; i++) {
@@ -163,20 +146,14 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
     if (row.every((c) => cellToString(c) === "")) continue;
     const get = (col: number) => (col >= 0 ? cellToString(row[col]) : "");
     const address = get(cols.address);
-    const metaAddressRaw = get(cols.metaAddress);
-    if (!address && !metaAddressRaw) {
+    if (!address) {
       skippedNoAddr++;
       continue;
     }
-    if (address && !looksLikeAddress(address)) {
+    if (!looksLikeAddress(address)) {
       skippedBadAddr++;
       continue;
     }
-    if (metaAddressRaw && !isMetaAddress(metaAddressRaw)) {
-      skippedBadMeta++;
-      continue;
-    }
-    const metaAddress = metaAddressRaw;
     const amountRaw = get(cols.amount);
     const amount = amountRaw.replace(/[,_\s]/g, "");
     if (!/^\d+(\.\d+)?$/.test(amount)) {
@@ -188,14 +165,7 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
       skippedBadEmail++;
       continue;
     }
-    // Dedup key: prefer metaAddress when present so two rows pointing
-    // at the same stealth recipient (same meta-address, different or
-    // empty `address`) are caught. Falls back to address for plain
-    // rows. The two key spaces don't collide in practice (40-hex vs
-    // 66/130-hex), and using the canonical metaAddress prevents an
-    // `st:chain:`-prefixed and unprefixed copy of the same key from
-    // both being accepted.
-    const dupKey = (metaAddress || address).toLowerCase();
+    const dupKey = address.toLowerCase();
     if (seenAddrs.has(dupKey)) {
       skippedDup++;
       continue;
@@ -207,12 +177,10 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
       address,
       amount,
       ...(email ? { email } : {}),
-      ...(metaAddress ? { metaAddress } : {}),
     });
   }
-  if (skippedNoAddr > 0) warnings.push(`Skipped ${skippedNoAddr} row(s) with no address or meta_address.`);
-  if (skippedBadAddr > 0) warnings.push(`Skipped ${skippedBadAddr} row(s) with malformed address (expected 0x + 40 hex with valid EIP-55 checksum).`);
-  if (skippedBadMeta > 0) warnings.push(`Skipped ${skippedBadMeta} row(s) with malformed meta_address (expected st:eth:0x + 132 hex chars).`);
+  if (skippedNoAddr > 0) warnings.push(`Skipped ${skippedNoAddr} row(s) with no address.`);
+  if (skippedBadAddr > 0) warnings.push(`Skipped ${skippedBadAddr} row(s) with malformed address (expected 0x + 40 hex; mixed-case must match EIP-55 checksum).`);
   if (skippedBadAmount > 0) warnings.push(`Skipped ${skippedBadAmount} row(s) with non-numeric amount.`);
   if (skippedBadEmail > 0) warnings.push(`Skipped ${skippedBadEmail} row(s) with malformed email.`);
   if (skippedDup > 0) warnings.push(`Skipped ${skippedDup} duplicate row(s).`);

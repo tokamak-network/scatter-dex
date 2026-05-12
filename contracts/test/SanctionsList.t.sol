@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {SanctionsList} from "../src/SanctionsList.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
@@ -37,7 +38,7 @@ contract SanctionsListTest is Test {
     uint[2] proofC = [uint(0), uint(0)];
 
     function setUp() public {
-        sanctions = new SanctionsList();
+        sanctions = ProxyDeployer.deploySanctionsList(address(this), address(this));
 
         MockVerifier withdrawVerifier = new MockVerifier();
         MockDepositVerifier depositVerifier = new MockDepositVerifier();

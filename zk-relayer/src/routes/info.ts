@@ -37,14 +37,6 @@ export function createInfoRoutes(submitter: PrivateSubmitter, db: PrivateOrderDB
       // Operator-set cosmetic metadata (name, description, logoUrl, ...).
       // Empty object when nothing has been configured.
       profile: getProfile(db),
-      // Per-token gasless transfer fee policy
-      // (e.g. `{ USDC: "0.10", USDT: "0.10", TON: "1.0" }`).
-      // Frontend renders these in the relayer selector so users can
-      // compare across relayers and uses the matching value as the
-      // in-batch fee when signing. Empty when the operator hasn't
-      // published a policy — gasless transfer is unavailable
-      // through this relayer in that case.
-      gasless_fees: config.gaslessFees,
       // Per-recipient claim-gasless reserve. Multiplied by the run's
       // recipient count and added to the service fee at settle time
       // — operators see a single combined "Relayer fee" line and the

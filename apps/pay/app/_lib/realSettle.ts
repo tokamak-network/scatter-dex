@@ -52,11 +52,6 @@ export interface RealSettleArgs {
   /** Optional sender / run labels echoed into each ClaimPackage so
    *  recipients see who sent it and which run it belongs to. */
   labels?: { sender?: string; run?: string };
-  /** Lower-cased stealth address → ephemeral pubkey, produced by
-   *  `applyStealthRouting`. When a claim's recipient lookup hits this
-   *  map the package gains the EIP-5564 ephPub field so the receiver
-   *  can derive the matching stealth privkey locally. */
-  ephPubByAddress?: Record<string, string>;
 }
 
 export interface RealSettleResult {
@@ -107,7 +102,6 @@ export interface FinalizeContext {
   batch: PayoutBatch;
   labels?: { sender?: string; run?: string };
   relayerUrl?: string;
-  ephPubByAddress?: Record<string, string>;
   /** EdDSA pubkey the proof was bound to (Poseidon(ax, ay) == pubKeyBind).
    *  Submitted alongside the proof so the relayer can revalidate the
    *  bind without re-deriving from the private key. */
@@ -233,7 +227,6 @@ export async function prepareRealSettle(args: RealSettleArgs): Promise<PreparedS
     batch,
     labels: args.labels,
     relayerUrl: relayer.url,
-    ephPubByAddress: args.ephPubByAddress,
     pubKey: { ax: eddsaPublicKey[0], ay: eddsaPublicKey[1] },
   };
   return { side, ctx };
@@ -403,7 +396,6 @@ export async function finalizeRealSettle(
   const claimsRootHex = toBytes32Hex(ctx.authResult.claimsRoot);
   const claimPackages: ClaimPackage[] = ctx.batch.claims.map((c, i) => {
     const proof = getMerkleProof(claimsLayers, i);
-    const ephPub = ctx.ephPubByAddress?.[c.recipient.toLowerCase()];
     return {
       version: 1,
       chainId: ctx.chainId,
@@ -422,7 +414,6 @@ export async function finalizeRealSettle(
       ...(ctx.labels?.sender ? { senderLabel: ctx.labels.sender } : {}),
       ...(ctx.labels?.run ? { runLabel: ctx.labels.run } : {}),
       ...(ctx.relayerUrl ? { relayerUrl: ctx.relayerUrl } : {}),
-      ...(ephPub ? { ephemeralPubKey: ephPub } : {}),
     };
   });
 

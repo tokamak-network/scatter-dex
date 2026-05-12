@@ -1,0 +1,189 @@
+{
+  "storage": [
+    {
+      "astId": 1453,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "minBond",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_uint256"
+    },
+    {
+      "astId": 1463,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "identityRegistry",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_contract(IIdentityRegistry)2357"
+    },
+    {
+      "astId": 1467,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "bondToken",
+      "offset": 0,
+      "slot": "2",
+      "type": "t_contract(IERC20)942"
+    },
+    {
+      "astId": 1469,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "treasury",
+      "offset": 0,
+      "slot": "3",
+      "type": "t_address"
+    },
+    {
+      "astId": 1474,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "relayers",
+      "offset": 0,
+      "slot": "4",
+      "type": "t_mapping(t_address,t_struct(Relayer)1451_storage)"
+    },
+    {
+      "astId": 1478,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "inList",
+      "offset": 0,
+      "slot": "5",
+      "type": "t_mapping(t_address,t_bool)"
+    },
+    {
+      "astId": 1481,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "relayerList",
+      "offset": 0,
+      "slot": "6",
+      "type": "t_array(t_address)dyn_storage"
+    },
+    {
+      "astId": 1486,
+      "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+      "label": "__gap",
+      "offset": 0,
+      "slot": "7",
+      "type": "t_array(t_uint256)50_storage"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_array(t_address)dyn_storage": {
+      "encoding": "dynamic_array",
+      "label": "address[]",
+      "numberOfBytes": "32",
+      "base": "t_address"
+    },
+    "t_array(t_uint256)50_storage": {
+      "encoding": "inplace",
+      "label": "uint256[50]",
+      "numberOfBytes": "1600",
+      "base": "t_uint256"
+    },
+    "t_bool": {
+      "encoding": "inplace",
+      "label": "bool",
+      "numberOfBytes": "1"
+    },
+    "t_contract(IERC20)942": {
+      "encoding": "inplace",
+      "label": "contract IERC20",
+      "numberOfBytes": "20"
+    },
+    "t_contract(IIdentityRegistry)2357": {
+      "encoding": "inplace",
+      "label": "contract IIdentityRegistry",
+      "numberOfBytes": "20"
+    },
+    "t_mapping(t_address,t_bool)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => bool)",
+      "numberOfBytes": "32",
+      "value": "t_bool"
+    },
+    "t_mapping(t_address,t_struct(Relayer)1451_storage)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => struct RelayerRegistry.Relayer)",
+      "numberOfBytes": "32",
+      "value": "t_struct(Relayer)1451_storage"
+    },
+    "t_string_storage": {
+      "encoding": "bytes",
+      "label": "string",
+      "numberOfBytes": "32"
+    },
+    "t_struct(Relayer)1451_storage": {
+      "encoding": "inplace",
+      "label": "struct RelayerRegistry.Relayer",
+      "numberOfBytes": "224",
+      "members": [
+        {
+          "astId": 1438,
+          "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+          "label": "url",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_string_storage"
+        },
+        {
+          "astId": 1440,
+          "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+          "label": "name",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_string_storage"
+        },
+        {
+          "astId": 1442,
+          "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+          "label": "fee",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 1444,
+          "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+          "label": "bond",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 1446,
+          "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+          "label": "registeredAt",
+          "offset": 0,
+          "slot": "4",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 1448,
+          "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+          "label": "exitRequestedAt",
+          "offset": 0,
+          "slot": "5",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 1450,
+          "contract": "src/RelayerRegistry.sol:RelayerRegistry",
+          "label": "active",
+          "offset": 0,
+          "slot": "6",
+          "type": "t_bool"
+        }
+      ]
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    }
+  }
+}

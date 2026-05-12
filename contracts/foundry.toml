@@ -23,6 +23,8 @@ skip = [
     "lib/openzeppelin-contracts/fv/**",
     "lib/openzeppelin-contracts/scripts/**",
     "lib/openzeppelin-contracts-upgradeable/test/**",
+    "lib/openzeppelin-contracts-upgradeable/certora/**",
+    "lib/openzeppelin-contracts-upgradeable/scripts/**",
     "src/zk/BatchAuthorizeVerifier.sol",
 ]
 

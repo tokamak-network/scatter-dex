@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 /// @dev Realistic mock that mirrors zk-X509 IdentityRegistry behavior.
 contract RealisticIdentityRegistry is IIdentityRegistry {
@@ -44,7 +46,7 @@ contract IdentityGateTest is Test {
     function setUp() public {
         registry1 = new RealisticIdentityRegistry();
         registry2 = new RealisticIdentityRegistry();
-        gate = new IdentityGate(address(registry1));
+        gate = ProxyDeployer.deployIdentityGate(address(this), address(this), address(registry1));
 
         // user1: verified in registry1 (30 days)
         registry1.setVerifiedUntil(user1, uint64(block.timestamp + 30 days));
@@ -56,14 +58,16 @@ contract IdentityGateTest is Test {
         registry2.setVerifiedUntil(user3, uint64(block.timestamp + 60 days));
     }
 
-    // ─── Constructor ─────────────────────────────────────────
+    // ─── Initializer ─────────────────────────────────────────
 
-    function test_constructor_zero_address_reverts() public {
+    function test_initialize_zero_registry_reverts() public {
+        IdentityGate impl = new IdentityGate();
+        bytes memory initData = abi.encodeCall(IdentityGate.initialize, (address(this), address(0)));
         vm.expectRevert(IdentityGate.RegistryAddressZero.selector);
-        new IdentityGate(address(0));
+        new TransparentUpgradeableProxy(address(impl), address(this), initData);
     }
 
-    function test_constructor_sets_initial_registry() public view {
+    function test_initialize_sets_initial_registry() public view {
         assertEq(gate.getRegistryCount(), 1);
         assertEq(address(gate.registries(0)), address(registry1));
     }
