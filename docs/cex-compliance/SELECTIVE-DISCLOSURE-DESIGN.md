@@ -30,8 +30,11 @@ How:
 2. The wallet has the `secret`, `salt`, `pubKey`, and `token` /
    `amount` in local storage (or the user-picked notes folder).
 3. The wallet computes
-   `Poseidon(TAG_COMMITMENT_V2, secret, token, balance, salt, pubKeyAx, pubKeyAy)`
-   and compares it against the on-chain `commitment`.
+   `Poseidon(TAG_COMMITMENT_V2, secret, token, amount, salt, pubKeyAx, pubKeyAy)`
+   and compares it against the on-chain `commitment`. The
+   canonical preimage shape is defined in
+   `packages/sdk/src/zk/commitment.ts`; the tag constant is
+   `TAG_COMMITMENT_V2` (also from the SDK).
 4. The wallet exports a signed JSON disclosure containing the
    commitment, the matching preimage fields, and an EdDSA
    signature over the bundle from the same pubKey baked into the
@@ -51,11 +54,16 @@ How:
 1. The user has the `secret` + `leafIndex` for the claim leaf
    that produced the `PrivateClaim`.
 2. The user re-computes
-   `nullifier = Poseidon(TAG_CLAIM_NULLIFIER, secret, leafIndex)`
-   and compares it to the event's `nullifier` field.
-3. The user includes the leaf's `recipient`, `token`, `amount`,
-   and `releaseTime` (also visible on-chain) and signs the
-   bundle with the EOA that received the payout (i.e. `recipient`).
+   `nullifier = Poseidon(TAG_CLAIM_NULL, secret, leafIndex)` —
+   note the tag is `TAG_CLAIM_NULL` (value `2`) per
+   `circuits/tags.circom`, not `TAG_CLAIM_NULLIFIER` — and
+   compares it to the event's `nullifier` field.
+3. The user includes the leaf's `recipient`, `token`, `amount`
+   (all three are emitted in `PrivateClaim`) and the leaf's
+   `releaseTime` (visible in the original claim transaction's
+   calldata but not in the event itself; the user has it from
+   their own claim-link package) and signs the bundle with the
+   EOA that received the payout (i.e. `recipient`).
 
 A verifier recomputes the nullifier and validates the signature.
 Same shape as (A) — no ZK proof needed because the secrets are

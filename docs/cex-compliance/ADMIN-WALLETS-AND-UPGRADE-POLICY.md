@@ -27,11 +27,13 @@ follow-ons):
 - `FeeVault`
 - `RelayerRegistry`
 - `SanctionsList`
+- `IdentityGate` (multi-CA aggregator — `Initializable +
+  Ownable2StepUpgradeable + __gap`. Logic can be replaced via the
+  proxy; `addRegistry` / `removeRegistry` add/remove child
+  registries without an upgrade.)
 
 Non-upgradeable (immutable bytecode):
 
-- `IdentityGate` (multi-CA aggregator — adds/removes registries
-  through `Ownable2Step`, but doesn't replace logic)
 - Per-tier Groth16 verifier contracts (`AuthorizeVerifier`,
   `ClaimVerifier`, `CancelVerifier`, `DepositVerifier`,
   `WithdrawVerifier`, `BatchAuthorizeVerifier`)
@@ -40,15 +42,15 @@ Non-upgradeable (immutable bytecode):
 
 When a circuit changes, the deploy of a new verifier is **not** an
 upgrade — it's a new contract address that the relevant manager
-registers (e.g. `PrivateSettlement.setAuthorizeVerifierForTier`).
+registers via `PrivateSettlement.setAuthorizeVerifier(uint8 tier, address verifier)`
+or `setClaimVerifier(uint8 tier, address verifier)`.
 
 ## Roles
 
 | Role | Authority | Held by (target) |
 |---|---|---|
 | **Proxy admin** | Replaces a proxy's implementation. Cannot read or write contract storage directly. Cannot transfer ownership of the implementation's logic. | Dedicated `ProxyAdmin` contract owned by the multisig. Each upgradeable proxy has its own admin instance to limit blast radius. |
-| **Owner** (per contract, `Ownable2Step`) | Calls owner-gated mutators on a specific contract (e.g. registry add/remove, pause, fee-collector update). | Operations multisig. |
-| **Pauser** | Triggers `Pausable.pause()` on contracts that expose it. | Pauser role address; held by the operations multisig and a dedicated incident-response key (split). |
+| **Owner** (per contract, `Ownable2Step` / `Ownable2StepUpgradeable`) | Calls owner-gated mutators on a specific contract (registry add/remove, **pause/unpause via `setPaused(bool)`**, fee-collector update, per-tier verifier registration). The owner is the only role that can pause — there is no separate `Pauser` permission today. | Operations multisig. |
 | **Identity registry CA** | Adds / removes individual zk-X509 registries inside `IdentityGate`. | `IdentityGate.owner`, set to the operations multisig. |
 | **Sanctions list manager** | Adds / removes addresses from `SanctionsList`. | `SanctionsList.owner`, set to the operations multisig. |
 | **Relayer registrar** | Self-service via the `RelayerRegistry` contract; operators bond, post fees, exit on cooldown. | Each relayer EOA, gated by the registry's own modifiers. No external admin role. |
@@ -94,10 +96,11 @@ bug):
 
 Critical bug or active exploit:
 
-1. **Pause first.** Pauser keys (operations multisig + the
-   dedicated incident-response key) trigger `Pausable.pause()` on
-   the affected contracts. This freezes the relevant entry points
-   immediately; no upgrade is needed to stop the bleed.
+1. **Pause first.** The owner multisig calls `setPaused(true)` on
+   the affected contracts (each contract has its own owner-gated
+   setter; there's no global pause). This freezes the relevant
+   entry points immediately; no upgrade is needed to stop the
+   bleed.
 2. **Notify.** Post an incident notice (operator channel, the
    project's public status page, and the exchange contact list
    from this pack). Include: which contract is paused, what's
@@ -123,9 +126,10 @@ Critical bug or active exploit:
   catches a layout that's incompatible with the live state before
   the proxy can be flipped.
 - **Does not provide a global pause for the whole protocol.**
-  `Pausable` is per-contract by design; each entry point lists
-  whether it observes a pause modifier so the incident-response
-  team can target only the affected surface.
+  Each pausable contract owns its own `paused` flag and
+  `setPaused(bool)` setter; entry points check the flag with a
+  `ContractPaused()` revert. The incident-response team targets
+  only the affected surface — there's no single switch.
 - **Does not permit ownership transfer outside the documented
   multisig.** `Ownable2Step` enforces a two-step accept; an
   accidental ownership transfer to an external EOA is not possible
@@ -143,9 +147,10 @@ What an exchange's compliance team should subscribe to:
 | Event | Source | Triggered when |
 |---|---|---|
 | `Upgraded(address indexed implementation)` | Each upgradeable proxy | Implementation address changes. |
-| `OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)` | `Ownable2Step` on the proxy admin / owner-gated contracts | Owner transfer is queued (before the new owner accepts). |
-| `OwnershipTransferred(address indexed previousOwner, address indexed newOwner)` | Same | Owner transfer is accepted. |
-| `Paused(address account)` / `Unpaused(address account)` | Each `Pausable` contract | Pauser triggers pause / unpause. |
+| `OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)` | Each `Ownable2Step` / `Ownable2StepUpgradeable` contract (`CommitmentPool`, `PrivateSettlement`, `IdentityGate`, etc.) | Owner transfer is queued (before the new owner accepts). **Not** emitted by OZ `ProxyAdmin`, which uses `Ownable`. |
+| `OwnershipTransferred(address indexed previousOwner, address indexed newOwner)` | Every owned contract above, plus `ProxyAdmin` | Owner transfer is accepted (for `Ownable2Step*`) or transferred outright (for `Ownable`-only `ProxyAdmin`). |
+| `Paused(bool paused)` | `CommitmentPool` | Owner calls `setPaused(true)` or `setPaused(false)`. |
+| `PausedUpdated(bool paused)` | `PrivateSettlement` | Same, distinct event name from `CommitmentPool` — both must be subscribed. |
 | `AdminChanged(address previousAdmin, address newAdmin)` | Each `TransparentUpgradeableProxy` | Proxy admin transferred. Rare. |
 | Sanctions list mutation | `SanctionsList` (event named per the contract) | Address added or removed. |
 | `IdentityGate` registry mutation | `IdentityGate` (event named per the contract) | A child registry is added or removed from the aggregator. |

@@ -1,5 +1,4 @@
 {
-  "$schema": "./CONTRACT-ADDRESSES.schema.json",
   "_doc": "Canonical address pack per network. Mainnet block is intentionally empty until the production deployment lands; the testnet entries are the current reference deployment used by the live demo apps. Each entry lists the implementation address (for upgradeable contracts) alongside the proxy, so exchange-side monitoring can subscribe to both. Verification status is the latest known state on the named explorer; re-check before submitting to a CEX.",
   "lastUpdated": "2026-05-12",
   "ownerContact": "TBA — populated alongside the production deployment.",
