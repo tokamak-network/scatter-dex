@@ -62,7 +62,11 @@ export function useWalletBook(): WalletBookState {
 }
 
 export function WalletBookProvider({ children }: { children: React.ReactNode }) {
-  const { ready: folderReady } = useFolder();
+  // Key the hydrate effect off `currentId` too, not just `ready`.
+  // Switching between two already-ready folders leaves `ready=true`
+  // throughout the swap; without the id in the dep list the address
+  // book would stick on the previous folder's entries.
+  const { ready: folderReady, currentId } = useFolder();
   const [entries, setEntries] = useState<WalletEntry[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [corrupt, setCorrupt] = useState<WalletBookCorruptError | null>(null);
@@ -103,7 +107,7 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
     }
     setLoaded(false);
     void refresh();
-  }, [folderReady, refresh]);
+  }, [folderReady, currentId, refresh]);
 
   const add = useCallback(
     async (input: {

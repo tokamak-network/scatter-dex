@@ -306,16 +306,17 @@ export function OrderModal({
       const eddsaKey = await deriveEdDSA();
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
-      // Absolute timestamps from the user-provided datetime inputs.
-      // `expiryToUnixSec` falls back to "now + 1h" on empty;
-      // `releaseAtToUnixSec` falls back to "now" (claim immediately
-      // once settled). Both produce BigInt seconds the proof input
-      // and on-chain calls expect verbatim.
-      const expirySec = expiryToUnixSec(expiryAtLocal);
+      // Capture a single `nowSec` and thread it through every
+      // timestamp helper so the order's expiry + each claim's
+      // release time can't drift across a second boundary mid-
+      // build. Falls back inside the helpers when the user left
+      // the corresponding input empty.
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      const expirySec = expiryToUnixSec(expiryAtLocal, nowSec);
 
       const claims: ClaimEntry[] = resolved.map((r, i) => ({
         ...r,
-        releaseTime: releaseAtToUnixSec(recipients[i]!),
+        releaseTime: releaseAtToUnixSec(recipients[i]!, nowSec),
       }));
 
       const commitment = await computeCommitment(note.note);

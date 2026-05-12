@@ -71,28 +71,30 @@ export function RecipientsSection({
   // Live sum across rows + delta vs the order's projected receive
   // total. Users get immediate feedback that their split adds up
   // (or doesn't) without having to wait for the submit-time
-  // `resolveClaims` error.
-  const { sumStr, deltaStr, balanced } = useMemo(() => {
+  // `resolveClaims` error. Track the first row whose amount didn't
+  // parse — silently summing past it would hide validation errors
+  // until submit and surface as a misleading "short by X" delta.
+  const { sumStr, deltaStr, balanced, invalidRow } = useMemo(() => {
     if (!receiveTotal || receiveTotal.replace(/,/g, "") === "") {
-      return { sumStr: "—", deltaStr: "", balanced: false };
+      return { sumStr: "—", deltaStr: "", balanced: false, invalidRow: null };
     }
     let target: bigint;
     try {
       target = parseUnits(receiveTotal.replace(/,/g, ""), receiveDecimals);
     } catch {
-      return { sumStr: "—", deltaStr: "", balanced: false };
+      return { sumStr: "—", deltaStr: "", balanced: false, invalidRow: null };
     }
     let sum = 0n;
-    for (const r of recipients) {
-      if (!r.amount.trim()) continue;
+    let firstInvalid: number | null = null;
+    recipients.forEach((r, i) => {
+      if (!r.amount.trim()) return;
       try {
         sum += parseUnits(r.amount.replace(/,/g, ""), receiveDecimals);
       } catch {
-        // Garbage amount in a row — surface it through the empty
-        // string sum line; submit-time validation will name the row.
+        if (firstInvalid === null) firstInvalid = i + 1;
       }
-    }
-    const balanced = sum === target;
+    });
+    const balanced = sum === target && firstInvalid === null;
     const diff = sum > target ? sum - target : target - sum;
     return {
       sumStr: `${formatTokenAmount(sum, receiveDecimals)} ${quoteSymbol}`,
@@ -100,6 +102,7 @@ export function RecipientsSection({
         ? ""
         : `${sum > target ? "over" : "short"} by ${formatTokenAmount(diff, receiveDecimals)} ${quoteSymbol}`,
       balanced,
+      invalidRow: firstInvalid,
     };
   }, [recipients, receiveTotal, receiveDecimals, quoteSymbol]);
 
@@ -112,7 +115,7 @@ export function RecipientsSection({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => splitEqually(receiveTotal)}
+            onClick={() => splitEqually(receiveTotal, receiveDecimals)}
             disabled={!receiveTotal || receiveTotal.replace(/,/g, "") === ""}
             className="text-[11px] font-medium text-[var(--color-primary)] hover:underline disabled:opacity-40"
             title="Spread the projected receive total evenly across all rows"
@@ -123,10 +126,17 @@ export function RecipientsSection({
           <button
             type="button"
             onClick={async () => {
-              const hasInput =
-                recipients.length > 1 ||
-                recipients[0]?.address.trim() !== "" ||
-                recipients[0]?.amount.trim() !== "";
+              // Confirm whenever the user has typed anything across
+              // any row — including a `releaseAt` they set without
+              // touching address/amount. Without scanning every row +
+              // every field the reset can silently nuke a non-trivial
+              // schedule with no prompt.
+              const hasInput = recipients.some(
+                (r) =>
+                  r.address.trim() !== "" ||
+                  r.amount.trim() !== "" ||
+                  r.releaseAt.trim() !== "",
+              );
               if (hasInput) {
                 const ok = await confirm({
                   title: "Reset recipients?",
@@ -188,13 +198,18 @@ export function RecipientsSection({
       </p>
       <div
         className={`flex items-center justify-between text-[11px] ${
-          balanced ? "text-[var(--color-success)]" : "text-[var(--color-text-muted)]"
+          invalidRow !== null
+            ? "text-[var(--color-danger)]"
+            : balanced
+              ? "text-[var(--color-success)]"
+              : "text-[var(--color-text-muted)]"
         }`}
       >
         <span>Allocated</span>
         <span className="font-mono">
-          {sumStr}
-          {deltaStr ? ` · ${deltaStr}` : ""}
+          {invalidRow !== null
+            ? `Recipient #${invalidRow} amount is invalid`
+            : `${sumStr}${deltaStr ? ` · ${deltaStr}` : ""}`}
         </span>
       </div>
 

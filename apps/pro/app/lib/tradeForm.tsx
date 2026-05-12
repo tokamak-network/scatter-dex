@@ -76,9 +76,10 @@ interface TradeFormState {
    *  multiple entries from the address book). Caps at 16. */
   setRecipients(next: RecipientRow[]): void;
   /** Helper: spread the projected receive-side total across all
-   *  recipient rows evenly. Caller computes `total`; this only
-   *  fills the row strings. */
-  splitEqually(total: string): void;
+   *  recipient rows evenly using base-unit BigInt math so the sum
+   *  reconstructs exactly at submit-time `parseUnits`. Caller
+   *  passes both the display string and the token's `decimals`. */
+  splitEqually(total: string, decimals: number): void;
 
   /** Order's "must settle by" deadline as a local `datetime-local`
    *  value (`YYYY-MM-DDTHH:mm`). Empty = use a 1-hour default at
@@ -143,20 +144,35 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
     setRecipientsState(next.slice(0, 16));
   }, []);
 
-  const splitEqually = useCallback((total: string) => {
-    setRecipientsState((prev) => {
-      // Total parses as a decimal display string ("123.45"). Bail
-      // cleanly on garbage input — the button shouldn't make the
-      // form worse than not pressing it.
-      const totalNum = Number(total.replace(/,/g, ""));
-      if (!Number.isFinite(totalNum) || totalNum <= 0 || prev.length === 0) return prev;
-      const each = totalNum / prev.length;
-      // 8 fractional digits is plenty for the display string; the
-      // canonical value comes from `parseUnits` at submit time.
-      const display = each.toLocaleString("en-US", { maximumFractionDigits: 8 });
-      return prev.map((r) => ({ ...r, amount: display }));
-    });
-  }, []);
+  // `splitEqually` runs in base units (BigInt) instead of `Number` so
+  // a 1.0 split across 3 rows actually sums back to 1.0 after the
+  // submit-time `parseUnits` round-trip. The remainder (always
+  // `< prev.length`) goes to the first row so the total is exact.
+  // Lives outside the callback so it stays a pure helper.
+  const splitEqually = useCallback(
+    (total: string, decimals: number) => {
+      setRecipientsState((prev) => {
+        if (prev.length === 0) return prev;
+        const cleaned = total.replace(/,/g, "");
+        if (!cleaned) return prev;
+        let totalUnits: bigint;
+        try {
+          totalUnits = parseUnitsExact(cleaned, decimals);
+        } catch {
+          return prev;
+        }
+        if (totalUnits <= 0n) return prev;
+        const n = BigInt(prev.length);
+        const base = totalUnits / n;
+        const rem = totalUnits - base * n;
+        return prev.map((r, i) => ({
+          ...r,
+          amount: formatUnitsExact(i === 0 ? base + rem : base, decimals),
+        }));
+      });
+    },
+    [],
+  );
 
   const value = useMemo<TradeFormState>(
     () => ({
@@ -195,25 +211,57 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   return <TradeFormCtx.Provider value={value}>{children}</TradeFormCtx.Provider>;
 }
 
-/** Convert the `datetime-local` expiry string to an absolute
- *  Unix timestamp (seconds). Empty / malformed input falls back to
- *  one hour from now — a sensible default that beats letting the
- *  order revert at submit. */
-export function expiryToUnixSec(value: string): bigint {
+/** Convert the `datetime-local` expiry string to an absolute Unix
+ *  timestamp (seconds). Empty / malformed input falls back to
+ *  `nowSec + 1h`. The optional `nowSec` parameter lets the caller
+ *  capture a single timestamp once and thread it through all the
+ *  per-order calls (expiry + every claim's release) so they can't
+ *  drift across a second boundary mid-build. */
+export function expiryToUnixSec(value: string, nowSec?: bigint): bigint {
   if (value) {
     const ms = Date.parse(value);
     if (Number.isFinite(ms)) return BigInt(Math.floor(ms / 1000));
   }
-  return BigInt(Math.floor(Date.now() / 1000) + 60 * 60);
+  const base = nowSec ?? BigInt(Math.floor(Date.now() / 1000));
+  return base + 3600n;
 }
 
 /** Convert a recipient row's `releaseAt` to an absolute Unix
  *  timestamp (seconds). Empty value = release immediately on
- *  settle, expressed as the current second. */
-export function releaseAtToUnixSec(row: Pick<RecipientRow, "releaseAt">): bigint {
+ *  settle, expressed as `nowSec` (or the current second when
+ *  unspecified). See `expiryToUnixSec` for the rationale on
+ *  threading a shared `nowSec`. */
+export function releaseAtToUnixSec(
+  row: Pick<RecipientRow, "releaseAt">,
+  nowSec?: bigint,
+): bigint {
   if (row.releaseAt) {
     const ms = Date.parse(row.releaseAt);
     if (Number.isFinite(ms)) return BigInt(Math.floor(ms / 1000));
   }
-  return BigInt(Math.floor(Date.now() / 1000));
+  return nowSec ?? BigInt(Math.floor(Date.now() / 1000));
+}
+
+// Inline replacements for `parseUnits` / `formatUnits` used by
+// `splitEqually` — the existing helpers in `lib/parseUnits` only
+// expose `parseUnits`; we need a matching formatter that strips
+// trailing zeros for display without losing precision. Keep both
+// self-contained so this file stays free of a back-import on the
+// component layer.
+function parseUnitsExact(value: string, decimals: number): bigint {
+  const [whole, frac = ""] = value.split(".");
+  if (whole === undefined) throw new Error(`invalid amount: ${value}`);
+  if (!/^\d*$/.test(whole) || !/^\d*$/.test(frac)) {
+    throw new Error(`invalid amount: ${value}`);
+  }
+  const padded = frac.padEnd(decimals, "0").slice(0, decimals);
+  return BigInt(whole || "0") * 10n ** BigInt(decimals) + BigInt(padded || "0");
+}
+
+function formatUnitsExact(units: bigint, decimals: number): string {
+  if (decimals === 0) return units.toString();
+  const denom = 10n ** BigInt(decimals);
+  const whole = units / denom;
+  const frac = (units % denom).toString().padStart(decimals, "0").replace(/0+$/, "");
+  return frac.length ? `${whole}.${frac}` : whole.toString();
 }
