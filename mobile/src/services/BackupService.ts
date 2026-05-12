@@ -201,8 +201,6 @@ export const BackupService = {
         // the runtime type and truthiness so a malformed number/null/''
         // never lands in storage.
         ...(typeof c.orderId === 'string' && c.orderId ? { orderId: c.orderId } : {}),
-        ...(typeof c.ephemeralPubKey === 'string' && c.ephemeralPubKey
-          ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
       });
     }
     if (claimsToAdd.length > 0) {
@@ -220,7 +218,6 @@ export const BackupService = {
         bundle.addressBook.map((entry) => ({
           label: entry.label,
           address: entry.address,
-          kind: entry.kind,
           memo: entry.memo,
         })),
       );

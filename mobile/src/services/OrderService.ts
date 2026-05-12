@@ -136,12 +136,9 @@ export interface OrderProgress {
 }
 
 export interface ClaimInput {
-  recipient: string;   // Ethereum address (the stealth address itself when ephemeralPubKey is set)
+  recipient: string;   // Ethereum address
   amount: string;      // human-readable
   releaseDelaySec: number; // seconds from now
-  /** Set on stealth claims so the recipient can derive the stealth
-   *  private key. Persisted with the pending claim alongside `secret`. */
-  ephemeralPubKey?: string;
 }
 
 export interface OrderInput {
@@ -575,9 +572,6 @@ export const OrderService = {
           // detail view and BackupService dedup always have something
           // to key on.
           orderId: response.orderId || orderHash,
-          // Carry the ephemeral pubkey through to storage on stealth
-          // claims — the recipient needs it to derive their private key.
-          ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
         })),
       );
 
@@ -614,7 +608,6 @@ export const OrderService = {
           recipient: c.recipient,
           amount: claimsData[idx].amount,
           releaseTime: claimsData[idx].releaseTime,
-          ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
         })),
         createdAt: Date.now(),
       });
