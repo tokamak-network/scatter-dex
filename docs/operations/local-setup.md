@@ -223,28 +223,96 @@ npm run dev
 
 ## Integration Mode (with zk-X509)
 
-**Step 1:** Start anvil:
+This mode points Pay's `IdentityGate` at a **real** zk-X509 `IdentityRegistry` instead of the `MockIdentityRegistry` baked into dev.sh's deploy.
+
+**Why not pass `IDENTITY_REGISTRY` env vars to `dev.sh` directly?** Native integration mode (`./scripts/dev.sh` without `--mock`) tries to register the zk-relayer (Anvil Account #1) into the zk-X509 Relayer CA registry during contract deploy. A freshly-deployed zk-X509 registry has no verified identities yet, so that deploy reverts with `NotVerified()`. The recommended flow is: boot in mock mode, then **swap** the mock registry out of `IdentityGate` for the real zk-X509 one.
+
+### Prerequisite
+
+A local zk-X509 checkout with `make elf` already run (the prebuilt ELF lives at `<zk-X509>/elf/zk-x509-program`). Below, `<zk-X509>` and `<scatter-dex>` are the absolute paths to each checkout.
+
+### Step-by-step
+
+**1. Start Pay in mock mode** — this brings up anvil, mock contracts, orderbook, relayers, and Pay in one shot:
 
 ```bash
-anvil
+cd <scatter-dex>
+SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock --apps pay
 ```
 
-**Step 2:** Deploy zk-X509 by following the [zk-X509 Local Setup Guide](https://github.com/tokamak-network/zk-X509/blob/main/docs/local-setup.md).
+Note Pay's `IdentityGate` address from the deploy summary (`NEXT_PUBLIC_IDENTITY_GATE_ADDRESS` is also written to `apps/pay/.env.local`).
 
-**Step 3:** Start zkScatter:
+**2. Start zk-X509 frontend + backend** in a separate terminal. With `--apps pay` the default frontend isn't started, so zk-X509 can take its default port 3000:
 
 ```bash
-IDENTITY_REGISTRY=0x... \
-RELAYER_IDENTITY_REGISTRY=0x... \
-./scripts/dev.sh
+cd <zk-X509>
+bash script/start-services.sh                           # frontend :3000, backend :4444
+# or, if you also need scatter-dex's default frontend later:
+FRONTEND_PORT=3001 bash script/start-services.sh
 ```
 
-The script will:
-1. Detect the running anvil (does **not** start its own)
-2. Deploy zkScatter contracts with real `IdentityGate` (User CA) and `RelayerRegistry` (Relayer CA)
-3. Register Account #1 as zk-relayer
-4. Start zk-relayer on http://localhost:3002
-5. Start frontend on http://localhost:3000
+**3. Deploy a zk-X509 `IdentityRegistry` onto the same anvil** that `dev.sh --mock` started. `MAX_WALLETS_PER_CERT` controls how many wallets one certificate may bind (default 1 for strict 1:1, set to N for multi-wallet use cases):
+
+```bash
+cd <zk-X509>
+MAX_WALLETS_PER_CERT=10 \
+SERVICE_NAME="User CA (10 wallets/cert)" \
+bash script/deploy-on-existing-anvil.sh
+```
+
+Note the printed `IdentityRegistry (proxy)` address — that's the registry Pay will route through.
+
+**4. Swap the mock registry out of Pay's `IdentityGate`** using the helper script — it reads `IdentityGate` from `apps/pay/.env.local`, adds the zk-X509 registry, and removes every other registry (the mock from step 1):
+
+```bash
+cd <scatter-dex>
+./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry from step 3>
+```
+
+If you'd rather drive `cast` directly:
+
+```bash
+IDENTITY_GATE=<IdentityGate from step 1>
+ZK_X509_REG=<zk-X509 IdentityRegistry from step 3>
+DEPLOYER_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80   # Anvil account #0
+RPC=http://localhost:8545
+
+cast send $IDENTITY_GATE "addRegistry(address)" $ZK_X509_REG --rpc-url $RPC --private-key $DEPLOYER_KEY
+MOCK=$(cast call $IDENTITY_GATE "getRegistries()(address[])" --rpc-url $RPC | tr -d '[]' | awk -F',' '{print $1}' | tr -d ' ')
+cast send $IDENTITY_GATE "removeRegistry(address)" $MOCK --rpc-url $RPC --private-key $DEPLOYER_KEY
+cast call $IDENTITY_GATE "getRegistries()(address[])" --rpc-url $RPC
+```
+
+After the swap, Pay's `isVerified(user)` routes through zk-X509. The registry has no CA Merkle root or issued identities yet, so `isVerified()` returns `false` for every wallet until you issue an identity through the zk-X509 dashboard at http://localhost:3000.
+
+### Ports at a glance (integration + zk-X509)
+
+| Port | Service | Owner |
+|---|---|---|
+| 8545 | anvil | started by `dev.sh --mock` |
+| 3000 | zk-X509 frontend | zk-X509 (free because `--apps pay` skips scatter-dex's default frontend) |
+| 3002 | zk-relayer A | scatter-dex |
+| 3003 | zk-relayer B | scatter-dex |
+| 4000 | shared-orderbook | scatter-dex |
+| 4001 | Pay app | scatter-dex |
+| 4444 | zk-X509 backend | zk-X509 |
+
+### Teardown
+
+Use port-based termination so other dev stacks (e.g. another scatter-dex checkout) are untouched. `pkill -f "scripts/dev.sh"` would match every checkout's bootstrap script and `pkill -f "anvil --silent"` would kill unrelated anvil sessions:
+
+```bash
+# scatter-dex (Ctrl+C in dev.sh's terminal, or)
+lsof -tiTCP:4001 -sTCP:LISTEN | xargs -r kill           # Pay
+lsof -tiTCP:4000 -sTCP:LISTEN | xargs -r kill           # shared-orderbook
+lsof -tiTCP:3002 -tiTCP:3003 -sTCP:LISTEN | xargs -r kill   # relayers
+lsof -tiTCP:8545 -sTCP:LISTEN | xargs -r kill           # anvil (this also tears down on-chain state)
+
+# zk-X509
+( cd <zk-X509> && bash script/stop-services.sh )
+```
+
+On macOS `xargs` doesn't support `-r`; if you're not on Linux, gate the kill with a check instead: `pids=$(lsof -tiTCP:8545 -sTCP:LISTEN); [ -n "$pids" ] && kill $pids`.
 
 ## Docker (ZK Relayer)
 
