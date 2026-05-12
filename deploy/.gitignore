@@ -1,0 +1,5 @@
+# local-only deploy state
+gcp/deploy.env
+runtime/.env
+**/secrets/
+*.key
