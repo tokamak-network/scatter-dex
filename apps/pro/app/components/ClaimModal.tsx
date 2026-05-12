@@ -111,7 +111,11 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
   // gate prompt instead of the claim flow when the wallet is
   // unverified / expired / error.
   if (open && identityBlocking) {
-    return <IdentityGateModal state={identityState} onClose={onClose} />;
+    // Wire dismissal to the local `close()` helper so the identity
+    // branch follows the same abort + phase-reset path the rest of
+    // the modal uses. Bypassing `close()` here would leave any in-
+    // flight prove running and could let a stale `phase` re-render.
+    return <IdentityGateModal state={identityState} onClose={close} />;
   }
 
   const busy =

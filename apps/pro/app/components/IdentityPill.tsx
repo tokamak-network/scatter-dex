@@ -67,7 +67,7 @@ export function IdentityPill() {
               </button>
             </div>
             <p className="mt-3 text-[10px] text-[var(--color-text-subtle)]">
-              Identity-bound payouts: your zk-X509 attestation
+              Identity-bound trades: your zk-X509 attestation
               protects this account even if your wallet keys leak.
             </p>
           </div>
@@ -160,11 +160,11 @@ function detailLines(state: IdentityState): string[] {
     case "expired":
       return [
         `Was valid until ${new Date(state.expiresAt * 1000).toLocaleString()}.`,
-        "Renew to continue sending or claiming payouts.",
+        "Renew to continue trading or claiming proceeds.",
       ];
     case "unverified":
       return [
-        "Scatter Pay requires zk-X509 identity verification for both senders and recipients.",
+        "Scatter Pro requires zk-X509 identity verification for both traders and recipients.",
       ];
     case "loading":
       return ["Reading registry…"];

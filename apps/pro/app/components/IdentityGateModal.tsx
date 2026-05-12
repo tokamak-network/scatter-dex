@@ -5,7 +5,7 @@ import type { IdentityState } from "../lib/identity";
 
 /** Blocking modal shown when the connected wallet doesn't meet
  *  the verification requirements for the action the user is
- *  trying to take (create a payout, claim, etc). The caller
+ *  trying to take (place an order, claim, etc). The caller
  *  decides when to mount this — usually wrapped in a state-check
  *  conditional. Always renders the underlying `Modal` when
  *  mounted; no internal short-circuit on `state.kind === "verified"`. */
@@ -77,7 +77,7 @@ function defaultBody(state: IdentityState): string {
     case "expiring":
       return "Your verification expires soon. Renew now so you don't get blocked mid-flow.";
     case "unverified":
-      return "Scatter Pay requires a one-time zk-X509 verification before sending or claiming. Takes about 30 seconds with your phone or signing device.";
+      return "Scatter Pro requires a one-time zk-X509 verification before trading or claiming. Takes about 30 seconds with your phone or signing device.";
     case "error":
       return `We couldn't read your verification status: ${state.message}. Retry or contact the operator if the registry is unreachable.`;
     default:

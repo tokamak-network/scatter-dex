@@ -200,7 +200,7 @@ export function IdentityBatchProvider({ children }: { children: ReactNode }) {
           // "unknown, don't block". The primary IdentityPill
           // surfaces gate misconfig at the operator level.
           if (process.env.NODE_ENV !== "production") {
-            console.warn("[pay] identity probe failed", key, e);
+            console.warn("[identity] probe failed", key, e);
           }
         } finally {
           inFlight.current.delete(key);
@@ -260,8 +260,11 @@ export function useIdentityForAddresses(addresses: readonly string[]): {
     for (const a of addresses) {
       if (a) ctx.probe(a);
     }
-    // `keys` is the input identity in stable string form; deps lint
-    // is satisfied by including the source array too.
+    // `keys` is the canonical lower-cased version of `addresses`,
+    // memoised above; it changes iff the *content* of the address
+    // set changes. We intentionally omit `addresses` from the deps
+    // to avoid re-running the effect on every parent render that
+    // hands a fresh-but-equal array reference.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx, keys]);
   return { get: (a: string) => ctx?.get(a) ?? null };

@@ -7,7 +7,7 @@ import {
   type AuthorizeProofInput,
   type ClaimEntry,
 } from "@zkscatter/sdk/zk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { useIdentityForAddresses, useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
@@ -311,7 +311,9 @@ export function OrderModal({
       if (v && !v.isVerified) unverified.push(trimmed);
     }
     if (unverified.length > 0) {
-      const preview = unverified.slice(0, 3).join(", ");
+      // Show short-form addresses so the toast/error line stays
+      // readable when 3 full 0x… strings would otherwise wrap.
+      const preview = unverified.slice(0, 3).map(shortAddr).join(", ");
       const tail = unverified.length > 3 ? ` and ${unverified.length - 3} more` : "";
       setPhase({
         kind: "error",

@@ -11,7 +11,7 @@ import { ZK_X509_URL } from "../../lib/features";
 
 /** Build a per-registry deep-link to the external zk-X509 console.
  *  Returns null when the deploy didn't configure
- *  `NEXT_PUBLIC_PAY_ZK_X509_URL`, in which case we omit the link
+ *  `NEXT_PUBLIC_ZK_X509_URL`, in which case we omit the link
  *  rather than dangling a broken target. */
 function zkX509RegistryUrl(address: string): string | null {
   if (!ZK_X509_URL) return null;
