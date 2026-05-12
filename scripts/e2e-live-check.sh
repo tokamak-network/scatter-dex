@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 #
 # E2E live check — exercises every row marked 🌐 / on-chain-invariant
-# in `docs/operations/feature-checklist.md`. Assumes `dev.sh --mock`
-# is already up; cleanly SKIPs the rest if anvil is unreachable.
+# in `docs/operations/feature-checklist.md`. Assumes the e2e stack
+# is already up (`./scripts/start-e2e-env.sh` or `./scripts/dev.sh
+# --mock`).
+#
+# Pre-flight: if anvil is unreachable we exit with code 2 (usage
+# error) since none of the on-chain checks are meaningful without
+# it. To run only the offline portion, prefer `./scripts/feature-
+# check.sh --quick`.
 #
 # Usage:
 #   ./scripts/e2e-live-check.sh                # run full live sweep
 #   ./scripts/e2e-live-check.sh --verbose      # show raw responses
 #
-# Exit code = number of FAILs.
+# Exit code = number of FAILs (or 2 on pre-flight error).
 
 set -uo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -45,22 +51,49 @@ if ! curl -fsS -X POST -H "Content-Type: application/json" \
     exit 2
 fi
 
-# Read app config to find proxy addresses
-PAY_ENV="$ROOT_DIR/apps/pay/.env.local"
-if [ ! -f "$PAY_ENV" ]; then
-    echo "$PAY_ENV not found — dev.sh deploy didn't complete"
+# Resolve canonical proxy addresses from the latest broadcast file —
+# works for both `dev.sh --mock` and `start-e2e-env.sh` boots (the
+# latter doesn't write `apps/pay/.env.local`). If `.env.local` is
+# present we cross-check, but the broadcast file is the source of
+# truth: it always reflects the most recent deploy run on chain 31337.
+BCAST="$ROOT_DIR/contracts/broadcast/DeployLocal.s.sol/31337/run-latest.json"
+if [ ! -f "$BCAST" ]; then
+    echo "broadcast file missing: $BCAST — re-run the deploy"
+    exit 2
+fi
+if ! command -v jq >/dev/null 2>&1; then
+    echo "jq required to parse broadcast addresses"
     exit 2
 fi
 
-addr() {
-    grep -E "^$1=" "$PAY_ENV" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
+# Walk transactions in order. DeployLocal deploys each proxy as a pair:
+# `Name impl` (the implementation, contractName = the contract itself) +
+# `TransparentUpgradeableProxy` (the proxy, points at impl). The proxy
+# is always the second of the pair, in deploy order.
+read_proxy_after() {
+    local impl_name="$1"
+    jq -r --arg N "$impl_name" '
+      [.transactions[] | select(.contractAddress != null)]
+      | (map(.contractName) | index($N)) as $i
+      | .[$i + 1] // {}
+      | .contractAddress // ""
+    ' "$BCAST"
 }
 
-POOL=$(addr NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS)
-SETTLE=$(addr NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS)
-GATE=$(addr NEXT_PUBLIC_IDENTITY_GATE_ADDRESS)
-VAULT=$(addr NEXT_PUBLIC_FEE_VAULT_ADDRESS)
-RREG=$(addr NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS)
+POOL=$(read_proxy_after CommitmentPool)
+SETTLE=$(read_proxy_after PrivateSettlement)
+GATE=$(read_proxy_after IdentityGate)
+VAULT=$(read_proxy_after FeeVault)
+RREG=$(read_proxy_after RelayerRegistry)
+
+for v in POOL:CommitmentPool SETTLE:PrivateSettlement GATE:IdentityGate VAULT:FeeVault RREG:RelayerRegistry; do
+    name="${v%%:*}"; label="${v##*:}"
+    val="${!name}"
+    if [ -z "$val" ] || [ "$val" = "null" ]; then
+        echo "ERROR: failed to resolve $label proxy from $BCAST"
+        exit 2
+    fi
+done
 
 echo "scatter-dex · e2e live check"
 echo "$(date '+%Y-%m-%d %H:%M:%S')"
@@ -74,22 +107,53 @@ for svc in \
     "orderbook /api/relayers:http://localhost:4000/api/relayers" \
     "orderbook /api/orders:http://localhost:4000/api/orders" \
     "relayer A /api/info:http://localhost:3002/api/info" \
-    "relayer A /api/admin/profile:http://localhost:3002/api/admin/profile" \
     "relayer A /health:http://localhost:3002/health" \
     "relayer B /api/info:http://localhost:3003/api/info" \
     "relayer B /health:http://localhost:3003/health" \
     "Pay /:http://localhost:4001" \
     "Pro /:http://localhost:4003"; do
     label="${svc%%:*}"; url="${svc#*:}"
+    # `-f` would suppress output on 4xx and force curl exit 22; we WANT
+    # to capture all HTTP codes (including 401 for admin endpoints) so
+    # drop `-f` and rely on the printed `%{http_code}` alone.
     if [ "$label" = "anvil" ]; then
-        code=$(curl -fsS -X POST -H "Content-Type: application/json" \
+        code=$(curl -sS -X POST -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-            --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null || echo 000)
+            --max-time 3 -o /dev/null -w "%{http_code}" "$url" 2>/dev/null)
     else
-        code=$(curl -fsS -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null || echo 000)
+        code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null)
+    fi
+    code="${code:-000}"
+    # Pay (4001) / Pro (4003) are not started by start-e2e-env.sh — only
+    # by `dev.sh --apps pay,pro`. SKIP cleanly on connection refused so
+    # operators using the lighter CI boot don't get spurious FAILs.
+    if [[ "$label" == "Pay /" || "$label" == "Pro /" ]] && [ "$code" = "000" ]; then
+        skip "$label" "not running (boot with dev.sh --apps pay,pro)"
+        continue
     fi
     if [[ "$code" =~ ^2 ]]; then pass "$label ($code)"
     else fail "$label" "HTTP $code"; fi
+done
+
+# ─── HTTP admin endpoints (require x-admin-key) ──────────────────
+# `/api/admin/*` is gated by `adminAuth` middleware. We send the
+# default mock key; the relayer rejects with 401 if `ADMIN_API_KEY`
+# is configured to a different value — that's a SKIP, not a FAIL.
+# Override the key with:  ADMIN_API_KEY=... ./scripts/e2e-live-check.sh
+section "HTTP · admin endpoints (auth required)"
+ADMIN_KEY="${ADMIN_API_KEY:-dev-admin-key}"
+for url in \
+    "relayer A /api/admin/profile:http://localhost:3002/api/admin/profile" \
+    "relayer B /api/admin/profile:http://localhost:3003/api/admin/profile"; do
+    label="${url%%:*}"; target="${url#*:}"
+    code=$(curl -sS -H "x-admin-key: $ADMIN_KEY" -o /dev/null -w "%{http_code}" --max-time 5 "$target" 2>/dev/null)
+    code="${code:-000}"
+    if [[ "$code" =~ ^2 ]]; then pass "$label ($code)"
+    elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
+        skip "$label" "admin auth rejected (set ADMIN_API_KEY env to match the relayer's configured key)"
+    else
+        fail "$label" "HTTP $code"
+    fi
 done
 
 # ─── On-chain proxy admin slot ───────────────────────────────────
@@ -177,11 +241,12 @@ else
     count=$(cast call "$RREG" "getRelayerCount()(uint256)" --rpc-url "$RPC" 2>/dev/null)
     [ $VERBOSE -eq 1 ] && echo "    getRelayerCount() = $count"
     # Account #1 (relayer A) is registered by DeployLocal; relayer B
-    # joins via dev.sh's post-deploy register call.
-    if [ -n "$count" ] && [ "$count" -ge 1 ]; then
-        pass "registered relayers: $count (expected ≥1)"
+    # joins via start-e2e-env.sh / dev.sh's post-deploy register call.
+    # Both should be registered → require ≥2.
+    if [ -n "$count" ] && [ "$count" -ge 2 ]; then
+        pass "registered relayers: $count (expected ≥2)"
     else
-        fail "RelayerRegistry.getRelayerCount" "got '$count', expected ≥1"
+        fail "RelayerRegistry.getRelayerCount" "got '$count', expected ≥2"
     fi
 fi
 
@@ -207,12 +272,16 @@ else
     relayer_addr=$(echo "$info" | grep -oE '"address":"[^"]+"' | head -1 | cut -d'"' -f4)
     [ $VERBOSE -eq 1 ] && echo "    relayer A reports address=$relayer_addr"
     if [ -n "$relayer_addr" ]; then
-        # Check the relayer's on-chain bond > 0 (proves it registered)
-        bond=$(cast call "$RREG" "relayers(address)(string,string,uint256,uint256,uint256,uint256,bool)" "$relayer_addr" --rpc-url "$RPC" 2>/dev/null | tail -1)
-        if [ "$bond" = "true" ]; then
+        # `relayers(addr)` returns the Relayer struct
+        # (url, name, fee, bond, registeredAt, exitRequestedAt, active).
+        # The active bool is the LAST field — that's what we check; bond
+        # itself may be zero in mock mode (minBond=0) and isn't the
+        # registration signal.
+        active=$(cast call "$RREG" "relayers(address)(string,string,uint256,uint256,uint256,uint256,bool)" "$relayer_addr" --rpc-url "$RPC" 2>/dev/null | tail -1)
+        if [ "$active" = "true" ]; then
             pass "relayer A address ($relayer_addr) is active on-chain"
         else
-            fail "relayer A on-chain" "active=$bond"
+            fail "relayer A on-chain" "active=$active"
         fi
     else
         fail "relayer A info" "no address in /api/info"
