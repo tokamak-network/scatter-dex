@@ -265,8 +265,12 @@ function ClaimInner() {
       stealthVerified && readProvider
         ? deriveStealthForPackage(parsed.pkg, metaKeys)
         : null;
+    // Defense in depth: even though `stealthVerified` already gated us
+    // through an address-only match, re-check `stealthFull.matches`
+    // before signing. Guards against any future drift between the
+    // address-only and full derivation implementations.
     const claimSigner =
-      stealthFull && readProvider
+      stealthFull?.matches && readProvider
         ? new ethers.Wallet(stealthFull.privateKey, readProvider)
         : (signer ?? undefined);
     if (!gasless && !claimSigner) return;

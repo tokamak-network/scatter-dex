@@ -34,7 +34,7 @@ import {
 } from "../../_lib/relay7702";
 import { useRelayers } from "../../_lib/relayers";
 import { formatLocalStamp } from "../../_lib/format";
-import { ERC20_ABI, formatTokenLabel, type NetworkConfig } from "@zkscatter/sdk";
+import { ERC20_ABI, eqAddr, formatTokenLabel, type NetworkConfig } from "@zkscatter/sdk";
 
 /** True when `token` is the chain's WETH — claims auto-unwrap to
  *  native ETH on payout, so native send-tx and `getBalance` are the
@@ -547,8 +547,7 @@ function RowActions({
   const derivedMismatch = useMemo(() => {
     if (entry.stealthPrivateKey) {
       try {
-        const w = new ethers.Wallet(entry.stealthPrivateKey);
-        return w.address.toLowerCase() !== entry.pkg.recipient.toLowerCase();
+        return !eqAddr(ethers.computeAddress(entry.stealthPrivateKey), entry.pkg.recipient);
       } catch {
         return true;
       }
@@ -642,10 +641,7 @@ function ClaimExecuteModal({
   const canDerivePrivkey = useMemo(() => {
     if (entry.stealthPrivateKey) {
       try {
-        return (
-          new ethers.Wallet(entry.stealthPrivateKey).address.toLowerCase() ===
-          entry.pkg.recipient.toLowerCase()
-        );
+        return eqAddr(ethers.computeAddress(entry.stealthPrivateKey), entry.pkg.recipient);
       } catch {
         return false;
       }
@@ -658,13 +654,14 @@ function ClaimExecuteModal({
   }, [entry, spendingKey, viewingKey]);
 
   // Lazy: materialise the privkey on the call stack only. Used by
-  // the self-pay signer fallback and the Reveal click handler.
+  // the self-pay signer fallback and the Reveal click handler. The
+  // `matches` guard mirrors the canDerivePrivkey gate above so a
+  // package whose ephemeralPubKey doesn't agree with the user's
+  // meta-keys never returns a stale / wrong key here.
   function resolveStealthPriv(): string | null {
     if (entry.stealthPrivateKey) return entry.stealthPrivateKey;
-    return (
-      deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey })
-        ?.privateKey ?? null
-    );
+    const derived = deriveStealthForPackage(entry.pkg, { spendingKey, viewingKey });
+    return derived?.matches ? derived.privateKey : null;
   }
 
   async function run() {
@@ -833,10 +830,7 @@ function ClaimedRowActions({
   const canDerivePrivkey = useMemo(() => {
     if (entry.stealthPrivateKey) {
       try {
-        return (
-          new ethers.Wallet(entry.stealthPrivateKey).address.toLowerCase() ===
-          entry.pkg.recipient.toLowerCase()
-        );
+        return eqAddr(ethers.computeAddress(entry.stealthPrivateKey), entry.pkg.recipient);
       } catch {
         return false;
       }
