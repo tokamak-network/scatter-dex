@@ -180,7 +180,7 @@ function rowsFromMatrix(matrix: unknown[][]): ParseResult {
     });
   }
   if (skippedNoAddr > 0) warnings.push(`Skipped ${skippedNoAddr} row(s) with no address.`);
-  if (skippedBadAddr > 0) warnings.push(`Skipped ${skippedBadAddr} row(s) with malformed address (expected 0x + 40 hex with valid EIP-55 checksum).`);
+  if (skippedBadAddr > 0) warnings.push(`Skipped ${skippedBadAddr} row(s) with malformed address (expected 0x + 40 hex; mixed-case must match EIP-55 checksum).`);
   if (skippedBadAmount > 0) warnings.push(`Skipped ${skippedBadAmount} row(s) with non-numeric amount.`);
   if (skippedBadEmail > 0) warnings.push(`Skipped ${skippedBadEmail} row(s) with malformed email.`);
   if (skippedDup > 0) warnings.push(`Skipped ${skippedDup} duplicate row(s).`);

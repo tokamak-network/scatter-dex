@@ -775,6 +775,10 @@ function NewPayout() {
       if (e.kakaoId) newKakaos[lower] = e.kakaoId;
       if (e.label) newLabels[lower] = e.label;
     };
+    // Defensive guard: the picker already filters out address-less
+    // entries up front, so this branch shouldn't fire in normal use.
+    // Keep it so a future change that bypasses the picker still gets
+    // a structurally sound row set.
     for (const e of picked) {
       if (!e.address) continue;
       const lower = e.address.toLowerCase();
