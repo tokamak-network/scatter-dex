@@ -6,6 +6,38 @@ happens when an address is added or removed, and what the
 operational implications are for an exchange or regulator
 evaluating the protocol.
 
+## What the gate does, in one sentence
+
+**The gate refuses to execute actions involving a sanctioned
+address. It does not hide anything.**
+
+Specifically:
+
+- A sanctioned address cannot **deposit** to the commitment pool.
+- A sanctioned address cannot be the **recipient of a claim**
+  (already-settled funds bound to that address become unclaimable
+  — they stay in the pool as committed-but-locked state).
+- A sanctioned address cannot **withdraw** from the pool, nor can
+  funds be withdrawn *to* a sanctioned address.
+- A sanctioned relayer cannot **match orders** or **submit
+  settlements**.
+
+What stays the same regardless of sanctions status:
+
+- Every on-chain action that did succeed is still publicly visible
+  on the chain explorer.
+- Commitment-tree inserts, nullifier publications, settlement
+  events, claim events, and pool balance totals are all observable
+  the same way they are for any other address.
+- Adding an address to the sanctions list does **not** retroactively
+  erase past activity from the chain. It only refuses the *next*
+  action that involves that address.
+
+Funds already deposited by an address that later gets sanctioned
+remain in the pool — they're not moved, hidden, or zeroed. They
+simply become **frozen**: the on-chain state is unchanged, but no
+entry point will accept a transaction that would move them.
+
 ## Where the check fires
 
 The protocol's sanctions gate is enforced at the state-changing
@@ -95,11 +127,17 @@ the claim path is where the recipient-level check lives.
 ## Retroactive enforcement
 
 Adding an address to the sanctions list **retroactively** affects
-every pre-existing claim leaf bound to that address. There is no
-grandfathering. Consequences:
+every pre-existing claim leaf bound to that address — but the
+retroactive effect is on *future actions*, not on past on-chain
+state. There is no grandfathering of new attempted transactions,
+and no rewriting of history.
+
+Consequences:
 
 - Funds already settled to a now-sanctioned address stay locked
-  in the `CommitmentPool` and become unclaimable.
+  in the `CommitmentPool`. The leaf preimage and the on-chain
+  commitment are unchanged; only the `claimWithProof` call for
+  that leaf now reverts.
 - The original sender cannot reclaim those funds either (the
   claim circuit binds the recipient inside the leaf preimage; a
   third party — sender or anyone else — cannot substitute a
@@ -107,14 +145,17 @@ grandfathering. Consequences:
   check).
 - An OFAC SDN listing that lands between settlement and claim
   effectively turns the routed amount into a frozen on-chain
-  balance.
+  balance: it remains visible on-chain, but no entry point will
+  accept a transaction that would move it.
 
 This is intentional. From an exchange's risk perspective the
 property to subscribe to is:
 
 > *"Once the operator multisig adds an address to SanctionsList,
 > no future on-chain action can move funds to or from that address
-> through the ScatterDEX entry points."*
+> through the ScatterDEX entry points. Past activity by that
+> address stays observable on chain — the gate refuses actions,
+> not data."*
 
 ## Removal semantics
 
@@ -156,12 +197,18 @@ These are operational policy items; they are not enforced on-chain.
 
 ## What this gate does NOT do
 
+- **Does not hide anything.** Adding an address to the sanctions
+  list refuses future actions involving that address. It does not
+  redact, erase, or obscure any on-chain data. Past commitments,
+  nullifiers, settlements, claims, and pool balances stay
+  observable on chain. Chain analytics tooling continues to see
+  exactly what it would see otherwise.
 - **Does not screen the original depositor of funds that a third
   party later claims.** The check fires on the address acting at
   each entry point — depositor at deposit time, relayer at
   settle time, recipient at claim time. Chain analytics outside
   the protocol can still trace fund provenance; the on-chain
-  gate only blocks the specific actions listed above.
+  gate only refuses the specific actions listed above.
 - **Does not unwind past actions.** Adding an address after a
   deposit is recorded does not retroactively reject the deposit
   — the deposit already landed. The gate only blocks **future**
