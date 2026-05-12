@@ -23,6 +23,17 @@ function pick(value: string | undefined, fallback = ""): string {
   return value && value.length > 0 ? value : fallback;
 }
 
+/** Parse a non-negative integer from an env string with a guarded
+ *  fallback. `Number()` alone returns `NaN` on garbage input (e.g.
+ *  `"11155111abc"`) and silently propagates it into the network
+ *  config; downstream `chainId` comparisons then never match. Reject
+ *  anything that isn't a clean positive integer and fall back. */
+function pickInt(value: string | undefined, fallback: number): number {
+  if (!value || value.length === 0) return fallback;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
 /** Parse the comma-separated `NEXT_PUBLIC_TOKENS` list emitted by
  *  `scripts/dev.sh write_app_env`. Format: `<addr>:<SYMBOL>:<decimals>`
  *  per entry. Returns a symbol→address map. WETH is folded into
@@ -58,7 +69,7 @@ function buildNetworkConfig(): NetworkConfig {
   });
 
   return {
-    chainId: Number(pick(process.env.NEXT_PUBLIC_CHAIN_ID, "11155111")),
+    chainId: pickInt(process.env.NEXT_PUBLIC_CHAIN_ID, 11155111),
     name: pick(process.env.NEXT_PUBLIC_NETWORK_NAME, "Local / Sepolia"),
     rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, "https://rpc.sepolia.org"),
     explorerBase: pick(

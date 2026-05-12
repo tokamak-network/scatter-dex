@@ -184,7 +184,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
     } finally {
       setAbortCtrl(null);
     }
-  }, [tokenSymbol, amount, account, deriveEdDSA, addNote, toast]);
+  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast]);
 
   if (!open) return null;
 

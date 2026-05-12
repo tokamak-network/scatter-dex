@@ -71,6 +71,14 @@ export async function dispatchDeposit(
 ): Promise<DispatchResult> {
   const pool = DEMO_NETWORK.contracts.commitmentPool;
   if (!isConfiguredAddress(pool)) return { kind: "simulated", reason: "not_configured" };
+  // Guard the token address too — `LAUNCH_TOKENS` always lists
+  // ETH/USDC/USDT/TON, and a partial env overlay can leave USDT/TON
+  // pointing at `ZERO_ADDRESS`. Calling `ensureAllowance` on
+  // 0x000…000 would hard-revert against an EOA; surface that as the
+  // same `not_configured` simulated path the pool guard uses.
+  if (!isConfiguredAddress(tokenAddress)) {
+    return { kind: "simulated", reason: "not_configured" };
+  }
   if (!signer) return { kind: "simulated", reason: "no_signer" };
 
   // Approve first (no-op when allowance already covers `amount`).
@@ -86,41 +94,57 @@ export async function dispatchDeposit(
   return { kind: "onchain", txHash: tx.hash };
 }
 
+/** Named order of authorize.circom's public signals. Consensus-
+ *  critical: index 0 is the circuit output (`pubKeyBind`), 1–14 are
+ *  the public inputs in declaration order. Drift between this list
+ *  and the circuit silently corrupts every body the relayer rejects.
+ *  Update both — and re-run the local end-to-end test — when adding
+ *  or reordering signals. */
+const AUTHORIZE_PUBLIC_SIGNAL_NAMES = [
+  "pubKeyBind",
+  "commitmentRoot",
+  "nullifier",
+  "nonceNullifier",
+  "newCommitment",
+  "sellToken",
+  "buyToken",
+  "sellAmount",
+  "buyAmount",
+  "maxFee",
+  "expiry",
+  "claimsRoot",
+  "totalLocked",
+  "relayer",
+  "orderHash",
+] as const;
+type AuthorizePublicSignalName = (typeof AUTHORIZE_PUBLIC_SIGNAL_NAMES)[number];
+
 /** Build the wire-format `AuthorizeOrderBody` from the raw prover
  *  output + the EdDSA pubkey used in the proof. The relayer
  *  re-verifies every public signal so the body needs nothing beyond
- *  `proof` + `publicSignals` + the named pubkey.
- *
- *  Public-signal order is consensus-critical (matches authorize.circom):
- *    [0] pubKeyBind  (output)
- *    [1] commitmentRoot
- *    [2] nullifier
- *    [3] nonceNullifier
- *    [4] newCommitment
- *    [5] sellToken
- *    [6] buyToken
- *    [7] sellAmount
- *    [8] buyAmount
- *    [9] maxFee
- *    [10] expiry
- *    [11] claimsRoot
- *    [12] totalLocked
- *    [13] relayer
- *    [14] orderHash
- */
+ *  `proof` + `publicSignals` + the named pubkey. */
 export function buildAuthorizeOrderBody(
   proof: { proof: Groth16Proof; publicSignals: readonly bigint[] },
   pubKey: readonly [bigint, bigint],
   tier: number,
 ): AuthorizeOrderBody {
+  // Catch circuit/client drift up front — a 14-signal output vs the
+  // 15-name list would otherwise produce a body with an `undefined`
+  // field that only the relayer rejects, well after the 1–2 s prove
+  // has been paid for.
+  if (proof.publicSignals.length !== AUTHORIZE_PUBLIC_SIGNAL_NAMES.length) {
+    throw new Error(
+      `buildAuthorizeOrderBody: publicSignals length ${proof.publicSignals.length} ≠ expected ${AUTHORIZE_PUBLIC_SIGNAL_NAMES.length} (circuit/client drift)`,
+    );
+  }
   const ps = proof.publicSignals.map((b) => b.toString());
-  const at = (i: number): string => {
-    const v = ps[i];
-    if (v === undefined) {
-      throw new Error(`buildAuthorizeOrderBody: missing public signal at index ${i}`);
-    }
-    return v;
-  };
+  const named = AUTHORIZE_PUBLIC_SIGNAL_NAMES.reduce<Record<AuthorizePublicSignalName, string>>(
+    (acc, name, i) => {
+      acc[name] = ps[i]!;
+      return acc;
+    },
+    {} as Record<AuthorizePublicSignalName, string>,
+  );
   const p = proof.proof;
   return {
     proof: {
@@ -132,21 +156,21 @@ export function buildAuthorizeOrderBody(
       c: [p.c[0].toString(), p.c[1].toString()],
     },
     publicSignals: {
-      pubKeyBind: at(0),
-      commitmentRoot: at(1),
-      nullifier: at(2),
-      nonceNullifier: at(3),
-      newCommitment: at(4),
-      sellToken: at(5),
-      buyToken: at(6),
-      sellAmount: at(7),
-      buyAmount: at(8),
-      maxFee: at(9),
-      expiry: at(10),
-      claimsRoot: at(11),
-      totalLocked: at(12),
-      relayer: at(13),
-      orderHash: at(14),
+      pubKeyBind: named.pubKeyBind,
+      commitmentRoot: named.commitmentRoot,
+      nullifier: named.nullifier,
+      nonceNullifier: named.nonceNullifier,
+      newCommitment: named.newCommitment,
+      sellToken: named.sellToken,
+      buyToken: named.buyToken,
+      sellAmount: named.sellAmount,
+      buyAmount: named.buyAmount,
+      maxFee: named.maxFee,
+      expiry: named.expiry,
+      claimsRoot: named.claimsRoot,
+      totalLocked: named.totalLocked,
+      relayer: named.relayer,
+      orderHash: named.orderHash,
     },
     publicSignalsArray: ps,
     tier,

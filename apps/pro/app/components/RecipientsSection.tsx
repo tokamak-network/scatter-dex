@@ -105,6 +105,7 @@ function RecipientRowItem({
         <select
           value={row.mode}
           onChange={(e) => onChange(row.id, "mode", e.target.value as RecipientRow["mode"])}
+          aria-label={`Recipient ${index + 1} mode`}
           className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1"
         >
           <option value="regular">Regular</option>
@@ -115,13 +116,14 @@ function RecipientRowItem({
           placeholder={row.mode === "stealth" ? "st:eth:0x…" : "0x… (empty = self)"}
           value={row.address}
           onChange={(e) => onChange(row.id, "address", e.target.value)}
+          aria-label={`Recipient ${index + 1} address`}
           className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono text-[11px]"
         />
         <button
           type="button"
           onClick={onRemove}
           disabled={!canRemove}
-          aria-label="Remove recipient"
+          aria-label={`Remove recipient ${index + 1}`}
           className="rounded p-0.5 text-[var(--color-text-subtle)] hover:text-[var(--color-danger)] disabled:opacity-30"
         >
           ×
@@ -136,6 +138,7 @@ function RecipientRowItem({
           placeholder="0.0"
           value={row.amount}
           onChange={(e) => onChange(row.id, "amount", e.target.value)}
+          aria-label={`Recipient ${index + 1} amount`}
           className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono"
         />
         <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
@@ -146,11 +149,13 @@ function RecipientRowItem({
           min={0}
           value={row.delay}
           onChange={(e) => onChange(row.id, "delay", e.target.value)}
+          aria-label={`Recipient ${index + 1} delay`}
           className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono"
         />
         <select
           value={row.delayUnit}
           onChange={(e) => onChange(row.id, "delayUnit", e.target.value as RecipientRow["delayUnit"])}
+          aria-label={`Recipient ${index + 1} delay unit`}
           className="rounded border border-[var(--color-border-strong)] bg-white px-1 py-1"
         >
           <option value="min">min</option>
