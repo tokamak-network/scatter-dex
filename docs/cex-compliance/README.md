@@ -17,16 +17,16 @@ state clearly what the protocol does and does not do.
 - **[Marketing Compliance Guidelines](./MARKETING-COMPLIANCE-GUIDELINES.md)** —
   language we use, language we avoid, with rationale. Reviewed before
   every external announcement.
-
-## Documents in flight
-
-- `CONTRACT-ADDRESSES.json` — canonical addresses per network with
-  Etherscan verification status, owner/admin/multisig/timelock, and
-  deployment commit hashes. Added per network as deployments mature.
-- `ADMIN-WALLETS-AND-UPGRADE-POLICY.md` — owner authority, upgrade
-  procedure, emergency pause, incident response.
-- `SELECTIVE-DISCLOSURE-DESIGN.md` — what users can prove about their
-  own activity, what tooling exists today vs. roadmap.
+- **[Contract Addresses](./CONTRACT-ADDRESSES.json)** — canonical
+  addresses per network with verification status, owner / proxy admin,
+  and per-tier verifier registration. Mainnet block reserved; testnet
+  placeholders track the current reference deployment.
+- **[Admin Wallets and Upgrade Policy](./ADMIN-WALLETS-AND-UPGRADE-POLICY.md)** —
+  who can change a contract's logic, parameters, or owner; the routine
+  + incident upgrade procedures; the events exchanges can subscribe to.
+- **[Selective Disclosure Design](./SELECTIVE-DISCLOSURE-DESIGN.md)** —
+  what a user can prove about their own activity to a third party,
+  what tooling ships today vs. what's roadmap.
 
 ## What ScatterDEX is not
 
