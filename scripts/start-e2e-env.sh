@@ -69,8 +69,8 @@ cd "$ROOT_DIR/contracts"
 # stdout-not-a-terminal / contract-size warnings even when the deploy
 # succeeded. Surface anything else.
 set +e
-DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
-  --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" --no-color 2>&1)
+DEPLOY_OUTPUT=$(NO_COLOR=1 forge script script/DeployLocal.s.sol:DeployLocal \
+  --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
 DEPLOY_STATUS=$?
 set -e
 if [ "$DEPLOY_STATUS" -ne 0 ] \
@@ -80,7 +80,18 @@ if [ "$DEPLOY_STATUS" -ne 0 ] \
   exit 1
 fi
 
-parse_addr() { echo "$DEPLOY_OUTPUT" | grep "^  $1:" | awk '{print $NF}'; }
+# Proxy migration changed the deploy log: each upgradeable contract now
+# prints `Name impl: <addr>` + `Name proxy: <addr>` (apps consume the proxy).
+# Non-upgradeable contracts (WETH, USDC, ...) still use the bare `Name: <addr>`
+# form. Prefer `proxy:` when present; fall back to the bare label otherwise.
+parse_addr() {
+    local addr
+    addr=$(echo "$DEPLOY_OUTPUT" | grep "^  $1 proxy:" | head -1 | awk '{print $NF}')
+    if [ -z "$addr" ]; then
+        addr=$(echo "$DEPLOY_OUTPUT" | grep "^  $1:" | head -1 | awk '{print $NF}')
+    fi
+    echo "$addr"
+}
 RELAYER_REGISTRY=$(parse_addr RelayerRegistry)
 WETH=$(parse_addr WETH)
 USDC=$(parse_addr USDC)
@@ -149,8 +160,11 @@ if cast call "$RELAYER_REGISTRY" "isActiveRelayer(address)(bool)" "$RELAYER_B_AD
     --rpc-url "$RPC_URL" 2>/dev/null | grep -q true; then
   echo "  [ok] already active"
 else
-  if ! cast send "$RELAYER_REGISTRY" "register(string,uint256)" \
-      "http://localhost:3003" 30 \
+  # `register` signature post-RelayerRegistry proxy migration is
+  # (url, name, fee, bondAmount). minBond defaults to 0 in MOCK mode so
+  # bondAmount=0 and msg.value=0 both satisfy `_pullBond`.
+  if ! cast send "$RELAYER_REGISTRY" "register(string,string,uint256,uint256)" \
+      "http://localhost:3003" "Relayer-B" 30 0 \
       --private-key "$RELAYER_B_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
     echo "  ERROR: register() failed"
     exit 1

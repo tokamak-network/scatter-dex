@@ -122,7 +122,7 @@ Identical surface per instance.
 | # | Endpoint | Method | Notes |
 |---|---|---|---|
 | relayer-1 | `GET /api/info` | 🌐 curl (`feature-check --live`) | metadata + orderCount |
-| relayer-2 | `GET /api/health` | 🌐 curl | liveness probe |
+| relayer-2 | `GET /health` | 🌐 curl | liveness probe (mounted at `/health`, not `/api/health`) |
 | relayer-3 | `GET /api/admin/profile` | 🌐 curl | persisted relayer profile fields |
 | relayer-4 | `PATCH /api/admin/profile` | 🧪 test (`admin.test.ts`) | merge semantics |
 | relayer-5 | `POST /api/admin/drain` | 🧪 test | one-shot order drain |
