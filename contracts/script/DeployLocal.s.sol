@@ -7,6 +7,7 @@ import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {SanctionsList} from "../src/SanctionsList.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {MockToken} from "./DeployTestTokens.s.sol";
@@ -49,6 +50,12 @@ contract DeployLocal is Script {
         address gate;
         address vault;
         address batchExecutor;
+        // OFAC SDN-style address blocklist behind TransparentUpgradeableProxy.
+        // Empty by default in local deploys; owner can `addSanction(addr)` or
+        // `addSanctionsBatch(addrs)` post-deploy. Production deploys may
+        // swap the implementation for `ChainalysisSanctionsAdapter` (or any
+        // other `ISanctionsList` implementation) via the proxy admin.
+        address sanctionsList;
     }
 
     function run() external {
@@ -155,6 +162,24 @@ contract DeployLocal is Script {
         }
         console.log("ZK contracts configured (relayer gate + fee vault + DEX routers)");
 
+        // 14. Deploy SanctionsList behind TransparentUpgradeableProxy and
+        //     register on the boundary contracts. Inlined into a helper
+        //     so its return value never lives as a local in `run()` —
+        //     a fresh local here trips Solidity's 16-slot stack limit.
+        //     Local deploys start with an empty list — owner adds OFAC
+        //     SDN entries post-deploy via `addSanction(addr)` or
+        //     `addSanctionsBatch(addrs)`. Production deploys can swap
+        //     the implementation for a Chainalysis adapter via the
+        //     proxy admin without touching the boundary contracts —
+        //     they all read through the `ISanctionsList` interface.
+        // Deploy SanctionsList + register on the two boundary contracts.
+        // The helper takes its arguments via address-casting from
+        // already-live values in this scope (no fresh locals) and the
+        // proxy address is read back from the boundary contract's
+        // storage in the summary path. Both choices are about staying
+        // under Solidity's 16-slot stack limit in `run()`.
+        _deployAndWireSanctionsList(address(pool), address(privateSettlement));
+
         // Deploy the minimal EIP-7702 batch executor. The frontend
         // authorizes EOAs to delegate to this address when available,
         // collapsing deposit's wrap+approve+deposit popups into one tx.
@@ -179,6 +204,9 @@ contract DeployLocal is Script {
         d.gate = address(gate);
         d.vault = address(vault);
         d.batchExecutor = address(batchExecutor);
+        // Read the sanctions proxy address back from the contract that
+        // was wired with it — no `run()`-local needed.
+        d.sanctionsList = address(pool.sanctionsList());
         _printSummary(d);
     }
 
@@ -191,7 +219,6 @@ contract DeployLocal is Script {
         address gate = d.gate;
         address vault = d.vault;
         address batchExecutor = d.batchExecutor;
-        address authorizeVerifier = _authorizeVerifier;
         console.log("");
         console.log("=== LOCAL DEPLOYMENT SUMMARY ===");
         console.log(string.concat("NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=", vm.toString(relayerRegistry)));
@@ -219,11 +246,24 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(vault)));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
+        _printSanctionsAndVerifiers(d);
+    }
+
+    /// @dev Lifted out to keep `_printSummary`'s stack within the
+    ///      16-slot limit. Surfaces the SanctionsList proxy and every
+    ///      live authorize-verifier tier so an operator running
+    ///      `dev.sh` can spot a missing tier registration.
+    function _printSanctionsAndVerifiers(Deployed memory d) internal view {
+        // SanctionsList proxy — informational; the boundary contracts
+        // read the address from their own storage (set at deploy time
+        // via setSanctionsList). Surfaced so an operator can copy it
+        // for OFAC SDN updates (`addSanction[Batch]`).
+        console.log(string.concat("NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS=", vm.toString(d.sanctionsList)));
         // Surface every active tier's authorize verifier so a dev
         // running `dev.sh` can spot a missing tier registration in the
         // summary; the SDK reads addresses from the on-chain registry,
         // so these env vars are informational rather than required.
-        console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_ADDRESS=", vm.toString(authorizeVerifier)));
+        console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_ADDRESS=", vm.toString(_authorizeVerifier)));
         console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_64_ADDRESS=", vm.toString(_authorizeVerifier64)));
         console.log(string.concat("NEXT_PUBLIC_AUTHORIZE_VERIFIER_128_ADDRESS=", vm.toString(_authorizeVerifier128)));
     }
@@ -270,6 +310,34 @@ contract DeployLocal is Script {
             _upgradeOwner = envOwner;
         }
         console.log("UPGRADE_OWNER (ProxyAdmin):", _upgradeOwner);
+    }
+
+    /// @dev Deploy SanctionsList behind a TransparentUpgradeableProxy
+    ///      and register it on both boundary contracts. Returns the
+    ///      proxy address so the caller can record it on the Deployed
+    ///      struct. Bundled into one helper so `run()`'s stack stays
+    ///      under Solidity's 16-slot limit — adding either a fresh
+    ///      local for the proxy OR a separate registration step both
+    ///      tip it over.
+    ///
+    ///      Owner = deployer (so the script can wire the boundary
+    ///      contracts via setSanctionsList). ProxyAdmin owner =
+    ///      `_upgradeOwner` resolved in `_resolveUpgradeOwner`.
+    ///      Local deploys start with an empty list; the operations
+    ///      multisig populates it post-deploy via `addSanction(addr)`
+    ///      or `addSanctionsBatch(addrs)`. Production deploys can swap
+    ///      the implementation for the Chainalysis SDN Oracle via the
+    ///      proxy admin without touching the boundary contracts —
+    ///      they all read through the `ISanctionsList` interface.
+    function _deployAndWireSanctionsList(address pool_, address settlement_) internal {
+        SanctionsList impl = new SanctionsList();
+        bytes memory initData = abi.encodeCall(SanctionsList.initialize, (msg.sender));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        console.log("SanctionsList impl:", address(impl));
+        console.log("SanctionsList proxy:", address(proxy));
+        CommitmentPool(pool_).setSanctionsList(address(proxy));
+        PrivateSettlement(payable(settlement_)).setSanctionsList(address(proxy));
+        console.log("SanctionsList registered on CommitmentPool + PrivateSettlement");
     }
 
     /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.
