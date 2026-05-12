@@ -8,21 +8,50 @@ evaluating the protocol.
 
 ## Where the check fires
 
-The protocol's sanctions gate is enforced at every state-changing
-boundary entry point. There is no path that bypasses the gate.
+The protocol's sanctions gate is enforced at the state-changing
+boundary entry points listed below. The check itself is uniform —
+if a non-zero `SanctionsList` is registered and the checked
+address is on it, the call reverts.
 
-| Entry point | Checked address | Source file |
+| Entry point | Checked address | Notes |
 |---|---|---|
-| `CommitmentPool.deposit` | `msg.sender` (the depositor) | `contracts/src/zk/CommitmentPool.sol` |
-| `CommitmentPool.withdraw` | both the EOA producing the proof and the `recipient` | `contracts/src/zk/CommitmentPool.sol` |
-| `PrivateSettlement.settleAuth` | `msg.sender` (the matching relayer) | `contracts/src/zk/PrivateSettlement.sol` |
-| `PrivateSettlement.settleWithDex` | `msg.sender` (the relayer running the asset-conversion path) | `contracts/src/zk/PrivateSettlement.sol` |
-| `PrivateSettlement.scatterDirectAuth` | `msg.sender` (the relayer / issuer running the self-distribution path) | `contracts/src/zk/PrivateSettlement.sol` |
-| `PrivateSettlement.claimWithProof` (and `claimWithProofBatch`) | `recipient` (the address the payout is bound to in the leaf) | `contracts/src/zk/PrivateSettlement.sol` |
+| `CommitmentPool.deposit` | `msg.sender` (the depositor) | Pool entry |
+| `CommitmentPool.withdraw` | both the proof submitter and the `recipient` | Pool exit |
+| `PrivateSettlement.settleAuth` | `msg.sender` (the matching relayer) | OTC match — relayer-level gate |
+| `PrivateSettlement.settleWithDex` | `msg.sender` (the relayer running the asset-conversion path) | Same — relayer-level |
+| `PrivateSettlement.scatterDirectAuth` | `msg.sender` (the relayer / issuer of the self-distribution proof) | Same — relayer-level |
+| `PrivateSettlement.claimWithProof` (called per-leaf by both `claimWithProof` and `claimWithProofBatch`) | `recipient` baked into the leaf preimage | **Beneficiary-level gate** — the load-bearing piece (see next section) |
 
-The check itself is the same on every entry: if a non-zero
-`SanctionsList` is registered and the checked address is on it,
-the call reverts.
+All source for the above lives in `contracts/src/zk/CommitmentPool.sol`
+and `contracts/src/zk/PrivateSettlement.sol`.
+
+### Entry points without a direct in-function check
+
+The following entry points exist on `PrivateSettlement` but do
+**not** themselves call `_requireNotSanctioned`. They are listed
+for completeness so an auditor isn't surprised:
+
+- **`cancelPrivate`** — escrow rotation (same balance, new salt
+  back to the same owner pubkey). The cancel circuit binds the
+  submitter inside the proof, so funds never leave the
+  submitter's own escrow. Pool deposit / withdraw / claim — the
+  paths funds actually leave through — still carry the gate, so
+  a sanctioned address cannot extract the rotated funds.
+- **`scatterDirect`** (the legacy non-auth variant, not
+  `scatterDirectAuth`) — restricted to `onlyRelayer`, so the
+  relayer-registry path is the gate. The funds it routes still
+  land in `claimsGroups[…]` and become subject to the
+  beneficiary-level claim-time gate before any user receives
+  them.
+- **`claimWithProofBatch`** — wraps `claimWithProof` per leaf, so
+  every leaf in the batch goes through the recipient-level
+  check. The batch wrapper itself doesn't need a separate
+  check.
+
+Adding a direct check to these is a follow-on item if the audit
+recommends defence-in-depth; the current claim-time and pool
+boundary gates already prevent funds from reaching a sanctioned
+address by any of these paths.
 
 The same `ISanctionsList` interface lets the operator swap the
 default `SanctionsList` implementation for the Chainalysis SDN
@@ -32,13 +61,21 @@ needs to change.
 
 ## The "claim-time gate" — the load-bearing piece
 
-The settlement / scatter / settle-with-dex entry points block at
-**relayer** granularity (they check `msg.sender`). That's the
-gate most analogous to "filtering at the matching engine".
+The settlement / scatter / settle-with-dex entry points check
+`msg.sender` — which for a privacy-preserving relayer protocol is
+the **relayer** submitting the proof, not the beneficiary. So
+this layer is best described as a relayer-side filter: a relayer
+on the sanctions list cannot match orders or run an
+asset-conversion settle. It is not a beneficiary-level screen at
+this stage, by design — the beneficiary is hidden inside the ZK
+proof and only revealed at claim time.
 
-The **claim** entry point blocks at **recipient** granularity.
-That gate is the load-bearing one for the protocol's compliance
-posture, because:
+The **claim** entry point is where the beneficiary-level gate
+lives. `claimWithProof` (and `claimWithProofBatch`, which loops
+through `_executeClaim`) checks the `recipient` address — the
+address baked into the claim leaf's preimage and revealed in the
+public signals. That gate is the load-bearing one for the
+protocol's compliance posture, because:
 
 1. A settle / scatter / settle-with-dex transaction does not move
    funds to any user yet — it only registers a `claimsGroups[…]`

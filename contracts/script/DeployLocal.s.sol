@@ -53,8 +53,10 @@ contract DeployLocal is Script {
         // OFAC SDN-style address blocklist behind TransparentUpgradeableProxy.
         // Empty by default in local deploys; owner can `addSanction(addr)` or
         // `addSanctionsBatch(addrs)` post-deploy. Production deploys may
-        // swap the implementation for `ChainalysisSanctionsAdapter` (or any
-        // other `ISanctionsList` implementation) via the proxy admin.
+        // swap the implementation via the proxy admin for any other
+        // contract that satisfies `ISanctionsList` — e.g. an adapter
+        // around the Chainalysis SDN Oracle (mainnet `0x40C57923...`),
+        // a merged-source bespoke list, or a stricter regional variant.
         address sanctionsList;
     }
 
@@ -162,22 +164,20 @@ contract DeployLocal is Script {
         }
         console.log("ZK contracts configured (relayer gate + fee vault + DEX routers)");
 
-        // 14. Deploy SanctionsList behind TransparentUpgradeableProxy and
-        //     register on the boundary contracts. Inlined into a helper
-        //     so its return value never lives as a local in `run()` —
-        //     a fresh local here trips Solidity's 16-slot stack limit.
+        // 14. Deploy SanctionsList behind TransparentUpgradeableProxy
+        //     and register it on both boundary contracts. The helper
+        //     does the proxy deploy AND both `setSanctionsList` calls
+        //     in one frame — `run()` never sees the proxy as a local,
+        //     and the summary path below reads it back from
+        //     `pool.sanctionsList()`. Both choices avoid Solidity's
+        //     16-slot stack limit in `run()`.
+        //
         //     Local deploys start with an empty list — owner adds OFAC
         //     SDN entries post-deploy via `addSanction(addr)` or
         //     `addSanctionsBatch(addrs)`. Production deploys can swap
-        //     the implementation for a Chainalysis adapter via the
-        //     proxy admin without touching the boundary contracts —
-        //     they all read through the `ISanctionsList` interface.
-        // Deploy SanctionsList + register on the two boundary contracts.
-        // The helper takes its arguments via address-casting from
-        // already-live values in this scope (no fresh locals) and the
-        // proxy address is read back from the boundary contract's
-        // storage in the summary path. Both choices are about staying
-        // under Solidity's 16-slot stack limit in `run()`.
+        //     the implementation via the proxy admin for any other
+        //     contract that satisfies `ISanctionsList` — e.g. an
+        //     adapter around the Chainalysis SDN Oracle.
         _deployAndWireSanctionsList(address(pool), address(privateSettlement));
 
         // Deploy the minimal EIP-7702 batch executor. The frontend
@@ -313,12 +313,13 @@ contract DeployLocal is Script {
     }
 
     /// @dev Deploy SanctionsList behind a TransparentUpgradeableProxy
-    ///      and register it on both boundary contracts. Returns the
-    ///      proxy address so the caller can record it on the Deployed
-    ///      struct. Bundled into one helper so `run()`'s stack stays
-    ///      under Solidity's 16-slot limit — adding either a fresh
-    ///      local for the proxy OR a separate registration step both
-    ///      tip it over.
+    ///      and register it on both boundary contracts. Does not
+    ///      return the proxy address — the caller (and the summary
+    ///      path) read it back from `pool.sanctionsList()` to keep
+    ///      `run()`'s stack under Solidity's 16-slot limit. Bundled
+    ///      into one helper for the same reason: a fresh local for
+    ///      the proxy plus separate `setSanctionsList` calls in the
+    ///      caller would each push the limit.
     ///
     ///      Owner = deployer (so the script can wire the boundary
     ///      contracts via setSanctionsList). ProxyAdmin owner =
@@ -326,9 +327,9 @@ contract DeployLocal is Script {
     ///      Local deploys start with an empty list; the operations
     ///      multisig populates it post-deploy via `addSanction(addr)`
     ///      or `addSanctionsBatch(addrs)`. Production deploys can swap
-    ///      the implementation for the Chainalysis SDN Oracle via the
-    ///      proxy admin without touching the boundary contracts —
-    ///      they all read through the `ISanctionsList` interface.
+    ///      the implementation via the proxy admin for any other
+    ///      contract that satisfies `ISanctionsList` — e.g. an adapter
+    ///      around the Chainalysis SDN Oracle.
     function _deployAndWireSanctionsList(address pool_, address settlement_) internal {
         SanctionsList impl = new SanctionsList();
         bytes memory initData = abi.encodeCall(SanctionsList.initialize, (msg.sender));
