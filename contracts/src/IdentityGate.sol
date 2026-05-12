@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 
 /// @notice Multi-CA identity gate for zkScatter.
@@ -14,9 +15,12 @@ import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 ///      Deploy two separate instances:
 ///        - User IdentityGate   (for CommitmentPool deposits)
 ///        - Relayer IdentityGate (for RelayerRegistry registration)
-contract IdentityGate is Ownable2Step, IIdentityRegistry {
+contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegistry {
     IIdentityRegistry[] public registries;
     mapping(address => bool) public registryExists;
+
+    /// @dev Reserved storage for future upgrades. Decrement when new state added.
+    uint256[50] private __gap;
 
     event RegistryAdded(address indexed registry);
     event RegistryRemoved(address indexed registry);
@@ -30,15 +34,22 @@ contract IdentityGate is Ownable2Step, IIdentityRegistry {
     error TooManyRegistries();
     error RenounceOwnershipDisabled();
 
-    constructor(address _initialRegistry) Ownable(msg.sender) {
-        if (_initialRegistry == address(0)) revert RegistryAddressZero();
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner, address _initialRegistry) external initializer {
+        if (initialOwner == address(0) || _initialRegistry == address(0)) revert RegistryAddressZero();
+        __Ownable_init(initialOwner);
+        __Ownable2Step_init();
         registries.push(IIdentityRegistry(_initialRegistry));
         registryExists[_initialRegistry] = true;
         emit RegistryAdded(_initialRegistry);
     }
 
     /// @dev Disable renounceOwnership to prevent lockout.
-    function renounceOwnership() public pure override {
+    function renounceOwnership() public pure override(OwnableUpgradeable) {
         revert RenounceOwnershipDisabled();
     }
 

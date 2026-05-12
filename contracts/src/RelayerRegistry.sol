@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
@@ -23,7 +24,7 @@ import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 ///      failed settle() attempts. Consider adding slashing for repeated violations.
 ///      NOTE (L-4): getActiveRelayers() iterates the full relayerList. For very large
 ///      registries, off-chain indexing via events is recommended instead.
-contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
+contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
     struct Relayer {
         string url;
@@ -43,14 +44,21 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     uint256 public constant EXIT_COOLDOWN = 7 days;
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
-    IIdentityRegistry public immutable identityRegistry;
+    /// @dev Was `immutable` in the non-upgradeable predecessor; moved to a regular
+    ///      state var because the implementation's constructor never runs through
+    ///      the proxy. Value is locked in at `initialize()` and never reassigned.
+    IIdentityRegistry public identityRegistry;
     /// @notice Bond token. `address(0)` means native (msg.value) mode.
-    IERC20 public immutable bondToken;
+    /// @dev See `identityRegistry` note — was `immutable` before the proxy migration.
+    IERC20 public bondToken;
     address public treasury;
 
     mapping(address => Relayer) public relayers;
     mapping(address => bool) private inList; // tracks if address was ever added to relayerList
     address[] public relayerList;
+
+    /// @dev Reserved storage for future upgrades. Decrement when new state added.
+    uint256[50] private __gap;
 
     // ─── Events ──────────────────────────────────────────────────
     event RelayerRegistered(address indexed relayer, string url, string name, uint256 fee, uint256 bond);
@@ -78,20 +86,32 @@ contract RelayerRegistry is Ownable2Step, ReentrancyGuard {
     error WrongPaymentMode();
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
-    function renounceOwnership() public pure override {
+    function renounceOwnership() public pure override(OwnableUpgradeable) {
         revert RenounceOwnershipDisabled();
     }
 
     /// @dev Override to reject zero-address transfers, preserving the original contract's behavior.
-    function transferOwnership(address newOwner) public override {
+    function transferOwnership(address newOwner) public override(Ownable2StepUpgradeable) {
         if (newOwner == address(0)) revert ZeroAddress();
         super.transferOwnership(newOwner);
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     /// @param _bondToken ERC20 token address for bonds, or `address(0)` for native (msg.value) mode.
-    constructor(address _treasury, address _identityRegistry, address _bondToken) Ownable(msg.sender) {
+    function initialize(address initialOwner, address _treasury, address _identityRegistry, address _bondToken)
+        external
+        initializer
+    {
+        if (initialOwner == address(0)) revert ZeroAddress();
         if (_treasury == address(0)) revert ZeroAddress();
         if (_identityRegistry == address(0)) revert ZeroAddress();
+        __Ownable_init(initialOwner);
+        __Ownable2Step_init();
+        __ReentrancyGuard_init();
         treasury = _treasury;
         identityRegistry = IIdentityRegistry(_identityRegistry);
         bondToken = IERC20(_bondToken); // address(0) → native mode

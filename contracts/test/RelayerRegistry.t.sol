@@ -5,6 +5,8 @@ import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract RelayerRegistryTest is Test {
     RelayerRegistry public registry;
@@ -15,7 +17,7 @@ contract RelayerRegistryTest is Test {
 
     function setUp() public {
         identityRegistry = new MockIdentityRegistry();
-        registry = new RelayerRegistry(treasury, address(identityRegistry), address(0));
+        registry = ProxyDeployer.deployRelayerRegistry(address(this), address(this), treasury, address(identityRegistry), address(0));
         vm.deal(relayer1, 10 ether);
         vm.deal(relayer2, 10 ether);
         // Verify relayers by default so existing tests pass
@@ -189,14 +191,20 @@ contract RelayerRegistryTest is Test {
         registry.setTreasury(address(0x9999));
     }
 
-    function test_constructor_zero_treasury_reverts() public {
+    function test_initialize_zero_treasury_reverts() public {
+        RelayerRegistry impl = new RelayerRegistry();
+        bytes memory initData =
+            abi.encodeCall(RelayerRegistry.initialize, (address(this), address(0), address(identityRegistry), address(0)));
         vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
-        new RelayerRegistry(address(0), address(identityRegistry), address(0));
+        new TransparentUpgradeableProxy(address(impl), address(this), initData);
     }
 
-    function test_constructor_zero_identity_registry_reverts() public {
+    function test_initialize_zero_identity_registry_reverts() public {
+        RelayerRegistry impl = new RelayerRegistry();
+        bytes memory initData =
+            abi.encodeCall(RelayerRegistry.initialize, (address(this), treasury, address(0), address(0)));
         vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
-        new RelayerRegistry(treasury, address(0), address(0));
+        new TransparentUpgradeableProxy(address(impl), address(this), initData);
     }
 
     function test_register_unverified_reverts() public {
@@ -345,7 +353,7 @@ contract RelayerRegistryERC20Test is Test {
     function setUp() public {
         identityRegistry = new MockIdentityRegistry();
         ton = new MockTON();
-        registry = new RelayerRegistry(treasury, address(identityRegistry), address(ton));
+        registry = ProxyDeployer.deployRelayerRegistry(address(this), address(this), treasury, address(identityRegistry), address(ton));
         identityRegistry.setVerified(relayer1, true);
         ton.mint(relayer1, 10 ether);
     }

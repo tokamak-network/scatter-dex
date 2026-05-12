@@ -11,8 +11,10 @@ mkdir -p "$OUT"
 
 CONTRACTS=(
   FeeVault
-  # Future PRs append here: SanctionsList, IdentityGate, RelayerRegistry,
-  # CommitmentPool, PrivateSettlement.
+  SanctionsList
+  IdentityGate
+  RelayerRegistry
+  # Future PRs append here: CommitmentPool, PrivateSettlement.
 )
 
 for c in "${CONTRACTS[@]}"; do

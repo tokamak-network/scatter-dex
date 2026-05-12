@@ -15,6 +15,9 @@ OUT="$ROOT/storage-layouts"
 
 CONTRACTS=(
   FeeVault
+  SanctionsList
+  IdentityGate
+  RelayerRegistry
 )
 
 normalize() {

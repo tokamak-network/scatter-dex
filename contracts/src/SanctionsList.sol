@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
-import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {ISanctionsList} from "./interfaces/ISanctionsList.sol";
 
 /// @title SanctionsList
 /// @notice On-chain address blocklist for OFAC SDN and other sanctions compliance.
 /// @dev    Implements ISanctionsList so it can be swapped with the Chainalysis
 ///         oracle (0x40C57923...) or any other compatible blocklist.
-contract SanctionsList is Ownable2Step, ISanctionsList {
+contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList {
     mapping(address => bool) public sanctioned;
 
     uint256 public constant MAX_BATCH_SIZE = 200;
+
+    /// @dev Reserved storage for future upgrades. Decrement when new state added.
+    uint256[50] private __gap;
 
     event AddressSanctioned(address indexed addr);
     event AddressUnsanctioned(address indexed addr);
@@ -22,9 +27,18 @@ contract SanctionsList is Ownable2Step, ISanctionsList {
     error BatchTooLarge();
     error RenounceOwnershipDisabled();
 
-    constructor() Ownable(msg.sender) {}
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
-    function renounceOwnership() public pure override {
+    function initialize(address initialOwner) external initializer {
+        if (initialOwner == address(0)) revert ZeroAddress();
+        __Ownable_init(initialOwner);
+        __Ownable2Step_init();
+    }
+
+    function renounceOwnership() public pure override(OwnableUpgradeable) {
         revert RenounceOwnershipDisabled();
     }
 

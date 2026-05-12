@@ -8,6 +8,7 @@ import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
@@ -657,7 +658,7 @@ contract SettleAuthTest is Test {
         MockIdentityRegistry idRegistry = new MockIdentityRegistry();
         idRegistry.setVerified(makerRelayer, true);
         idRegistry.setVerified(takerRelayer, true);
-        RelayerRegistry registry = new RelayerRegistry(treasury, address(idRegistry), address(0));
+        RelayerRegistry registry = ProxyDeployer.deployRelayerRegistry(address(this), address(this), treasury, address(idRegistry), address(0));
 
         // Fund makerRelayer and register; takerRelayer stays unregistered.
         vm.deal(makerRelayer, 1 ether);
