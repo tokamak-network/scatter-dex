@@ -105,11 +105,7 @@ export const PRIVATE_SETTLEMENT_ABI = [
   "event ScatterDirectAuthSettled(bytes32 indexed nullifier, bytes32 indexed nonceNullifier, bytes32 claimsRoot, address indexed relayer, uint96 fee)",
   "function claimWithProof(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
   "function claimWithProofBatch((uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime)[] claims) external",
-  // claimToPool — atomic stealth claim → split pool deposits with
-  // an EIP-712 ClaimToPoolAuth signature from the stealth privkey.
-  "function claimToPool((uint256[2] claimProofA, uint256[2][2] claimProofB, uint256[2] claimProofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address stealthRecipient, uint256 releaseTime) p, (uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, uint256 amount)[] slices, bytes stealthSignature) external",
   "event PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount)",
-  "event PrivateClaimToPool(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed stealthRecipient, address token, uint256 amount, uint256 sliceCount)",
   "event PrivateCancel(bytes32 indexed escrowNullifier, bytes32 indexed nonceNullifier, bytes32 newCommitment, address indexed relayer)",
   "event PrivateSettledAuth(bytes32 indexed makerNullifier, bytes32 indexed takerNullifier, bytes32 claimsRootMaker, bytes32 claimsRootTaker, address indexed makerRelayer, address takerRelayer, address submitter, uint96 feeTokenMaker, uint96 feeTokenTaker)",
   "event SettledWithDex(bytes32 indexed nullifier, bytes32 indexed claimsRoot, address sellToken, address buyToken, uint128 sellAmount, uint256 amountOut, uint128 totalLocked, address indexed submitter)",

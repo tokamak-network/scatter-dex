@@ -21,7 +21,6 @@ import { submitClaim } from "../_lib/claimSubmit";
 import { useIdentityStatus } from "../_lib/identity";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { deriveStealthForPackage } from "../_lib/stealthDerive";
-import { RedepositSplitModal } from "../_components/RedepositSplitModal";
 
 /** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
  *  as a static export, so the link id moves to a `?id=` query param
@@ -91,7 +90,6 @@ function ClaimInner() {
   const [preSaveState, setPreSaveState] = useState<
     "idle" | "saving" | "saved" | "duplicate"
   >("idle");
-  const [showRedeposit, setShowRedeposit] = useState(false);
   // null = unknown / not yet probed, true = up, false = down. Drives
   // the gasless button's disabled state so the recipient doesn't
   // burn a proof generation just to hit a connection refused.
@@ -607,26 +605,6 @@ function ClaimInner() {
                             : `Save to ${isStealth ? "Stealth inbox" : "Claims inbox"}`}
                     </button>
                   )}
-                  {/* Redeposit is only valid when the recipient holds the
-                      stealth privkey (stealthVerified), has a connected
-                      wallet to pay gas + sign the redeposit tx, and the
-                      slot isn't already spent. The button replaces the
-                      claim flow — funds land in the pool as fresh
-                      commitments owned by the recipient's trading key. */}
-                  {stealthVerified &&
-                    !!signer &&
-                    !wrongWalletChain &&
-                    isAvailable === true &&
-                    alreadyClaimed !== true &&
-                    (phase.kind === "idle" || phase.kind === "error") && (
-                      <button
-                        onClick={() => setShowRedeposit(true)}
-                        title="Redirect the claim into the pool as N fresh commitments owned by your trading key. Observers see N small deposits instead of one large claim."
-                        className="w-full rounded-md border border-[var(--color-border-strong)] py-2 text-xs hover:bg-[var(--color-primary-soft)]"
-                      >
-                        Redeposit (split into pool)
-                      </button>
-                    )}
                 </>
               );
             })()}
@@ -641,54 +619,6 @@ function ClaimInner() {
           <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">{link}</span>
         </div>
       </div>
-      {showRedeposit && parsed && stealthDerivation?.privateKey && (
-        <RedepositSplitModal
-          pkg={parsed.pkg}
-          privkey={stealthDerivation.privateKey}
-          onClose={() => setShowRedeposit(false)}
-          onDone={async (txHash) => {
-            // Mirror the regular Claim flow's done-state transition so
-            // the page collapses to the success card — the slot is now
-            // spent on-chain either way. Funds live in the pool rather
-            // than at the stealth EOA; the post-claim address line
-            // still points at the original recipient since the proof
-            // is bound to that leaf.
-            setPhase({ kind: "done", txHash });
-            setShowRedeposit(false);
-            // Same best-effort inbox mirror as doClaim — keeps the
-            // recipient's local history consistent regardless of which
-            // exit path they took. Save failure must not surface as a
-            // claim error since the on-chain spend already succeeded.
-            if (isStealth && folder.ready && parsed) {
-              try {
-                const inserted = await addStealthInboxEntry({
-                  source: "link",
-                  rawInput:
-                    typeof window !== "undefined" ? window.location.href : "",
-                  pkg: parsed.pkg,
-                  ephemeralPubKey: parsed.pkg.ephemeralPubKey,
-                });
-                // Pre-saved entries take the lookup path; mirrors the
-                // doClaim branch so a pre-Save followed by Redeposit
-                // still flips the row to claimed.
-                const id =
-                  inserted?.id ??
-                  (await loadStealthInbox()).find(
-                    (e) =>
-                      e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
-                      e.pkg.leafIndex === parsed.pkg.leafIndex,
-                  )?.id;
-                if (id) {
-                  await markStealthInboxEntryClaimed(id, txHash);
-                  setSavedInboxId(id);
-                }
-              } catch (saveErr) {
-                console.warn("[Pay] save-to-inbox after redeposit failed", saveErr);
-              }
-            }
-          }}
-        />
-      )}
     </div>
   );
 }
