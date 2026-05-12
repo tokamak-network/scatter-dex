@@ -2,26 +2,21 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
-import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
-contract TCToken is ERC20 {
-    constructor() ERC20("TC", "TC") {}
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
-}
-
 /// @dev Drop-in IIdentityRegistry stand-in that marks everyone verified
 ///      forever. Lets us populate multiple IdentityGate slots without
 ///      needing the production zk-X509 wiring.
 contract AlwaysVerified is IIdentityRegistry {
-    bool public paused;
-    function setPaused(bool p) external { paused = p; }
-    function isVerified(address) external view returns (bool) { return !paused; }
-    function verifiedUntil(address) external view returns (uint64) { return type(uint64).max; }
+    bool private _paused;
+    function setPaused(bool p) external { _paused = p; }
+    function paused() external view override returns (bool) { return _paused; }
+    function isVerified(address) external view override returns (bool) { return !_paused; }
+    function verifiedUntil(address) external view override returns (uint64) { return type(uint64).max; }
 }
 
 /// @title TrackCBranchCoverage
