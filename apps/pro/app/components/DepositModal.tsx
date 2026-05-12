@@ -6,23 +6,29 @@ import {
   toBytes32Hex,
   type CommitmentNote,
 } from "@zkscatter/sdk/zk";
+import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { DEMO_NETWORK } from "../lib/network";
+import { dispatchDeposit } from "../lib/dispatch";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
-import { abortableSleep, isAbortError } from "../lib/abort";
+import { isAbortError } from "../lib/abort";
 
-// Depositable tokens come straight from the active network's
-// whitelist — every entry that can be a sell-side or quote-side
-// of any launch pair. Previously this was a hardcoded local list
-// that drifted from the whitelist (ETH/USDC/WBTC vs the canonical
-// ETH/USDC/USDT/TON), which made vault notes unspendable in the
-// trade form. Source of truth: `DEMO_NETWORK.tokens`.
-const DEPOSITABLE = DEMO_NETWORK.tokens;
+// Depositable tokens come from the active network's whitelist,
+// filtered to entries with a real (non-zero) address. LAUNCH_TOKENS
+// always lists ETH/USDC/USDT/TON, but a local deploy might only
+// wire WETH+USDC — showing the unwired entries here would let the
+// user pick a token whose deposit call would revert at
+// `ensureAllowance` against the zero address. Source of truth:
+// `DEMO_NETWORK.tokens` after the env overlay.
+const ZERO = "0x0000000000000000000000000000000000000000";
+const DEPOSITABLE = DEMO_NETWORK.tokens.filter(
+  (t) => t.address.toLowerCase() !== ZERO,
+);
 
 type Phase =
   | { kind: "idle" }
@@ -39,7 +45,7 @@ interface DepositModalProps {
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
   const { add: addNote } = useVault();
-  const { account } = useWallet();
+  const { account, signer } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState("ETH");
@@ -133,9 +139,23 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
       const commitment = proveResult.publicSignals[0]!;
 
       setPhase({ kind: "submitting" });
-      // Phase 5+ wires CommitmentPool.deposit(); the abortable
-      // sleep stands in for it now and respects cancel.
-      await abortableSleep(600, ctrl.signal);
+      // The prove result carries snarkjs's raw-shaped proof; the
+      // dispatch layer expects the SDK's `DepositProofResult` shape
+      // (commitment + Groth16Proof tuples). Reconstruct it from
+      // `proveResult` — the prover already formatted the proof in
+      // the right shape, so this is purely a re-pack.
+      const depositProof: DepositProofResult = {
+        commitment,
+        proof: proveResult.proof,
+        publicSignals: proveResult.publicSignals,
+      };
+      const dispatch = await dispatchDeposit(
+        signer,
+        depositProof,
+        token.address,
+        amountWei,
+      );
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       await addNote({
         symbol: token.symbol,
@@ -144,10 +164,14 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
         commitment,
       });
       setPhase({ kind: "success", commitment });
+      const description =
+        dispatch.kind === "onchain"
+          ? `On-chain tx ${dispatch.txHash.slice(0, 10)}… · note added to your private vault.`
+          : "Note added to your private vault (simulated — pool not configured).";
       toast.push({
         kind: "success",
         title: `Deposited ${amount} ${token.symbol}`,
-        description: "Note added to your private vault.",
+        description,
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) {
@@ -160,7 +184,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
     } finally {
       setAbortCtrl(null);
     }
-  }, [tokenSymbol, amount, account, deriveEdDSA, addNote, toast]);
+  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast]);
 
   if (!open) return null;
 

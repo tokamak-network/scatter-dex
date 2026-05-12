@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ZERO_ADDRESS } from "@zkscatter/sdk";
 import {
   randomFieldElement,
   type AuthorizeProofInput,
@@ -9,6 +10,7 @@ import {
 import { useWallet } from "@zkscatter/sdk/react";
 import { useOrders } from "../lib/orders";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
+import { useRelayers } from "../lib/relayers";
 import { authorizeProver } from "../lib/authorizeProver";
 import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
@@ -23,9 +25,10 @@ import {
   type RecipientRow,
 } from "../lib/tradeForm";
 import { DEMO_NETWORK } from "../lib/network";
+import { buildAuthorizeOrderBody, dispatchAuthorize } from "../lib/dispatch";
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
-import { abortableSleep, isAbortError } from "../lib/abort";
+import { isAbortError } from "../lib/abort";
 
 type Phase =
   | { kind: "idle" }
@@ -50,10 +53,6 @@ interface OrderModalProps {
    *  disabled with a clear message. */
   note: VaultNote | null;
 }
-
-// Relayer placeholder until relayer-registry context threads a real
-// selection through. Phase 5d-followup reads this from `useRelayers().selected`.
-const DEMO_RELAYER = "0x0000000000000000000000000000000000000099";
 
 /** Format a quote-token-denominated estimated fill (price × size).
  *  Uses string-based parsing so an 18-decimal token doesn't lose
@@ -176,6 +175,7 @@ export function OrderModal({
   const { add: addOrder } = useOrders();
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
+  const { selected: selectedRelayer } = useRelayers();
   const commitmentTree = useCommitmentTree();
   const toast = useToast();
   // Pull the active pair object + advanced settings from the
@@ -328,6 +328,14 @@ export function OrderModal({
 
       const nonce = randomFieldElement();
 
+      // Relayer address is bound into the proof (and the order hash),
+      // so the user's pick has to be cached before prove. Falls back
+      // to the zero address when no relayer is selected — the
+      // dispatch layer then short-circuits to a simulated submission
+      // so the UI flow stays exercisable without a registry. Same
+      // pattern the cancel modal uses.
+      const relayerAddress = selectedRelayer?.address ?? ZERO_ADDRESS;
+
       const input: AuthorizeProofInput = {
         note: note.note,
         leafIndex,
@@ -338,14 +346,14 @@ export function OrderModal({
         maxFee: BigInt(maxFeeBps),
         expiry: expirySec,
         nonce,
-        relayer: DEMO_RELAYER,
+        relayer: relayerAddress,
         eddsaPrivateKey: eddsaKey.privateKey,
         claims,
       };
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
       await authorizeProver.ready();
-      await authorizeProver.prove(
+      const proveResult = await authorizeProver.prove(
         { circuitId: "authorize", input: input as unknown as Record<string, unknown> },
         {
           signal: ctrl.signal,
@@ -354,9 +362,25 @@ export function OrderModal({
       );
 
       setPhase({ kind: "submitting" });
-      // Phase 5+ wires relayer submission. For now just simulate
-      // the latency so the flow feels coherent.
-      await abortableSleep(500, ctrl.signal);
+      // Hand off to the selected relayer's `POST /api/authorize-orders`
+      // endpoint. Dispatch falls back to `simulated` when no relayer
+      // is configured or the privateSettlement address isn't wired up
+      // for the active network — the local order record still persists
+      // in either case so the user can exercise the claim/cancel UI.
+      const body = buildAuthorizeOrderBody(
+        proveResult,
+        eddsaKey.publicKey,
+        // tier 16 is the only authorize circuit currently shipped to
+        // apps/pro; tier 64/128 land alongside multi-recipient
+        // expansion past the 16-claim cap.
+        16,
+      );
+      const dispatch = await dispatchAuthorize(
+        selectedRelayer?.url ?? null,
+        body,
+        ctrl.signal,
+      );
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       // Persist enough material on the order record that the user
       // can later run the claim flow without re-deriving from chain
@@ -395,10 +419,17 @@ export function OrderModal({
         },
       });
       setPhase({ kind: "success", orderLabel: order.label });
+      const action = side === "sell" ? "Sell" : "Buy";
+      const description =
+        dispatch.kind === "relayer"
+          ? `${action} ${size} @ ${price} — relayer accepted (status: ${dispatch.status.status}).`
+          : dispatch.kind === "simulated"
+            ? `${action} ${size} @ ${price} — simulated (${dispatch.reason}).`
+            : `${action} ${size} @ ${price} — matching now.`;
       toast.push({
         kind: "success",
         title: `${order.label} submitted`,
-        description: `${side === "sell" ? "Sell" : "Buy"} ${size} @ ${price} — matching now.`,
+        description,
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
@@ -413,6 +444,7 @@ export function OrderModal({
     side, pair, price, size, account, note,
     activePair, recipients, expiryKey, maxFeeBps,
     deriveEdDSA, addOrder, toast, commitmentTree,
+    selectedRelayer,
   ]);
 
   const busy =

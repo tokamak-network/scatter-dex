@@ -11,6 +11,10 @@ import { OrderModal } from "../components/OrderModal";
 import { MyPositionPanel } from "../components/MyPositionPanel";
 import { PairSelector } from "../components/PairSelector";
 import { AdvancedSettings } from "../components/AdvancedSettings";
+import { RecipientsSection } from "../components/RecipientsSection";
+import { NoteSelect } from "../components/NoteSelect";
+import { RelayerPill } from "../components/RelayerPill";
+import { DepositModal } from "../components/DepositModal";
 import { DEMO_NETWORK } from "../lib/network";
 import { useReferencePrice } from "../lib/useReferencePrice";
 import { formatUsd, parseLooseNumber } from "../lib/format";
@@ -69,6 +73,16 @@ function projectOrderbook(
 export default function Workbench() {
   const { pair, side, setSide, price, setPrice, size, setSize } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  // Orderbook starts hidden so the form gets the full middle width.
+  // The book is a reference panel, not a primary CTA — most users
+  // pasted prices in from elsewhere; expose it behind a toggle.
+  const [orderbookOpen, setOrderbookOpen] = useState(false);
+  // DepositModal lives at the page level so both entry points hit
+  // the same instance — the left-panel "+ Deposit" button and the
+  // inline empty-state CTA inside `NoteSelect`. Two modal instances
+  // would race on the vault's `addNote` write.
+  const [depositOpen, setDepositOpen] = useState(false);
   const { notes } = useVault();
   const ob = useSharedOrderbook(pair.display);
 
@@ -80,6 +94,33 @@ export default function Workbench() {
     return t?.address ?? "0x0000000000000000000000000000000000000001";
   }, [pair.base]);
 
+  // Sell-side token address — drives the funding-note filter. Sell
+  // side means "sell `pair.base`" (sellToken = base); buy side flips
+  // it to the quote token. OrderModal validates the same mapping;
+  // pre-filtering here just keeps the dropdown honest.
+  const sellTokenAddress = useMemo(() => {
+    const symbol = side === "sell" ? pair.base : pair.quote;
+    const t = DEMO_NETWORK.tokens.find((x) => x.symbol === symbol);
+    return t?.address ?? "0x0000000000000000000000000000000000000001";
+  }, [side, pair.base, pair.quote]);
+
+  // Active funding note: explicit pick wins; otherwise the first
+  // note whose token matches the sell side. Falls back to null when
+  // no note matches — submit button disables itself in that case.
+  const selectedNote = useMemo(() => {
+    if (selectedNoteId) {
+      const found = notes.find((n) => n.id === selectedNoteId);
+      if (found && found.note.token === BigInt(sellTokenAddress.toLowerCase())) {
+        return found;
+      }
+    }
+    return (
+      notes.find(
+        (n) => n.note.token === BigInt(sellTokenAddress.toLowerCase()),
+      ) ?? null
+    );
+  }, [notes, selectedNoteId, sellTokenAddress]);
+
   const projected = useMemo(
     () => (ob.orders ? projectOrderbook(ob.orders, baseAddress) : null),
     [ob.orders, baseAddress],
@@ -89,7 +130,11 @@ export default function Workbench() {
   const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
   const fillFraction = (frac: number) => {
-    const n = notes[0];
+    // Source the % buttons from the *selected* funding note instead
+    // of `notes[0]` — when the user picks a different note (or sides
+    // flips to the quote token), Max should reflect that pick, not
+    // the legacy first-deposit slot.
+    const n = selectedNote;
     if (!n) return;
     const num = Number(n.amount.replace(/,/g, ""));
     if (!Number.isFinite(num)) return;
@@ -104,21 +149,33 @@ export default function Workbench() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold">Workbench</h1>
           <PairSelector />
         </div>
-        <Link href="/orders" className="text-sm text-[var(--color-primary)] hover:underline">
-          View order history →
-        </Link>
+        <div className="flex items-center gap-4 text-sm">
+          <button
+            type="button"
+            onClick={() => setOrderbookOpen((v) => !v)}
+            className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs font-medium hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+          >
+            {orderbookOpen ? "Hide orderbook ▾" : "Show orderbook ▸"}
+          </button>
+          <Link href="/orders" className="text-[var(--color-primary)] hover:underline">
+            View order history →
+          </Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-12 gap-4">
-        <MyPositionPanel />
+        <MyPositionPanel onDeposit={() => setDepositOpen(true)} />
 
-        {/* Order form */}
-        <section className="col-span-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        {/* Order form — takes the orderbook's slot when it's hidden so
+            the wizard-style fields below have room to breathe. */}
+        <section
+          className={`${orderbookOpen ? "col-span-5" : "col-span-9"} rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5`}
+        >
           <div className="mb-4 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
             Place private order
           </div>
@@ -139,50 +196,89 @@ export default function Workbench() {
             </button>
           </div>
           <div className="space-y-3 text-sm">
-            <Field label={`Price (${pair.quote} / ${pair.base})`}>
-              <input
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
-              />
-            </Field>
-            <Field label={`Size (${pair.base})`}>
-              <input
-                value={size}
-                onChange={(e) => setSize(e.target.value)}
-                className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
-              />
-              {notes.length > 0 && (
-                <div className="mt-1.5 flex gap-1">
-                  {[0.25, 0.5, 0.75, 1].map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      onClick={() => fillFraction(f)}
-                      className="flex-1 rounded border border-[var(--color-border)] py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-                    >
-                      {f === 1 ? "Max" : `${f * 100}%`}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </Field>
+            <NoteSelect
+              sellTokenAddress={sellTokenAddress}
+              sellTokenSymbol={side === "sell" ? pair.base : pair.quote}
+              notes={notes}
+              selectedId={selectedNote?.id ?? null}
+              onSelect={setSelectedNoteId}
+              onDeposit={() => setDepositOpen(true)}
+            />
+            {/* Wizard-style progressive disclosure: every field below
+                the funding-note picker is hidden until a real note is
+                selected. Submitting without one would fail at
+                OrderModal's `Deposit to your vault before placing an
+                order` gate — keeping price/size/recipients/advanced
+                visible would also imply they're configurable in that
+                state, which they aren't. */}
+            {selectedNote && (
+              <>
+                <Field label={`Price (${pair.quote} / ${pair.base})`}>
+                  <input
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+                  />
+                </Field>
+                <Field label={`Size (${pair.base})`}>
+                  <input
+                    value={size}
+                    onChange={(e) => setSize(e.target.value)}
+                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+                  />
+                  <div className="mt-1.5 flex gap-1">
+                    {[0.25, 0.5, 0.75, 1].map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => fillFraction(f)}
+                        className="flex-1 rounded border border-[var(--color-border)] py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                      >
+                        {f === 1 ? "Max" : `${f * 100}%`}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
+              </>
+            )}
           </div>
 
-          <AdvancedSettings />
+          {selectedNote && (
+            <>
+              <RecipientsSection />
+              <AdvancedSettings />
 
-          <FillEstimate side={side} price={price} size={size} baseSymbol={pair.base} quoteSymbol={pair.quote} />
-          <div className="mt-3 text-xs text-[var(--color-text-muted)]">
-            Launch event: 0% trading fee until Dec 31, 2026. Proof
-            generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
-            mobile. Post-launch fee schedule set by governance.
-          </div>
-          <Button onClick={() => setOrderOpen(true)} block size="lg" className="mt-4">
-            Sign &amp; submit
-          </Button>
+              <FillEstimate
+                side={side}
+                price={price}
+                size={size}
+                baseSymbol={pair.base}
+                quoteSymbol={pair.quote}
+              />
+              <div className="mt-3 text-xs text-[var(--color-text-muted)]">
+                Launch event: 0% trading fee until Dec 31, 2026. Proof
+                generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
+                mobile. Post-launch fee schedule set by governance.
+              </div>
+              <div className="mt-4 flex items-center justify-between gap-3">
+                <span className="text-xs text-[var(--color-text-muted)]">Route via</span>
+                <RelayerPill />
+              </div>
+              <Button
+                onClick={() => setOrderOpen(true)}
+                block
+                size="lg"
+                className="mt-3"
+              >
+                Sign &amp; submit
+              </Button>
+            </>
+          )}
         </section>
 
-        {/* Orderbook */}
+        {/* Orderbook — collapsible. Hidden by default so the form has
+            the full middle width; toggled from the header. */}
+        {orderbookOpen && (
         <aside className="col-span-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <div className="mb-4 flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
             <span>Orderbook · {pair.display}</span>
@@ -216,6 +312,7 @@ export default function Workbench() {
               : `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders · click a row to fill`}
           </div>
         </aside>
+        )}
       </div>
 
       <OrderModal
@@ -225,8 +322,10 @@ export default function Workbench() {
         pair={pair.display}
         price={price}
         size={size}
-        note={notes[0] ?? null}
+        note={selectedNote}
       />
+
+      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} />
     </div>
   );
 }
