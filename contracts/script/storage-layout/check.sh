@@ -4,10 +4,12 @@
 # if anything has drifted — that's how we catch a slot shift before
 # it makes it into a production upgrade.
 #
-# We normalise out `astId` and `contract` before diffing because both
-# change on unrelated source edits / solc bumps and would otherwise
-# cause noisy false-positive CI failures. The fields that actually
-# matter for upgrade safety (label, slot, offset, type) are preserved.
+# We normalise out `astId`, `contract`, and AST node ids embedded in
+# type identifiers (e.g. `t_contract(IFoo)2357` → `t_contract(IFoo)`)
+# before diffing. All three churn on unrelated source edits / solc
+# bumps but don't change the actual storage layout. The fields that
+# matter for upgrade safety (label, slot, offset, normalised type) are
+# preserved — a real slot shift still surfaces.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -15,10 +17,17 @@ OUT="$ROOT/storage-layouts"
 
 CONTRACTS=(
   FeeVault
+  SanctionsList
+  IdentityGate
+  RelayerRegistry
 )
 
 normalize() {
-  jq '{storage: [.storage[] | {label: .label, offset: .offset, slot: .slot, type: .type}], types: .types}'
+  # Pass 1 (jq): keep only slot-meaningful fields and the types table.
+  # Pass 2 (sed): strip the trailing AST node id baked into type identifiers
+  #               (e.g. `t_contract(IFoo)2357` → `t_contract(IFoo)`).
+  jq '{storage: [.storage[] | {label: .label, offset: .offset, slot: .slot, type: .type}], types: .types}' \
+    | sed -E 's/(t_contract\([^)]+\))[0-9]+/\1/g; s/(t_userDefinedValueType\([^)]+\))[0-9]+/\1/g; s/(t_enum\([^)]+\))[0-9]+/\1/g; s/(t_struct\([^)]+\))[0-9]+/\1/g'
 }
 
 fail=0
