@@ -60,36 +60,49 @@ chmod 700 /var/lib/zkscatter/secrets
 
 cd /var/lib/zkscatter/runtime
 
-# --- fetch relayer key from Secret Manager --------------------------------
+# --- 1 GB swap on e2-micro ------------------------------------------------
+# e2-micro caps at 1 GB RAM. A swap file keeps the OOM killer at bay during
+# image pulls / npm-install spikes. Idempotent: create only once.
+if [[ ! -f /var/lib/zkscatter/swapfile ]]; then
+	log "creating 1G swap file"
+	fallocate -l 1G /var/lib/zkscatter/swapfile || \
+		dd if=/dev/zero of=/var/lib/zkscatter/swapfile bs=1M count=1024
+	chmod 600 /var/lib/zkscatter/swapfile
+	mkswap /var/lib/zkscatter/swapfile >/dev/null
+fi
+swapon /var/lib/zkscatter/swapfile 2>/dev/null || true
+
+# --- shared helper: GCP access token from metadata ------------------------
+gcp_token() {
+	curl -s -H 'Metadata-Flavor: Google' \
+		"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
+		| python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])'
+}
+
+# --- fetch relayer key from Secret Manager (REST, no docker pull) ---------
 log "fetching secret '${RELAYER_SECRET_NAME}'"
-docker run --rm \
-	gcr.io/google.com/cloudsdktool/google-cloud-cli:slim \
-	gcloud secrets versions access latest \
-		--secret="${RELAYER_SECRET_NAME}" \
-		--project="${PROJECT_ID}" \
+token=$(gcp_token)
+curl -s -f -H "Authorization: Bearer ${token}" \
+	"https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/${RELAYER_SECRET_NAME}/versions/latest:access" \
+	| python3 -c 'import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)["payload"]["data"]))' \
 	> /var/lib/zkscatter/secrets/relayer.key
 chmod 600 /var/lib/zkscatter/secrets/relayer.key
-log "secret written"
+log "secret written ($(wc -c </var/lib/zkscatter/secrets/relayer.key) bytes)"
 
 # --- auth docker to Artifact Registry -------------------------------------
+# COS ships docker-credential-gcr but only registers gcr.io by default.
 docker-credential-gcr configure-docker --registries="${AR_PATH%%/*}" >/dev/null 2>&1 || true
-gcloud_auth_token=$(curl -s -H 'Metadata-Flavor: Google' \
-	"http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" \
-	| sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
-echo "${gcloud_auth_token}" | docker login -u oauth2accesstoken --password-stdin "https://${AR_PATH%%/*}"
+echo "${token}" | docker login -u oauth2accesstoken --password-stdin "https://${AR_PATH%%/*}" >/dev/null
 log "docker auth ok"
 
-# --- write compose files (idempotent) -------------------------------------
-# Pull the latest copy from GCS or just embed via metadata. Simpler approach
-# for now: ship the compose files alongside this script via metadata at
-# vm-create time. For initial bootstrap we assume an operator scp'd them, or
-# generate inline below.
-if [[ ! -f compose.yml ]]; then
-	log "compose files missing — pulling from metadata 'compose-yml' and 'compose-tls-yml'"
-	mget compose-yml > compose.yml
-	mget compose-tls-yml > compose.tls.yml
-	mget caddyfile > Caddyfile
-fi
+# --- refresh compose files from metadata ---------------------------------
+# vm-create.sh always uploads the current compose/Caddy files into instance
+# metadata, so re-pulling each boot keeps the VM in sync with the latest
+# committed runtime config (operators only need to re-add metadata to roll
+# out a change — no rebuild required).
+mget compose-yml > compose.yml
+mget compose-tls-yml > compose.tls.yml
+mget caddyfile > Caddyfile
 
 # --- write .env -----------------------------------------------------------
 cat > .env <<EOF

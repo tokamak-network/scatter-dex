@@ -47,11 +47,16 @@ build_and_push() {
 	echo "   tags:     ${IMAGE_TAG}, sha-${SHA}"
 	echo "   platform: ${PLATFORM}"
 
+	# Cache layers into a dedicated tag in Artifact Registry so repeat
+	# builds (especially in CI) skip the npm install step. `mode=max`
+	# uploads inline cache for every intermediate stage.
 	docker buildx build \
 		--platform "${PLATFORM}" \
 		--file "${dockerfile}" \
 		--tag "${img}:${IMAGE_TAG}" \
 		--tag "${img}:sha-${SHA}" \
+		--cache-from "type=registry,ref=${img}:buildcache" \
+		--cache-to   "type=registry,ref=${img}:buildcache,mode=max" \
 		--push \
 		"${REPO_ROOT}"
 

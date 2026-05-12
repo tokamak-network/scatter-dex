@@ -37,16 +37,15 @@ if gcloud compute instances describe "${VM_NAME}" --zone="${ZONE}" >/dev/null 2>
 	exit 0
 fi
 
-STARTUP=$(cat ./vm-startup.sh)
-COMPOSE=$(cat ../runtime/compose.yml)
-COMPOSE_TLS=$(cat ../runtime/compose.tls.yml)
-CADDYFILE=$(cat ../runtime/Caddyfile)
-
 # us-central1 e2-micro is in the GCP Always Free tier (one per billing
 # account per month). Keep this zone unless you have a strong reason
 # to move — switching regions drops the free credit.
 echo "creating VM ${VM_NAME} (${VM_MACHINE_TYPE}, ${ZONE})"
 
+# Scalar metadata goes through --metadata with a `|` delimiter so values
+# containing commas (notably CORS_ORIGINS) survive intact. File bodies go
+# through --metadata-from-file. This replaces an earlier in-line ^@^
+# trick that would break the moment a `@` appeared in any embedded file.
 gcloud compute instances create "${VM_NAME}" \
 	--zone="${ZONE}" \
 	--machine-type="${VM_MACHINE_TYPE}" \
@@ -57,20 +56,22 @@ gcloud compute instances create "${VM_NAME}" \
 	--service-account="${VM_SA_EMAIL}" \
 	--scopes=cloud-platform \
 	--tags="${VM_TAG}" \
-	--metadata=^@^"project-id=${PROJECT_ID}"@\
-"ar-path=${AR_PATH}"@\
-"image-tag=${IMAGE_TAG}"@\
-"rpc-url=${RPC_URL}"@\
-"commitment-pool-address=${COMMITMENT_POOL_ADDRESS}"@\
-"private-settlement-address=${PRIVATE_SETTLEMENT_ADDRESS}"@\
-"cors-origins=${CORS_ORIGINS}"@\
-"domain=${DOMAIN}"@\
-"acme-email=${ACME_EMAIL}"@\
-"relayer-secret-name=${SECRET_RELAYER_KEY}"@\
-"compose-yml=${COMPOSE}"@\
-"compose-tls-yml=${COMPOSE_TLS}"@\
-"caddyfile=${CADDYFILE}"@\
-"startup-script=${STARTUP}"
+	--metadata=^\|^"\
+project-id=${PROJECT_ID}|\
+ar-path=${AR_PATH}|\
+image-tag=${IMAGE_TAG}|\
+rpc-url=${RPC_URL}|\
+commitment-pool-address=${COMMITMENT_POOL_ADDRESS}|\
+private-settlement-address=${PRIVATE_SETTLEMENT_ADDRESS}|\
+cors-origins=${CORS_ORIGINS}|\
+domain=${DOMAIN}|\
+acme-email=${ACME_EMAIL}|\
+relayer-secret-name=${SECRET_RELAYER_KEY}" \
+	--metadata-from-file=\
+startup-script=./vm-startup.sh,\
+compose-yml=../runtime/compose.yml,\
+compose-tls-yml=../runtime/compose.tls.yml,\
+caddyfile=../runtime/Caddyfile
 
 echo "✓ VM created."
 echo
