@@ -177,13 +177,45 @@ contract PrivateSettlementAdminTest is Test {
         vm.expectRevert(); settlement.setRelayerRegistry(address(token));
         vm.expectRevert(); settlement.setFeeVault(address(token));
         vm.expectRevert(); settlement.setAuthorizeVerifier(16, address(authVerifier));
+        vm.expectRevert(); settlement.setBatchAuthorizeVerifier(16, address(authVerifier));
         vm.expectRevert(); settlement.setCancelVerifier(address(authVerifier));
         vm.expectRevert(); settlement.setClaimVerifier(16, address(claimVerifier));
         vm.expectRevert(); settlement.setSanctionsList(address(token));
+        vm.expectRevert(); settlement.setDexRouterWhitelist(address(token), true);
+        vm.expectRevert(); settlement.setDexPlatformFee(50);
         vm.stopPrank();
     }
 
-    // ─── claimWithProof paused / unknown group / wrong recipient ─────
+    // ─── setBatchAuthorizeVerifier / setDexRouterWhitelist / setDexPlatformFee ────
+
+    function test_setBatchAuthorizeVerifier_eoa_reverts() public {
+        vm.expectRevert(PrivateSettlement.NotAContract.selector);
+        settlement.setBatchAuthorizeVerifier(16, alice);
+    }
+
+    function test_setBatchAuthorizeVerifier_zero_disables() public {
+        settlement.setBatchAuthorizeVerifier(16, address(authVerifier));
+        assertEq(address(settlement.batchAuthorizeVerifierByTier(16)), address(authVerifier));
+        settlement.setBatchAuthorizeVerifier(16, address(0));
+        assertEq(address(settlement.batchAuthorizeVerifierByTier(16)), address(0));
+    }
+
+    function test_setDexRouterWhitelist_toggle() public {
+        settlement.setDexRouterWhitelist(address(token), true);
+        assertTrue(settlement.whitelistedDexRouters(address(token)));
+        settlement.setDexRouterWhitelist(address(token), false);
+        assertFalse(settlement.whitelistedDexRouters(address(token)));
+    }
+
+    function test_setDexPlatformFee_set_and_clear() public {
+        settlement.setFeeVault(address(token)); // vault must be set first
+        settlement.setDexPlatformFee(50);
+        assertEq(settlement.dexPlatformFeeBps(), 50);
+        settlement.setDexPlatformFee(0);
+        assertEq(settlement.dexPlatformFeeBps(), 0);
+    }
+
+    // ─── claimWithProof: paused + unknown-group reverts ────────
 
     function test_claimWithProof_paused_reverts() public {
         settlement.pause();
