@@ -28,7 +28,6 @@ import 'react-native-get-random-values';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { ethers } from 'ethers';
-import { isMetaAddress } from '../lib/stealth';
 import { eqAddr } from '../lib/address';
 
 const BASE_KEY = 'scatterdex_wallet_book_v1';
@@ -52,16 +51,11 @@ export class WalletBookCorruptError extends Error {
   }
 }
 
-export type WalletEntryKind = 'standard' | 'stealth';
-
 export interface WalletEntry {
   id: string;
   label: string;
-  // Shared field so pick callbacks return a single string and callers
-  // discriminate on `kind`: lowercase 0x EOA for 'standard', lowercase
-  // st:eth:0x meta-address for 'stealth'.
+  /** Lowercase 0x EOA address. */
   address: string;
-  kind: WalletEntryKind;
   memo?: string;
   createdAt: number;   // unix seconds
 }
@@ -83,27 +77,23 @@ function newId(): string {
 
 // Single source of truth for address normalization — keep in sync with
 // `readBook`'s map. If we ever want checksummed storage instead, this is
-// the only line to change. Stealth meta-addresses already have a fixed
-// prefix plus hex, so lowercasing is safe for both kinds.
+// the only line to change.
 function normalizeAddress(addr: string): string {
   return addr.toLowerCase();
 }
 
-export function isValidAddressForKind(addr: unknown, kind: WalletEntryKind): boolean {
+export function isValidAddress(addr: unknown): boolean {
   if (typeof addr !== 'string') return false;
-  return kind === 'stealth' ? isMetaAddress(addr) : ethers.isAddress(addr);
+  return ethers.isAddress(addr);
 }
 
 function isValidEntry(e: unknown): e is WalletEntry {
   if (!e || typeof e !== 'object') return false;
   const v = e as Record<string, unknown>;
-  // Pre-stealth v1 blobs omitted `kind`; treat missing as 'standard'.
-  if (v.kind !== undefined && v.kind !== 'standard' && v.kind !== 'stealth') return false;
-  const kind: WalletEntryKind = v.kind === 'stealth' ? 'stealth' : 'standard';
   return (
     typeof v.id === 'string'
     && typeof v.label === 'string'
-    && isValidAddressForKind(v.address, kind)
+    && isValidAddress(v.address)
     && typeof v.createdAt === 'number'
     && (v.memo === undefined || typeof v.memo === 'string')
   );
@@ -111,6 +101,22 @@ function isValidEntry(e: unknown): e is WalletEntry {
   // read via `readBook` below — be lenient at the boundary so a manually-
   // edited file or a sync from a tool that emits checksummed addresses
   // doesn't trip WalletBookCorruptError.
+}
+
+/**
+ * Pre-migration check used by `readRawBook`: legacy entries that
+ * carry a `kind === 'stealth'` (from the now-removed stealth mode)
+ * or a `metaAddress` field were valid under the previous schema but
+ * no longer satisfy `isValidEntry` (their `address` may be a stealth
+ * meta-string, not a 0x EOA). Treat them as opportunistically-
+ * droppable rather than reporting the whole book as corrupt — so a
+ * user with one legacy stealth contact can still read / restore the
+ * rest of their address book and its companion bundles.
+ */
+function isLegacyStealthEntry(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const v = e as Record<string, unknown>;
+  return v.kind === 'stealth' || typeof v.metaAddress === 'string';
 }
 
 async function readRawBook(storageKey: string): Promise<WalletEntry[]> {
@@ -130,16 +136,21 @@ async function readRawBook(storageKey: string): Promise<WalletEntry[]> {
       'wallet book has an unsupported shape (expected { version: 1, entries: [...] })',
     );
   }
-  if (!book.entries.every(isValidEntry)) {
+  // Drop legacy stealth/meta-address rows up front so a single
+  // pre-Phase-2 stealth contact doesn't make the whole book
+  // unreadable. After the filter, every surviving entry must satisfy
+  // the current schema or the file is genuinely corrupt.
+  const filtered = book.entries.filter((e) => !isLegacyStealthEntry(e));
+  if (!filtered.every(isValidEntry)) {
     throw new WalletBookCorruptError('wallet book contains invalid entries');
   }
   // Normalize addresses on read so callers and the dedup check in `add`
-  // don't have to think about casing.
-  return book.entries.map((e) => ({
-    ...e,
-    kind: e.kind ?? 'standard',
-    address: normalizeAddress(e.address),
-  }));
+  // don't have to think about casing. Strip any legacy `kind` field from
+  // pre-removal entries so the in-memory shape matches WalletEntry.
+  return filtered.map((e) => {
+    const { kind: _drop, ...rest } = e as WalletEntry & { kind?: unknown };
+    return { ...rest, address: normalizeAddress(rest.address) };
+  });
 }
 
 async function readBook(ownerAddress: string): Promise<WalletEntry[]> {
@@ -236,17 +247,20 @@ async function migrateLegacyIfNeeded(address: string): Promise<void> {
 function prepareEntry(input: {
   label: string;
   address: string;
-  kind?: WalletEntryKind;
   memo?: string;
 }):
   | { ok: true; entry: WalletEntry }
-  | { ok: false; reason: 'invalid-address' | 'missing-label'; kind: WalletEntryKind } {
-  // Runtime-validate kind. Callers that pass an untyped value (e.g.
-  // BackupService restoring user-edited JSON) could otherwise write an
-  // entry that `isValidEntry` later rejects as corrupt.
-  const kind: WalletEntryKind = input.kind === 'stealth' ? 'stealth' : 'standard';
-  if (!isValidAddressForKind(input.address, kind)) {
-    return { ok: false, reason: 'invalid-address', kind };
+  | { ok: false; reason: 'invalid-address' | 'missing-label' } {
+  // Trim the address once up front so callers (form submit,
+  // BackupService.addMany, JSON-edited bundle import) all behave
+  // consistently. Without this a UI that validates against
+  // `formAddress.trim()` could mark a row as valid while the add
+  // path rejects it because of trailing whitespace, or accept a
+  // backup row whose JSON contains stray padding.
+  const rawAddress: unknown = input.address;
+  const trimmedAddress = typeof rawAddress === 'string' ? rawAddress.trim() : '';
+  if (!isValidAddress(trimmedAddress)) {
+    return { ok: false, reason: 'invalid-address' };
   }
   // Runtime-guard `label` / `memo` against non-string values — the
   // compile-time types say `string`, but BackupService hands bundle rows
@@ -256,14 +270,13 @@ function prepareEntry(input: {
   // instead of crashing the transaction.
   const rawLabel: unknown = input.label;
   const label = typeof rawLabel === 'string' ? rawLabel.trim() : '';
-  if (!label) return { ok: false, reason: 'missing-label', kind };
+  if (!label) return { ok: false, reason: 'missing-label' };
   const rawMemo: unknown = input.memo;
   const memo = typeof rawMemo === 'string' ? (rawMemo.trim() || undefined) : undefined;
   const entry: WalletEntry = {
     id: newId(),
     label,
-    address: normalizeAddress(input.address),
-    kind,
+    address: normalizeAddress(trimmedAddress),
     memo,
     createdAt: Math.floor(Date.now() / 1000),
   };
@@ -278,13 +291,11 @@ export const AddressBookService = {
 
   async add(
     ownerAddress: string,
-    input: { label: string; address: string; kind?: WalletEntryKind; memo?: string },
+    input: { label: string; address: string; memo?: string },
   ): Promise<WalletEntry> {
     const prepared = prepareEntry(input);
     if (!prepared.ok) {
-      throw new Error(prepared.reason === 'invalid-address'
-        ? (prepared.kind === 'stealth' ? 'Invalid meta-address' : 'Invalid address')
-        : 'Label is required');
+      throw new Error(prepared.reason === 'invalid-address' ? 'Invalid address' : 'Label is required');
     }
 
     return withLock(ownerAddress, async () => {
@@ -307,7 +318,7 @@ export const AddressBookService = {
    */
   async addMany(
     ownerAddress: string,
-    inputs: Array<{ label: string; address: string; kind?: WalletEntryKind; memo?: string }>,
+    inputs: Array<{ label: string; address: string; memo?: string }>,
   ): Promise<Array<
     | { ok: true; entry: WalletEntry }
     | { ok: false; reason: 'invalid' | 'duplicate' }

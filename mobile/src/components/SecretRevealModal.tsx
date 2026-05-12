@@ -1,6 +1,6 @@
 /**
  * SecretRevealModal — controlled disclosure of sensitive values
- * (stealth private keys, spending/viewing keys, seed phrases, …).
+ * (seed phrases, private keys, …).
  *
  * Replaces the previous pattern of dumping the secret into an
  * `Alert.alert` body, which showed the value in plaintext the moment

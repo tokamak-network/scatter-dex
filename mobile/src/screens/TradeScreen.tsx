@@ -23,7 +23,6 @@ import { ConfigService } from '../services/ConfigService';
 import { eqAddr } from '../lib/address';
 import AddressBookModal from '../components/AddressBookModal';
 import MarketQuoteCard from '../components/MarketQuoteCard';
-import { generateStealthAddress, isMetaAddress } from '../lib/stealth';
 import { formatAmount, parseHumanNumber, stripThousandsSep } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
 import { computeMarketAmounts } from '../lib/market-amounts';
@@ -49,11 +48,9 @@ const STEP_LABELS: Record<string, string> = {
 };
 
 type DelayUnit = 'min' | 'hr' | 'day';
-type ClaimMode = 'standard' | 'stealth';
 interface ClaimRow {
   id: number;
-  mode: ClaimMode;     // 'standard' = address is a normal 0x; 'stealth' = a meta-address
-  address: string;     // empty = self when mode === 'standard'
+  address: string;     // empty = self
   amount: string;      // human-readable decimal string
   delay: string;       // integer string
   delayUnit: DelayUnit;
@@ -65,7 +62,6 @@ interface ClaimRow {
 // module scope so its identity is stable across renders (Reset's
 // `isDefaultForm` check also relies on this exact shape).
 const DEFAULT_CLAIM_ROW: Omit<ClaimRow, 'id'> = {
-  mode: 'standard',
   address: '',
   amount: '',
   delay: '1',
@@ -218,7 +214,6 @@ export default function TradeScreen() {
       (() => {
         const r = claimRows[0];
         return (
-          r.mode === DEFAULT_CLAIM_ROW.mode &&
           r.address.trim() === DEFAULT_CLAIM_ROW.address &&
           r.amount.trim() === DEFAULT_CLAIM_ROW.amount &&
           r.delay === DEFAULT_CLAIM_ROW.delay &&
@@ -482,7 +477,7 @@ export default function TradeScreen() {
     setClaimRows((prev) => {
       if (prev.length >= MAX_CLAIM_ROWS) return prev;
       const nextId = prev.length > 0 ? Math.max(...prev.map((r) => r.id)) + 1 : 1;
-      return [...prev, { id: nextId, mode: 'standard' as ClaimMode, address: '', amount: '', delay: '1', delayUnit: 'hr' as DelayUnit }];
+      return [...prev, { id: nextId, address: '', amount: '', delay: '1', delayUnit: 'hr' as DelayUnit }];
     });
   }, []);
   const removeClaim = useCallback((id: number) => {
@@ -585,38 +580,12 @@ export default function TradeScreen() {
         const buyAmountBn = (sellAmountBn * priceBn) / (10n ** BigInt(sellDecimals));
         const buyAmountTotal = ethers.formatUnits(buyAmountBn, buyDecimals);
 
-        // Validate + normalize claim rows. Standard mode: empty address
-        // defaults to `account` (mirrors frontend/private-order). Stealth
-        // mode: parse the meta-address and derive a one-time stealth
-        // address per claim — also surface `ephemeralPubKey` so the
-        // recipient (and our local persistence path) can later reconstruct
-        // the stealth private key.
+        // Validate + normalize claim rows. Empty address defaults to
+        // `account` (mirrors frontend/private-order).
         const parsedClaims = claimRows.map((r, idx) => {
           const claimAmount = r.amount.trim();
           if (!claimAmount || !(parseFloat(claimAmount) > 0)) {
             throw new Error(`Claim #${idx + 1}: amount must be > 0.`);
-          }
-          if (r.mode === 'stealth') {
-            const meta = r.address.trim();
-            if (!isMetaAddress(meta)) {
-              throw new Error(`Claim #${idx + 1}: meta-address must start with "st:eth:0x" and carry 66 bytes of compressed pubkeys.`);
-            }
-            // `generateStealthAddress` can still throw past the format
-            // check (e.g. the parsed pubkey is not on the secp256k1
-            // curve) — wrap so the user sees which row to fix instead
-            // of a bare crypto error.
-            try {
-              const { stealthAddress, ephemeralPubKey } = generateStealthAddress(meta);
-              return {
-                recipient: stealthAddress,
-                amount: claimAmount,
-                releaseDelaySec: delayToSeconds(r.delay, r.delayUnit),
-                ephemeralPubKey,
-              };
-            } catch (err: any) {
-              const reason = err?.message ? `: ${err.message}` : '.';
-              throw new Error(`Claim #${idx + 1}: invalid meta-address${reason}`);
-            }
           }
           const recipient = r.address.trim() || account;
           if (!ethers.isAddress(recipient)) {
@@ -1141,32 +1110,10 @@ export default function TradeScreen() {
                     </TouchableOpacity>
                   )}
                 </View>
-                {/* Standard / Stealth mode toggle. Stealth mode generates a
-                    one-time recipient from a recipient-published meta-address;
-                    address-book picker is hidden in that mode (book stores
-                    plain addresses, not meta-addresses). */}
-                <View style={s.claimModeRow}>
-                  <TouchableOpacity
-                    style={[s.claimModeBtn, row.mode === 'standard' && s.claimModeBtnActive]}
-                    onPress={() => { if (row.mode !== 'standard') updateClaim(row.id, { mode: 'standard', address: '' }); }}
-                  >
-                    <Text style={[s.claimModeText, row.mode === 'standard' && s.claimModeTextActive]}>Standard</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[s.claimModeBtn, row.mode === 'stealth' && s.claimModeBtnActive]}
-                    onPress={() => { if (row.mode !== 'stealth') updateClaim(row.id, { mode: 'stealth', address: '' }); }}
-                  >
-                    <Text style={[s.claimModeText, row.mode === 'stealth' && s.claimModeTextActive]}>Stealth</Text>
-                  </TouchableOpacity>
-                </View>
                 <View style={s.claimRowInputs}>
                   <TextInput
                     style={[s.claimInput, { flex: 1 }]}
-                    placeholder={
-                      row.mode === 'stealth'
-                        ? 'st:eth:0x… (recipient meta-address)'
-                        : `Recipient (blank = self${account ? ` = ${account.slice(0, 8)}…` : ''})`
-                    }
+                    placeholder={`Recipient (blank = self${account ? ` = ${account.slice(0, 8)}…` : ''})`}
                     placeholderTextColor="#9CA3AF"
                     value={row.address}
                     onChangeText={(v) => updateClaim(row.id, { address: v })}
@@ -1358,11 +1305,6 @@ export default function TradeScreen() {
         visible={pickerForRow !== null}
         mode="pick"
         ownerAddress={account}
-        kindFilter={
-          pickerForRow !== null
-            ? (claimRows.find((r) => r.id === pickerForRow)?.mode ?? 'standard')
-            : undefined
-        }
         onClose={() => setPickerForRow(null)}
         onPick={(addr) => {
           if (pickerForRow !== null) updateClaim(pickerForRow, { address: addr });
@@ -1456,11 +1398,6 @@ const s = StyleSheet.create({
   claimRestBtn: { paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.primaryLight, borderRadius: 10 },
   claimPickBtn: { paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.primaryLight, borderRadius: 10 },
   claimPickText: { fontSize: 16 },
-  claimModeRow: { flexDirection: 'row', backgroundColor: colors.card, borderRadius: 10, padding: 4, gap: 4 },
-  claimModeBtn: { flex: 1, paddingVertical: 6, alignItems: 'center', borderRadius: 8 },
-  claimModeBtnActive: { backgroundColor: colors.primaryLight },
-  claimModeText: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
-  claimModeTextActive: { color: colors.primaryDark },
   claimRestText: { fontSize: 12, fontWeight: '700', color: colors.primaryDark },
   delayUnitRow: { flexDirection: 'row', backgroundColor: colors.card, borderRadius: 10, borderWidth: 1, borderColor: colors.borderMedium, overflow: 'hidden' },
   delayUnitBtn: { paddingHorizontal: 10, paddingVertical: 8 },

@@ -16,10 +16,9 @@ import {
 } from 'react-native';
 import { colors } from '../styles/theme';
 import {
-  AddressBookService, WalletBookCorruptError, WalletEntry, WalletEntryKind,
-  isValidAddressForKind,
+  AddressBookService, WalletBookCorruptError, WalletEntry,
+  isValidAddress,
 } from '../services/AddressBookService';
-import { META_ADDRESS_PREFIX } from '../lib/stealth';
 import { shortAddr } from '../lib/format';
 import BaseModal from './BaseModal';
 
@@ -38,13 +37,8 @@ type Props =
   }
   & (
     | { mode: 'manage' }
-    | { mode: 'pick'; kindFilter?: WalletEntryKind; onPick: (address: string) => void }
+    | { mode: 'pick'; onPick: (address: string) => void }
   );
-
-function shortMeta(meta: string): string {
-  const body = meta.slice(META_ADDRESS_PREFIX.length);
-  return `${META_ADDRESS_PREFIX}${body.slice(0, 6)}…${body.slice(-4)}`;
-}
 
 export default function AddressBookModal(props: Props) {
   const { visible, mode, onClose, ownerAddress } = props;
@@ -61,7 +55,6 @@ export default function AddressBookModal(props: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formLabel, setFormLabel] = useState('');
   const [formAddress, setFormAddress] = useState('');
-  const [formKind, setFormKind] = useState<WalletEntryKind>('standard');
   const [formMemo, setFormMemo] = useState('');
   const [showForm, setShowForm] = useState(false);
 
@@ -109,7 +102,6 @@ export default function AddressBookModal(props: Props) {
     setEditingId(null);
     setFormLabel('');
     setFormAddress('');
-    setFormKind('standard');
     setFormMemo('');
     setShowForm(false);
   }, []);
@@ -128,7 +120,6 @@ export default function AddressBookModal(props: Props) {
     setEditingId(entry.id);
     setFormLabel(entry.label);
     setFormAddress(entry.address);
-    setFormKind(entry.kind);
     setFormMemo(entry.memo || '');
     setShowForm(true);
   };
@@ -148,7 +139,6 @@ export default function AddressBookModal(props: Props) {
         await AddressBookService.add(ownerAddress, {
           label: formLabel,
           address: formAddress,
-          kind: formKind,
           memo: formMemo,
         });
       }
@@ -160,10 +150,9 @@ export default function AddressBookModal(props: Props) {
   };
 
   const handleDelete = (entry: WalletEntry) => {
-    const display = entry.kind === 'stealth' ? shortMeta(entry.address) : shortAddr(entry.address);
     Alert.alert(
       'Delete entry',
-      `Remove "${entry.label}" (${display})?`,
+      `Remove "${entry.label}" (${shortAddr(entry.address)})?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -217,17 +206,9 @@ export default function AddressBookModal(props: Props) {
   // any useEffect/useCallback referencing it).
   const formValid = useMemo(() => {
     if (!formLabel.trim()) return false;
-    if (editingId) return true; // address + kind are fixed when editing
-    return isValidAddressForKind(formAddress.trim(), formKind);
-  }, [formLabel, formAddress, formKind, editingId]);
-
-  // Narrow the memo deps — `props` is a fresh object every render, so
-  // depending on it defeats memoization.
-  const kindFilter = props.mode === 'pick' ? props.kindFilter : undefined;
-  const visibleEntries = useMemo(
-    () => (kindFilter ? entries.filter((e) => e.kind === kindFilter) : entries),
-    [entries, kindFilter],
-  );
+    if (editingId) return true; // address is fixed when editing
+    return isValidAddress(formAddress.trim());
+  }, [formLabel, formAddress, editingId]);
 
   return (
     <BaseModal
@@ -250,14 +231,12 @@ export default function AddressBookModal(props: Props) {
             <ActivityIndicator color={colors.primary} style={{ paddingVertical: 24 }} />
           ) : (
             <ScrollView style={s.list} contentContainerStyle={{ paddingBottom: 12 }}>
-              {visibleEntries.length === 0 ? (
+              {entries.length === 0 ? (
                 <Text style={s.empty}>
-                  {kindFilter
-                    ? `No ${kindFilter === 'stealth' ? 'stealth meta-addresses' : 'standard addresses'} saved. Add one from Settings → Address Book.`
-                    : 'No entries yet. Add a labelled recipient to reuse it across orders.'}
+                  No entries yet. Add a labelled recipient to reuse it across orders.
                 </Text>
               ) : (
-                visibleEntries.map((entry) => (
+                entries.map((entry) => (
                   <View key={entry.id} style={s.row}>
                     <TouchableOpacity
                       style={s.rowMain}
@@ -270,15 +249,8 @@ export default function AddressBookModal(props: Props) {
                         }
                       }}
                     >
-                      <View style={s.rowLabelLine}>
-                        <Text style={s.rowLabel}>{entry.label}</Text>
-                        {entry.kind === 'stealth' && (
-                          <Text style={s.kindBadge}>STEALTH</Text>
-                        )}
-                      </View>
-                      <Text style={s.rowAddr}>
-                        {entry.kind === 'stealth' ? shortMeta(entry.address) : shortAddr(entry.address)}
-                      </Text>
+                      <Text style={s.rowLabel}>{entry.label}</Text>
+                      <Text style={s.rowAddr}>{shortAddr(entry.address)}</Text>
                       {entry.memo && <Text style={s.rowMemo} numberOfLines={1}>{entry.memo}</Text>}
                     </TouchableOpacity>
                     {mode === 'manage' && (
@@ -301,22 +273,6 @@ export default function AddressBookModal(props: Props) {
           {mode === 'manage' && showForm && (
             <View style={s.form}>
               <Text style={s.formTitle}>{editingId ? 'Edit entry' : 'New entry'}</Text>
-              {/* Hidden when editing — changing kind would invalidate the stored address. */}
-              {!editingId && (
-                <View style={s.kindRow}>
-                  {(['standard', 'stealth'] as WalletEntryKind[]).map((k) => (
-                    <TouchableOpacity
-                      key={k}
-                      style={[s.kindBtn, formKind === k && s.kindBtnActive]}
-                      onPress={() => setFormKind(k)}
-                    >
-                      <Text style={[s.kindBtnText, formKind === k && s.kindBtnTextActive]}>
-                        {k === 'stealth' ? 'Stealth' : 'Standard'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
               <TextInput
                 style={s.input}
                 placeholder="Label (e.g. Alice)"
@@ -326,7 +282,7 @@ export default function AddressBookModal(props: Props) {
               />
               <TextInput
                 style={[s.input, editingId ? { opacity: 0.5 } : null]}
-                placeholder={formKind === 'stealth' ? 'st:eth:0x… meta-address' : '0x... address'}
+                placeholder="0x... address"
                 placeholderTextColor={colors.textMuted}
                 value={formAddress}
                 onChangeText={setFormAddress}
@@ -369,22 +325,7 @@ const s = StyleSheet.create({
 
   row: { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: colors.bgSecondary, borderRadius: 12, marginBottom: 8 },
   rowMain: { flex: 1 },
-  rowLabelLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rowLabel: { fontSize: 14, fontWeight: '700', color: colors.text },
-  kindBadge: {
-    fontSize: 10, fontWeight: '700', color: colors.primaryDark,
-    backgroundColor: colors.blueBorder, paddingHorizontal: 6, paddingVertical: 2,
-    borderRadius: 4, letterSpacing: 0.5,
-  },
-  kindRow: { flexDirection: 'row', gap: 8 },
-  kindBtn: {
-    flex: 1, paddingVertical: 8, borderRadius: 10,
-    backgroundColor: colors.bg, borderWidth: 1, borderColor: colors.borderMedium,
-    alignItems: 'center',
-  },
-  kindBtnActive: { backgroundColor: colors.primaryDark, borderColor: colors.primaryDark },
-  kindBtnText: { fontSize: 12, fontWeight: '700', color: colors.textSecondary },
-  kindBtnTextActive: { color: '#FFFFFF' },
   rowAddr: { fontSize: 12, color: colors.textSecondary, marginTop: 2, fontFamily: 'monospace' },
   rowMemo: { fontSize: 11, color: colors.textMuted, marginTop: 2 },
   deleteBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.dangerLight },

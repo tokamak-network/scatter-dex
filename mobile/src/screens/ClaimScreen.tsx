@@ -17,11 +17,8 @@ import { PendingClaimsStorage, PendingClaim } from '../services/PendingClaimsSto
 import ClaimStatusBadge, { isClaimLocked } from '../components/ClaimStatusBadge';
 import { useNowSec } from '../hooks/useNowSec';
 import { NoteStorageService } from '../services/NoteStorageService';
-import { StealthIdentityService, STEALTH_WALLET_REQUIRED_ALERT } from '../services/StealthIdentityService';
-import { deriveStealthPrivateKey } from '../lib/stealth';
 import { formatAmount, shortAddr } from '../lib/format';
 import { friendlyError } from '../lib/error-messages';
-import SecretRevealModal from '../components/SecretRevealModal';
 import { ethers } from 'ethers';
 
 export default function ClaimScreen() {
@@ -33,7 +30,6 @@ export default function ClaimScreen() {
   // Claim JSON tab
   const [jsonInput, setJsonInput] = useState('');
   const [parsedJsonClaim, setParsedJsonClaim] = useState<ClaimData | null>(null);
-  const [parsedJsonEphemeralPubKey, setParsedJsonEphemeralPubKey] = useState<string | null>(null);
   const [jsonError, setJsonError] = useState<string | null>(null);
 
   // Claimable Notes tab
@@ -42,8 +38,8 @@ export default function ClaimScreen() {
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
 
   // Expandable row state — lets a single row reveal recipient, token,
-  // release time, stealth flag, and originating order id without
-  // navigating away. Keyed by row index into `pendingClaims`.
+  // release time, and originating order id without navigating away.
+  // Keyed by row index into `pendingClaims`.
   const [expandedClaimIdx, setExpandedClaimIdx] = useState<number | null>(null);
 
   // Submission mode
@@ -148,7 +144,6 @@ export default function ClaimScreen() {
   const handleParseJson = useCallback(() => {
     setJsonError(null);
     setParsedJsonClaim(null);
-    setParsedJsonEphemeralPubKey(null);
     try {
       const parsed = JSON.parse(jsonInput);
       if (!parsed.secret || !parsed.recipient || !parsed.token || !parsed.amount || !parsed.allLeaves) {
@@ -164,56 +159,10 @@ export default function ClaimScreen() {
         allLeaves: parsed.allLeaves,
       };
       setParsedJsonClaim(claimData);
-      if (typeof parsed.ephemeralPubKey === 'string' && /^0x[0-9a-fA-F]{66}$/.test(parsed.ephemeralPubKey)) {
-        setParsedJsonEphemeralPubKey(parsed.ephemeralPubKey);
-      }
     } catch (err: any) {
       setJsonError(err?.message || 'Invalid JSON');
     }
   }, [jsonInput]);
-
-  const [stealthPrivkeyReveal, setStealthPrivkeyReveal] = useState<{ privKey: string; stealthAddress: string } | null>(null);
-
-  const handleRevealStealthKey = useCallback(async (ephemeralPubKey: string, stealthAddress: string) => {
-    if (!account) {
-      Alert.alert(STEALTH_WALLET_REQUIRED_ALERT.title, STEALTH_WALLET_REQUIRED_ALERT.body);
-      return;
-    }
-    const identity = await StealthIdentityService.load(account);
-    if (!identity) {
-      Alert.alert(
-        'No Stealth Identity',
-        'Generate a stealth identity first in Settings → Stealth Identity. Without your spending and viewing keys this claim\'s stealth private key cannot be derived.',
-      );
-      return;
-    }
-    let privKey: string;
-    try {
-      privKey = deriveStealthPrivateKey(identity.spendingKey, identity.viewingKey, ephemeralPubKey);
-    } catch (err: any) {
-      Alert.alert('Derivation failed', err?.message || 'Could not derive stealth private key');
-      return;
-    }
-    // Guard against malformed/tampered claim JSON: if the derived key doesn't
-    // control `stealthAddress`, the user isn't the intended recipient (or the
-    // claim's `recipient` was rewritten). Sharing would be misleading at best
-    // and fund-losing at worst.
-    let derivedAddress: string;
-    try {
-      derivedAddress = new ethers.Wallet(privKey).address;
-    } catch (err: any) {
-      Alert.alert('Derivation failed', err?.message || 'Invalid derived key');
-      return;
-    }
-    if (ethers.getAddress(derivedAddress) !== ethers.getAddress(stealthAddress)) {
-      Alert.alert(
-        'Stealth address mismatch',
-        `The derived private key controls ${derivedAddress}, but this claim targets ${stealthAddress}. Either this meta-address didn't issue the claim, or the claim JSON was tampered. Refusing to reveal.`,
-      );
-      return;
-    }
-    setStealthPrivkeyReveal({ privKey, stealthAddress });
-  }, [account]);
 
   const toPendingClaimData = (pc: PendingClaim): ClaimData => ({
     secret: pc.secret,
@@ -453,20 +402,12 @@ export default function ClaimScreen() {
                           <Text style={s.itemIconText}>🛡</Text>
                         </View>
                         <View>
-                          <Text style={s.itemAsset}>Parsed Claim{parsedJsonEphemeralPubKey ? ' • Stealth' : ''}</Text>
+                          <Text style={s.itemAsset}>Parsed Claim</Text>
                           <Text style={s.itemAmount}>{formatAmount(parsedJsonClaim.amount)} tokens</Text>
                         </View>
                       </View>
                       <ClaimStatusBadge releaseTime={parsedJsonClaim.releaseTime} nowSec={nowSec} />
                     </View>
-                    {parsedJsonEphemeralPubKey && (
-                      <TouchableOpacity
-                        style={s.revealBtn}
-                        onPress={() => handleRevealStealthKey(parsedJsonEphemeralPubKey, parsedJsonClaim.recipient)}
-                      >
-                        <Text style={s.revealBtnText}>Reveal Stealth Key</Text>
-                      </TouchableOpacity>
-                    )}
                   </View>
                 )}
               </View>
@@ -507,7 +448,7 @@ export default function ClaimScreen() {
                             <Text style={s.itemIconText}>🛡</Text>
                           </View>
                           <View>
-                            <Text style={s.itemAsset}>Claim #{index + 1}{item.ephemeralPubKey ? ' • Stealth' : ''}</Text>
+                            <Text style={s.itemAsset}>Claim #{index + 1}</Text>
                             <Text style={s.itemAmount}>{formatAmount(item.amount)} tokens</Text>
                           </View>
                         </View>
@@ -547,20 +488,7 @@ export default function ClaimScreen() {
                               {item.orderId ? `${item.orderId.slice(0, 14)}…` : '—'}
                             </Text>
                           </View>
-                          {item.ephemeralPubKey ? (
-                            <Text style={s.detailStealth}>
-                              Stealth claim — reveal key below to derive the recipient's signing key.
-                            </Text>
-                          ) : null}
                         </View>
-                      )}
-                      {item.ephemeralPubKey && (
-                        <TouchableOpacity
-                          style={s.revealBtn}
-                          onPress={() => handleRevealStealthKey(item.ephemeralPubKey!, item.recipient)}
-                        >
-                          <Text style={s.revealBtnText}>Reveal Stealth Key</Text>
-                        </TouchableOpacity>
                       )}
                     </View>
                     ))}
@@ -676,22 +604,6 @@ export default function ClaimScreen() {
         </View>
       </View>
 
-      <SecretRevealModal
-        visible={stealthPrivkeyReveal !== null}
-        onClose={() => setStealthPrivkeyReveal(null)}
-        title="Stealth Private Key"
-        description={stealthPrivkeyReveal ? `Controls stealth address ${stealthPrivkeyReveal.stealthAddress}.` : undefined}
-        warning="Anyone with this key can drain the stealth address. Only import into a wallet flow you control."
-        fieldLabel="Private key"
-        secret={stealthPrivkeyReveal?.privKey ?? ''}
-        share={{
-          title: 'Share stealth private key?',
-          body: 'The OS share sheet will expose the private key. Only send to a secure wallet import flow you control.',
-          message: stealthPrivkeyReveal
-            ? `zkScatterDEX stealth private key (KEEP SECRET)\n\naddress: ${stealthPrivkeyReveal.stealthAddress}\nprivateKey: ${stealthPrivkeyReveal.privKey}`
-            : '',
-        }}
-      />
     </SafeAreaView>
   );
 }
@@ -736,8 +648,6 @@ const s = StyleSheet.create({
   jsonInput: { backgroundColor: colors.bgSecondary, borderRadius: 12, borderWidth: 1, borderColor: colors.borderLight, padding: 12, fontSize: 13, color: colors.text, minHeight: 120, fontFamily: 'monospace' },
   parseBtn: { backgroundColor: colors.primaryLight, paddingVertical: 10, borderRadius: 10, alignItems: 'center' },
   parseBtnText: { fontSize: 14, fontWeight: '700', color: colors.primaryDark },
-  revealBtn: { backgroundColor: '#FEF3C7', paddingVertical: 8, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: '#FDE68A' },
-  revealBtnText: { fontSize: 12, fontWeight: '700', color: '#92400E' },
   errorText: { fontSize: 12, color: colors.danger, fontWeight: '600' },
 
   bottomPanel: { backgroundColor: colors.card, padding: 24, borderTopWidth: 1, borderTopColor: colors.borderLight, gap: 16 },
@@ -765,5 +675,4 @@ const s = StyleSheet.create({
   detailLabel: { fontSize: 10, color: colors.textMuted, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.4 },
   detailValue: { fontSize: 11, color: colors.text, fontWeight: '600' },
   detailValueMono: { fontSize: 10, color: colors.text, fontFamily: 'monospace' },
-  detailStealth: { fontSize: 10, color: colors.warning, fontStyle: 'italic', marginTop: 2 },
 });

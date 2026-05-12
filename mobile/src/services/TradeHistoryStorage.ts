@@ -20,10 +20,9 @@ const DB_NAME = 'scatterdex_trade_history.db';
 const MIGRATION_KEY = 'migrated_asyncstorage_v1';
 
 export interface TradeClaim {
-  recipient: string;      // 0x address (stealth address for stealth mode)
+  recipient: string;      // 0x address
   amount: string;         // wei string (buyToken units)
   releaseTime: string;    // unix seconds
-  ephemeralPubKey?: string;
   // NOTE: claim `secret` is intentionally NOT stored here. The authoritative
   // copy lives in PendingClaimsStorage (SecureStore, keychain-backed) —
   // writing it into TradeHistoryStorage's SQLite db would leak claim
