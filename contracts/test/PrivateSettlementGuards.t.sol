@@ -11,6 +11,7 @@ import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockCancelVerifier} from "./mocks/MockCancelVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 contract PsgToken is ERC20 {
     constructor() ERC20("Psg", "PSG") {}
@@ -127,7 +128,7 @@ contract PrivateSettlementGuardsTest is Test {
         settlement.setCancelVerifier(address(cancelVerifier));
         settlement.pause();
         PrivateSettlement.CancelParams memory p = _cancelParams(bytes32(uint256(1)));
-        vm.expectRevert(); // PausableUpgradeable.EnforcedPause
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         settlement.cancelPrivate(p);
     }
 
@@ -140,7 +141,6 @@ contract PrivateSettlementGuardsTest is Test {
     }
 
     function test_claimWithProofBatch_tooLarge_reverts() public {
-        // MAX_CLAIM_BATCH_SIZE = 256 — exceed it.
         uint256 max = settlement.MAX_CLAIM_BATCH_SIZE();
         PrivateSettlement.ClaimParams[] memory claims = new PrivateSettlement.ClaimParams[](max + 1);
         vm.expectRevert(PrivateSettlement.BatchTooLarge.selector);
@@ -150,7 +150,7 @@ contract PrivateSettlementGuardsTest is Test {
     function test_claimWithProofBatch_paused_reverts() public {
         settlement.pause();
         PrivateSettlement.ClaimParams[] memory claims = new PrivateSettlement.ClaimParams[](1);
-        vm.expectRevert(); // EnforcedPause
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         settlement.claimWithProofBatch(claims);
     }
 
@@ -170,8 +170,9 @@ contract PrivateSettlementGuardsTest is Test {
     function test_receive_nonWeth_reverts() public {
         vm.deal(alice, 1 ether);
         vm.prank(alice);
+        vm.expectRevert(PrivateSettlement.OnlyWETH.selector);
         (bool ok, ) = address(settlement).call{value: 1 ether}("");
-        assertFalse(ok, "settlement must reject ETH from non-WETH callers");
+        ok; // silence unused-warning — the expectRevert above is the assertion
     }
 
     function test_receive_fromWeth_succeeds() public {
