@@ -1,6 +1,12 @@
 "use client";
 
 /**
+ * @deprecated Phase 2 stealth removal — see
+ * `docs/architecture-decisions/0001-stealth-deprecation.md`. The
+ * meta-address provider will be retired once consumers migrate to
+ * plain-EOA claim recipients; the provider remains for backward
+ * compatibility during the deprecation window.
+ *
  * Meta-address React provider — folder-storage-backed.
  *
  * Replaces apps/pro's old `localStorage`-based provider. Two apps

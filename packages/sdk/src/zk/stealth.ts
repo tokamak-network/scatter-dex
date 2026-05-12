@@ -1,5 +1,12 @@
 /** Stealth address — EIP-5564-style on secp256k1.
  *
+ *  @deprecated The stealth-address surface is being retired from the
+ *  ScatterDEX SDK as part of the Phase 2 stealth removal track (see
+ *  `docs/architecture-decisions/0001-stealth-deprecation.md`).
+ *  Applications should migrate to plain-EOA claim recipients; the
+ *  helpers in this module remain functional for the current release
+ *  but will be removed in a future major version.
+ *
  *  Recipient publishes a meta-address once. Sender generates a
  *  one-time stealth address per claim using only the public part.
  *  Only the recipient can derive the spending private key for any

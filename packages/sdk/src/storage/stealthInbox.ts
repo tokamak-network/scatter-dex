@@ -1,4 +1,10 @@
 /**
+ * @deprecated Phase 2 stealth removal — see
+ * `docs/architecture-decisions/0001-stealth-deprecation.md`. The
+ * stealth-claim inbox module will be retired from the SDK along
+ * with the rest of the stealth surface; this file remains for
+ * backward compatibility during the deprecation window.
+ *
  * Stealth-claim inbox persisted in the user-picked notes folder
  * (`zkscatter-stealth-inbox.json`). Receivers paste claim links the
  * sender delivered out-of-band (email / KakaoTalk / Telegram); each

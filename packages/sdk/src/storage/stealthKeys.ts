@@ -1,4 +1,10 @@
 /**
+ * @deprecated Phase 2 stealth removal — see
+ * `docs/architecture-decisions/0001-stealth-deprecation.md`. The
+ * persisted meta-address keypair will be retired from the SDK
+ * once consumers stop reading from this module; the file remains
+ * for backward compatibility during the deprecation window.
+ *
  * Stealth meta-address keypair persisted in the user's notes folder
  * — the same File System Access API directory that backs the wallet
  * book and run records.
