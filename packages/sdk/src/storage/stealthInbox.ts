@@ -43,6 +43,7 @@ const STEALTH_INBOX_FILENAME = "zkscatter-stealth-inbox.json";
  *  on-disk normalization keeps re-imports byte-equivalent. */
 const PRIVKEY_RE = /^0x[0-9a-fA-F]{64}$/;
 
+/** @deprecated Phase 2 stealth removal — see ADR 0001. */
 export class StealthInboxCorruptError extends Error {
   constructor(message: string) {
     super(message);
@@ -55,9 +56,13 @@ export class StealthInboxCorruptError extends Error {
  *  comparing `pkg.releaseTime` to the wall clock without changing
  *  the persisted enum, so a future on-chain reconciler can flip
  *  `available → claimed` without us having to introduce a third
- *  intermediate state. */
+ *  intermediate state.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export type StealthInboxStatus = "available" | "claimed";
 
+/** @deprecated Phase 2 stealth removal — see ADR 0001. */
 export interface StealthInboxEntry {
   /** Stable random id; the inbox table keys off this so renames don't
    *  re-sort. */
@@ -145,7 +150,10 @@ function isValidEntry(e: unknown): e is StealthInboxEntry {
  *  folder is selected or the file doesn't exist yet. Throws
  *  {@link StealthInboxCorruptError} on a parseable-but-malformed
  *  file so the UI can offer a "wipe and start over" path rather
- *  than silently overwriting. */
+ *  than silently overwriting.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function loadStealthInbox(): Promise<StealthInboxEntry[]> {
   if (!hasFolder()) return [];
   const text = await loadFile(STEALTH_INBOX_FILENAME);
@@ -196,7 +204,10 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
 /** Discriminated input describing what the parser pulled from the
  *  user's paste. Either a link (most common — full URL or just the
  *  fragment) or a privkey + already-decoded package (for the rare
- *  hand-off case). */
+ *  hand-off case).
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export type ParsedClaimInput =
   | {
       source: "link";
@@ -222,7 +233,10 @@ export type ParsedClaimInput =
  *
  *  Throws with a human-readable error when neither shape parses.
  *  Stays a pure function so the inbox page can preview the parse
- *  without touching disk. */
+ *  without touching disk.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export function parseClaimInput(rawInput: string): ParsedClaimInput {
   const trimmed = rawInput.trim();
   if (!trimmed) throw new Error("Empty input");
@@ -294,7 +308,10 @@ function decodePackageFromAnyForm(token: string): {
 /** Append a new entry. Refuses to insert a duplicate (same
  *  `claimsRoot + leafIndex` is the canonical claim identity, so two
  *  pastes of the same link collapse into one row). Returns the
- *  inserted entry, or `null` if it duplicated an existing one. */
+ *  inserted entry, or `null` if it duplicated an existing one.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function addStealthInboxEntry(
   parsed: ParsedClaimInput,
 ): Promise<StealthInboxEntry | null> {
@@ -325,7 +342,10 @@ export async function addStealthInboxEntry(
 /** Mark an entry as claimed. No-op when the id isn't in the inbox.
  *  `txHash` is optional — pass it when the inbox itself executed the
  *  claim, omit when reconciling from on-chain state and the tx hash
- *  isn't known (e.g. the user claimed on a different device). */
+ *  isn't known (e.g. the user claimed on a different device).
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function markStealthInboxEntryClaimed(
   id: string,
   txHash?: string,
@@ -350,7 +370,10 @@ export async function markStealthInboxEntryClaimed(
  *  the on-chain reconciler doesn't pay an O(N) write for each
  *  matching nullifier. `claimedAt` is stamped from a single `Date.now()`
  *  reading — close enough for a batch reconcile and avoids drift
- *  between rows that all settled in the same probe. */
+ *  between rows that all settled in the same probe.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function markStealthInboxEntriesClaimed(
   ids: readonly string[],
 ): Promise<void> {
@@ -366,7 +389,10 @@ export async function markStealthInboxEntriesClaimed(
   });
 }
 
-/** Remove an entry by id. No-op when the id isn't in the inbox. */
+/** Remove an entry by id. No-op when the id isn't in the inbox.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function removeStealthInboxEntry(id: string): Promise<void> {
   return withLock(async () => {
     const entries = await loadStealthInbox();
@@ -378,7 +404,10 @@ export async function removeStealthInboxEntry(id: string): Promise<void> {
  *  receiver paste-imports a privkey for an entry whose URL didn't
  *  carry an `ephemeralPubKey` (so auto-derivation isn't available).
  *  Caller is expected to have validated the key against the entry's
- *  recipient address before invoking. */
+ *  recipient address before invoking.
+ *
+ *  @deprecated Phase 2 stealth removal — see ADR 0001.
+ */
 export async function setStealthInboxEntryPrivateKey(
   id: string,
   privateKey: string,

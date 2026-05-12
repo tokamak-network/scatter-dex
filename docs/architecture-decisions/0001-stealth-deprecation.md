@@ -46,14 +46,20 @@ to see the `@deprecated` markers until 2.4 closes the surface.
 ## Consequences
 
 ### What this PR (2.1) does
-- Top-level `@deprecated` JSDoc on `packages/sdk/src/zk/stealth.ts`,
+- A file-level `@deprecated` JSDoc block at the top of each of
+  `packages/sdk/src/zk/stealth.ts`,
   `packages/sdk/src/storage/stealthKeys.ts`,
   `packages/sdk/src/storage/stealthInbox.ts`, and
-  `packages/sdk/src/react/metaAddress.tsx`.
+  `packages/sdk/src/react/metaAddress.tsx` for human readers.
+- An additional **per-export `@deprecated` JSDoc** on every public
+  export in those four files (functions, classes, interfaces, type
+  aliases). This is what TypeScript / TypeScript-aware IDEs (VS
+  Code, IntelliJ, WebStorm) actually consume to render the
+  strikethrough on use sites — a file-level block on its own does
+  not propagate to individual exports.
 - No code paths are removed; no existing import breaks.
-- IDEs that surface `@deprecated` markers (VS Code, IntelliJ) will
-  show the strikethrough on use of the affected symbols. CI is not
-  configured to fail on `@deprecated`; builds continue green.
+- CI is not configured to fail on `@deprecated`; builds continue
+  green.
 - This ADR is the canonical reference each PR cites in its commit
   message and PR body.
 
