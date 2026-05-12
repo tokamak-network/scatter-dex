@@ -90,10 +90,6 @@ export function isValidAddress(addr: unknown): boolean {
 function isValidEntry(e: unknown): e is WalletEntry {
   if (!e || typeof e !== 'object') return false;
   const v = e as Record<string, unknown>;
-  // Legacy entries may carry a `kind` field (from the now-removed stealth
-  // mode). Accept and ignore it — only 'standard' EOA entries survive
-  // the migration; previously-saved 'stealth' rows fail the address
-  // check below and are reported as corrupt.
   return (
     typeof v.id === 'string'
     && typeof v.label === 'string'
@@ -105,6 +101,22 @@ function isValidEntry(e: unknown): e is WalletEntry {
   // read via `readBook` below — be lenient at the boundary so a manually-
   // edited file or a sync from a tool that emits checksummed addresses
   // doesn't trip WalletBookCorruptError.
+}
+
+/**
+ * Pre-migration check used by `readRawBook`: legacy entries that
+ * carry a `kind === 'stealth'` (from the now-removed stealth mode)
+ * or a `metaAddress` field were valid under the previous schema but
+ * no longer satisfy `isValidEntry` (their `address` may be a stealth
+ * meta-string, not a 0x EOA). Treat them as opportunistically-
+ * droppable rather than reporting the whole book as corrupt — so a
+ * user with one legacy stealth contact can still read / restore the
+ * rest of their address book and its companion bundles.
+ */
+function isLegacyStealthEntry(e: unknown): boolean {
+  if (!e || typeof e !== 'object') return false;
+  const v = e as Record<string, unknown>;
+  return v.kind === 'stealth' || typeof v.metaAddress === 'string';
 }
 
 async function readRawBook(storageKey: string): Promise<WalletEntry[]> {
@@ -124,13 +136,18 @@ async function readRawBook(storageKey: string): Promise<WalletEntry[]> {
       'wallet book has an unsupported shape (expected { version: 1, entries: [...] })',
     );
   }
-  if (!book.entries.every(isValidEntry)) {
+  // Drop legacy stealth/meta-address rows up front so a single
+  // pre-Phase-2 stealth contact doesn't make the whole book
+  // unreadable. After the filter, every surviving entry must satisfy
+  // the current schema or the file is genuinely corrupt.
+  const filtered = book.entries.filter((e) => !isLegacyStealthEntry(e));
+  if (!filtered.every(isValidEntry)) {
     throw new WalletBookCorruptError('wallet book contains invalid entries');
   }
   // Normalize addresses on read so callers and the dedup check in `add`
   // don't have to think about casing. Strip any legacy `kind` field from
   // pre-removal entries so the in-memory shape matches WalletEntry.
-  return book.entries.map((e) => {
+  return filtered.map((e) => {
     const { kind: _drop, ...rest } = e as WalletEntry & { kind?: unknown };
     return { ...rest, address: normalizeAddress(rest.address) };
   });
@@ -234,7 +251,15 @@ function prepareEntry(input: {
 }):
   | { ok: true; entry: WalletEntry }
   | { ok: false; reason: 'invalid-address' | 'missing-label' } {
-  if (!isValidAddress(input.address)) {
+  // Trim the address once up front so callers (form submit,
+  // BackupService.addMany, JSON-edited bundle import) all behave
+  // consistently. Without this a UI that validates against
+  // `formAddress.trim()` could mark a row as valid while the add
+  // path rejects it because of trailing whitespace, or accept a
+  // backup row whose JSON contains stray padding.
+  const rawAddress: unknown = input.address;
+  const trimmedAddress = typeof rawAddress === 'string' ? rawAddress.trim() : '';
+  if (!isValidAddress(trimmedAddress)) {
     return { ok: false, reason: 'invalid-address' };
   }
   // Runtime-guard `label` / `memo` against non-string values — the
@@ -251,7 +276,7 @@ function prepareEntry(input: {
   const entry: WalletEntry = {
     id: newId(),
     label,
-    address: normalizeAddress(input.address),
+    address: normalizeAddress(trimmedAddress),
     memo,
     createdAt: Math.floor(Date.now() / 1000),
   };
