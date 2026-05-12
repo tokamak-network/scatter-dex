@@ -94,57 +94,70 @@ function RecipientRowItem({
   onChange: <K extends keyof RecipientRow>(id: number, field: K, value: RecipientRow[K]) => void;
   onRemove: () => void;
 }) {
-  // 7 columns: index · mode · address (fr) · amount · delay · delayUnit · remove
+  // Two-row card. A single 7-column horizontal grid got crushed in
+  // the workbench's col-span-5 slot; splitting into "address row" +
+  // "amount/schedule row" gives the 0x… input the width it needs at
+  // any container size while keeping the recipient self-contained.
   return (
-    <div className="grid grid-cols-[auto_5rem_1fr_5rem_4rem_3rem_auto] items-center gap-1.5 text-xs">
-      <span className="font-mono text-[var(--color-text-subtle)]">#{index + 1}</span>
-      <select
-        value={row.mode}
-        onChange={(e) => onChange(row.id, "mode", e.target.value as RecipientRow["mode"])}
-        className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1"
-      >
-        <option value="regular">Regular</option>
-        <option value="stealth">Stealth</option>
-      </select>
-      <input
-        type="text"
-        placeholder={row.mode === "stealth" ? "st:eth:0x…" : "0x… (empty = self)"}
-        value={row.address}
-        onChange={(e) => onChange(row.id, "address", e.target.value)}
-        className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono text-[11px]"
-      />
-      <input
-        type="text"
-        placeholder="amt"
-        value={row.amount}
-        onChange={(e) => onChange(row.id, "amount", e.target.value)}
-        className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono"
-      />
-      <input
-        type="number"
-        min={0}
-        value={row.delay}
-        onChange={(e) => onChange(row.id, "delay", e.target.value)}
-        className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono"
-      />
-      <select
-        value={row.delayUnit}
-        onChange={(e) => onChange(row.id, "delayUnit", e.target.value as RecipientRow["delayUnit"])}
-        className="rounded border border-[var(--color-border-strong)] bg-white px-1 py-1"
-      >
-        <option value="min">min</option>
-        <option value="hr">hr</option>
-        <option value="day">day</option>
-      </select>
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={!canRemove}
-        aria-label="Remove recipient"
-        className="rounded p-0.5 text-[var(--color-text-subtle)] hover:text-[var(--color-danger)] disabled:opacity-30"
-      >
-        ×
-      </button>
+    <div className="space-y-1.5 rounded-md border border-[var(--color-border)] bg-white p-2 text-xs">
+      <div className="grid grid-cols-[auto_5rem_1fr_auto] items-center gap-1.5">
+        <span className="font-mono text-[var(--color-text-subtle)]">#{index + 1}</span>
+        <select
+          value={row.mode}
+          onChange={(e) => onChange(row.id, "mode", e.target.value as RecipientRow["mode"])}
+          className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1"
+        >
+          <option value="regular">Regular</option>
+          <option value="stealth">Stealth</option>
+        </select>
+        <input
+          type="text"
+          placeholder={row.mode === "stealth" ? "st:eth:0x…" : "0x… (empty = self)"}
+          value={row.address}
+          onChange={(e) => onChange(row.id, "address", e.target.value)}
+          className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono text-[11px]"
+        />
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={!canRemove}
+          aria-label="Remove recipient"
+          className="rounded p-0.5 text-[var(--color-text-subtle)] hover:text-[var(--color-danger)] disabled:opacity-30"
+        >
+          ×
+        </button>
+      </div>
+      <div className="grid grid-cols-[auto_1fr_auto_5rem_4rem] items-center gap-1.5 pl-7">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Amount
+        </span>
+        <input
+          type="text"
+          placeholder="0.0"
+          value={row.amount}
+          onChange={(e) => onChange(row.id, "amount", e.target.value)}
+          className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono"
+        />
+        <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Delay
+        </span>
+        <input
+          type="number"
+          min={0}
+          value={row.delay}
+          onChange={(e) => onChange(row.id, "delay", e.target.value)}
+          className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono"
+        />
+        <select
+          value={row.delayUnit}
+          onChange={(e) => onChange(row.id, "delayUnit", e.target.value as RecipientRow["delayUnit"])}
+          className="rounded border border-[var(--color-border-strong)] bg-white px-1 py-1"
+        >
+          <option value="min">min</option>
+          <option value="hr">hr</option>
+          <option value="day">day</option>
+        </select>
+      </div>
     </div>
   );
 }

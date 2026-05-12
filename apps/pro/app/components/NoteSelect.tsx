@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import type { VaultNote } from "../lib/vault";
-import { Field } from "@zkscatter/ui";
+import { Button, Field } from "@zkscatter/ui";
 
 interface Props {
   /** Funding-side token address (sellToken). Notes whose `note.token`
@@ -10,9 +10,17 @@ interface Props {
    *  would fail at the OrderModal "vault note is in a different
    *  token" gate, so pre-filter here. */
   sellTokenAddress: string;
+  /** Symbol shown in the empty-state CTA — "Deposit ETH" reads better
+   *  than "Deposit on the left to fund this side", and ties the action
+   *  to the side the user is actually trying to fund. */
+  sellTokenSymbol: string;
   notes: readonly VaultNote[];
   selectedId: string | null;
   onSelect(id: string | null): void;
+  /** Inline Deposit CTA. Hooked to the same `DepositModal` the
+   *  position-panel button opens, so users notice the entry point
+   *  without having to scan the left column. */
+  onDeposit(): void;
 }
 
 /** Workbench's funding-note picker. Filters by sell-side token and
@@ -20,7 +28,14 @@ interface Props {
  *  to back the order. Without this the form defaulted to `notes[0]`
  *  regardless of token, which silently failed at submit when the
  *  first note was in the wrong currency. */
-export function NoteSelect({ sellTokenAddress, notes, selectedId, onSelect }: Props) {
+export function NoteSelect({
+  sellTokenAddress,
+  sellTokenSymbol,
+  notes,
+  selectedId,
+  onSelect,
+  onDeposit,
+}: Props) {
   // BigInt(address.toLowerCase()) on every render added up — the
   // hash is hot when notes is large. Memo the parsed key so the
   // filter is a plain bigint compare per note.
@@ -50,8 +65,14 @@ export function NoteSelect({ sellTokenAddress, notes, selectedId, onSelect }: Pr
   if (matching.length === 0) {
     return (
       <Field label="Fund with">
-        <div className="rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-          No matching notes. Deposit on the left to fund this side.
+        <div className="space-y-2 rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 py-3">
+          <p className="text-xs text-[var(--color-text-muted)]">
+            No {sellTokenSymbol} notes in your vault yet. Deposit{" "}
+            {sellTokenSymbol} to fund this side of the order.
+          </p>
+          <Button onClick={onDeposit} size="sm" block>
+            + Deposit {sellTokenSymbol}
+          </Button>
         </div>
       </Field>
     );

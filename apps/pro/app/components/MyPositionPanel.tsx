@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { EmptyState } from "@zkscatter/ui";
 import { useVault, type VaultNote } from "../lib/vault";
 import { useOrders, type OrderRecord } from "../lib/orders";
-import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
 import { CancelOrderModal } from "./CancelOrderModal";
 import { ClaimModal } from "./ClaimModal";
@@ -22,7 +21,15 @@ import { StatusBadge, StatusProgress } from "./StatusBadge";
  *  The component owns the modals (Deposit / Withdraw / Cancel /
  *  Claim) so the rest of the page can stay focused on the workbench
  *  and the modal lifecycle is local. */
-export function MyPositionPanel() {
+interface Props {
+  /** Opens the page-level `DepositModal`. The modal moved out of
+   *  this panel so the workbench can trigger it from `NoteSelect`
+   *  too — two `DepositModal` instances would race on the vault's
+   *  `addNote` write. */
+  onDeposit: () => void;
+}
+
+export function MyPositionPanel({ onDeposit }: Props) {
   const { notes } = useVault();
   const { orders } = useOrders();
 
@@ -36,7 +43,6 @@ export function MyPositionPanel() {
     return { open: o, claimable: c };
   }, [orders]);
 
-  const [depositOpen, setDepositOpen] = useState(false);
   const [withdrawNote, setWithdrawNote] = useState<VaultNote | null>(null);
   const [cancelOrder, setCancelOrder] = useState<OrderRecord | null>(null);
   const [claimOrder, setClaimOrder] = useState<OrderRecord | null>(null);
@@ -75,7 +81,7 @@ export function MyPositionPanel() {
           </div>
         )}
         <button
-          onClick={() => setDepositOpen(true)}
+          onClick={onDeposit}
           className="mt-3 w-full rounded-md border border-[var(--color-border-strong)] bg-white py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]"
         >
           + Deposit
@@ -178,7 +184,6 @@ export function MyPositionPanel() {
         )}
       </Section>
 
-      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} />
       <WithdrawModal
         open={!!withdrawNote}
         onClose={() => setWithdrawNote(null)}
