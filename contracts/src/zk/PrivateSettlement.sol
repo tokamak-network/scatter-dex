@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
@@ -27,12 +28,11 @@ import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 ///         same-token scatters via `scatterDirectAuth`. Claims are
 ///         distributed via `claimWithProof` — a ZK proof of membership in
 ///         a per-settle `claimsRoot` without revealing which settle.
-contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable2StepUpgradeable {
+contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
 
     // ─── Errors ──────────────────────────────────────────────────
     error ZeroAddress();
-    error ContractPaused();
     error UnknownRoot();
     error NullifierAlreadySpent();
     error InvalidProof();
@@ -91,7 +91,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
         address token,
         uint256 amount
     );
-    event PausedUpdated(bool paused);
+    // Paused / Unpaused emitted by PausableUpgradeable on `_pause`/`_unpause`.
     event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
     event FeeVaultUpdated(address oldVault, address newVault);
     event AuthorizeVerifierUpdated(uint8 indexed tier, address oldVerifier, address newVerifier);
@@ -217,7 +217,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     ///         each side's circuit-bound `maxFee`.
     uint256 public constant FEE_BPS_DENOMINATOR = 10_000;
 
-    bool public paused;
+    // `paused` is now provided by `PausableUpgradeable` (ERC-7201 namespaced
+    // storage). The public `paused()` view stays ABI-compatible; admin
+    // entrypoints moved from `setPaused(bool)` to `pause()` / `unpause()`.
 
     mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers
     mapping(bytes32 => bool) public nonceNullifiers;   // nonce nullifiers
@@ -250,6 +252,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
         __Ownable_init(initialOwner);
         __Ownable2Step_init();
         __ReentrancyGuard_init();
+        __Pausable_init();
         pool = CommitmentPool(_pool);
         // Seed the claim-verifier registry with tier 16 — the only live
         // circuit today. New tiers attach post-deploy via setClaimVerifier.
@@ -258,7 +261,11 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     }
 
     function renounceOwnership() public pure override(OwnableUpgradeable) { revert RenounceOwnershipDisabled(); }
-    function setPaused(bool _paused) external onlyOwner { paused = _paused; emit PausedUpdated(_paused); }
+    /// @notice Pause every user-facing settlement entrypoint. Flip on before
+    ///         an upgrade or in response to an incident — claim / settle /
+    ///         settleWithDex / cancel are all `whenNotPaused`.
+    function pause() external onlyOwner { _pause(); }
+    function unpause() external onlyOwner { _unpause(); }
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
@@ -405,10 +412,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     ///         `authorize.circom` proofs (maker + taker) are verified and
     ///         settled atomically. See the comment block above for the
     ///         async-root and fee-bound model.
-    function settleAuth(SettleAuthParams calldata p) external nonReentrant {
+    function settleAuth(SettleAuthParams calldata p) external nonReentrant whenNotPaused {
         // 1. Only the two proof relayers may submit
         if (msg.sender != p.maker.relayer && msg.sender != p.taker.relayer) revert NotMakerOrTakerRelayer();
-        if (paused) revert ContractPaused();
         _requireNotSanctioned(msg.sender);
         // Resolve the verifier for each side's tier. Mixed tiers are allowed
         // (e.g. maker tier-16 ↔ taker tier-64) — the registry is per-tier so
@@ -584,8 +590,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     ///         msg.sender as the submitter, and the Groth16 verification
     ///         is the access control. The user typically submits directly
     ///         from their own wallet (no relayer needed for cancel).
-    function cancelPrivate(CancelParams calldata p) external nonReentrant {
-        if (paused) revert ContractPaused();
+    function cancelPrivate(CancelParams calldata p) external nonReentrant whenNotPaused {
         if (address(cancelVerifier) == address(0)) revert CancelVerifierNotSet();
 
         // Cancel MUST produce a new commitment — otherwise the balance
@@ -667,8 +672,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     ///         chosen DEX (e.g. Uniswap exactInputSingle, 1inch swap, etc.).
     error DeadlineExpired();
 
-    function settleWithDex(SettleDexParams calldata p) external nonReentrant {
-        if (paused) revert ContractPaused();
+    function settleWithDex(SettleDexParams calldata p) external nonReentrant whenNotPaused {
         _requireNotSanctioned(msg.sender);
         // Cache storage refs used multiple times in this function so each is
         // loaded once instead of at every reference.
@@ -820,8 +824,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     /// @notice Single-party scatter: consume a commitment and register claims directly.
     ///         Uses withdraw proof — no counterparty or settle circuit needed.
     ///         For same-token orders (e.g., scheduled transfers).
-    function scatterDirect(ScatterDirectParams calldata p) external onlyRelayer nonReentrant {
-        if (paused) revert ContractPaused();
+    function scatterDirect(ScatterDirectParams calldata p) external onlyRelayer nonReentrant whenNotPaused {
         if (!whitelistedTokens[p.token]) revert TokenNotWhitelisted();
         if (nullifiers[p.nullifier]) revert NullifierAlreadySpent();
 
@@ -877,12 +880,11 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     /// @notice Single-party scatter using an authorize.circom proof (half-proof model).
     ///         The user generates the proof client-side — the relayer never holds witness data.
     ///         Requires sellToken == buyToken (same-token scatter invariant).
-    function scatterDirectAuth(ScatterDirectAuthParams calldata p) external nonReentrant {
+    function scatterDirectAuth(ScatterDirectAuthParams calldata p) external nonReentrant whenNotPaused {
         SettleVerifyLib.AuthorizeProof calldata ap = p.proof;
 
         // Order-of-checks preserved from before: cheap calldata compare gates
         // state reads, and relayer registry is checked before proof verify.
-        if (paused) revert ContractPaused();
         IAuthorizeVerifier _verifier = authorizeVerifierByTier[ap.tier];
         if (address(_verifier) == address(0)) revert TierNotConfigured(ap.tier);
         _requireNotSanctioned(msg.sender);
@@ -959,8 +961,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
         address token,
         address recipient,
         uint256 releaseTime
-    ) external nonReentrant {
-        if (paused) revert ContractPaused();
+    ) external nonReentrant whenNotPaused {
         _executeClaim(
             proofA, proofB, proofC,
             claimsRoot, claimNullifier,
@@ -973,8 +974,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Ownable
     ///         Reverts atomically if any claim fails — callers must ensure every
     ///         element is individually valid. Capped by `MAX_CLAIM_BATCH_SIZE`
     ///         to stay within block gas limits; frontends should chunk larger sets.
-    function claimWithProofBatch(ClaimParams[] calldata claims) external nonReentrant {
-        if (paused) revert ContractPaused();
+    function claimWithProofBatch(ClaimParams[] calldata claims) external nonReentrant whenNotPaused {
         uint256 n = claims.length;
         if (n == 0) revert EmptyBatch();
         if (n > MAX_CLAIM_BATCH_SIZE) revert BatchTooLarge();
