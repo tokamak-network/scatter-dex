@@ -339,6 +339,16 @@ contract DeployLocal is Script {
         CommitmentPool(pool_).setSanctionsList(address(proxy));
         PrivateSettlement(payable(settlement_)).setSanctionsList(address(proxy));
         console.log("SanctionsList registered on CommitmentPool + PrivateSettlement");
+
+        // Optional: chain the self-managed list with an external oracle (e.g.
+        // Chainalysis SDN Oracle at 0x40C57923... on mainnet). Set via
+        // env var SANCTIONS_EXTERNAL_ORACLE — addresses are OR-combined inside
+        // SanctionsList.isSanctioned. Local anvil leaves this unset.
+        address externalOracle = vm.envOr("SANCTIONS_EXTERNAL_ORACLE", address(0));
+        if (externalOracle != address(0)) {
+            SanctionsList(address(proxy)).setExternalOracle(externalOracle);
+            console.log("SanctionsList externalOracle wired:", externalOracle);
+        }
     }
 
     /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.

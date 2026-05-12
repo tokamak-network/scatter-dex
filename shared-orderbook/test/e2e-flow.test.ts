@@ -76,6 +76,8 @@ describe("E2E: Shared Orderbook Full Flow", () => {
   let broadcaster: OrderBroadcaster;
 
   beforeAll(async () => {
+    // SSRF guard rejects localhost URLs; opt in for the test harness.
+    process.env.ALLOW_PRIVATE_RELAYER_URLS = "1";
     for (const suffix of ["", "-wal", "-shm"]) {
       try { fs.unlinkSync(TEST_DB + suffix); } catch {}
     }

@@ -48,6 +48,10 @@ describe("API integration", () => {
   let broadcaster: OrderBroadcaster;
 
   beforeAll(async () => {
+    // The SSRF guard rejects `http://localhost:PORT` x-relayer-url
+    // headers in production. Tests register against a real localhost
+    // server, so flip the dev opt-in for the duration of the suite.
+    process.env.ALLOW_PRIVATE_RELAYER_URLS = "1";
     try { fs.unlinkSync(TEST_DB); } catch {}
     db = new OrderbookDB(TEST_DB);
     orderbook = new SharedOrderbook();

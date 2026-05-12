@@ -3,6 +3,7 @@ import type { RequestHandler } from "express";
 import type { SharedOrderbook } from "../core/orderbook.js";
 import type { OrderBroadcaster } from "../core/broadcaster.js";
 import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "../lib/url-guard.js";
 
 export function createRelayerRoutes(
   orderbook: SharedOrderbook,
@@ -20,10 +21,23 @@ export function createRelayerRoutes(
    */
   const registerMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
   if (relayerWriteLimiter) registerMiddleware.push(relayerWriteLimiter);
-  router.post("/register", ...registerMiddleware, (req, res) => {
+  router.post("/register", ...registerMiddleware, async (req, res) => {
     try {
       const { relayerAddress, relayerUrl } = req as AuthenticatedRequest;
       const name = req.body.name as string | undefined;
+
+      // SSRF guard — see /api/orders for context. Reject before the
+      // address is admitted into the registry so cross-relayer matchers
+      // never see a private-IP URL.
+      try {
+        await assertSafeOutboundUrl(relayerUrl);
+      } catch (e) {
+        if (e instanceof UnsafeUrlError) {
+          res.status(400).json({ error: `unsafe relayer URL: ${e.message}` });
+          return;
+        }
+        throw e;
+      }
 
       const info = orderbook.registerRelayer(relayerAddress, relayerUrl, name);
 

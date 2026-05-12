@@ -81,7 +81,9 @@ if curl -s http://localhost:4000/health > /dev/null 2>&1; then
   echo "  [ok] Already running"
 else
   cd "$ROOT_DIR/shared-orderbook"
-  PORT=4000 npm run dev > "$LOG_DIR/orderbook.log" 2>&1 &
+  # ALLOW_PRIVATE_RELAYER_URLS=1: matches the relayer side launches below.
+  # Without it the SSRF guard would reject `http://localhost:3002/3003`.
+  PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/orderbook.log" 2>&1 &
   OB_PID=$!
   PIDS+=($OB_PID)
   for i in $(seq 1 15); do
@@ -116,7 +118,7 @@ DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer.db" \
 SHARED_ORDERBOOK_URL="http://localhost:4000" \
 RELAYER_PUBLIC_URL="http://localhost:3002" \
 RELAYER_NAME="Relayer-A" \
-npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
+ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
 RA_PID=$!
 PIDS+=($RA_PID)
 
@@ -146,7 +148,7 @@ DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
 SHARED_ORDERBOOK_URL="http://localhost:4000" \
 RELAYER_PUBLIC_URL="http://localhost:3003" \
 RELAYER_NAME="Relayer-B" \
-npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
+ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
 RB_PID=$!
 PIDS+=($RB_PID)
 

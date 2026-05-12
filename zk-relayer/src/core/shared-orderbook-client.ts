@@ -3,6 +3,8 @@ import { Wallet } from "ethers";
 import WebSocket from "ws";
 import type { OrderSummary } from "../types/order.js";
 import { eqAddr } from "../lib/address.js";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "../lib/url-guard.js";
+import { createLogger } from "./logger.js";
 
 const EMPTY_BODY_SHA256 =
   "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -11,7 +13,6 @@ function sha256HexBody(bodyBytes: string | undefined): string {
   if (!bodyBytes || bodyBytes.length === 0) return EMPTY_BODY_SHA256;
   return "0x" + createHash("sha256").update(bodyBytes, "utf8").digest("hex");
 }
-import { createLogger } from "./logger.js";
 
 const log = createLogger("shared-orderbook");
 
@@ -440,6 +441,10 @@ export class SharedOrderbookClient {
 
     const promises = [...this.peers.values()].map(async (peer) => {
       try {
+        // SSRF guard before each peer fetch — see lib/url-guard.ts.
+        // Defense in depth against DNS rebinding flipping a known peer
+        // hostname to a private IP between sync and broadcast.
+        await assertSafeOutboundUrl(peer.url);
         const body = JSON.stringify(summary);
         const headers = await this.authHeaders("POST", "/api/p2p/orders", body);
         await fetch(`${peer.url}/api/p2p/orders`, {
@@ -448,7 +453,11 @@ export class SharedOrderbookClient {
           body,
           signal: AbortSignal.timeout(5000),
         });
-      } catch {}
+      } catch (e) {
+        if (e instanceof UnsafeUrlError) {
+          log.warn("Refusing to post to peer (unsafe URL)", { peer: peer.url, reason: e.message });
+        }
+      }
     });
     await Promise.allSettled(promises);
     return id;
@@ -458,13 +467,18 @@ export class SharedOrderbookClient {
   private async broadcastCancelToPeers(orderId: string): Promise<boolean> {
     const promises = [...this.peers.values()].map(async (peer) => {
       try {
+        await assertSafeOutboundUrl(peer.url);
         const headers = await this.authHeaders("DELETE", `/api/p2p/orders/${orderId}`);
         await fetch(`${peer.url}/api/p2p/orders/${orderId}`, {
           method: "DELETE",
           headers,
           signal: AbortSignal.timeout(5000),
         });
-      } catch {}
+      } catch (e) {
+        if (e instanceof UnsafeUrlError) {
+          log.warn("Refusing to cancel on peer (unsafe URL)", { peer: peer.url, reason: e.message });
+        }
+      }
     });
     await Promise.allSettled(promises);
     return true;

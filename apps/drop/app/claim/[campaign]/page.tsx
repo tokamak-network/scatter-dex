@@ -2,8 +2,21 @@
 
 import { use, useState } from "react";
 
+/**
+ * Static marketing mock for the future Scatter Drop claim flow.
+ * Renders preview-only UI: clicking "Claim" flips local state but
+ * no SDK calls, no signing, no on-chain dispatch happens. The
+ * stealth-address checkbox is a deliberate placeholder for the
+ * planned drop-specific stealth flow once the SDK's deprecated
+ * stealth surface is rebuilt around the new identity-anchored
+ * recipient model (tracked separately). Do not wire real submit
+ * paths into this page without first removing the mock toggles. */
 export default function Claim({ params }: { params: Promise<{ campaign: string }> }) {
   const { campaign } = use(params);
+  // Preview-only UI flag — DOES NOT actually derive a stealth
+  // address. Reusing the SDK's previously-deprecated stealth path
+  // here would silently re-introduce the surface we deprecated;
+  // any real claim flow needs its own design pass first.
   const [stealth, setStealth] = useState(true);
   const [done, setDone] = useState(false);
 
@@ -38,6 +51,9 @@ export default function Claim({ params }: { params: Promise<{ campaign: string }
                 <span className="font-medium">Receive at a stealth address</span>
                 <span className="block text-xs text-[var(--color-text-muted)]">
                   Recommended. Hides your claim amount from public dashboards.
+                </span>
+                <span className="mt-1 block text-[10px] uppercase tracking-wide text-[var(--color-warning)]">
+                  Preview — not yet active
                 </span>
               </span>
             </label>

@@ -43,6 +43,10 @@ services:
     environment:
       - PORT=4000
       - DB_PATH=/data/shared-orderbook.db
+      # docker-compose.yml is the local-mock stack; private peer URLs
+      # are expected. Production runtime (deploy/runtime/compose.yml)
+      # MUST leave this unset so the SSRF guard stays strict.
+      - ALLOW_PRIVATE_RELAYER_URLS=1
     volumes:
       - orderbook-data:/data
     healthcheck:
@@ -80,6 +84,9 @@ services:
       - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
       - RELAYER_PUBLIC_URL=${RELAYER_A_PUBLIC_URL:-http://zk-relayer:3002}
       - RELAYER_NAME=Relayer-A
+      # Local-mock peer URLs use Docker hostnames that resolve to
+      # private IPs; production must leave this unset.
+      - ALLOW_PRIVATE_RELAYER_URLS=1
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 3s
@@ -114,6 +121,7 @@ services:
       - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
       - RELAYER_PUBLIC_URL=${RELAYER_B_PUBLIC_URL:-http://zk-relayer-b:3003}
       - RELAYER_NAME=Relayer-B
+      - ALLOW_PRIVATE_RELAYER_URLS=1
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:'+process.env.PORT+'/api/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
       interval: 3s

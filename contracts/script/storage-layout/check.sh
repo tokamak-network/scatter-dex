@@ -25,10 +25,14 @@ CONTRACTS=(
 )
 
 normalize() {
-  # Pass 1 (jq): keep only slot-meaningful fields and the types table.
+  # Pass 1 (jq): drop every `astId` and `contract` field recursively (both
+  #              churn on unrelated source edits / solc bumps without
+  #              changing the actual storage layout), and keep only the
+  #              slot-meaningful fields at the storage[] top level.
   # Pass 2 (sed): strip the trailing AST node id baked into type identifiers
-  #               (e.g. `t_contract(IFoo)2357` → `t_contract(IFoo)`).
-  jq '{storage: [.storage[] | {label: .label, offset: .offset, slot: .slot, type: .type}], types: .types}' \
+  #              (e.g. `t_contract(IFoo)2357` → `t_contract(IFoo)`).
+  jq 'walk(if type == "object" then del(.astId, .contract) else . end)
+      | {storage: [.storage[] | {label: .label, offset: .offset, slot: .slot, type: .type}], types: .types}' \
     | sed -E 's/(t_contract\([^)]+\))[0-9]+/\1/g; s/(t_userDefinedValueType\([^)]+\))[0-9]+/\1/g; s/(t_enum\([^)]+\))[0-9]+/\1/g; s/(t_struct\([^)]+\))[0-9]+/\1/g'
 }
 
