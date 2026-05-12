@@ -452,8 +452,8 @@ contract CommitmentPoolTest is Test {
     }
 
     function test_transferToSettlement_insufficientBalance_reverts() public {
-        // Set this test contract as authorizedSettlement so the caller-gate passes.
-        // setUp() leaves authorizedSettlement unset; wire it once here.
+        // setUp() leaves authorizedSettlement unset; wire a fresh contract
+        // address so the caller-gate passes, then prank as that address.
         pool.setAuthorizedSettlement(_makeContract());
         vm.prank(pool.authorizedSettlement());
         vm.expectRevert(CommitmentPool.InsufficientPoolBalance.selector);
@@ -488,8 +488,11 @@ contract CommitmentPoolTest is Test {
         pool.insertCommitment(uint256(COMMITMENT_1));
     }
 
+    /// @dev Deploys a throwaway contract address — the
+    ///      setAuthorizedSettlement guard requires `_settlement.code.length > 0`,
+    ///      so an EOA would revert NotAContract before the test can probe the
+    ///      caller-gate it's actually targeting.
     function _makeContract() internal returns (address) {
-        // Any non-EOA — reuse the deposit verifier mock.
         return address(new MockDepositVerifier());
     }
 }
