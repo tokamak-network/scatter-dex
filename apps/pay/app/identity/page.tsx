@@ -18,13 +18,6 @@ function zkX509RegistryUrl(address: string): string | null {
   return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}`;
 }
 
-/** Entry point for the zk-X509 identity registration flow. The CTA
- *  shown to unverified / expired users opens this page in a new tab. */
-function zkX509RegisterUrl(): string | null {
-  if (!ZK_X509_URL) return null;
-  return `${ZK_X509_URL.replace(/\/$/, "")}/identity`;
-}
-
 /** Placeholder identity hub. Scatter Pay reads zk-X509
  *  verification status from the on-chain `IdentityGate`, but the
  *  actual certificate-proof workflow lives in the separate
@@ -37,7 +30,6 @@ export default function IdentityPage() {
   const { account } = useWallet();
   const cfg = getNetworkConfig();
   const { snapshot, loading: adminLoading } = useIdentityGateAdmin();
-  const registerUrl = zkX509RegisterUrl();
   const needsRegistration =
     state.kind === "unverified" ||
     state.kind === "expired" ||
@@ -65,21 +57,16 @@ export default function IdentityPage() {
         <div className="mt-3 text-sm">
           <StatusLine state={state} />
         </div>
+        {needsRegistration && (
+          <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+            {state.kind === "expiring" || state.kind === "expired"
+              ? "Renew your registration on one of the trusted registries listed below."
+              : state.kind === "error"
+                ? "Open one of the trusted registries below to check your registration directly on zk-X509."
+                : "Pick a trusted registry below and complete registration on its zk-X509 site."}
+          </p>
+        )}
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          {needsRegistration && registerUrl && (
-            <a
-              href={registerUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)]"
-            >
-              {state.kind === "expiring" || state.kind === "expired"
-                ? "Renew on zk-X509 ↗"
-                : state.kind === "error"
-                  ? "Check on zk-X509 ↗"
-                  : "Register on zk-X509 ↗"}
-            </a>
-          )}
           <button
             type="button"
             onClick={refresh}
