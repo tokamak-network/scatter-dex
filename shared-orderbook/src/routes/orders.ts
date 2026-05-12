@@ -5,6 +5,7 @@ import type { OrderbookDB } from "../core/db.js";
 import type { OrderBroadcaster } from "../core/broadcaster.js";
 import { parseOrderSummary, pairKey, isValidPair } from "../types/order.js";
 import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "../lib/url-guard.js";
 
 export function createOrderRoutes(
   orderbook: SharedOrderbook,
@@ -22,13 +23,27 @@ export function createOrderRoutes(
    */
   const postMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
   if (relayerWriteLimiter) postMiddleware.push(relayerWriteLimiter);
-  router.post("/", ...postMiddleware, (req, res) => {
+  router.post("/", ...postMiddleware, async (req, res) => {
     try {
       const { relayerAddress, relayerUrl } = req as AuthenticatedRequest;
 
       if (!relayerUrl) {
         res.status(400).json({ error: "x-relayer-url header required for order posting" });
         return;
+      }
+
+      // SSRF guard: every other relayer will fetch this URL when
+      // matching. Reject private/loopback/link-local hosts before
+      // letting the address into the in-memory registry. See
+      // `lib/url-guard.ts` for the threat model.
+      try {
+        await assertSafeOutboundUrl(relayerUrl);
+      } catch (e) {
+        if (e instanceof UnsafeUrlError) {
+          res.status(400).json({ error: `unsafe relayer URL: ${e.message}` });
+          return;
+        }
+        throw e;
       }
 
       // Auto-register/heartbeat on order post

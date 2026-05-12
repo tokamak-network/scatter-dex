@@ -554,7 +554,10 @@ if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
 fi
 ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
 cd "$ROOT_DIR/shared-orderbook"
-PORT=4000 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
+# `ALLOW_PRIVATE_RELAYER_URLS=1` opts the SSRF guard out for local
+# dev so the zk-relayer can register `http://localhost:3002` etc.
+# This MUST stay unset in production; see shared-orderbook/src/lib/url-guard.ts.
+PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
 if ! wait_for "http://localhost:4000/health" "shared-orderbook" 20; then
@@ -600,7 +603,10 @@ EOF
 echo "  Admin API key: $ADMIN_KEY"
 
 cd "$ROOT_DIR/zk-relayer"
-npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
+# Same SSRF-guard opt-in as shared-orderbook so the relayer can
+# fetch its own loopback peers in dev. Production must leave this
+# unset.
+ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
 if ! wait_for "http://localhost:3002/api/info" "relayer-a" 30; then
@@ -635,6 +641,7 @@ GASLESS_FEE_TON=0.5 \
 CLAIM_FEE_USDC=0.03 \
 CLAIM_FEE_USDT=0.03 \
 CLAIM_FEE_TON=0.3 \
+ALLOW_PRIVATE_RELAYER_URLS=1 \
 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")

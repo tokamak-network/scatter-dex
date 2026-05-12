@@ -13,6 +13,7 @@ import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
 import { decPubKeyCount, nullifierToOfferHandle } from "../routes/authorize-orders.js";
 import { eqAddr } from "../lib/address.js";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "../lib/url-guard.js";
 import { createLogger } from "./logger.js";
 
 const log = createLogger("authorize-cross");
@@ -174,6 +175,18 @@ export class AuthorizeCrossRelayerMatchService {
       takerOrder,
     };
 
+    // SSRF guard — defense in depth. The shared orderbook already
+    // refuses to register private-IP URLs, but DNS rebinding could in
+    // theory flip a registered hostname to a private IP between
+    // register-time and now. Re-check the URL before every fetch.
+    try {
+      await assertSafeOutboundUrl(remoteMaker.relayerUrl);
+    } catch (e) {
+      if (e instanceof UnsafeUrlError) {
+        return { status: "rejected", reason: `unsafe peer URL: ${e.message}` };
+      }
+      throw e;
+    }
     const url = `${remoteMaker.relayerUrl}/api/p2p/authorize-trade-offer`;
     const headers = await this.sharedClient.authHeaders(
       "POST",
