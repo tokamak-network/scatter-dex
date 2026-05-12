@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # ============================================================
-# Swap Pay's IdentityGate from MockIdentityRegistry to a real
-# zk-X509 IdentityRegistry. Run AFTER `dev.sh --mock --apps pay`
-# is up and AFTER you've deployed a zk-X509 IdentityRegistry
-# onto the same anvil.
+# Swap scatter-dex's IdentityGate from MockIdentityRegistry to a real
+# zk-X509 IdentityRegistry. Run AFTER `dev.sh --mock` is up — with any
+# `--apps` selection (e.g. `--apps pay`, `--apps pay,pro`, …) — and
+# AFTER you've deployed a zk-X509 IdentityRegistry onto the same anvil.
+#
+# IdentityGate is a single on-chain contract shared by every app
+# (Pay, Pro, Drop, etc.). One swap covers all of them — the script
+# reads the address from apps/pay/.env.local for convenience.
 #
 # The native `dev.sh` integration path (no --mock, with
 # IDENTITY_REGISTRY=...) tries to register the relayer identity
 # during contract deploy, which reverts with NotVerified() on a
 # freshly-deployed zk-X509 registry. Booting in mock and swapping
-# afterwards lets Pay come up first and avoids that chicken-and-egg.
+# afterwards lets the stack come up first and avoids that
+# chicken-and-egg.
 #
 # Usage:
 #   ./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry>
@@ -17,9 +22,10 @@
 #   RPC_URL=http://localhost:8545 ./scripts/swap-identity-registry.sh 0x...
 #
 # Inputs (env or default):
-#   IDENTITY_GATE   Pay's IdentityGate. Auto-read from
+#   IDENTITY_GATE   IdentityGate proxy. Auto-read from
 #                   apps/pay/.env.local::NEXT_PUBLIC_IDENTITY_GATE_ADDRESS
-#                   if not set.
+#                   if not set (Pro & every other app point at the
+#                   same on-chain address).
 #   RPC_URL         default http://localhost:8545
 #   DEPLOYER_KEY    default Anvil account #0 (must own IdentityGate)
 # ============================================================
@@ -45,7 +51,7 @@ if [ -z "${IDENTITY_GATE:-}" ]; then
 fi
 if [ -z "${IDENTITY_GATE:-}" ]; then
     echo "ERROR: IDENTITY_GATE not set and apps/pay/.env.local doesn't have NEXT_PUBLIC_IDENTITY_GATE_ADDRESS."
-    echo "       Did you run 'dev.sh --mock --apps pay' first?"
+    echo "       Did you run 'dev.sh --mock --apps pay' (or 'dev.sh --mock --apps pay,pro') first?"
     exit 1
 fi
 
