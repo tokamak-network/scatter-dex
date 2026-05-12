@@ -8,6 +8,8 @@ import {
 } from "@zkscatter/sdk/zk";
 import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
+import { useIdentityGate } from "../lib/identity";
+import { IdentityGateModal } from "./IdentityGateModal";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
@@ -18,17 +20,19 @@ import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
 
-// Depositable tokens come from the active network's whitelist,
-// filtered to entries with a real (non-zero) address. LAUNCH_TOKENS
-// always lists ETH/USDC/USDT/TON, but a local deploy might only
-// wire WETH+USDC — showing the unwired entries here would let the
-// user pick a token whose deposit call would revert at
-// `ensureAllowance` against the zero address. Source of truth:
-// `DEMO_NETWORK.tokens` after the env overlay.
+// Depositable tokens are the full LAUNCH_TOKENS lineup —
+// ETH / USDC / USDT / TON — every entry on the SDK's UI whitelist.
+// We show all of them so the user sees the supported set even when
+// a particular deploy hasn't wired one yet; the entry is marked
+// "(not deployed)" and the Deposit button stays disabled in that
+// case. Source of truth: `DEMO_NETWORK.tokens` after the env
+// overlay applies. Submit-time `dispatchDeposit` still guards
+// against ZERO_ADDRESS tokens as a defense in depth.
 const ZERO = "0x0000000000000000000000000000000000000000";
-const DEPOSITABLE = DEMO_NETWORK.tokens.filter(
-  (t) => t.address.toLowerCase() !== ZERO,
-);
+const DEPOSITABLE = DEMO_NETWORK.tokens;
+function isConfigured(addr: string): boolean {
+  return addr.toLowerCase() !== ZERO;
+}
 
 type Phase =
   | { kind: "idle" }
@@ -44,6 +48,8 @@ interface DepositModalProps {
 }
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
+  const { state: identityState, blocking: identityBlocking } = useIdentityGate();
+
   const { add: addNote } = useVault();
   const { account, signer } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
@@ -188,6 +194,13 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
 
   if (!open) return null;
 
+  // Identity gate — when the wallet's verification status is
+  // unverified / expired / error, show the gate prompt in place
+  // of the deposit content. Mirrors Pay's NewPayoutGate pattern.
+  if (identityBlocking) {
+    return <IdentityGateModal state={identityState} onClose={close} />;
+  }
+
   const busy =
     phase.kind === "preparing" ||
     phase.kind === "proving" ||
@@ -206,6 +219,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
             {DEPOSITABLE.map((t) => (
               <option key={t.symbol} value={t.symbol}>
                 {t.symbol}
+                {isConfigured(t.address) ? "" : " (not deployed)"}
               </option>
             ))}
           </select>
@@ -238,13 +252,28 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
             <Button variant="secondary" onClick={close}>
               {busy ? "Cancel" : "Close"}
             </Button>
-            <Button
-              onClick={submit}
-              disabled={busy || isDeriving || !account}
-              title={!account ? "Connect a wallet first" : undefined}
-            >
-              {busy ? "Working…" : isDeriving ? "Awaiting signature…" : "Deposit"}
-            </Button>
+            {(() => {
+              // Gate the Deposit button when the chosen token isn't
+              // wired up for the active network. Without this the
+              // submit kicks off a 1–2 s prove only to fail at
+              // `dispatchDeposit`'s zero-address guard.
+              const picked = DEPOSITABLE.find((t) => t.symbol === tokenSymbol);
+              const tokenConfigured = picked ? isConfigured(picked.address) : false;
+              const disableReason = !account
+                ? "Connect a wallet first"
+                : !tokenConfigured
+                  ? `${tokenSymbol} isn't deployed on this network yet`
+                  : undefined;
+              return (
+                <Button
+                  onClick={submit}
+                  disabled={busy || isDeriving || !account || !tokenConfigured}
+                  title={disableReason}
+                >
+                  {busy ? "Working…" : isDeriving ? "Awaiting signature…" : "Deposit"}
+                </Button>
+              );
+            })()}
           </>
         )}
       </div>

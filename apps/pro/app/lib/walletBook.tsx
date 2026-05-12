@@ -30,7 +30,7 @@ interface WalletBookState {
   error: string | null;
   add(input: {
     label: string;
-    address?: string;
+    address: string;
     memo?: string;
     email?: string;
     telegramHandle?: string;
@@ -112,7 +112,11 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
   const add = useCallback(
     async (input: {
       label: string;
-      address?: string;
+      // Match the SDK's tightened signature — `addWallet` requires
+      // a real address, not optional. Address-less rows aren't
+      // supported in the storage layer; surface the same constraint
+      // here so TypeScript catches the misuse at the call site.
+      address: string;
       memo?: string;
       email?: string;
       telegramHandle?: string;
