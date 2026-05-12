@@ -73,12 +73,11 @@ contract PrivateSettlementClaimGuardsTest is Test {
         weth.transfer(address(pool), 10 ether);
 
         // Seed at least one commitment so pool.getLastRoot() reflects a
-        // known root. Uses MockDepositVerifier (always passes).
-        vm.startPrank(alice);
-        // alice has no token balance yet, but the mock deposit verifier
-        // doesn't enforce the transfer — only the pool.deposit revert
-        // guards (commitment field range / whitelist / paused) matter here.
+        // known root. MockDepositVerifier short-circuits the ZK check, but
+        // CommitmentPool.deposit still pulls tokens via safeTransferFrom
+        // and verifies the balance delta — fund + approve alice first.
         token.mint(alice, 100 ether);
+        vm.startPrank(alice);
         token.approve(address(pool), 100 ether);
         pool.deposit(proofA, proofB, proofC, COMMITMENT, address(token), 1 ether);
         vm.stopPrank();
@@ -192,40 +191,17 @@ contract PrivateSettlementClaimGuardsTest is Test {
 
     function test_scatterDirect_happyPath_registers_claimsGroup() public {
         _registerErc20Group();
-        // Spot-check: nullifier marked, group registered (probe via the
-        // next-step claim's NotYetReleasable expectation below).
         assertTrue(settlement.nullifiers(bytes32(uint256(0xABCD))));
+        // Direct claimsGroups probe — confirms token/totalLocked/tier landed.
+        (uint128 totalLocked, uint128 totalClaimed, address gToken, uint8 tier) =
+            settlement.claimsGroups(TEST_CLAIMS_ROOT);
+        assertEq(gToken, address(token));
+        assertEq(totalLocked, 10 ether);
+        assertEq(totalClaimed, 0);
+        assertEq(tier, 16);
     }
 
     // ─── _executeClaim revert guards (via claimWithProof) ───────
-
-    function _baseClaim(bytes32 nullifier, uint256 amount, address recipient, uint256 releaseTime)
-        internal
-        pure
-        returns (
-            uint[2] memory,
-            uint[2][2] memory,
-            uint[2] memory,
-            bytes32,
-            bytes32,
-            uint256,
-            address,
-            address,
-            uint256
-        )
-    {
-        return (
-            [uint(0), uint(0)],
-            [[uint(0), uint(0)], [uint(0), uint(0)]],
-            [uint(0), uint(0)],
-            TEST_CLAIMS_ROOT,
-            nullifier,
-            amount,
-            address(0), // token overridden by caller
-            recipient,
-            releaseTime
-        );
-    }
 
     function test_executeClaim_groupNotFound_reverts() public {
         // No scatter yet — claimsGroup not registered.
