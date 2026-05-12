@@ -82,7 +82,7 @@ contract SettleWithDexTest is Test {
         authVerifier = new MockAuthorizeVerifier();
         dexRouter = new MockDexRouter();
 
-        pool = new CommitmentPool(address(withdrawVerifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
         weth = new MockWETH();
         settlement = new PrivateSettlement(
             address(pool),

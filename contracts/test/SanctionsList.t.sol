@@ -45,7 +45,7 @@ contract SanctionsListTest is Test {
         MockClaimVerifier claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
-        pool = new CommitmentPool(address(withdrawVerifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
         weth = new MockWETH();
         settlement = new PrivateSettlement(
             address(pool), address(claimVerifier), address(weth)

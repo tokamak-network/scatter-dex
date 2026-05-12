@@ -1,23 +1,31 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {PoseidonT3} from "poseidon-solidity/PoseidonT3.sol";
 
 /// @title IncrementalMerkleTree
 /// @notice Append-only Merkle tree using Poseidon hash, with a ring buffer of historical roots.
 /// @dev Based on Tornado Cash's MerkleTreeWithHistory, adapted for Poseidon.
-contract IncrementalMerkleTree {
+///      Upgradeable base: `levels` / `ROOT_HISTORY_SIZE` were `immutable` before the proxy
+///      migration; they are now regular state vars locked in by `__IncrementalMerkleTree_init`
+///      and never reassigned (the implementation contract's constructor never runs through
+///      the proxy, so `immutable` values are unreachable on the proxy side).
+contract IncrementalMerkleTree is Initializable {
     uint256 public constant FIELD_SIZE = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
 
-    uint32 public immutable levels;
-    uint32 public immutable ROOT_HISTORY_SIZE;
+    uint32 public levels;
+    uint32 public ROOT_HISTORY_SIZE;
 
     mapping(uint256 => uint256) public filledSubtrees;
     mapping(uint256 => uint256) public roots;
     uint32 public currentRootIndex;
     uint32 public nextIndex;
 
-    constructor(uint32 _levels, uint32 _rootHistorySize) {
+    /// @dev Reserved storage for future upgrades. Decrement when new state added.
+    uint256[50] private __gap;
+
+    function __IncrementalMerkleTree_init(uint32 _levels, uint32 _rootHistorySize) internal onlyInitializing {
         require(_levels > 0 && _levels <= 20, "invalid levels");
         require(_rootHistorySize > 0, "invalid root history size");
         levels = _levels;
@@ -27,9 +35,10 @@ contract IncrementalMerkleTree {
         // zeros[0] = 0
         // zeros[i] = Poseidon(zeros[i-1], zeros[i-1])
         uint256 currentZero = 0;
-        for (uint32 i = 0; i < _levels; i++) {
+        for (uint32 i; i < _levels;) {
             filledSubtrees[i] = currentZero;
             currentZero = _hashPair(currentZero, currentZero);
+            unchecked { ++i; }
         }
         roots[0] = currentZero;
     }
@@ -42,14 +51,15 @@ contract IncrementalMerkleTree {
     /// @return index The index of the inserted leaf.
     function _insert(uint256 leaf) internal returns (uint32 index) {
         uint32 _nextIndex = nextIndex;
-        require(_nextIndex < uint32(2) ** levels, "tree full");
+        uint32 _levels = levels;
+        require(_nextIndex < uint32(2) ** _levels, "tree full");
 
         uint32 currentIndex = _nextIndex;
         uint256 currentHash = leaf;
         uint256 left;
         uint256 right;
 
-        for (uint32 i = 0; i < levels; i++) {
+        for (uint32 i; i < _levels;) {
             if (currentIndex % 2 == 0) {
                 left = currentHash;
                 right = _zeros(i);
@@ -60,6 +70,7 @@ contract IncrementalMerkleTree {
             }
             currentHash = _hashPair(left, right);
             currentIndex /= 2;
+            unchecked { ++i; }
         }
 
         uint32 newRootIndex = (currentRootIndex + 1) % ROOT_HISTORY_SIZE;
@@ -74,10 +85,11 @@ contract IncrementalMerkleTree {
     function isKnownRoot(uint256 root) public view returns (bool) {
         if (root == 0) return false;
         uint32 _currentRootIndex = currentRootIndex;
+        uint32 _ringSize = ROOT_HISTORY_SIZE;
         uint32 i = _currentRootIndex;
         do {
             if (roots[i] == root) return true;
-            if (i == 0) i = ROOT_HISTORY_SIZE;
+            if (i == 0) i = _ringSize;
             i--;
         } while (i != _currentRootIndex);
         return false;

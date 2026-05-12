@@ -14,7 +14,8 @@ CONTRACTS=(
   SanctionsList
   IdentityGate
   RelayerRegistry
-  # Future PRs append here: CommitmentPool, PrivateSettlement.
+  CommitmentPool
+  # Future PRs append here: PrivateSettlement.
 )
 
 for c in "${CONTRACTS[@]}"; do
