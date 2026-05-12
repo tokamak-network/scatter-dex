@@ -46,6 +46,7 @@ npm run dev   # http://localhost:4002
 
 Scatter Drop is **not a mixer or anonymity tool**. Use is prohibited
 for money laundering, terrorist financing, sanctions evasion, evasion
-of statutory reporting, or any other illegal activity. Anti-sybil
-zk-X509 attestation is a first-class control. Operators may decline
-service and report suspicious activity as required by applicable law.
+of statutory reporting (including Travel Rule), or any other illegal
+activity. Anti-sybil zk-X509 attestation is a first-class control.
+Operators may decline service and report suspicious activity as
+required by applicable law.
