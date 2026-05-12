@@ -18,6 +18,13 @@ function zkX509RegistryUrl(address: string): string | null {
   return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}`;
 }
 
+/** Entry point for the zk-X509 identity registration flow. The CTA
+ *  shown to unverified / expired users opens this page in a new tab. */
+function zkX509RegisterUrl(): string | null {
+  if (!ZK_X509_URL) return null;
+  return `${ZK_X509_URL.replace(/\/$/, "")}/identity`;
+}
+
 /** Placeholder identity hub. Scatter Pay reads zk-X509
  *  verification status from the on-chain `IdentityGate`, but the
  *  actual certificate-proof workflow lives in the separate
@@ -30,6 +37,12 @@ export default function IdentityPage() {
   const { account } = useWallet();
   const cfg = getNetworkConfig();
   const { snapshot, loading: adminLoading } = useIdentityGateAdmin();
+  const registerUrl = zkX509RegisterUrl();
+  const needsRegistration =
+    state.kind === "unverified" ||
+    state.kind === "expired" ||
+    state.kind === "expiring" ||
+    state.kind === "error";
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -52,13 +65,27 @@ export default function IdentityPage() {
         <div className="mt-3 text-sm">
           <StatusLine state={state} />
         </div>
-        <button
-          type="button"
-          onClick={refresh}
-          className="mt-3 rounded-md border border-[var(--color-border-strong)] px-3 py-1 text-xs hover:bg-[var(--color-primary-soft)]"
-        >
-          Refresh status
-        </button>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {needsRegistration && registerUrl && (
+            <a
+              href={registerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)]"
+            >
+              {state.kind === "expiring" || state.kind === "expired"
+                ? "Renew on zk-X509 ↗"
+                : "Register on zk-X509 ↗"}
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={refresh}
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1 text-xs hover:bg-[var(--color-primary-soft)]"
+          >
+            Refresh status
+          </button>
+        </div>
       </section>
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -108,10 +135,10 @@ export default function IdentityPage() {
                         href={zkUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        title="Open this registry on zk-X509 (new tab)"
+                        title="Register an identity with this CA on zk-X509 (new tab)"
                         className="whitespace-nowrap text-[10px] text-[var(--color-primary)] underline-offset-2 hover:underline"
                       >
-                        Open on zk-X509 ↗
+                        Register with zk-X509 ↗
                       </a>
                     )}
                   </span>
@@ -123,22 +150,22 @@ export default function IdentityPage() {
       </section>
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
-        <h2 className="text-base font-medium">Register or renew</h2>
+        <h2 className="text-base font-medium">How to register or renew</h2>
         <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-          Certificate verification runs in the dedicated zk-X509 app.
-          Generate a proof there, then return — your status updates
-          automatically within ~30 seconds, or use the refresh button
-          above.
+          Pay reads verification status on-chain but doesn't run the
+          certificate proof itself — that lives on each trusted
+          registry's zk-X509 site. Pick a registry from the list above
+          and follow its registration flow.
         </p>
         <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-[var(--color-text-muted)]">
-          <li>Open the zk-X509 registration app on your phone or signing device.</li>
-          <li>Select your certificate (NPKI / corporate CA / etc.) and complete the proof.</li>
+          <li>Click <em>Register with zk-X509 ↗</em> next to a registry above.</li>
+          <li>On its site, select your certificate (NPKI / corporate CA / etc.) and complete the proof.</li>
           <li>Submit the on-chain registration tx (one-time, gas-paid by you).</li>
-          <li>Return here — your wallet is now verified.</li>
+          <li>Return here — your status updates within ~30 seconds, or click Refresh status above.</li>
         </ol>
         <p className="mt-3 text-xs text-[var(--color-text-subtle)]">
-          Don't have the zk-X509 app yet? Ask the service operator for the
-          deployment-specific registration URL.
+          Don't see a registry that matches your certificate? Ask the
+          service operator which CA they recognise for this deployment.
         </p>
       </section>
 
@@ -187,7 +214,8 @@ function StatusLine({ state }: { state: ReturnType<typeof useIdentityStatus>["st
     case "unverified":
       return (
         <span className="text-[var(--color-danger)]">
-          ⚠ Not verified — complete registration below.
+          ⚠ Not verified — pick a registry below and complete registration on
+          its zk-X509 site.
         </span>
       );
     case "loading":
