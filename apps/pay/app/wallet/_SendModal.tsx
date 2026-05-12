@@ -29,7 +29,7 @@ type Mode = "normal" | "gasless";
 /** Deadline (seconds from now) bound into every gasless signature.
  *  Long enough for the operator to read the wallet prompt; short
  *  enough that a leaked sig can't sit on a still-fresh nonce
- *  indefinitely. Mirrors the redeposit / inbox flows. */
+ *  indefinitely. Mirrors the inbox flow. */
 const GASLESS_DEADLINE_SEC = 600;
 
 /** Conservative gas reserve subtracted from `Max` for a native ETH

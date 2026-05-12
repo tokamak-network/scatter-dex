@@ -10,7 +10,7 @@
  *  Two routes share the same delegate contract and fee floor:
  *    POST /relay      — stealth-flow callers (Pay inbox); body uses
  *                       `stealthAddress`. Permissive call shapes so
- *                       redeposit/split flows can do non-ERC20 calls
+ *                       the stealth-EOA can make non-ERC20 calls
  *                       (e.g. into the Pay vault).
  *    POST /eoa-relay  — general EOA → recipient transfers. Stricter:
  *                       every batch call must be an ERC20.transfer
