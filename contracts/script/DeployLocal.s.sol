@@ -239,16 +239,20 @@ contract DeployLocal is Script {
     }
 
     /// @dev Resolve `UPGRADE_OWNER` once per deploy. On local dev chains
-    ///      (anvil 31337 / hardhat 1337) we fall back to the deployer for
-    ///      convenience and warn. On any other chain id (i.e. a real
-    ///      network) we hard-revert — missing the env var on mainnet would
-    ///      otherwise hand single-EOA admin authority over all six proxies
-    ///      to the deployer hot key. See PR 8 mainnet-readiness audit (L-1).
+    ///      (anvil 31337 / hardhat 1337 / `dev-fork.sh` mainnet fork 31338)
+    ///      we fall back to the deployer for convenience and warn. On any
+    ///      other chain id (i.e. a real network) we hard-revert — missing
+    ///      the env var on mainnet would otherwise hand single-EOA admin
+    ///      authority over all six proxies to the deployer hot key. See
+    ///      PR 8 mainnet-readiness audit (L-1).
     function _resolveUpgradeOwner(address deployer) internal {
         address envOwner = vm.envOr("UPGRADE_OWNER", address(0));
         if (envOwner == address(0)) {
             uint256 cid = block.chainid;
-            bool isLocalDevChain = cid == 31337 || cid == 1337;
+            // 31337: anvil default. 1337: hardhat default.
+            // 31338: `scripts/dev-fork.sh` mainnet-fork env (distinguished
+            //        from plain anvil so apps can tell forked from clean).
+            bool isLocalDevChain = cid == 31337 || cid == 1337 || cid == 31338;
             require(
                 isLocalDevChain,
                 string.concat(
