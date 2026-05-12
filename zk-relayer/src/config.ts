@@ -43,32 +43,6 @@ export const config = {
   commitmentPoolAddress: requireEnv("COMMITMENT_POOL_ADDRESS"),
   privateSettlementAddress: requireEnv("PRIVATE_SETTLEMENT_ADDRESS"),
   feeVaultAddress: requireEnv("FEE_VAULT_ADDRESS"),
-  // Optional: address of the deployed `StealthTransferAccount` — the
-  // delegate contract recipients use for gasless transfers via
-  // EIP-7702. Unset disables the /api/transfer-7702 endpoint, so an
-  // older operator deployment doesn't accidentally expose a
-  // misconfigured route. Validate at startup: this address acts as
-  // the allowlist for delegation, so a typo or stray whitespace
-  // would cause every legitimate request to fail with "unauthorized
-  // delegate" — fail-fast here so the operator notices.
-  stealthTransferAccountAddress: (() => {
-    const raw = (process.env.STEALTH_TRANSFER_ACCOUNT_ADDRESS || "").trim();
-    if (!raw) return null;
-    if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) {
-      throw new Error(
-        "STEALTH_TRANSFER_ACCOUNT_ADDRESS must be a 0x-prefixed 20-byte address",
-      );
-    }
-    return raw;
-  })(),
-  // Per-token gasless transfer fee policy. Operator publishes a flat
-  // amount (decimal string in token-units) for every token they want
-  // to relay. Read from `GASLESS_FEE_<SYMBOL>` env vars (e.g.
-  // `GASLESS_FEE_USDC=0.1`). Frontend surfaces this in the relayer
-  // selector so users can compare across relayers; the
-  // /api/transfer-7702/relay endpoint also enforces that the fee
-  // included in the batch is at least this published value.
-  gaslessFees: parsePerTokenDecimalEnv("GASLESS_FEE_"),
   // Per-recipient claim-gasless reserve charged at settle time, on
   // top of the bps service fee. The platform sets this so all
   // relayers in the network charge the same per-token amount —
