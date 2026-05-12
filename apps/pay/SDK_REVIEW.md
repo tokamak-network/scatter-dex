@@ -1,5 +1,13 @@
 # Pay × zkScatter SDK — Coverage Audit
 
+> **Historical note (Phase 2.4d, 2026-05-12).** Stealth-address helpers
+> (`generateMetaAddress`, `generateStealthAddress`,
+> `deriveStealthPrivateKey`, `stealthWallet`, etc.) referenced in this
+> document have been removed from the SDK. Recipient routing now binds
+> claims to a regular wallet address. Treat the stealth references
+> below as historical context for the original review; the current
+> production surface is the EOA-recipient path.
+
 Maps Pay's spec (see `SPEC.md`) onto the SDK in `packages/sdk` and the
 existing `frontend/` flows. The goal is to confirm Pay can be built as a
 UX wrapper without forking the protocol, and to surface the few helpers

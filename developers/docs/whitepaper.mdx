@@ -236,10 +236,10 @@ re-onboarding. The same relayer matches all of them.
   settlement happen entirely without their participation — a relayer
   pairs them with a counterparty whenever one appears (minutes,
   hours, days later). When the trader returns at their convenience,
-  the fill is already on-chain as a commitment at a stealth address
-  only they can decrypt; they generate a local `claim` proof to
-  withdraw the ERC-20 tokens to a wallet of their choice.
-- **A treasurer on Pay** uploads a CSV of recipient meta-addresses
+  the fill is already on-chain as a commitment addressed to their
+  wallet; they generate a local `claim` proof to withdraw the
+  ERC-20 tokens to a wallet of their choice.
+- **A treasurer on Pay** uploads a CSV of recipient wallet addresses
   and amounts; the SDK chunks the list into claims-tree batches sized
   to fit the protocol's per-circuit cap and the treasurer signs once
   per batch. Recipients claim independently when they like.
@@ -347,7 +347,7 @@ joint witness, no cryptographic dance between maker and taker.
 Time t=0:    Maker signs authorize proof, sends to relayer, goes offline.
 Time t=1h:   Taker signs authorize proof, sends to (any) relayer.
 Time t=1h+ε: Relayer matches maker + taker proofs, submits settleAuth.
-Time t=∞:    Either party returns and claims their stealth payout.
+Time t=∞:    Either party returns and claims their payout.
 ```
 
 The cryptographic guarantees are unchanged. The only extra constraint
@@ -549,7 +549,6 @@ permissionlessly joinable.
 | Authorisation signature | EdDSA on Baby Jubjub | Derived from wallet ECDSA via deterministic message |
 | Tree | Incremental Merkle (Poseidon) | Depth is a deployment parameter, currently sized for the high-1M leaf range before rotation; the SDK exposes the active depth as `COMMIT_TREE_DEPTH` |
 | Identity attestation | zk-X509 | Per-CA; aggregated by `IdentityGate` (client SDK ships with §10.3) |
-| Stealth address | EIP-5564 (opt-in) | ECDH on secp256k1 |
 
 ### 5.3 Threat model
 
@@ -596,10 +595,9 @@ calibrate the surrounding controls:
   analysis attacks on the prover could leak witness bits. The
   reference SDK runs proving in a constant-time WebAssembly
   worker, but constant-time is best-effort, not formally verified.
-- **Out-of-band linkage.** If a user posts their stealth meta-
-  address publicly with their real name, no protocol can re-hide
-  the linkage. Operational hygiene at the application layer is
-  required.
+- **Out-of-band linkage.** If a user posts a recipient address
+  publicly with their real name, no protocol can re-hide the
+  linkage. Operational hygiene at the application layer is required.
 - **Coordinated relayer cartel collusion.** A cartel of all
   active relayers refusing to match an order produces a liveness
   failure (not a privacy or correctness failure). The federation
@@ -626,7 +624,6 @@ across the §10 ("Next research") items. The split:
 | Relayer-CA `IdentityGate` enforced at `RelayerRegistry.register` | ✅ Live |
 | Automatic sanctions screening at every fund-touching entry point (§7.4) | ✅ Live |
 | `FeeVault` accrual + flat-rate platform-fee skim on relayer claim | ✅ Live |
-| Stealth addresses (EIP-5564) — opt-in | ✅ Live |
 | User-CA `IdentityGate` enforced at `deposit` / `claimWithProof` (sender + recipient gating) | ⏳ Wires in alongside the zk-X509 client SDK (§10.3) |
 | zk-X509 client-side attestation generation in the SDK | ⏳ §10.3 |
 | Peer-to-peer relayer gossip (Waku v2) replacing the shared-orderbook service | ⏳ §10.1 |
@@ -742,16 +739,16 @@ transfers).
 ### 6.4 Claim
 
 A claim spends a slot of a settled order's `claimsRoot`. The
-recipient may or may not be the original maker — if a stealth
-address was specified, only the stealth address's spending key
-holder can claim.
+recipient may or may not be the original maker — the claim circuit
+binds each payout to a specific wallet address.
 
 ```
 1. Recipient (or their wallet) discovers the claim — either by
    relayer notification, by self-scanning CommitmentInserted events,
    or by drop coordinator handoff.
-2. Recipient generates a `claim` Groth16 proof showing knowledge of
-   the spending key for the slot, and that releaseTime ≤ block.time.
+2. Recipient generates a `claim` Groth16 proof against the slot,
+   asserting their wallet is the bound recipient and that
+   releaseTime ≤ block.time.
 3. Wallet calls PrivateSettlement.claimWithProof(...).
 4. Contract verifies the proof, burns the claim's nullifier, transfers
    token to recipient's address.
@@ -875,8 +872,8 @@ deployment uses Relayer R-1 with a 30 bps flat fee.
   <Step title="Alice signs an order (off-chain, on her device)">
     Alice's wallet samples a fresh `nonce` and `newSalt`, computes
     her `claimsRoot` for the buy-side payout (one entry: `recipient
-    = stealth-address-she-derives-locally, token = ETH, amount =
-    0.5 ETH`), and runs `authorize.circom`:
+    = her-wallet-address, token = ETH, amount = 0.5 ETH`), and runs
+    `authorize.circom`:
     
     - witness: `(ownerSecret, salt, leafIndex, merkleProof,
       eddsaPrivateKey, claims[])`
@@ -936,11 +933,11 @@ deployment uses Relayer R-1 with a 30 bps flat fee.
   <Step title="Alice and Bob claim later, at their own pace">
     Whenever Alice next opens her wallet, the wallet scans
     `CommitmentInserted` events, finds the leaf addressed to her
-    stealth address, generates a `claim` proof, and calls
+    wallet, generates a `claim` proof, and calls
     `PrivateSettlement.claimWithProof(...)`. The contract
-    transfers 0.5 ETH (less Alice's fee) to her stealth address.
-    Bob does the same independently for his 1,000 USDC. Neither
-    needs the other to be online.
+    transfers 0.5 ETH (less Alice's fee) to her wallet. Bob does
+    the same independently for his 1,000 USDC. Neither needs the
+    other to be online.
   </Step>
   <Step title="R-1 claims its accrued fees">
     Periodically R-1 calls `FeeVault.claim(USDC)` and
@@ -1020,7 +1017,6 @@ discrete log on BN254 can:
 
 - **Forge new authorize proofs**, allowing them to spend any leaf
   whose pubkey they have observed.
-- **Compute viewing keys** from published stealth meta-addresses.
 - **Generate new fake cancellations / claims**.
 
 But they **cannot** recover the witness data of past settled trades —

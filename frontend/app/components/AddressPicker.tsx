@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { BookUser } from "lucide-react";
-import { hasDefaultAddress, loadWalletBook, type WalletEntry } from "../lib/wallet-book";
+import { loadWalletBook, type WalletEntry } from "../lib/wallet-book";
 import { hasFolderSelected } from "../lib/zk/note-storage";
 import { shortenAddress } from "../lib/utils";
 
@@ -68,7 +68,7 @@ export function AddressPicker({ onPick }: { onPick: (address: string) => void })
             </div>
           )}
           {!loading &&
-            entries?.filter(hasDefaultAddress).map((e) => (
+            entries?.map((e) => (
               <button
                 key={e.id}
                 type="button"

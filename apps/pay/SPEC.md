@@ -1,5 +1,11 @@
 # Scatter Pay — Product Spec
 
+> **Historical note (Phase 2.4d, 2026-05-12).** The original spec
+> described a stealth-address recipient model. The stealth surface
+> has since been retired (see ADR 0001); recipients are now
+> identified by their regular wallet address and the `scanInbox`
+> helper / "stealth" references below are historical context only.
+
 A user-friendly payments wrapper on top of zkScatter (private DEX with
 zk-X509 compliance). Reuses existing protocol primitives — does not
 introduce new contracts or circuits.

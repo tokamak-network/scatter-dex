@@ -1,14 +1,9 @@
 /**
- * Claim inbox for non-stealth (regular EOA) recipients. Persists to
- * `zkscatter-claim-inbox.json` in the user-picked folder. Parallel to
- * `stealthInbox` but with a slimmer entry shape — no ephemeral pubkey,
- * no pre-derived privkey hand-off, no stealth-specific source kinds.
- *
- * The two inboxes intentionally don't share storage. A future pass can
- * merge them once we have a clearer view of cross-flow filters; for
- * now keeping them separate is the smallest change that lets EOA
- * recipients see their claim history without leaking stealth-only
- * fields into rows that don't need them.
+ * Claim inbox for EOA recipients. Persists to
+ * `zkscatter-claim-inbox.json` in the user-picked folder. Each entry
+ * records a claim payable to a wallet address: no ephemeral pubkey,
+ * no pre-derived privkey hand-off — claims bind directly to the
+ * recipient's EOA.
  */
 
 import {

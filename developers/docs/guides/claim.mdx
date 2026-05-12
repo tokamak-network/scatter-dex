@@ -8,14 +8,6 @@ payout lands in `CommitmentPool` as a fresh commitment addressed to
 your wallet. Claim turns that commitment into a real on-chain
 transfer.
 
-> **Note (Phase 1, 2026-05-12).** User-facing surfaces no longer
-> document stealth addresses, but the SDK still exposes the
-> EIP-5564 derivation helpers (`deriveStealthPrivateKey`,
-> `generateMetaAddress`, `ephemeralPubKey`) that the code samples
-> below use. The runtime path is unchanged. A subsequent change
-> will retire those helpers entirely; until then the references
-> here are intentional.
-
 Claims can be **locked** (have a `releaseTime` in the future) or
 **unlocked** (`releaseTime = 0`). Both use the same `claim` circuit.
 
@@ -39,15 +31,14 @@ const fromOrders = orders.orders.flatMap((o) => o.claims ?? []);
 ```
 
 **B) Self-scan** — replay `CommitmentInserted` events and identify
-the commitments your wallet owns using your locally-held viewing key
-and the per-payout `ephemeralPubKey` your sender published. See the
-SDK's `@zkscatter/sdk/zk` exports for the derivation helpers.
+the commitments your wallet owns by matching `recipient` against the
+addresses you control.
 
 Either path, the local record you feed into `generateClaimProof` looks
 like:
 
 ```ts
-// [{ commitment, leafIndex, secret, token, amount, releaseTime, ephemeralPubKey }]
+// [{ commitment, leafIndex, secret, token, amount, releaseTime, recipient }]
 ```
 
 `secret` is the random field element you generated for this claim
@@ -57,15 +48,7 @@ proof cannot be built without it.
 ## Generate the claim proof
 
 ```ts
-import {
-  generateClaimProof,
-  deriveStealthPrivateKey,
-} from "@zkscatter/sdk/zk";
-
-const spendingPriv = deriveStealthPrivateKey(
-  meta.spendingKey,
-  claim.ephemeralPubKey,
-);
+import { generateClaimProof } from "@zkscatter/sdk/zk";
 
 const claimResult = await generateClaimProof(
   {
@@ -76,7 +59,6 @@ const claimResult = await generateClaimProof(
     token: claim.token,
     amount: claim.amount,
     releaseTime: claim.releaseTime,
-    spendingPrivateKey: spendingPriv,
   },
   { wasm: "/zk/claim.wasm", zkey: "/zk/claim_final.zkey" },
 );
@@ -141,10 +123,5 @@ button until the deadline.
   </Accordion>
   <Accordion title="`Claim: not yet releasable`">
     `block.timestamp < releaseTime`. Re-render with the unlock countdown.
-  </Accordion>
-  <Accordion title="Stealth address mismatch in proof">
-    `deriveStealthPrivateKey` was called with the wrong meta-address.
-    Confirm `viewingKey` and `spendingKey` came from the same
-    `generateMetaAddress` call.
   </Accordion>
 </AccordionGroup>

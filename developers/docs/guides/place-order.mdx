@@ -82,13 +82,9 @@ const authResult = await generateAuthorizeProof(
     nonce,
     relayer: target.address,
     eddsaPrivateKey: eddsa.privateKey,
-    // `recipient` is the address that will be able to claim this
-    // payout. Pass either:
-    //   - a regular wallet address (account.toLowerCase()) when the
-    //     recipient prefers an audit trail or doesn't need unlinkability,
-    //   - a stealth address derived via `generateStealthAddress(meta)`
-    //     when unlinkability matters.
-    // The `claim` circuit verifies spending-key knowledge either way.
+    // `recipient` is the wallet address that will be able to claim
+    // this payout. The `claim` circuit binds the payout to this
+    // address — only that EOA can submit the claim.
     claims: [
       {
         secret: randomFieldElement(),
@@ -147,7 +143,7 @@ const me = orders.find((o) => o.nonce === nonce.toString(16));
 
 When `me.status === "settled"`, the matched payout is now a commitment
 in the pool addressed to whatever `recipient` you set in the claim
-entry above (regular or stealth). See [Claim a payout](/docs/guides/claim).
+entry above. See [Claim a payout](/docs/guides/claim).
 
 ## Pre-flight UX
 

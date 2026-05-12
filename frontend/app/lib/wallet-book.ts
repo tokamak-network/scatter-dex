@@ -17,7 +17,6 @@
 export {
   WalletBookCorruptError,
   type WalletEntry,
-  hasDefaultAddress,
   loadWalletBook,
   addWallet,
   updateWallet,

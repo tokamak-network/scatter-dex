@@ -1,6 +1,6 @@
 ---
 title: zk
-description: "Groth16 prover, Poseidon, EdDSA, Merkle trees, stealth addresses."
+description: "Groth16 prover, Poseidon, EdDSA, Merkle trees."
 ---
 
 ```ts
@@ -134,17 +134,6 @@ const incProof = await inc.proof(leafIndex);
 Use `IncrementalMerkleTree` when streaming `CommitmentInserted` events;
 use `buildMerkleTree` when reconstructing from a fresh history scan.
 
-## Stealth addresses
-
-See [Stealth addresses](/docs/concepts/stealth-addresses) for the full
-walkthrough.
-
-```ts
-const meta = generateMetaAddress();
-const { stealthAddress, ephemeralPubKey } = generateStealthAddress(meta.metaAddress);
-const spendingPriv = deriveStealthPrivateKey(meta.spendingKey, ephemeralPubKey);
-```
-
 ## Circuit-specific proofs
 
 Each circuit has a `generateXxxProof(input, assets)` function:
@@ -201,5 +190,5 @@ const result = await timeProve("authorize", () =>
 ## Hardening
 
 - Wipe key material with `wipeBytes(buf)` after use.
-- Never log `eddsa.privateKey`, `meta.spendingKey`, or note secrets.
+- Never log `eddsa.privateKey` or note secrets.
 - Treat `note.ownerSecret` like a private key — losing it loses the funds.
