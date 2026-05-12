@@ -8,6 +8,8 @@ import {
 } from "@zkscatter/sdk/zk";
 import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
+import { useIdentityStatus } from "../lib/identity";
+import { IdentityGateModal } from "./IdentityGateModal";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
@@ -46,6 +48,12 @@ interface DepositModalProps {
 }
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
+  const { state: identityState } = useIdentityStatus();
+  const identityBlocking =
+    identityState.kind === "unverified" ||
+    identityState.kind === "expired" ||
+    identityState.kind === "error";
+
   const { add: addNote } = useVault();
   const { account, signer } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
@@ -189,6 +197,13 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
   }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast]);
 
   if (!open) return null;
+
+  // Identity gate — when the wallet's verification status is
+  // unverified / expired / error, show the gate prompt in place
+  // of the deposit content. Mirrors Pay's NewPayoutGate pattern.
+  if (identityBlocking) {
+    return <IdentityGateModal state={identityState} onClose={close} />;
+  }
 
   const busy =
     phase.kind === "preparing" ||

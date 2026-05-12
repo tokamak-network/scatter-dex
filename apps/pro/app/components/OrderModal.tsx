@@ -8,6 +8,8 @@ import {
   type ClaimEntry,
 } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
+import { useIdentityStatus } from "../lib/identity";
+import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../lib/relayers";
@@ -172,6 +174,12 @@ export function OrderModal({
   size,
   note,
 }: OrderModalProps) {
+  const { state: identityState } = useIdentityStatus();
+  const identityBlocking =
+    identityState.kind === "unverified" ||
+    identityState.kind === "expired" ||
+    identityState.kind === "error";
+
   const { add: addOrder } = useOrders();
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
@@ -452,6 +460,13 @@ export function OrderModal({
     phase.kind === "preparing" ||
     phase.kind === "proving" ||
     phase.kind === "submitting";
+
+  // Identity gate — when the wallet's verification status is
+  // unverified / expired / error, show the gate prompt in place
+  // of the confirm-order content.
+  if (open && identityBlocking) {
+    return <IdentityGateModal state={identityState} onClose={close} />;
+  }
 
   return (
     <Modal open={open} onClose={close} title="Confirm private order">

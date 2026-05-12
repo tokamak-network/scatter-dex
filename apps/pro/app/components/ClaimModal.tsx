@@ -1,4 +1,6 @@
 "use client";
+import { useIdentityStatus } from "../lib/identity";
+import { IdentityGateModal } from "./IdentityGateModal";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Modal, useToast } from "@zkscatter/ui";
@@ -22,6 +24,11 @@ interface ClaimModalProps {
 }
 
 export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
+  const { state: identityState } = useIdentityStatus();
+  const identityBlocking =
+    identityState.kind === "unverified" ||
+    identityState.kind === "expired" ||
+    identityState.kind === "error";
   const { markClaimed } = useOrders();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -102,6 +109,14 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
   }, [order, markClaimed, toast]);
 
   if (!order) return null;
+
+  // Identity gate — claims require a verified wallet (the on-chain
+  // claim call is gated on the same IdentityGate). Surface the
+  // gate prompt instead of the claim flow when the wallet is
+  // unverified / expired / error.
+  if (open && identityBlocking) {
+    return <IdentityGateModal state={identityState} onClose={onClose} />;
+  }
 
   const busy =
     phase.kind === "preparing" ||
