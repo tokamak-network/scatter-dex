@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract MockToken is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
@@ -33,7 +34,7 @@ contract CommitmentPoolTest is Test {
     function setUp() public {
         verifier = new MockVerifier();
         depositVerifier = new MockDepositVerifier();
-        pool = new CommitmentPool(address(verifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(verifier), address(depositVerifier), 20, 30);
         token = new MockToken();
 
         pool.setTokenWhitelist(address(token), true);

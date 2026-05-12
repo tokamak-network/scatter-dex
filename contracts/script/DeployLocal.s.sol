@@ -254,6 +254,22 @@ contract DeployLocal is Script {
         return IdentityGate(address(proxy));
     }
 
+    function _deployCommitmentPoolProxy(address withdrawVerifier, address depositVerifier)
+        internal
+        returns (CommitmentPool)
+    {
+        address deployer = msg.sender;
+        address upgradeOwner = vm.envOr("UPGRADE_OWNER", deployer);
+        CommitmentPool impl = new CommitmentPool();
+        bytes memory initData = abi.encodeCall(
+            CommitmentPool.initialize, (deployer, withdrawVerifier, depositVerifier, uint32(20), uint32(30))
+        );
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), upgradeOwner, initData);
+        console.log("CommitmentPool impl:", address(impl));
+        console.log("CommitmentPool proxy:", address(proxy));
+        return CommitmentPool(address(proxy));
+    }
+
     function _deployRelayerRegistryProxy(address deployer, address relayerIdRegistry)
         internal
         returns (RelayerRegistry)
@@ -368,8 +384,7 @@ contract DeployLocal is Script {
         console.log("AuthorizeVerifier (tier 128):", authorizeVerifier128);
         console.log("CancelVerifier:", cancelVerifier);
 
-        pool = new CommitmentPool(withdrawVerifier, depositVerifier, 20, 30);
-        console.log("CommitmentPool:", address(pool));
+        pool = _deployCommitmentPoolProxy(withdrawVerifier, depositVerifier);
 
         privateSettlement = new PrivateSettlement(
             address(pool), claimVerifier, weth

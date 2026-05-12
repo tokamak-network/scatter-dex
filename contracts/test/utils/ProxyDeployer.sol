@@ -7,6 +7,7 @@ import {FeeVault} from "../../src/FeeVault.sol";
 import {SanctionsList} from "../../src/SanctionsList.sol";
 import {IdentityGate} from "../../src/IdentityGate.sol";
 import {RelayerRegistry} from "../../src/RelayerRegistry.sol";
+import {CommitmentPool} from "../../src/zk/CommitmentPool.sol";
 
 /// @dev Centralised proxy boilerplate for upgradeable contracts under test.
 ///      Deploys a fresh implementation + TransparentUpgradeableProxy and
@@ -53,5 +54,22 @@ library ProxyDeployer {
             abi.encodeCall(RelayerRegistry.initialize, (initialOwner, treasury, identityRegistry, bondToken));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
         return RelayerRegistry(payable(address(proxy)));
+    }
+
+    function deployCommitmentPool(
+        address proxyAdminOwner,
+        address initialOwner,
+        address withdrawVerifier,
+        address depositVerifier,
+        uint32 treeLevels,
+        uint32 rootHistorySize
+    ) internal returns (CommitmentPool) {
+        CommitmentPool impl = new CommitmentPool();
+        bytes memory initData = abi.encodeCall(
+            CommitmentPool.initialize,
+            (initialOwner, withdrawVerifier, depositVerifier, treeLevels, rootHistorySize)
+        );
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
+        return CommitmentPool(address(proxy));
     }
 }

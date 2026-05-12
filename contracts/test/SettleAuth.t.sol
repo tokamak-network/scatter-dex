@@ -65,7 +65,7 @@ contract SettleAuthTest is Test {
         claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
-        pool = new CommitmentPool(address(withdrawVerifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
         weth = new MockWETH();
         settlement = new PrivateSettlement(
             address(pool),
@@ -428,8 +428,8 @@ contract SettleAuthTest is Test {
     function test_settleAuth_singlePairDrainsMostOfPool_succeeds() public {
         // Fresh pool with JUST ONE matched pair of liquidity — mirrors the
         // "1 WETH ↔ 2000 USDC, no other depositors" E2E scenario.
-        CommitmentPool thinPool = new CommitmentPool(
-            address(withdrawVerifier), address(depositVerifier), 20, 30
+        CommitmentPool thinPool = ProxyDeployer.deployCommitmentPool(
+            address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30
         );
         thinPool.setTokenWhitelist(address(weth), true);
         thinPool.setTokenWhitelist(address(usdc), true);

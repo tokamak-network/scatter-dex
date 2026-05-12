@@ -3,8 +3,9 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
+import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PoseidonT2} from "poseidon-solidity/PoseidonT2.sol";
 import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 import {IVerifier} from "./IVerifier.sol";
@@ -17,7 +18,7 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 ///      Withdrawals require a ZK proof of commitment ownership + nullifier.
 ///      Commitment = Poseidon(ownerSecret, token, amount, salt)
 ///      Nullifier  = Poseidon(ownerSecret, salt)
-contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step {
+contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
 
     // ─── Errors ──────────────────────────────────────────────────
@@ -54,8 +55,12 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     );
 
     // ─── State ───────────────────────────────────────────────────
-    IVerifier public immutable withdrawVerifier;
-    IDepositVerifier public immutable depositVerifier;
+    /// @dev Was `immutable` before the proxy migration; now a state var set
+    ///      once in `initialize()` and never reassigned (the impl's
+    ///      constructor never runs through the proxy).
+    IVerifier public withdrawVerifier;
+    /// @dev See `withdrawVerifier` note.
+    IDepositVerifier public depositVerifier;
     address public authorizedSettlement;
 
     /// @dev BN254 scalar field modulus. Public signals fed into a Groth16
@@ -81,32 +86,44 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuard, Ownable2Step 
     address public pendingSettlement;
     uint256 public pendingSettlementActivateAt;
 
+    /// @dev Reserved storage for future upgrades. Decrement when new state added.
+    uint256[50] private __gap;
 
-    // ─── Constructor ─────────────────────────────────────────────
-    constructor(
+
+    // ─── Initializer ─────────────────────────────────────────────
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(
+        address initialOwner,
         address _withdrawVerifier,
         address _depositVerifier,
         uint32 _treeLevels,
         uint32 _rootHistorySize
-    )
-        IncrementalMerkleTree(_treeLevels, _rootHistorySize)
-        Ownable(msg.sender)
-    {
+    ) external initializer {
+        if (initialOwner == address(0)) revert ZeroAddress();
         if (_withdrawVerifier == address(0)) revert ZeroAddress();
         if (_depositVerifier == address(0)) revert ZeroAddress();
         // [PR #123 review] Reject EOAs at deploy-time so a fat-fingered
         // address surfaces immediately instead of failing inside verifyProof.
         if (_withdrawVerifier.code.length == 0) revert NotAContract();
         if (_depositVerifier.code.length == 0) revert NotAContract();
+        __Ownable_init(initialOwner);
+        __Ownable2Step_init();
+        __ReentrancyGuard_init();
+        __IncrementalMerkleTree_init(_treeLevels, _rootHistorySize);
         withdrawVerifier = IVerifier(_withdrawVerifier);
         depositVerifier = IDepositVerifier(_depositVerifier);
     }
 
-    function renounceOwnership() public pure override {
+    function renounceOwnership() public pure override(OwnableUpgradeable) {
         revert RenounceOwnershipDisabled();
     }
 
-    function transferOwnership(address newOwner) public override {
+    function transferOwnership(address newOwner) public override(Ownable2StepUpgradeable) {
         if (newOwner == address(0)) revert ZeroAddress();
         super.transferOwnership(newOwner);
     }

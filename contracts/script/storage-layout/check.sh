@@ -20,6 +20,7 @@ CONTRACTS=(
   SanctionsList
   IdentityGate
   RelayerRegistry
+  CommitmentPool
 )
 
 normalize() {

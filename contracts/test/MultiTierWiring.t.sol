@@ -9,6 +9,7 @@ import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 /// @title MultiTierWiringTest
 /// @notice Asserts the PrivateSettlement per-tier registries hold an
@@ -34,7 +35,9 @@ contract MultiTierWiringTest is Test {
         MockVerifier withdrawVerifier = new MockVerifier();
         MockDepositVerifier depositVerifier = new MockDepositVerifier();
         MockWETH weth = new MockWETH();
-        CommitmentPool pool = new CommitmentPool(
+        CommitmentPool pool = ProxyDeployer.deployCommitmentPool(
+            address(this),
+            address(this),
             address(withdrawVerifier),
             address(depositVerifier),
             20,

@@ -7,7 +7,10 @@ import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Ini
 import {SanctionsList} from "../src/SanctionsList.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
+import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
+import {MockVerifier} from "./mocks/MockVerifier.sol";
+import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 /// @notice Initializer invariants for the upgradeable contracts converted in
@@ -55,5 +58,23 @@ contract UpgradeableInitTest is Test {
         RelayerRegistry impl = new RelayerRegistry();
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(owner, address(0xCAFE), address(0xDEAD), address(0));
+    }
+
+    function test_commitmentPool_proxy_reinit_reverts() public {
+        MockVerifier wv = new MockVerifier();
+        MockDepositVerifier dv = new MockDepositVerifier();
+        CommitmentPool p = ProxyDeployer.deployCommitmentPool(
+            address(this), owner, address(wv), address(dv), 20, 30
+        );
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        p.initialize(owner, address(wv), address(dv), 20, 30);
+    }
+
+    function test_commitmentPool_impl_init_reverts() public {
+        MockVerifier wv = new MockVerifier();
+        MockDepositVerifier dv = new MockDepositVerifier();
+        CommitmentPool impl = new CommitmentPool();
+        vm.expectRevert(Initializable.InvalidInitialization.selector);
+        impl.initialize(owner, address(wv), address(dv), 20, 30);
     }
 }
