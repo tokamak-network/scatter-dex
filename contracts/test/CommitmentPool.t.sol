@@ -309,4 +309,113 @@ contract CommitmentPoolTest is Test {
         vm.expectRevert();
         pool.setTokenWhitelist(address(token), false);
     }
+
+    // ─── Admin Branch Coverage ───────────────────────────────────
+
+    function test_renounceOwnership_disabled() public {
+        vm.expectRevert(CommitmentPool.RenounceOwnershipDisabled.selector);
+        pool.renounceOwnership();
+    }
+
+    function test_transferOwnership_zero_reverts() public {
+        vm.expectRevert(CommitmentPool.ZeroAddress.selector);
+        pool.transferOwnership(address(0));
+    }
+
+    function test_setTokenWhitelist_zero_reverts() public {
+        vm.expectRevert(CommitmentPool.ZeroAddress.selector);
+        pool.setTokenWhitelist(address(0), true);
+    }
+
+    function test_setSanctionsList_eoa_reverts() public {
+        vm.expectRevert(CommitmentPool.NotAContract.selector);
+        pool.setSanctionsList(alice);
+    }
+
+    function test_setSanctionsList_zero_disables() public {
+        // Zero is the documented disable path; verify the state actually clears.
+        // (setUp does not wire a sanctions list, so set one first.)
+        pool.setSanctionsList(address(new MockToken()));
+        pool.setSanctionsList(address(0));
+        assertEq(address(pool.sanctionsList()), address(0));
+    }
+
+    // ─── Settlement Timelock Branch Coverage ────────────────────
+
+    function test_setAuthorizedSettlement_alreadySet_reverts() public {
+        // setUp() leaves authorizedSettlement unset; first call must succeed,
+        // second call must hit the SettlementAlreadySet guard.
+        address mockSettlement = address(new MockToken());
+        pool.setAuthorizedSettlement(mockSettlement);
+        vm.expectRevert(CommitmentPool.SettlementAlreadySet.selector);
+        pool.setAuthorizedSettlement(mockSettlement);
+    }
+
+    function test_setAuthorizedSettlement_zero_reverts() public {
+        vm.expectRevert(CommitmentPool.ZeroAddress.selector);
+        pool.setAuthorizedSettlement(address(0));
+    }
+
+    function test_setAuthorizedSettlement_eoa_reverts() public {
+        vm.expectRevert(CommitmentPool.NotAContract.selector);
+        pool.setAuthorizedSettlement(alice);
+    }
+
+    function test_queueSetAuthorizedSettlement_zero_reverts() public {
+        vm.expectRevert(CommitmentPool.ZeroAddress.selector);
+        pool.queueSetAuthorizedSettlement(address(0));
+    }
+
+    function test_queueSetAuthorizedSettlement_eoa_reverts() public {
+        vm.expectRevert(CommitmentPool.NotAContract.selector);
+        pool.queueSetAuthorizedSettlement(alice);
+    }
+
+    function test_activateAuthorizedSettlement_noPending_reverts() public {
+        vm.expectRevert(CommitmentPool.NoPendingSettlement.selector);
+        pool.activateAuthorizedSettlement();
+    }
+
+    function test_activateAuthorizedSettlement_timelockNotExpired_reverts() public {
+        address mockSettlement = address(new MockToken());
+        pool.queueSetAuthorizedSettlement(mockSettlement);
+        vm.expectRevert(CommitmentPool.TimelockNotExpired.selector);
+        pool.activateAuthorizedSettlement();
+    }
+
+    function test_queueAndActivate_settlement_succeeds() public {
+        address mockSettlement = address(new MockToken());
+        pool.queueSetAuthorizedSettlement(mockSettlement);
+        vm.warp(block.timestamp + pool.SETTLEMENT_TIMELOCK() + 1);
+        pool.activateAuthorizedSettlement();
+        assertEq(pool.authorizedSettlement(), mockSettlement);
+    }
+
+    // ─── Pause Branch Coverage ──────────────────────────────────
+
+    function test_unpause_restores_deposits() public {
+        pool.pause();
+        pool.unpause();
+        vm.prank(alice);
+        _deposit(COMMITMENT_1, address(token), 50 ether);
+        assertEq(token.balanceOf(address(pool)), 50 ether);
+    }
+
+    function test_only_owner_can_unpause() public {
+        pool.pause();
+        vm.prank(alice);
+        vm.expectRevert();
+        pool.unpause();
+    }
+
+    // ─── Withdraw Guard Branch Coverage ─────────────────────────
+
+    function test_withdrawFor_unauthorized_reverts() public {
+        uint[2] memory pa;
+        uint[2][2] memory pb;
+        uint[2] memory pc;
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.NotAuthorizedSettlement.selector);
+        pool.withdrawFor(pa, pb, pc, 0, NULLIFIER_1, 0, address(token), 1 ether, bob, address(0));
+    }
 }
