@@ -37,7 +37,8 @@ gcloud config set project zkscatter
 ./gcp/secrets-set.sh ~/path/to/relayer.key
 
 # 3. set a budget alarm (optional but recommended)
-./gcp/budget-alert.sh 10        # $10/mo threshold
+./gcp/budget-alert.sh           # picks ~$1 worth in the billing currency
+# or specify an amount: ./gcp/budget-alert.sh 5000   (in billing currency)
 
 # 4. build & push the initial images
 ./ci/build-and-push.sh

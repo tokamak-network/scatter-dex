@@ -3,7 +3,6 @@
 # Convenience wrapper. Picks the TLS overlay automatically when DOMAIN is set.
 
 set -euo pipefail
-
 cd "$(dirname "$0")"
 
 if [[ ! -f .env ]]; then
@@ -12,16 +11,10 @@ if [[ ! -f .env ]]; then
 fi
 
 # shellcheck disable=SC1091
-set -a; . ./.env; set +a
+. ./_compose-files.sh
 
-files=(-f compose.yml)
-if [[ -n "${DOMAIN:-}" ]]; then
-	files+=(-f compose.tls.yml)
-	echo "starting with TLS for ${DOMAIN}"
-else
-	echo "starting in direct-port mode (no TLS)"
-fi
+echo "starting ${DOMAIN:+with TLS for $DOMAIN}${DOMAIN:-in direct-port mode (no TLS)}"
 
-docker compose "${files[@]}" --env-file .env pull
-docker compose "${files[@]}" --env-file .env up -d
-docker compose "${files[@]}" --env-file .env ps
+docker compose "${COMPOSE_FILES[@]}" --env-file .env pull
+docker compose "${COMPOSE_FILES[@]}" --env-file .env up -d
+docker compose "${COMPOSE_FILES[@]}" --env-file .env ps

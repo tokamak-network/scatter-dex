@@ -5,9 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # shellcheck disable=SC1091
-[[ -f .env ]] && { set -a; . ./.env; set +a; }
+. ./_compose-files.sh
 
-files=(-f compose.yml)
-[[ -n "${DOMAIN:-}" ]] && files+=(-f compose.tls.yml)
+# --env-file accepts a missing file as long as no compose value depends on it.
+# When .env is absent we omit the flag so `down` works on a fresh checkout.
+env_flag=()
+[[ -f .env ]] && env_flag=(--env-file .env)
 
-docker compose "${files[@]}" --env-file .env down "$@"
+docker compose "${COMPOSE_FILES[@]}" "${env_flag[@]}" down "$@"

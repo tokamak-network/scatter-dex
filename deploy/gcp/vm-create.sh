@@ -37,15 +37,12 @@ if gcloud compute instances describe "${VM_NAME}" --zone="${ZONE}" >/dev/null 2>
 	exit 0
 fi
 
-# us-central1 e2-micro is in the GCP Always Free tier (one per billing
-# account per month). Keep this zone unless you have a strong reason
-# to move — switching regions drops the free credit.
+# us-central1 e2-micro is in the GCP Always Free tier; other zones drop
+# the free credit.
 echo "creating VM ${VM_NAME} (${VM_MACHINE_TYPE}, ${ZONE})"
 
-# Scalar metadata goes through --metadata with a `|` delimiter so values
-# containing commas (notably CORS_ORIGINS) survive intact. File bodies go
-# through --metadata-from-file. This replaces an earlier in-line ^@^
-# trick that would break the moment a `@` appeared in any embedded file.
+# `|` delimiter so commas in CORS_ORIGINS survive. File bodies go via
+# --metadata-from-file to avoid in-line escaping entirely.
 gcloud compute instances create "${VM_NAME}" \
 	--zone="${ZONE}" \
 	--machine-type="${VM_MACHINE_TYPE}" \

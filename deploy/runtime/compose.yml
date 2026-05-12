@@ -16,6 +16,7 @@ services:
     environment:
       - PORT=4000
       - DB_PATH=${SHARED_ORDERBOOK_DB_PATH:-/data/shared-orderbook.db}
+      - CORS_ORIGINS=${CORS_ORIGINS}
     volumes:
       - orderbook-data:/data
     ports:

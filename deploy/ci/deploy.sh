@@ -23,8 +23,10 @@ gcloud compute instances add-metadata "${VM_NAME}" \
 	--metadata="image-tag=${IMAGE_TAG}"
 
 echo "▶  re-running startup script on ${VM_NAME}"
+# `set -o pipefail` on the remote side so a startup-script failure is
+# reflected in ssh's exit status (otherwise `tail` swallows it).
 gcloud compute ssh "${VM_NAME}" --zone="${ZONE}" --command \
-	'sudo google_metadata_script_runner startup 2>&1 | tail -40'
+	'set -o pipefail; sudo google_metadata_script_runner startup 2>&1 | tail -40'
 
 echo
 echo "▶  status:"

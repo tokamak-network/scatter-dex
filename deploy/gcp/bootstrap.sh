@@ -129,10 +129,12 @@ say "Bootstrap complete"
 cat <<EOF
 
 Next steps:
-  1. Put the relayer signing key into Secret Manager:
-       ./secrets-set.sh
-  2. Create the VM:
-       ./vm-create.sh
-  3. SSH in and run the runtime stack:
-       gcloud compute ssh ${VM_NAME} --zone ${ZONE}
+  1. Push the relayer signing key:    ./secrets-set.sh path/to/relayer.key
+  2. Set a budget alert (recommended): ./budget-alert.sh
+  3. Build and push images:           ../ci/build-and-push.sh
+  4. Edit deploy.env then create VM:  ./vm-create.sh
+
+After vm-create.sh the VM boots, pulls images, and starts the runtime
+stack automatically — no SSH needed. Watch progress on the serial port:
+  gcloud compute instances get-serial-port-output ${VM_NAME} --zone ${ZONE} | tail -200
 EOF

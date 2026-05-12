@@ -17,7 +17,7 @@ Self-contained docker compose stack that runs on a single VM (GCP e2-micro targe
 - Docker Engine + compose plugin
 - `${CIRCUITS_BUILD_DIR}` populated with the same artifacts as `circuits/build/` from the repo
 - `${RELAYER_KEY_FILE}` containing the relayer's signing key (single line)
-- Pre-built images pushed to a registry (see `deploy/ci/build-and-push.sh`, coming next)
+- Pre-built images pushed to a registry (use `deploy/ci/build-and-push.sh`)
 
 ## Direct-port mode (no domain)
 

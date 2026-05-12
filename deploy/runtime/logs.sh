@@ -8,9 +8,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # shellcheck disable=SC1091
-[[ -f .env ]] && { set -a; . ./.env; set +a; }
+. ./_compose-files.sh
 
-files=(-f compose.yml)
-[[ -n "${DOMAIN:-}" ]] && files+=(-f compose.tls.yml)
+env_flag=()
+[[ -f .env ]] && env_flag=(--env-file .env)
 
-docker compose "${files[@]}" --env-file .env logs -f --tail=200 "$@"
+docker compose "${COMPOSE_FILES[@]}" "${env_flag[@]}" logs -f --tail=200 "$@"
