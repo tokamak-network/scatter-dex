@@ -7,19 +7,21 @@ Verification methods:
 - **🧪 test** — explicit forge / vitest test path; run individually with `--match-test` or `vitest path/to/test`
 - **🌐 curl** — HTTP call against a running local service
 - **👤 UI** — manual click flow in the browser (requires `dev.sh --mock` + apps up)
-- **🪪 spec-only** — documented but not yet shipped; skip during testing
+- **🪪 spec-only** — documented in product specs but not implemented in this repo (skip in testing; tracked separately)
 
 ## How to run a release sweep
 
 ```bash
 # Lightning fast — file integrity, baselines, migration invariants
-./scripts/feature-check.sh --quick                 # ~5s, 45 checks
+./scripts/feature-check.sh --quick                 # ~5s, 46 checks
 
 # Unit suites — contracts + services (no live services needed)
 ./scripts/feature-check.sh --unit                  # ~30s
 
-# Live service health — assumes dev.sh is up
-arch -arm64 /opt/homebrew/bin/bash -c 'SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock --apps pay,pro,drop' &
+# Live service health — assumes dev.sh is up.
+# dev.sh auto-re-execs under native arm64 bash on Apple Silicon — no
+# wrapper needed. On Intel macOS / Linux the script just runs directly.
+SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock --apps pay,pro,drop &
 ./scripts/feature-check.sh --live                  # ~10s
 
 # UI flows below are manual — see each service's `👤 UI` row.
@@ -34,38 +36,26 @@ arch -arm64 /opt/homebrew/bin/bash -c 'SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --m
 
 ## Pay (apps/pay, port 4001)
 
-### Sender flows
+`apps/pay` is a **Next.js static-export client**. The user-facing wizard, dashboard, and claim pages live here; deposit/withdraw/claim hit on-chain contracts directly via wallet RPC, and gasless claims go through `zk-relayer` (port 3002/3003). There is no in-repo Pay-backend service today — multi-tenant / server-state / email features in the product spec are **🪪 spec-only** and listed as such.
+
+### Sender flows (in-repo)
 | # | Feature | Method | How |
 |---|---|---|---|
-| pay-1 | Create payout wizard (5-step) | 👤 UI | http://localhost:4001/payouts/new — token → recipients (CSV) → review → sign → submit |
-| pay-2 | Top-up payout pool (deposit) | 👤 UI + 🧪 test | UI: wallet sign + approve. Test: `forge test --match-test test_deposit_credit` |
+| pay-1 | Create payout wizard (5-step) | 👤 UI | http://localhost:4001 — connect wallet → token → recipients (CSV) → review → sign → submit |
+| pay-2 | Top-up payout pool (deposit) | 👤 UI + 🧪 test | UI: wallet sign + approve. Test: `forge test --match-contract CommitmentPoolTest --match-test test_deposit` (covers commit + amount + token whitelist + sanctions paths) |
 | pay-3 | Recipient release-date + amount | 👤 UI | Wizard step 3, per-row delay chips |
-| pay-4 | Payout dashboard | 👤 UI + 🌐 curl | UI: `/payouts`. Curl: `GET /api/payouts` |
-| pay-5 | CSV export + signed PDF receipt | 🌐 curl | `POST /api/payouts/:id/export` |
-| pay-6 | Reminder notifications | 🌐 curl + 🪪 spec | `POST /api/payouts/:id/remind` — endpoint exists, email channel is spec-only |
+| pay-4 | Payout dashboard | 👤 UI | `/payouts` — reads on-chain claim state + local notes |
+| pay-5 | CSV export | 👤 UI | client-side CSV generation from local payout state |
 
-### Recipient flows
+### Recipient flows (in-repo)
 | # | Feature | Method | How |
 |---|---|---|---|
-| pay-7 | Gasless claim via secret link | 👤 UI + 🌐 curl | UI: `/claim/[link]` → "Claim". Curl: `POST /api/claim/:link` |
-| pay-8 | Hidden amount until claim | 👤 UI | `/claim/[link]` page shows amount only after sign-in |
+| pay-6 | Gasless claim via secret link | 👤 UI + 🌐 curl | UI: `/claim/[link]` → "Claim". Curl: `POST http://localhost:3002/api/private-claim` (relayer-funded) |
+| pay-7 | Hidden amount until claim | 👤 UI | `/claim/[link]` page renders amount only after the user completes the proof step |
 
-### Backend routes
-| # | Endpoint | Method |
-|---|---|---|
-| pay-be-1 | `POST /api/payouts` | 🌐 curl |
-| pay-be-2 | `POST /api/payouts/:id/submit` | 🌐 curl |
-| pay-be-3 | `GET /api/payouts` / `GET /api/payouts/:id` | 🌐 curl |
-| pay-be-4 | `POST /api/payouts/:id/remind` | 🌐 curl |
-| pay-be-5 | `POST /api/claim/:link` | 🌐 curl |
-| pay-be-6 | `POST /api/payouts/:id/export` | 🌐 curl |
-
-### Admin / operator
-| # | Feature | Method |
-|---|---|---|
-| pay-admin-1 | Multi-org tenant isolation | 🧪 test (org-scoped queries in `apps/pay/api/`) |
-| pay-admin-2 | Team RBAC (admin/treasurer/viewer) | 👤 UI (`/team`) + 🪪 partial spec |
-| pay-admin-3 | Plan caps (Free/Team/Business/Enterprise) | 🪪 spec-only — limits not enforced server-side yet |
+### 🪪 Spec-only (no in-repo handler today)
+- Multi-org tenant isolation, team RBAC, plan caps — described in `docs/product/SCATTERPAY_SPEC.md`, but the server-side surface that would host these (`POST /api/payouts/*`, reminder emails, signed-PDF audit receipts) does not exist in this monorepo.
+- Treat the spec-only list as future work; the **in-repo** Pay surface above is what a release sweep should walk today.
 
 ---
 
@@ -97,34 +87,25 @@ arch -arm64 /opt/homebrew/bin/bash -c 'SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --m
 
 ## Drop (apps/drop, port 4002)
 
-### Campaign creator
+Like Pay, `apps/drop` is a Next.js static-export client. Campaign-creator and recipient flows run client-side against on-chain campaign contracts and `zk-relayer` for gasless claims. The product spec mentions a campaigns/snapshot/stats backend; that surface is **🪪 spec-only** today.
+
+### In-repo flows
 | # | Feature | Method | How |
 |---|---|---|---|
 | drop-1 | Create campaign wizard (4-step) | 👤 UI | `/campaigns/new` |
-| drop-2 | Snapshot voter eligibility | 🌐 curl + 👤 UI | UI: wizard step 2. Curl: `GET /api/snapshot/voters` |
-| drop-3 | Sybil policy config (zk-X509 / activity / KISA) | 👤 UI | wizard step 3 |
-| drop-4 | Live claim rate dashboard | 🌐 curl + 👤 UI | UI: `/campaigns/:id`. Curl: `GET /api/campaigns/:id/stats` |
-| drop-5 | Sybil block (per-campaign zkX509_id_hash uniqueness) | 🧪 test | (test target: campaign-scoped uniqueness in claim handler) |
+| drop-2 | Sybil policy config UI (zk-X509 / activity) | 👤 UI | wizard step 3 |
+| drop-3 | Eligibility self-check (merkle proof) | 👤 UI | `/claim/[id]` — client computes inclusion against on-chain root |
+| drop-4 | zk-X509 identity proof submission | 👤 UI | `/claim/[id]` → identity step; routes through zk-X509 backend (separate repo, port 4444) |
+| drop-5 | Gasless airdrop claim | 👤 UI + 🌐 curl | UI: `/claim/[id]` → "Claim". Curl: `POST http://localhost:3002/api/private-claim` |
 
-### Recipient
-| # | Feature | Method | How |
-|---|---|---|---|
-| drop-6 | Eligibility check | 🌐 curl | `GET /api/campaigns/:id/eligibility?wallet=` |
-| drop-7 | zk-X509 identity proof submission | 🌐 curl + 👤 UI | UI: `/claim/[id]` → identity step. Curl: `POST /api/campaigns/:id/claim` |
-| drop-8 | Gasless airdrop claim | 👤 UI + 🌐 curl | UI: `/claim/[id]` → "Claim". Curl: same endpoint |
-
-### Backend
-| # | Endpoint | Method |
-|---|---|---|
-| drop-be-1 | `POST /api/campaigns` | 🌐 curl |
-| drop-be-2 | `GET /api/campaigns` / `GET /api/campaigns/:id` | 🌐 curl |
-| drop-be-3 | `GET /api/campaigns/:id/eligibility` | 🌐 curl |
-| drop-be-4 | `POST /api/campaigns/:id/claim` | 🌐 curl |
-| drop-be-5 | `GET /api/campaigns/:id/stats` | 🌐 curl |
+### 🪪 Spec-only (no in-repo handler)
+- Snapshot voter ingest, server-stored campaign metadata, live claim-rate dashboard, sybil-block analytics — all live in `docs/product/SCATTERDROP_SPEC.md` but no `apps/drop/api/` or sibling service exists in this monorepo yet.
 
 ---
 
-## Hub (apps/hub, port 4000 collision — separate terminal)
+## Hub (apps/hub)
+
+`apps/hub` defaults to port 4000, which collides with `shared-orderbook`. `dev.sh --apps` **excludes hub by design** — when an operator wants Hub up alongside the dev stack, they start it in a separate terminal with an override port (`PORT=4040 npm run dev` etc.). Hub is a static landing site, no on-chain or relayer dependencies, so this is purely a port-config note for local dev.
 
 | # | Feature | Method |
 |---|---|---|
@@ -153,9 +134,12 @@ Identical surface per instance.
 | relayer-11 | `GET /api/relayer/trade-offers` | 🧪 test | |
 | relayer-12 | `GET /api/merkle-proof` | 🧪 test | `info.test.ts` 6 cases (1 ⚠️ stale) |
 | relayer-13 | Pause / resume (admin) | 🧪 test | `Relayer PAUSED/RESUMED` admin log |
-| relayer-14 | Authorize match dispatcher | 🧪 test | core flow in `index.test.ts` |
-| relayer-15 | Async settlement recovery | 🧪 test | orphan reconciliation |
-| relayer-16 | Fee enforcement (cap + deduction) | 🧪 test | `forge test --match-test test_settleAuth_feeExceedsMakerMaxFee_reverts` |
+| relayer-14 | Authorize match dispatcher | 🧪 test | `decode-settlement.test.ts`, `remote-orderbook.test.ts` |
+| relayer-15 | Async settlement recovery / tx retry | 🧪 test | `tx-retry.test.ts` |
+| relayer-16 | Vault state tracking | 🧪 test | `vault.test.ts` |
+| relayer-17 | Sanctions list enforcement | 🧪 test | `sanctions-list.test.ts` |
+| relayer-18 | p2p relayer protocol | 🧪 test | `routes/p2p.test.ts` |
+| relayer-19 | Fee enforcement (cap + deduction) | 🧪 test | `forge test --match-test test_settleAuth_feeExceedsMakerMaxFee_reverts` |
 
 Today: **231/232 PASS**, 1 ⚠️ stale (`info.test.ts` expects old relayer name).
 
@@ -215,9 +199,9 @@ Today: **239/239 PASS** (non-fork). Fork tests gated on `MAINNET_RPC` secret in 
 
 | # | Feature | Method | Notes |
 |---|---|---|---|
-| sdk-1 | Unified factory + module exports | 🪪 no tests | Missing `npm test` script — add later |
-| sdk-2 | React hooks (`useScatterClient`) | 🪪 no tests | |
-| sdk-3 | Stealth keypair helpers | 🪪 no tests | |
+| sdk-1 | Unified factory + module exports | 🪪 spec-only | No vitest setup in `packages/sdk` yet — see [Test debt](#test-debt) |
+| sdk-2 | React hooks (`useScatterClient`) | 🪪 spec-only | same — no test scaffolding |
+| sdk-3 | Stealth keypair helpers | 🪪 spec-only | same |
 
 🔜 SDK test coverage is a known gap.
 
@@ -227,9 +211,9 @@ Today: **239/239 PASS** (non-fork). Fork tests gated on `MAINNET_RPC` secret in 
 
 | # | Flow | Method | How |
 |---|---|---|---|
-| e2e-1 | Pay payout (sender → recipients) | 👤 UI + 🧪 test | scripts/run-e2e.sh — full deposit/match/claim |
-| e2e-2 | Pro cross-relayer order match (A↔B) | 🧪 test | scripts/start-cross-relayer-e2e.sh |
-| e2e-3 | Drop airdrop with sybil-proof | 🧪 test | scripts/local-tier-e2e.sh |
+| e2e-1 | Pay payout (sender → recipients) | 👤 UI | Manual walk in `apps/pay` UI — `scripts/run-e2e.sh` is currently broken (cd's to non-existent `relayer/`, see [Test debt](#test-debt)). |
+| e2e-2 | Pro cross-relayer order match (A↔B) | 🧪 test | `scripts/start-cross-relayer-e2e.sh` + `zk-relayer/test/e2e-authorize-cross-relayer.ts` |
+| e2e-3 | Multi-tier verifier dispatch (16 / 64 / 128) | 🧪 test | `scripts/local-tier-e2e.sh` — note: smoke-tests the tier registry, NOT the Drop airdrop flow. Drop E2E is currently 👤 UI only. |
 | e2e-4 | Vault note lifecycle (deposit → spend → claim → change) | 🧪 test | `forge test --match-test test_withdraw_partial_creates_change` |
 
 ---
@@ -238,8 +222,10 @@ Today: **239/239 PASS** (non-fork). Fork tests gated on `MAINNET_RPC` secret in 
 
 Tracked separately — pre-existing, not regression from the proxy migration:
 
-1. **shared-orderbook fixtures** — 24 tests expect `<relayer>-<nonce>` order IDs; server has required `OFFER_HANDLE` (`0x` + 64 hex) since commit `22e3c4e6`. Owner: needs PR to refresh test bodies.
-2. **zk-relayer info.test.ts** — expects `name === "ScatterDEX ZK Relayer"`; server returns `"Relayer-A"` after rename. Owner: trivial test rename.
-3. **`packages/sdk` no tests** — add `npm test` + vitest scaffolding.
+1. **shared-orderbook fixtures** — 24 tests in `test/api.test.ts` + `test/e2e-flow.test.ts` POST orders with `<relayer>-<nonce>` IDs, but the server has required the `OFFER_HANDLE` shape (`0x` + 64-char hex) for some time. Server-side guard is correct; fixtures need to be regenerated. Owner: refresh test bodies in a follow-up PR.
+2. **zk-relayer `info.test.ts`** — asserts `name === "ScatterDEX ZK Relayer"`; the running relayer returns `"Relayer-A"` after the per-instance rename. Owner: trivial rename / regex.
+3. **`packages/sdk` has no vitest scaffolding** — `npm test` script absent, no `test/` directory. Owner: add minimal vitest setup + 3-5 representative tests for hooks / factory / stealth helpers.
+4. **`scripts/run-e2e.sh` is broken** — line 39 does `cd relayer` but the directory is `zk-relayer/`. Either fix the path or retire the script in favour of `start-cross-relayer-e2e.sh` for cross-relayer E2E + a dedicated Pay-flow script.
+5. **Drop E2E coverage gap** — there is no automated test for the Drop airdrop / sybil-proof flow today. `local-tier-e2e.sh` exercises the multi-tier verifier registry, which is adjacent but not the same flow.
 
-These do not block release readiness — production code paths are exercised by the other 536 passing tests.
+None of the above block release readiness — production code paths are exercised by the **545 passing tests** (239 forge + 231 zk-relayer + 60 shared-orderbook + 15 other). The 25 stale tests are documentation-of-old-shape, not coverage gaps in shipping code.
