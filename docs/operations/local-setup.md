@@ -251,7 +251,7 @@ bash script/start-services.sh                           # frontend :3000, backen
 FRONTEND_PORT=3001 bash script/start-services.sh
 ```
 
-**3. Deploy a zk-X509 `IdentityRegistry` onto the same anvil** that `dev.sh --mock` started. `MAX_WALLETS_PER_CERT` controls how many wallets one certificate may bind (default 1 for strict 1:1, set to N for multi-wallet use cases):
+**3. Deploy a zk-X509 `IdentityRegistry` onto the same anvil** that `dev.sh --mock` started. The script also auto-seeds the test CA from `certs/ca_pub.der` so the registry isn't stuck at `caMerkleRoot = 0` (which would block every `register()` call):
 
 ```bash
 cd <zk-X509>
@@ -260,7 +260,12 @@ SERVICE_NAME="User CA (10 wallets/cert)" \
 bash script/deploy-on-existing-anvil.sh
 ```
 
-Note the printed `IdentityRegistry (proxy)` address — that's the registry Pay will route through.
+Knobs you typically don't need to set:
+- `MAX_WALLETS_PER_CERT` — how many wallets one certificate may bind (default 1 for strict 1:1, set to N for multi-wallet use cases like this example).
+- `SEED_TEST_CA=0` — skip the auto-`addCA` step (e.g. when you're going to wire CAs from a separate admin flow).
+- `CA_CERT_PATH=...` — point at a non-default CA cert; default is `certs/ca_pub.der`.
+
+Note the printed `IdentityRegistry (proxy)` address — that's the registry Pay will route through. The script also prints the resulting `caMerkleRoot`, which should be non-zero (= `sha256` of the seeded CA cert).
 
 **4. Swap the mock registry out of Pay's `IdentityGate`** using the helper script — it reads `IdentityGate` from `apps/pay/.env.local`, adds the zk-X509 registry, and removes every other registry (the mock from step 1):
 
@@ -283,7 +288,7 @@ cast send $IDENTITY_GATE "removeRegistry(address)" $MOCK --rpc-url $RPC --privat
 cast call $IDENTITY_GATE "getRegistries()(address[])" --rpc-url $RPC
 ```
 
-After the swap, Pay's `isVerified(user)` routes through zk-X509. The registry has no CA Merkle root or issued identities yet, so `isVerified()` returns `false` for every wallet until you issue an identity through the zk-X509 dashboard at http://localhost:3000.
+After the swap, Pay's `isVerified(user)` routes through zk-X509. The registry already has the test CA loaded (from step 3) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity through the zk-X509 dashboard at http://localhost:3000 (Identity → pick the registry → submit a proof against the seeded test CA). The CA itself should already be visible in the registry's Explorer tab; if it's not, re-run step 3 — `caMerkleRoot` in the script output should not be all-zeros.
 
 ### Ports at a glance (integration + zk-X509)
 
