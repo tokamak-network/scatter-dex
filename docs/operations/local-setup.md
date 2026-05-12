@@ -233,14 +233,17 @@ A local zk-X509 checkout with `make elf` already run (the prebuilt ELF lives at 
 
 ### Step-by-step
 
-**1. Start Pay in mock mode** — this brings up anvil, mock contracts, orderbook, relayers, and Pay in one shot:
+**1. Start Pay (+ optionally Pro) in mock mode** — this brings up anvil, mock contracts, orderbook, relayers, and the listed apps in one shot:
 
 ```bash
 cd <scatter-dex>
+# Pay only:
 SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock --apps pay
+# Or Pay + Pro (Pro runs on :4003 — same on-chain IdentityGate as Pay):
+SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock --apps pay,pro
 ```
 
-Note Pay's `IdentityGate` address from the deploy summary (`NEXT_PUBLIC_IDENTITY_GATE_ADDRESS` is also written to `apps/pay/.env.local`).
+Note the `IdentityGate` address from the deploy summary (`NEXT_PUBLIC_IDENTITY_GATE_ADDRESS` is also written to each app's `.env.local`). `IdentityGate` is a **single on-chain contract** that both Pay and Pro point at, so the registry swap in step 4 below applies to both apps — register a wallet once in the zk-X509 dashboard and it's verified everywhere.
 
 **2. Start zk-X509 frontend + backend** in a separate terminal. With `--apps pay` the default frontend isn't started, so zk-X509 can take its default port 3000:
 
@@ -267,7 +270,7 @@ Optional environment variables:
 
 Note the printed `IdentityRegistry (proxy)` address — that's the registry Pay will route through. The script also prints the resulting `caMerkleRoot`, which should be non-zero (= `sha256` of the seeded CA cert).
 
-**4. Swap the mock registry out of Pay's `IdentityGate`** using the helper script — it reads `IdentityGate` from `apps/pay/.env.local`, adds the zk-X509 registry, and removes every other registry (the mock from step 1):
+**4. Swap the mock registry out of `IdentityGate`** using the helper script — it reads `IdentityGate` from `apps/pay/.env.local`, adds the zk-X509 registry, and removes every other registry (the mock from step 1). Pro shares the same on-chain `IdentityGate` so this one swap covers both apps:
 
 ```bash
 cd <scatter-dex>
@@ -288,7 +291,7 @@ cast send $IDENTITY_GATE "removeRegistry(address)" $MOCK --rpc-url $RPC --privat
 cast call $IDENTITY_GATE "getRegistries()(address[])" --rpc-url $RPC
 ```
 
-After the swap, Pay's `isVerified(user)` routes through zk-X509. The registry already has the test CA loaded (from step 3) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity through the zk-X509 dashboard at http://localhost:3000 (Identity → pick the registry → submit a proof against the seeded test CA). The CA itself should already be visible in the registry's Explorer tab; if it's not, re-run step 3 — `caMerkleRoot` in the script output should not be all-zeros.
+After the swap, `isVerified(user)` calls from **both Pay and Pro** route through the same zk-X509 registry (they share the on-chain `IdentityGate`). The registry already has the test CA loaded (from step 3) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity through the zk-X509 dashboard at http://localhost:3000 (Identity → pick the registry → submit a proof against the seeded test CA). The CA itself should already be visible in the registry's Explorer tab; if it's not, re-run step 3 — `caMerkleRoot` in the script output should not be all-zeros.
 
 ### Ports at a glance (integration + zk-X509)
 
@@ -300,6 +303,7 @@ After the swap, Pay's `isVerified(user)` routes through zk-X509. The registry al
 | 3003 | zk-relayer B | scatter-dex |
 | 4000 | shared-orderbook | scatter-dex |
 | 4001 | Pay app | scatter-dex |
+| 4003 | Pro app (optional, `--apps pay,pro`) | scatter-dex |
 | 4444 | zk-X509 backend | zk-X509 |
 
 ### Teardown
@@ -309,6 +313,7 @@ Use port-based termination so other dev stacks (e.g. another scatter-dex checkou
 ```bash
 # scatter-dex (Ctrl+C in dev.sh's terminal, or)
 lsof -tiTCP:4001 -sTCP:LISTEN | xargs -r kill           # Pay
+lsof -tiTCP:4003 -sTCP:LISTEN | xargs -r kill           # Pro (if --apps pay,pro)
 lsof -tiTCP:4000 -sTCP:LISTEN | xargs -r kill           # shared-orderbook
 lsof -tiTCP:3002 -tiTCP:3003 -sTCP:LISTEN | xargs -r kill   # relayers
 lsof -tiTCP:8545 -sTCP:LISTEN | xargs -r kill           # anvil (this also tears down on-chain state)

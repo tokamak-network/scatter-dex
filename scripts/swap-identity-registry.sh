@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # ============================================================
-# Swap Pay's IdentityGate from MockIdentityRegistry to a real
-# zk-X509 IdentityRegistry. Run AFTER `dev.sh --mock --apps pay`
-# is up and AFTER you've deployed a zk-X509 IdentityRegistry
-# onto the same anvil.
+# Swap scatter-dex's IdentityGate from MockIdentityRegistry to a real
+# zk-X509 IdentityRegistry. Run AFTER `dev.sh --mock` is up — with any
+# `--apps` selection (e.g. `--apps pay`, `--apps pay,pro`, …) — and
+# AFTER you've deployed a zk-X509 IdentityRegistry onto the same anvil.
+#
+# IdentityGate is a single on-chain contract shared by every app
+# (Pay, Pro, Drop, etc.). One swap covers all of them — the script
+# reads the address from apps/pay/.env.local for convenience.
 #
 # The native `dev.sh` integration path (no --mock, with
 # IDENTITY_REGISTRY=...) tries to register the relayer identity
 # during contract deploy, which reverts with NotVerified() on a
 # freshly-deployed zk-X509 registry. Booting in mock and swapping
-# afterwards lets Pay come up first and avoids that chicken-and-egg.
+# afterwards lets the stack come up first and avoids that
+# chicken-and-egg.
 #
 # Usage:
 #   ./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry>
@@ -17,9 +22,13 @@
 #   RPC_URL=http://localhost:8545 ./scripts/swap-identity-registry.sh 0x...
 #
 # Inputs (env or default):
-#   IDENTITY_GATE   Pay's IdentityGate. Auto-read from
-#                   apps/pay/.env.local::NEXT_PUBLIC_IDENTITY_GATE_ADDRESS
-#                   if not set.
+#   IDENTITY_GATE   IdentityGate proxy. Auto-resolved by reading
+#                   NEXT_PUBLIC_IDENTITY_GATE_ADDRESS from the first
+#                   available .env.local under: apps/pay, apps/pro,
+#                   apps/drop, apps/operators. They all carry the same
+#                   on-chain address (single IdentityGate, multiple
+#                   front-ends). Set explicitly if none of those were
+#                   started: IDENTITY_GATE=0x... ./scripts/swap...
 #   RPC_URL         default http://localhost:8545
 #   DEPLOYER_KEY    default Anvil account #0 (must own IdentityGate)
 # ============================================================
@@ -36,16 +45,29 @@ fi
 RPC_URL="${RPC_URL:-http://localhost:8545}"
 DEPLOYER_KEY="${DEPLOYER_KEY:-0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80}"
 
-# Resolve IdentityGate from env or from Pay's .env.local
+# Resolve IdentityGate from env or from the first available app's .env.local.
+# All apps point at the same on-chain IdentityGate, so any of them works —
+# fallback order (pay → pro → drop → operators) matches the most-common
+# `--apps` selections so an operator that ran `--apps pro` (no pay) still
+# resolves automatically.
 if [ -z "${IDENTITY_GATE:-}" ]; then
-    ENV_FILE="$(cd "$(dirname "$0")/.." && pwd)/apps/pay/.env.local"
-    if [ -f "$ENV_FILE" ]; then
-        IDENTITY_GATE=$(grep -E '^NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
-    fi
+    REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+    for app in pay pro drop operators; do
+        ENV_FILE="$REPO_ROOT/apps/$app/.env.local"
+        [ -f "$ENV_FILE" ] || continue
+        CAND=$(grep -E '^NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+        if [ -n "$CAND" ]; then
+            IDENTITY_GATE="$CAND"
+            echo "  Resolved IdentityGate from apps/$app/.env.local"
+            break
+        fi
+    done
 fi
 if [ -z "${IDENTITY_GATE:-}" ]; then
-    echo "ERROR: IDENTITY_GATE not set and apps/pay/.env.local doesn't have NEXT_PUBLIC_IDENTITY_GATE_ADDRESS."
-    echo "       Did you run 'dev.sh --mock --apps pay' first?"
+    echo "ERROR: IDENTITY_GATE not set and no apps/{pay,pro,drop,operators}/.env.local"
+    echo "       has NEXT_PUBLIC_IDENTITY_GATE_ADDRESS."
+    echo "       Did you run 'dev.sh --mock --apps <pay|pro|...>' first?"
+    echo "       Or set explicitly: IDENTITY_GATE=0x... $0 $*"
     exit 1
 fi
 
