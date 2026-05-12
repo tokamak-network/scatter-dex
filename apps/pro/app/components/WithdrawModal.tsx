@@ -172,12 +172,18 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
               value: destAddr ? shortAddr(destAddr) : "—",
             },
             { label: "Network gas", value: "≈ $0.42", muted: true },
-            { label: "Privacy", value: destKind === "self" ? "Linkable to wallet" : "Unlinkable" },
+            {
+              label: "Privacy",
+              value:
+                destKind === "self"
+                  ? "Linkable to wallet"
+                  : "Depends on address reuse",
+            },
           ]}
           footer={
             destKind === "self"
               ? "Withdrawing to your connected wallet links the funds to your public balance."
-              : "Withdrawing to a custom address keeps the funds unlinkable from your wallet."
+              : "Unlinkability of a custom address depends on whether it has been used elsewhere — a fresh address keeps the funds private; a reused address inherits its existing linkage."
           }
         />
       </div>

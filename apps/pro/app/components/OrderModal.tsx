@@ -147,12 +147,12 @@ function resolveClaims(
     }
   }
 
-  return rows.map((_r, i) => {
+  return rows.map((r, i) => {
     const trimmed = trimmedAddrs[i]!;
     const recipient = trimmed || defaultRecipient;
     const amount = autoFillSingle
       ? buyAmount
-      : parseUnits(rows[i]!.amount.replace(/,/g, ""), buyTokenDecimals);
+      : parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
     return {
       secret: randomFieldElement(),
       recipient,
