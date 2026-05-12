@@ -418,4 +418,81 @@ contract CommitmentPoolTest is Test {
         vm.expectRevert(CommitmentPool.NotAuthorizedSettlement.selector);
         pool.withdrawFor(pa, pb, pc, 0, NULLIFIER_1, 0, address(token), 1 ether, bob, address(0));
     }
+
+    // ─── _processWithdraw guards (via withdraw entry) ──────────
+
+    function test_withdraw_zeroAmount_reverts() public {
+        vm.prank(alice);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
+        uint256 root = pool.getLastRoot();
+        uint[2] memory pa;
+        uint[2][2] memory pb;
+        uint[2] memory pc;
+        vm.expectRevert(CommitmentPool.ZeroAmount.selector);
+        pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), 0, bob, address(0));
+    }
+
+    function test_withdraw_zeroRecipient_reverts() public {
+        vm.prank(alice);
+        _deposit(COMMITMENT_1, address(token), 100 ether);
+        uint256 root = pool.getLastRoot();
+        uint[2] memory pa;
+        uint[2][2] memory pb;
+        uint[2] memory pc;
+        vm.expectRevert(CommitmentPool.ZeroAddress.selector);
+        pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), 1 ether, address(0), address(0));
+    }
+
+    // ─── transferToSettlement / transferFee restricted-caller guards ──
+
+    function test_transferToSettlement_unauthorized_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.NotAuthorizedSettlement.selector);
+        pool.transferToSettlement(address(token), 1 ether);
+    }
+
+    function test_transferToSettlement_insufficientBalance_reverts() public {
+        // setUp() leaves authorizedSettlement unset; wire a fresh contract
+        // address so the caller-gate passes, then prank as that address.
+        pool.setAuthorizedSettlement(_makeContract());
+        vm.prank(pool.authorizedSettlement());
+        vm.expectRevert(CommitmentPool.InsufficientPoolBalance.selector);
+        pool.transferToSettlement(address(token), 1_000_000 ether);
+    }
+
+    function test_transferFee_unauthorized_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.NotAuthorizedSettlement.selector);
+        pool.transferFee(bob, address(token), 1 ether);
+    }
+
+    function test_transferFee_zeroRecipient_reverts() public {
+        pool.setAuthorizedSettlement(_makeContract());
+        vm.prank(pool.authorizedSettlement());
+        vm.expectRevert(CommitmentPool.ZeroAddress.selector);
+        pool.transferFee(address(0), address(token), 1 ether);
+    }
+
+    function test_transferFee_insufficientBalance_reverts() public {
+        pool.setAuthorizedSettlement(_makeContract());
+        vm.prank(pool.authorizedSettlement());
+        vm.expectRevert(CommitmentPool.InsufficientPoolBalance.selector);
+        pool.transferFee(bob, address(token), 1_000_000 ether);
+    }
+
+    // ─── insertCommitment caller-gate ──────────────────────────
+
+    function test_insertCommitment_unauthorized_reverts() public {
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.NotAuthorizedSettlement.selector);
+        pool.insertCommitment(uint256(COMMITMENT_1));
+    }
+
+    /// @dev Deploys a throwaway contract address — the
+    ///      setAuthorizedSettlement guard requires `_settlement.code.length > 0`,
+    ///      so an EOA would revert NotAContract before the test can probe the
+    ///      caller-gate it's actually targeting.
+    function _makeContract() internal returns (address) {
+        return address(new MockDepositVerifier());
+    }
 }
