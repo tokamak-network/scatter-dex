@@ -8,6 +8,7 @@ import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
@@ -91,7 +92,7 @@ contract SettleWithDexTest is Test {
         usdc = new SDToken("USDC", "USDC");
 
         // Setup FeeVault for surplus tests
-        feeVault = new FeeVault(treasury, 0);
+        feeVault = ProxyDeployer.deployFeeVault(address(this), address(this), treasury, 0);
         settlement.setFeeVault(address(feeVault));
         feeVault.setAuthorizedDepositor(address(settlement), true);
 

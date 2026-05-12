@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test, Vm} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
@@ -44,7 +45,7 @@ contract FeeVaultPlatformRevenueTest is Test {
     address outsider = address(0xFACE);
 
     function setUp() public {
-        vault = new FeeVault(treasury, 500); // 5% relayer-claim platform fee (separate bucket)
+        vault = ProxyDeployer.deployFeeVault(address(this), address(this), treasury, 500); // 5% relayer-claim platform fee (separate bucket)
         token = new MockERC20();
         vault.setAuthorizedDepositor(depositor, true);
     }
@@ -333,7 +334,7 @@ contract FeeVaultPlatformRevenueTest is Test {
 
     function test_relayer_claim_skips_PlatformFeeFromRelayerClaim_when_fee_zero() public {
         // 0% platform fee → no skim, no event. Use a fresh vault with bps=0.
-        FeeVault zeroFeeVault = new FeeVault(treasury, 0);
+        FeeVault zeroFeeVault = ProxyDeployer.deployFeeVault(address(this), address(this), treasury, 0);
         zeroFeeVault.setAuthorizedDepositor(depositor, true);
         token.mint(address(zeroFeeVault), 10 ether);
 

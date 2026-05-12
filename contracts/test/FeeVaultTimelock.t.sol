@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
@@ -19,7 +20,7 @@ contract FeeVaultTimelockTest is Test {
     address depositor = address(0xDEAD);
 
     function setUp() public {
-        vault = new FeeVault(treasury, 500); // 5% initial
+        vault = ProxyDeployer.deployFeeVault(address(this), address(this), treasury, 500); // 5% initial
         token = new MockERC20();
 
         vault.setAuthorizedDepositor(depositor, true);
