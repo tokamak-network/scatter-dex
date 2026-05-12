@@ -353,7 +353,12 @@ if [ "$MOCK_MODE" = true ]; then
   check_port 4000 "shared-orderbook"
   check_port 3002 "zk-relayer-a"
   check_port 3003 "zk-relayer-b"
-  check_port 3000 "frontend"
+  # Only reserve 3000 if we're about to start the default frontend on it.
+  # `--apps pay` (or any non-empty --apps) skips the frontend, so a sibling
+  # service holding 3000 (e.g. zk-X509's dashboard) must not block startup.
+  if [ ${#APPS_TO_RUN[@]} -eq 0 ]; then
+    check_port 3000 "frontend"
+  fi
 
   echo "[1/6] Starting anvil (hardfork=prague for EIP-7702)..."
   # `--hardfork prague` enables Pectra-era features — notably EIP-7702
@@ -431,7 +436,12 @@ else
   check_port 4000 "shared-orderbook"
   check_port 3002 "zk-relayer-a"
   check_port 3003 "zk-relayer-b"
-  check_port 3000 "frontend"
+  # Same rationale as the MOCK branch: 3000 only matters when the default
+  # frontend will actually be started. zk-X509's frontend defaults to 3000,
+  # so integration runs of `--apps pay` need this conditional to coexist.
+  if [ ${#APPS_TO_RUN[@]} -eq 0 ]; then
+    check_port 3000 "frontend"
+  fi
 
   # Helper: prompt for a registry address if not set, verify contract exists
   require_registry() {

@@ -223,28 +223,80 @@ npm run dev
 
 ## Integration Mode (with zk-X509)
 
-**Step 1:** Start anvil:
+This mode runs zkScatter against a **real** zk-X509 IdentityRegistry instead of `MockIdentityRegistry`, so Pay's verification path actually hits zk-X509's on-chain logic. The anvil instance is shared between both projects.
+
+### Prerequisite
+
+A local zk-X509 checkout (default path: `/Users/<you>/tokamak-projects/zk-X509`) with `make elf` already run (the prebuilt ELF lives at `zk-X509/elf/zk-x509-program`).
+
+### Step-by-step
+
+**1. Start anvil with the same flags `dev.sh --mock` would use** (so EIP-7702 is enabled for Pay's gasless transfer):
 
 ```bash
-anvil
+anvil --silent --hardfork prague --host 0.0.0.0 &
 ```
 
-**Step 2:** Deploy zk-X509 by following the [zk-X509 Local Setup Guide](https://github.com/tokamak-network/zk-X509/blob/main/docs/local-setup.md).
-
-**Step 3:** Start zkScatter:
+**2. Deploy two zk-X509 IdentityRegistry instances** (User CA + Relayer CA) onto that anvil. The `deploy-on-existing-anvil.sh` helper in zk-X509 deploys one registry per call; run it twice with distinct `SERVICE_NAME`s and copy the printed proxy addresses:
 
 ```bash
-IDENTITY_REGISTRY=0x... \
-RELAYER_IDENTITY_REGISTRY=0x... \
-./scripts/dev.sh
+cd ~/tokamak-projects/zk-X509
+SERVICE_NAME="User CA"    bash script/deploy-on-existing-anvil.sh
+SERVICE_NAME="Relayer CA" bash script/deploy-on-existing-anvil.sh
 ```
 
-The script will:
-1. Detect the running anvil (does **not** start its own)
-2. Deploy zkScatter contracts with real `IdentityGate` (User CA) and `RelayerRegistry` (Relayer CA)
-3. Register Account #1 as zk-relayer
-4. Start zk-relayer on http://localhost:3002
-5. Start frontend on http://localhost:3000
+**3. Start zk-X509 frontend + backend** (optional — only needed if you want the zk-X509 admin dashboard to issue identities while Pay is running).
+
+zk-X509's frontend defaults to **port 3000**, which collides with zkScatter's default frontend port. zkScatter's `dev.sh --apps pay` now skips the 3000 pre-check (the default frontend isn't being started), but if you ever run `./scripts/dev.sh` without `--apps`, move zk-X509 to 3001 instead:
+
+```bash
+# zk-X509 owns 3000 freely when scatter-dex runs --apps pay
+bash script/start-services.sh
+
+# zk-X509 on 3001 when scatter-dex also starts its default frontend
+FRONTEND_PORT=3001 bash script/start-services.sh
+```
+
+**4. Start zkScatter in integration mode**, passing both registry addresses:
+
+```bash
+cd ~/tokamak-project-v3/scatter-dex
+IDENTITY_REGISTRY=<User CA proxy from step 2> \
+RELAYER_IDENTITY_REGISTRY=<Relayer CA proxy from step 2> \
+./scripts/dev.sh --apps pay
+```
+
+`dev.sh` then:
+1. Detects the running anvil (does **not** start a new one)
+2. Verifies both registry contracts exist at the given addresses
+3. Deploys zkScatter contracts wired to the real `IdentityGate`
+4. Starts shared-orderbook (:4000) + zk-relayer A (:3002) + zk-relayer B (:3003)
+5. Launches Pay on http://localhost:4001
+
+### Ports at a glance (integration + zk-X509)
+
+| Port | Service | Owner |
+|---|---|---|
+| 8545 | anvil | shared |
+| 3000 | zk-X509 frontend (or zkScatter frontend) | zk-X509 by default in `--apps pay` mode |
+| 3002 | zk-relayer A | zkScatter |
+| 3003 | zk-relayer B | zkScatter |
+| 4000 | shared-orderbook | zkScatter |
+| 4001 | Pay app | zkScatter |
+| 4444 | zk-X509 backend | zk-X509 |
+
+### Teardown
+
+```bash
+# zkScatter (Ctrl+C in dev.sh's terminal, or)
+pkill -f "scripts/dev.sh"
+
+# zk-X509
+cd ~/tokamak-projects/zk-X509 && bash script/stop-services.sh
+
+# anvil
+pkill -f "anvil --silent"
+```
 
 ## Docker (ZK Relayer)
 
