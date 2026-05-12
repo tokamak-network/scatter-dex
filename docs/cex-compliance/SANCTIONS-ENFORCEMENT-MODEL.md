@@ -207,14 +207,55 @@ Boundary contracts call `setSanctionsList(addr)` (owner-gated) to
 point at the chosen implementation; the rest of the protocol is
 agnostic.
 
+## External Oracle Fallback (OR-combined)
+
+`SanctionsList` itself supports an **optional external oracle**
+through `setExternalOracle(addr)` (owner-only). When set, the
+contract's `isSanctioned(addr)` returns `true` if **either** the
+self-managed map or the external oracle reports the address as
+sanctioned. Setting it back to `address(0)` disables the fallback.
+
+This is the recommended production wiring:
+
+```
+boundary  ─►  SanctionsList (self-managed)
+                       │
+                       └── externalOracle ─►  Chainalysis SDN Oracle
+                                              (0x40C57923...)
+```
+
+Why this layout:
+
+- **Chainalysis** auto-tracks OFAC SDN updates as they are
+  published — no multisig action needed for the common case.
+- The **self-managed map** covers regional lists Chainalysis does
+  not publish (e.g. KoFIU notices, EU/UK additions outside the
+  oracle's scope) and acts as an emergency-freeze surface the
+  operations multisig can hit immediately when an incident
+  requires it.
+- Boundary contracts remain pointed at **one** address
+  (`pool.setSanctionsList(self_managed)`,
+  `privateSettlement.setSanctionsList(self_managed)`) — no
+  Aggregator wrapper or extra proxy is introduced.
+
+Operationally this collapses the multisig cadence from
+"weekly OFAC sync" to "occasional regional additions and
+incident response" — see *Operational responsibilities* below.
+
+The `DeployLocal.s.sol` script reads
+`SANCTIONS_EXTERNAL_ORACLE` from the environment; if set to a
+non-zero address it issues `setExternalOracle(addr)` after
+deploying the proxy. Local anvil deploys leave it unset.
+
 ## Operational responsibilities
 
 | Task | Owner | Cadence |
 |---|---|---|
-| OFAC SDN list synchronisation | Operations multisig (operator team) | Per OFAC publication cycle (typically weekly batched updates) |
+| OFAC SDN list synchronisation | Chainalysis SDN Oracle (external) | Automatic — no operator action |
+| Regional list additions not covered by Chainalysis (e.g. KoFIU, EU/UK supplemental) | Operations multisig | Per regulator publication — typically monthly or per-event |
+| Emergency-freeze of a specific address (incident response) | Operations multisig | Per event |
 | Verifying batch additions don't exceed `MAX_BATCH_SIZE` (200) | Operations multisig | Per batch — split into multiple calls if larger |
-| Reviewing Chainalysis vs. self-managed trade-off | Compliance team | Pre-deploy and on major regulator events |
-| Incident response when a sanctioned interaction is attempted | Operations multisig + compliance | Per event |
+| Reviewing external-oracle configuration (Chainalysis vs. alternative) | Compliance team | Pre-deploy and on major regulator events |
 
 These are operational policy items; they are not enforced on-chain.
 
@@ -259,9 +300,44 @@ These are operational policy items; they are not enforced on-chain.
 - Probe a running deployment — call `pool.sanctionsList()` and
   `privateSettlement.sanctionsList()` and check they return the
   same non-zero address.
+- Probe the external oracle wiring — call
+  `SanctionsList(addr).externalOracle()` and verify it points at
+  the expected blocklist (e.g. the Chainalysis SDN Oracle on the
+  target network) or `address(0)` if the deployment intentionally
+  runs self-managed only.
+
+### On-chain verification recipes
+
+Anyone — exchange, regulator, auditor — can verify the gate with
+view calls, no protocol-level access required:
+
+```sh
+# Gate is active and consistent on both boundary contracts
+cast call $POOL "sanctionsList()(address)"
+cast call $SETTLEMENT "sanctionsList()(address)"
+
+# Optional external oracle (Chainalysis SDN Oracle, etc.)
+cast call $SANCTIONS_LIST "externalOracle()(address)"
+
+# Live check for a specific address (OR-combined across sources)
+cast call $SANCTIONS_LIST "isSanctioned(address)(bool)" $TARGET
+
+# Behavioural check via eth_call — no funds moved
+cast call $POOL "deposit(...)" --from $SANCTIONED_ADDR    # → reverts
+
+# Change history (self-managed entries)
+cast logs --address $SANCTIONS_LIST \
+  "AddressSanctioned(address)" --from-block $DEPLOY_BLOCK
+cast logs --address $SANCTIONS_LIST \
+  "ExternalOracleUpdated(address,address)" --from-block $DEPLOY_BLOCK
+```
 
 ## History
 
+- 2026-05-12 — add `externalOracle` fallback to `SanctionsList`
+  and document the OR-combined wiring with the Chainalysis SDN
+  Oracle. `DeployLocal.s.sol` reads `SANCTIONS_EXTERNAL_ORACLE`
+  from env. On-chain verification recipes section added.
 - 2026-05-12 — initial document. Captures the protocol-level
   enforcement model after the SanctionsList proxy was wired
   into `DeployLocal.s.sol` (this PR). The gate semantics

@@ -8,24 +8,34 @@ import {ISanctionsList} from "./interfaces/ISanctionsList.sol";
 
 /// @title SanctionsList
 /// @notice On-chain address blocklist for OFAC SDN and other sanctions compliance.
-/// @dev    Implements ISanctionsList so it can be swapped with the Chainalysis
-///         oracle (0x40C57923...) or any other compatible blocklist.
+/// @dev    Implements ISanctionsList. Supports an optional external oracle
+///         (e.g. Chainalysis SDN Oracle at 0x40C57923...) whose entries are
+///         OR-combined with the self-managed list. Boundary contracts can
+///         therefore subscribe to one address while owner-managed national
+///         lists and a third-party global list both contribute coverage.
 contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList {
     mapping(address => bool) public sanctioned;
 
     uint256 public constant MAX_BATCH_SIZE = 200;
 
+    /// @notice Optional external blocklist consulted after the self-managed map.
+    ///         Set to address(0) to disable. Result is OR-combined: an address
+    ///         is treated as sanctioned if either list reports it.
+    ISanctionsList public externalOracle;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     event AddressSanctioned(address indexed addr);
     event AddressUnsanctioned(address indexed addr);
+    event ExternalOracleUpdated(address indexed previousOracle, address indexed newOracle);
 
     error ZeroAddress();
     error AlreadySanctioned();
     error NotSanctioned();
     error BatchTooLarge();
     error RenounceOwnershipDisabled();
+    error OracleUnchanged();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -42,9 +52,22 @@ contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList
         revert RenounceOwnershipDisabled();
     }
 
-    /// @notice Check if an address is sanctioned.
+    /// @notice Check if an address is sanctioned by either the self-managed
+    ///         list or the external oracle (if configured).
     function isSanctioned(address addr) external view override returns (bool) {
-        return sanctioned[addr];
+        if (sanctioned[addr]) return true;
+        ISanctionsList oracle = externalOracle;
+        if (address(oracle) != address(0) && oracle.isSanctioned(addr)) return true;
+        return false;
+    }
+
+    /// @notice Point at an external blocklist (e.g. Chainalysis SDN Oracle).
+    ///         Pass address(0) to disable the fallback.
+    function setExternalOracle(address oracle) external onlyOwner {
+        address prev = address(externalOracle);
+        if (prev == oracle) revert OracleUnchanged();
+        externalOracle = ISanctionsList(oracle);
+        emit ExternalOracleUpdated(prev, oracle);
     }
 
     /// @notice Add a single address to the sanctions list.

@@ -13,10 +13,20 @@ import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
+import {ISanctionsList} from "../src/interfaces/ISanctionsList.sol";
 
 contract SLToken is ERC20 {
     constructor() ERC20("Test", "TST") {}
     function mint(address to, uint256 amt) external { _mint(to, amt); }
+}
+
+/// @dev Minimal oracle stand-in that returns true for any address explicitly
+///      flagged. Used to exercise SanctionsList's externalOracle fallback path
+///      (the same surface the Chainalysis SDN Oracle exposes in production).
+contract MockOracle is ISanctionsList {
+    mapping(address => bool) public flagged;
+    function flag(address a, bool v) external { flagged[a] = v; }
+    function isSanctioned(address a) external view returns (bool) { return flagged[a]; }
 }
 
 /// @title SanctionsListTest
@@ -206,5 +216,78 @@ contract SanctionsListTest is Test {
         vm.prank(sanctionedAddr);
         vm.expectRevert(PrivateSettlement.AddressSanctioned.selector);
         settlement.settleWithDex(p);
+    }
+
+    // ─── External Oracle Fallback ───────────────────────────────
+
+    function test_externalOracle_orCombined() public {
+        MockOracle oracle = new MockOracle();
+        sanctions.setExternalOracle(address(oracle));
+
+        // Address only in oracle → sanctioned
+        address oracleOnly = address(0xDEAD);
+        oracle.flag(oracleOnly, true);
+        assertTrue(sanctions.isSanctioned(oracleOnly));
+
+        // Self-managed entry still sanctioned independently
+        assertTrue(sanctions.isSanctioned(sanctionedAddr));
+
+        // Unflagged elsewhere stays clean
+        assertFalse(sanctions.isSanctioned(alice));
+    }
+
+    function test_externalOracle_selfManagedTakesPrecedence() public {
+        // Self-managed entry remains sanctioned even when oracle returns false
+        MockOracle oracle = new MockOracle();
+        sanctions.setExternalOracle(address(oracle));
+        assertFalse(oracle.isSanctioned(sanctionedAddr));
+        assertTrue(sanctions.isSanctioned(sanctionedAddr));
+    }
+
+    function test_externalOracle_unset_default() public {
+        assertEq(address(sanctions.externalOracle()), address(0));
+    }
+
+    function test_externalOracle_disable() public {
+        MockOracle oracle = new MockOracle();
+        sanctions.setExternalOracle(address(oracle));
+        address oracleOnly = address(0xBEEF);
+        oracle.flag(oracleOnly, true);
+        assertTrue(sanctions.isSanctioned(oracleOnly));
+
+        sanctions.setExternalOracle(address(0));
+        assertFalse(sanctions.isSanctioned(oracleOnly));
+    }
+
+    function test_externalOracle_onlyOwner() public {
+        MockOracle oracle = new MockOracle();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSignature("OwnableUnauthorizedAccount(address)", alice));
+        sanctions.setExternalOracle(address(oracle));
+    }
+
+    function test_externalOracle_unchanged_reverts() public {
+        MockOracle oracle = new MockOracle();
+        sanctions.setExternalOracle(address(oracle));
+        vm.expectRevert(SanctionsList.OracleUnchanged.selector);
+        sanctions.setExternalOracle(address(oracle));
+    }
+
+    function test_externalOracle_propagatesThroughBoundary() public {
+        // Boundary reads ISanctionsList.isSanctioned — when the address is
+        // only flagged in the external oracle the OR-combine still returns
+        // true and the deposit reverts.
+        MockOracle oracle = new MockOracle();
+        sanctions.setExternalOracle(address(oracle));
+
+        address oracleOnly = address(0xC0FFEE);
+        oracle.flag(oracleOnly, true);
+        token.mint(oracleOnly, 100e18);
+
+        vm.startPrank(oracleOnly);
+        token.approve(address(pool), 100e18);
+        vm.expectRevert(CommitmentPool.AddressSanctioned.selector);
+        pool.deposit(proofA, proofB, proofC, uint256(0xfeed), address(token), 100e18);
+        vm.stopPrank();
     }
 }
