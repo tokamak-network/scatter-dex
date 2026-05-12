@@ -18,13 +18,17 @@ import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
 
-// Depositable tokens come straight from the active network's
-// whitelist — every entry that can be a sell-side or quote-side
-// of any launch pair. Previously this was a hardcoded local list
-// that drifted from the whitelist (ETH/USDC/WBTC vs the canonical
-// ETH/USDC/USDT/TON), which made vault notes unspendable in the
-// trade form. Source of truth: `DEMO_NETWORK.tokens`.
-const DEPOSITABLE = DEMO_NETWORK.tokens;
+// Depositable tokens come from the active network's whitelist,
+// filtered to entries with a real (non-zero) address. LAUNCH_TOKENS
+// always lists ETH/USDC/USDT/TON, but a local deploy might only
+// wire WETH+USDC — showing the unwired entries here would let the
+// user pick a token whose deposit call would revert at
+// `ensureAllowance` against the zero address. Source of truth:
+// `DEMO_NETWORK.tokens` after the env overlay.
+const ZERO = "0x0000000000000000000000000000000000000000";
+const DEPOSITABLE = DEMO_NETWORK.tokens.filter(
+  (t) => t.address.toLowerCase() !== ZERO,
+);
 
 type Phase =
   | { kind: "idle" }

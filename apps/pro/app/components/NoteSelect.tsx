@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { VaultNote } from "../lib/vault";
 import { Field } from "@zkscatter/ui";
 
@@ -21,25 +21,31 @@ interface Props {
  *  regardless of token, which silently failed at submit when the
  *  first note was in the wrong currency. */
 export function NoteSelect({ sellTokenAddress, notes, selectedId, onSelect }: Props) {
+  // BigInt(address.toLowerCase()) on every render added up — the
+  // hash is hot when notes is large. Memo the parsed key so the
+  // filter is a plain bigint compare per note.
+  const sellTokenKey = useMemo(
+    () => BigInt(sellTokenAddress.toLowerCase()),
+    [sellTokenAddress],
+  );
   const matching = useMemo(
-    () =>
-      notes.filter(
-        (n) => n.note.token === BigInt(sellTokenAddress.toLowerCase()),
-      ),
-    [notes, sellTokenAddress],
+    () => notes.filter((n) => n.note.token === sellTokenKey),
+    [notes, sellTokenKey],
   );
 
   // Auto-reset the selection when it falls outside the filtered set
-  // (token change, withdrawal, etc.). Done at render rather than in
-  // an effect so the workbench's `note` prop stays consistent with
-  // what's actually in the dropdown.
-  if (selectedId && !matching.some((n) => n.id === selectedId)) {
-    // Defer the parent state update until after render to avoid a
-    // setState-in-render warning. `queueMicrotask` is enough — we
-    // want the reset visible on the very next commit, not the next
-    // frame.
-    queueMicrotask(() => onSelect(matching[0]?.id ?? null));
-  }
+  // (token change, withdrawal, etc.). Effect — not in-render —
+  // because the parent's setState during render warns under
+  // StrictMode and risks an infinite loop if `onSelect` isn't
+  // stabilised with useCallback at the call site.
+  const firstId = matching[0]?.id ?? null;
+  const selectedIsValid =
+    selectedId !== null && matching.some((n) => n.id === selectedId);
+  useEffect(() => {
+    if (selectedId !== null && !selectedIsValid) {
+      onSelect(firstId);
+    }
+  }, [selectedId, selectedIsValid, firstId, onSelect]);
 
   if (matching.length === 0) {
     return (
