@@ -29,7 +29,8 @@ apps do, your app can do, with the same primitives.
   </Card>
   <Card title="A private payment app" icon="paper-plane" href="/docs/guides/place-order">
     Send payouts in any whitelisted token. Recipients claim later,
-    gaslessly, at either a regular or stealth address (their choice).
+    gaslessly, to their wallet — per-recipient amounts stay private
+    against the rest of the payout batch until each recipient claims.
   </Card>
   <Card title="An identity-gated drop" icon="gift" href="/docs/guides/claim">
     Distribute to verified humans without doxxing claimers. The same
@@ -60,8 +61,8 @@ apps do, your app can do, with the same primitives.
   </Card>
   <Card title="ZK proofs" icon="shield-halved" href="/sdk/zk">
     Web Worker prover, Poseidon hashing, EdDSA on Baby Jubjub, incremental
-    Merkle trees, stealth-address derivation, and circuit-specific builders
-    for `deposit`, `authorize`, `claim`, `cancel`.
+    Merkle trees, and circuit-specific builders for `deposit`, `authorize`,
+    `claim`, `cancel`.
   </Card>
   <Card title="Relayer client" icon="network-wired" href="/sdk/relayer">
     Discover active relayers from the on-chain registry, probe their
@@ -96,10 +97,9 @@ shape per flow.
   </Step>
   <Step title="Authorize / Issue">
     *OTC*: maker signs an EdDSA order + half-proof binding it to a leaf.
-    *Payment*: sender signs a one-sided spend committing to a recipient
-    address (regular or stealth — recipient's choice). *Drop*:
-    distributor publishes a claims root committing to each recipient's
-    address + amount.
+    *Payment*: sender signs a one-sided spend committing to the recipient
+    address. *Drop*: distributor publishes a claims root committing to
+    each recipient's address + amount.
   </Step>
   <Step title="Match / Submit">
     *OTC*: a relayer pairs two compatible half-proofs and submits
@@ -109,9 +109,8 @@ shape per flow.
   </Step>
   <Step title="Claim (universal)">
     The recipient's payout sits in `CommitmentPool` as a new commitment
-    addressed to either a regular wallet or a stealth address (their
-    earlier choice). They claim later — any time, gaslessly — by
-    proving knowledge of the spending key. Up to 20 claims per
+    addressed to their wallet. They claim later — any time, gaslessly —
+    by proving knowledge of the spending key. Up to 20 claims per
     transaction.
   </Step>
 </Steps>

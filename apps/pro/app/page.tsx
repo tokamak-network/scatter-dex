@@ -97,7 +97,7 @@ export default function Landing() {
           <Step
             n={3}
             title="Settle and claim"
-            body="When matched, the relayer batches settlements on-chain. You claim the proceeds gaslessly to your main wallet — or to a fresh stealth address."
+            body="When matched, the relayer batches settlements on-chain. You claim the proceeds gaslessly to your wallet — KYC-gated and compliance-aware."
           />
         </div>
       </section>
@@ -161,7 +161,7 @@ export default function Landing() {
           🎉 Launch event: zero trading fees on every order until Dec 31, 2026.
         </p>
         <div className="grid grid-cols-3 gap-4">
-          <PriceCard plan="Standard" price="0.02%" sub="Per trade · relayer fee included" features={["Private limit orders", "Stealth claim", "Mobile Quick Sign"]} />
+          <PriceCard plan="Standard" price="0.02%" sub="Per trade · relayer fee included" features={["Private limit orders", "Gasless claim", "Mobile Quick Sign"]} />
           <PriceCard plan="Active" price="0.01%" sub="Per trade · once monthly volume ≥ $500K" features={["Everything in Standard", "Priority relayer routing", "Custom alerts"]} featured />
           <PriceCard plan="OTC desk" price="Custom" sub="White-label, dedicated relayer" features={["Everything in Active", "Multi-trader accounts", "Direct counterparty matching", "Compliance export"]} />
         </div>

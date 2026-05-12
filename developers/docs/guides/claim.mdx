@@ -1,14 +1,20 @@
 ---
 title: Claim a payout
-description: "Convert a stealth-addressed pool commitment into an ERC-20 balance."
+description: "Convert a pool commitment into an ERC-20 balance."
 ---
 
 When your order matches (or a payment / drop is sent to you), the
 payout lands in `CommitmentPool` as a fresh commitment addressed to
-**either a regular wallet or a stealth address** — whichever you
-specified when the sender authorized the payout. Claim turns that
-commitment into a real on-chain transfer either way; only the spending
-key derivation differs (see [Stealth addresses](/docs/concepts/stealth-addresses)).
+your wallet. Claim turns that commitment into a real on-chain
+transfer.
+
+> **Note (Phase 1, 2026-05-12).** User-facing surfaces no longer
+> document stealth addresses, but the SDK still exposes the
+> EIP-5564 derivation helpers (`deriveStealthPrivateKey`,
+> `generateMetaAddress`, `ephemeralPubKey`) that the code samples
+> below use. The runtime path is unchanged. A subsequent change
+> will retire those helpers entirely; until then the references
+> here are intentional.
 
 Claims can be **locked** (have a `releaseTime` in the future) or
 **unlocked** (`releaseTime = 0`). Both use the same `claim` circuit.
@@ -33,8 +39,9 @@ const fromOrders = orders.orders.flatMap((o) => o.claims ?? []);
 ```
 
 **B) Self-scan** — replay `CommitmentInserted` events and identify
-yours from `ephemeralPubKey` against your viewing key (see
-[Stealth addresses](/docs/concepts/stealth-addresses)).
+the commitments your wallet owns using your locally-held viewing key
+and the per-payout `ephemeralPubKey` your sender published. See the
+SDK's `@zkscatter/sdk/zk` exports for the derivation helpers.
 
 Either path, the local record you feed into `generateClaimProof` looks
 like:

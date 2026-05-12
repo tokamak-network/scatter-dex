@@ -4,7 +4,6 @@ import { PayProviders } from "./_lib/providers";
 import { ConnectWalletPill } from "./_components/ConnectWalletPill";
 import { Brand } from "./_components/Brand";
 import { WrongChainBanner } from "./_components/WrongChainBanner";
-import { StealthMenu } from "./_components/StealthMenu";
 import { IdentityPill } from "./_components/IdentityPill";
 import { IdentityMenu } from "./_components/IdentityMenu";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
@@ -40,7 +39,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/inbox" className="hover:text-[var(--color-text)]">Claims</Link>
                 <Link href="/address-book" className="hover:text-[var(--color-text)]">Address book</Link>
                 <IdentityMenu />
-                <StealthMenu />
               </>
             }
           />

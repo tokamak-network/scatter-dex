@@ -56,7 +56,17 @@ Plus 0.05% of payout value per run, capped at $20. Free until Dec 31, 2026.
 
 ## Differentiators vs Request Finance / Sablier / Toku
 
-- Recipients can't see each other's amounts (stealth claim links)
+- Recipients can't see each other's amounts (per-recipient claim links)
 - Single on-chain transaction for N recipients
 - Templates for payroll / grants / bonuses with the right export per case
 - zk-X509 signed accounting export for tax/audit
+
+## Compliance
+
+Scatter Pay is **not a mixer or anonymity tool**. Use is prohibited
+for money laundering, terrorist financing, sanctions evasion, evasion
+of statutory reporting (including Travel Rule), or any other illegal
+activity. The protocol is designed to support compliant payroll,
+grants, and bonus payouts with private per-recipient amounts and
+optional zk-X509 identity gating. Operators may decline service and
+report suspicious activity as required by applicable law.
