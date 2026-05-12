@@ -130,18 +130,30 @@ export default function Workbench() {
   const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
   const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
-  const fillFraction = (frac: number) => {
-    // Source the % buttons from the *selected* funding note instead
-    // of `notes[0]` — when the user picks a different note (or sides
-    // flips to the quote token), Max should reflect that pick, not
-    // the legacy first-deposit slot.
-    const n = selectedNote;
-    if (!n) return;
-    const num = Number(n.amount.replace(/,/g, ""));
-    if (!Number.isFinite(num)) return;
-    const v = num * frac;
-    setSize(v.toLocaleString("en-US", { maximumFractionDigits: 4 }));
-  };
+  // Buy-side (receive) token metadata + projected total. Drives
+  // the `Split equally` button and the live "Allocated" feedback
+  // in `RecipientsSection`.
+  const { receiveSymbol, receiveDecimals, receiveTotalDisplay } = useMemo(() => {
+    const buySymbol = side === "sell" ? pair.quote : pair.base;
+    const tok = DEMO_NETWORK.tokens.find((t) => t.symbol === buySymbol);
+    const decimals = tok?.decimals ?? 18;
+    const priceNum = Number(price.replace(/,/g, ""));
+    const sizeNum = Number(size.replace(/,/g, ""));
+    let total = NaN;
+    if (Number.isFinite(priceNum) && Number.isFinite(sizeNum) && sizeNum > 0) {
+      // Sell side: size in base, price in quote/base → receive in quote.
+      // Buy side: size already in base (the receive side), no price multiply.
+      total = side === "sell" ? priceNum * sizeNum : sizeNum;
+    }
+    const display = Number.isFinite(total)
+      ? total.toLocaleString("en-US", { maximumFractionDigits: 4 })
+      : "";
+    return {
+      receiveSymbol: buySymbol,
+      receiveDecimals: decimals,
+      receiveTotalDisplay: display,
+    };
+  }, [side, pair.base, pair.quote, price, size]);
 
   const fillFromRow = (row: RowData) => {
     setPrice(row.price);
@@ -229,18 +241,6 @@ export default function Workbench() {
                     onChange={(e) => setSize(e.target.value)}
                     className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
                   />
-                  <div className="mt-1.5 flex gap-1">
-                    {[0.25, 0.5, 0.75, 1].map((f) => (
-                      <button
-                        key={f}
-                        type="button"
-                        onClick={() => fillFraction(f)}
-                        className="flex-1 rounded border border-[var(--color-border)] py-1 text-[11px] font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-                      >
-                        {f === 1 ? "Max" : `${f * 100}%`}
-                      </button>
-                    ))}
-                  </div>
                 </Field>
               </>
             )}
@@ -248,7 +248,14 @@ export default function Workbench() {
 
           {selectedNote && (
             <>
-              <RecipientsSection />
+              <RecipientsSection
+                quoteSymbol={receiveSymbol}
+                receiveTotal={receiveTotalDisplay}
+                receiveDecimals={receiveDecimals}
+              />
+
+              <ExpiryField />
+
               <AdvancedSettings />
 
               <FillEstimate
@@ -329,6 +336,35 @@ export default function Workbench() {
       />
 
       <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} />
+    </div>
+  );
+}
+
+/** Order's "must settle by" deadline. Surfaced in the main form
+ *  because the user is picking an absolute deadline, not one of a
+ *  handful of presets — and because every recipient's release time
+ *  is relative to "after the order actually settles". Hidden inside
+ *  Advanced would let users miss that their order has a hard
+ *  expiry. */
+function ExpiryField() {
+  const { expiry, setExpiry } = useTradeForm();
+  return (
+    <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
+      <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+        Order must settle by
+      </label>
+      <input
+        type="datetime-local"
+        value={expiry}
+        onChange={(e) => setExpiry(e.target.value)}
+        aria-label="Order expiry deadline"
+        className="mt-1.5 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-sm"
+      />
+      <p className="mt-1 text-[11px] text-[var(--color-text-subtle)]">
+        Hard deadline. If the relayer doesn&apos;t match this order by then,
+        it expires and your funds stay in your vault. Empty = 1&nbsp;hour from
+        now.
+      </p>
     </div>
   );
 }

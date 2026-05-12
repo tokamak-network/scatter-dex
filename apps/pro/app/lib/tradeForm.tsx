@@ -17,8 +17,8 @@ import {
 const FEATURED = LAUNCH_PAIRS.find((p) => p.featured)?.display ?? "ETH/USDC";
 
 /** Per-claim recipient row. Mirrors `frontend/`'s ClaimRow shape so
- *  porting the per-claim UX (address, amount, delay) translates
- *  straight into our SDK's `ClaimEntry`. */
+ *  porting the per-claim UX (address, amount, release time)
+ *  translates straight into our SDK's `ClaimEntry`. */
 export interface RecipientRow {
   /** Stable id for React keys; set on push. */
   id: number;
@@ -29,15 +29,17 @@ export interface RecipientRow {
    *  applied at submit). Sum across rows must cover the post-fee
    *  receive total. */
   amount: string;
-  /** Release delay number + unit. Default 0 hr = immediate. */
-  delay: string;
-  delayUnit: "min" | "hr" | "day";
+  /** Absolute release time as a local `datetime-local` value
+   *  (`YYYY-MM-DDTHH:mm`). Empty = release immediately on settle.
+   *  Replaces the previous delay-from-now model so users specify
+   *  "when can this be claimed" instead of mental-math from now. */
+  releaseAt: string;
 }
 
 let nextRowId = 1;
 
 function freshRow(): RecipientRow {
-  return { id: nextRowId++, address: "", amount: "", delay: "0", delayUnit: "hr" };
+  return { id: nextRowId++, address: "", amount: "", releaseAt: "" };
 }
 
 interface TradeFormState {
@@ -53,8 +55,9 @@ interface TradeFormState {
   size: string;
   setSize(s: string): void;
 
-  /** Advanced settings collapsed by default; expanding reveals
-   *  multi-recipient list + expiry + maxFee. */
+  /** Advanced settings collapsed by default; expanding reveals the
+   *  max-fee tuner. Expiry surfaces in the main form because the
+   *  user is now picking an absolute deadline, not a preset. */
   advancedOpen: boolean;
   setAdvancedOpen(v: boolean): void;
 
@@ -69,13 +72,20 @@ interface TradeFormState {
     value: RecipientRow[K],
   ): void;
   resetRecipients(): void;
+  /** Replace the recipients list wholesale (e.g. after picking
+   *  multiple entries from the address book). Caps at 16. */
+  setRecipients(next: RecipientRow[]): void;
+  /** Helper: spread the projected receive-side total across all
+   *  recipient rows evenly. Caller computes `total`; this only
+   *  fills the row strings. */
+  splitEqually(total: string): void;
 
-  /** Order expiry as preset chip key. Default 1h. Custom expiry
-   *  (number + unit picker) is a follow-up — the preset chips cover
-   *  the common range and avoid a typo-prone manual entry on the
-   *  hot path. */
-  expiry: "15m" | "1h" | "4h" | "24h" | "7d";
-  setExpiry(v: TradeFormState["expiry"]): void;
+  /** Order's "must settle by" deadline as a local `datetime-local`
+   *  value (`YYYY-MM-DDTHH:mm`). Empty = use a 1-hour default at
+   *  submit. Surfaced as an absolute date so the user doesn't have
+   *  to mental-math a preset against the current clock. */
+  expiry: string;
+  setExpiry(v: string): void;
 
   /** Max relayer fee in basis points. Range 0–100 (0–1%). Default
    *  30 mirrors the frontend reference impl. */
@@ -99,8 +109,8 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   const [price, setPrice] = useState("4,205");
   const [size, setSize] = useState("2.0");
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [recipients, setRecipients] = useState<RecipientRow[]>(() => [freshRow()]);
-  const [expiry, setExpiry] = useState<TradeFormState["expiry"]>("1h");
+  const [recipients, setRecipientsState] = useState<RecipientRow[]>(() => [freshRow()]);
+  const [expiry, setExpiry] = useState<string>("");
   const [maxFeeBps, setMaxFeeBps] = useState(30);
 
   const setPairBy = useCallback((display: string) => {
@@ -109,16 +119,16 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addRecipient = useCallback(() => {
-    setRecipients((prev) => (prev.length >= 16 ? prev : [...prev, freshRow()]));
+    setRecipientsState((prev) => (prev.length >= 16 ? prev : [...prev, freshRow()]));
   }, []);
 
   const removeRecipient = useCallback((id: number) => {
-    setRecipients((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
+    setRecipientsState((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
   }, []);
 
   const updateRecipient = useCallback(
     <K extends keyof RecipientRow>(id: number, field: K, value: RecipientRow[K]) => {
-      setRecipients((prev) =>
+      setRecipientsState((prev) =>
         prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)),
       );
     },
@@ -126,7 +136,26 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   );
 
   const resetRecipients = useCallback(() => {
-    setRecipients([freshRow()]);
+    setRecipientsState([freshRow()]);
+  }, []);
+
+  const setRecipients = useCallback((next: RecipientRow[]) => {
+    setRecipientsState(next.slice(0, 16));
+  }, []);
+
+  const splitEqually = useCallback((total: string) => {
+    setRecipientsState((prev) => {
+      // Total parses as a decimal display string ("123.45"). Bail
+      // cleanly on garbage input — the button shouldn't make the
+      // form worse than not pressing it.
+      const totalNum = Number(total.replace(/,/g, ""));
+      if (!Number.isFinite(totalNum) || totalNum <= 0 || prev.length === 0) return prev;
+      const each = totalNum / prev.length;
+      // 8 fractional digits is plenty for the display string; the
+      // canonical value comes from `parseUnits` at submit time.
+      const display = each.toLocaleString("en-US", { maximumFractionDigits: 8 });
+      return prev.map((r) => ({ ...r, amount: display }));
+    });
   }, []);
 
   const value = useMemo<TradeFormState>(
@@ -146,6 +175,8 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       removeRecipient,
       updateRecipient,
       resetRecipients,
+      setRecipients,
+      splitEqually,
       expiry,
       setExpiry,
       maxFeeBps,
@@ -155,7 +186,8 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       pair, setPairBy,
       side, price, size,
       advancedOpen,
-      recipients, addRecipient, removeRecipient, updateRecipient, resetRecipients,
+      recipients, addRecipient, removeRecipient, updateRecipient,
+      resetRecipients, setRecipients, splitEqually,
       expiry, maxFeeBps,
     ],
   );
@@ -163,22 +195,25 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   return <TradeFormCtx.Provider value={value}>{children}</TradeFormCtx.Provider>;
 }
 
-/** Convert preset expiry chip → seconds. Used at submit time when
- *  building the AuthorizeProofInput. */
-export function expirySeconds(key: TradeFormState["expiry"]): number {
-  switch (key) {
-    case "15m": return 15 * 60;
-    case "1h":  return 60 * 60;
-    case "4h":  return 4 * 60 * 60;
-    case "24h": return 24 * 60 * 60;
-    case "7d":  return 7 * 24 * 60 * 60;
+/** Convert the `datetime-local` expiry string to an absolute
+ *  Unix timestamp (seconds). Empty / malformed input falls back to
+ *  one hour from now — a sensible default that beats letting the
+ *  order revert at submit. */
+export function expiryToUnixSec(value: string): bigint {
+  if (value) {
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms)) return BigInt(Math.floor(ms / 1000));
   }
+  return BigInt(Math.floor(Date.now() / 1000) + 60 * 60);
 }
 
-/** Convert a recipient row's delay into seconds. */
-export function delaySeconds(row: Pick<RecipientRow, "delay" | "delayUnit">): number {
-  const n = Number(row.delay);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  const mult = row.delayUnit === "min" ? 60 : row.delayUnit === "hr" ? 3600 : 86400;
-  return Math.floor(n * mult);
+/** Convert a recipient row's `releaseAt` to an absolute Unix
+ *  timestamp (seconds). Empty value = release immediately on
+ *  settle, expressed as the current second. */
+export function releaseAtToUnixSec(row: Pick<RecipientRow, "releaseAt">): bigint {
+  if (row.releaseAt) {
+    const ms = Date.parse(row.releaseAt);
+    if (Number.isFinite(ms)) return BigInt(Math.floor(ms / 1000));
+  }
+  return BigInt(Math.floor(Date.now() / 1000));
 }
