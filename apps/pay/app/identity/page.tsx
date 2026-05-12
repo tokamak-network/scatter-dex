@@ -75,7 +75,9 @@ export default function IdentityPage() {
             >
               {state.kind === "expiring" || state.kind === "expired"
                 ? "Renew on zk-X509 ↗"
-                : "Register on zk-X509 ↗"}
+                : state.kind === "error"
+                  ? "Check on zk-X509 ↗"
+                  : "Register on zk-X509 ↗"}
             </a>
           )}
           <button
@@ -135,10 +137,16 @@ export default function IdentityPage() {
                         href={zkUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        title="Register an identity with this CA on zk-X509 (new tab)"
+                        title={
+                          state.kind === "verified"
+                            ? "View your registration on zk-X509 (new tab)"
+                            : "Register an identity with this CA on zk-X509 (new tab)"
+                        }
                         className="whitespace-nowrap text-[10px] text-[var(--color-primary)] underline-offset-2 hover:underline"
                       >
-                        Register with zk-X509 ↗
+                        {state.kind === "verified"
+                          ? "View on zk-X509 ↗"
+                          : "Register with zk-X509 ↗"}
                       </a>
                     )}
                   </span>
