@@ -15,6 +15,7 @@ import { RecipientsSection } from "../components/RecipientsSection";
 import { NoteSelect } from "../components/NoteSelect";
 import { RelayerPill } from "../components/RelayerPill";
 import { DepositModal } from "../components/DepositModal";
+import { WorkspaceBar } from "../components/WorkspaceBar";
 import { DEMO_NETWORK } from "../lib/network";
 import { useReferencePrice } from "../lib/useReferencePrice";
 import { formatUsd, parseLooseNumber } from "../lib/format";
@@ -149,6 +150,8 @@ export default function Workbench() {
 
   return (
     <div className="space-y-6">
+      <WorkspaceBar />
+
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold">Workbench</h1>
