@@ -4,7 +4,7 @@ import { ClientProviders } from "./components/ClientProviders";
 
 export const metadata: Metadata = {
   title: "zkScatter | Privacy-Preserving DEX",
-  description: "Secure, stealth, and decentralized trading with zero-knowledge settlements.",
+  description: "Secure and decentralized trading with zero-knowledge settlements.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

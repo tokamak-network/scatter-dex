@@ -1,17 +1,13 @@
 import { ethers } from "ethers";
 import type { TokenInfo } from "../../lib/tokens";
-import { isMetaAddress, generateStealthAddress } from "../../lib/stealth";
 import { poseidonHash, buildMerkleTree, randomFieldElement, computeCommitment, getMerkleProof } from "../../lib/zk/commitment";
 import type { StoredNote } from "../../lib/zk/note-storage";
 import { getReadProvider, getSafeFromBlock } from "../../lib/provider";
 import { getCommitmentPoolAddress } from "../../lib/config";
 import { COMMITMENT_POOL_ABI } from "../../lib/contracts";
 
-export type RecipientMode = "standard" | "stealth";
-
 export interface ClaimRow {
   id: number;
-  mode: RecipientMode;
   address: string;
   amount: string;
   delay: string;
@@ -69,16 +65,10 @@ export async function buildOrderProof(params: BuildOrderParams) {
     });
   }
 
-  // Build claims data (with optional ephemeralPubKey for stealth)
-  const claimDataWithEpk = claims.map((c, idx) => {
+  // Build claims data
+  const claimData = claims.map((c, idx) => {
     let recipient: string;
-    let ephemeralPubKey: string | undefined;
-    if (c.mode === "stealth") {
-      if (!c.address || !isMetaAddress(c.address)) throw new Error(`Claim #${idx + 1}: Stealth mode requires a valid meta-address (st:eth:0x...)`);
-      const stealth = generateStealthAddress(c.address);
-      recipient = stealth.stealthAddress;
-      ephemeralPubKey = stealth.ephemeralPubKey;
-    } else if (c.address && !ethers.isAddress(c.address)) {
+    if (c.address && !ethers.isAddress(c.address)) {
       throw new Error(`Claim #${idx + 1}: Invalid recipient address`);
     } else {
       recipient = c.address || account || ethers.ZeroAddress;
@@ -87,9 +77,8 @@ export async function buildOrderProof(params: BuildOrderParams) {
     const releaseTime = BigInt(Math.floor(Date.now() / 1000) + delaySec);
     const claimSecret = randomFieldElement();
     const claimAmount = c.amount ? ethers.parseUnits(c.amount, buyToken.decimals).toString() : "0";
-    return { secret: claimSecret.toString(), recipient: BigInt(recipient).toString(), token: BigInt(buyToken.address).toString(), amount: claimAmount, releaseTime: releaseTime.toString(), ephemeralPubKey };
+    return { secret: claimSecret.toString(), recipient: BigInt(recipient).toString(), token: BigInt(buyToken.address).toString(), amount: claimAmount, releaseTime: releaseTime.toString() };
   });
-  const claimData = claimDataWithEpk.map(({ ephemeralPubKey: _, ...rest }) => rest);
 
   // Compute claimsRoot
   report("Hashing claims and building claims tree...");
@@ -137,6 +126,6 @@ export async function buildOrderProof(params: BuildOrderParams) {
     newSalt: change > 0n ? newSalt : undefined,
   });
 
-  return { proofResult, claimData, claimDataWithEpk, claimsRoot, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment };
+  return { proofResult, claimData, claimsRoot, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment };
 }
 

@@ -136,7 +136,7 @@ function PrivateOrderPageInner() {
   // Claims
   const nextClaimId = useRef(1);
   const [claims, setClaims] = useState<ClaimRow[]>([
-    { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" },
+    { id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" },
   ]);
 
   // Same-token orders are direct distributions, not trades — the contract
@@ -278,7 +278,7 @@ function PrivateOrderPageInner() {
   // Claims helpers
   const addClaim = () => {
     if (claims.length >= MAX_CLAIMS) return;
-    setClaims([...claims, { id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
+    setClaims([...claims, { id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" }]);
   };
   const removeClaim = (id: number) => {
     if (claims.length <= 1) return;
@@ -534,7 +534,7 @@ function PrivateOrderPageInner() {
       const selectedZkRelayer = zkRelayers[selectedRelayerIdx];
       if (!selectedZkRelayer) throw new Error("No ZK relayer selected");
 
-      const { proofResult, claimData, claimDataWithEpk, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
+      const { proofResult, claimData, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
         sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account,
         selectedNote, changeSalt, maxFee: BigInt(effectiveFeeBps || 30),
         onProgress: setSigningProgress,
@@ -590,7 +590,7 @@ function PrivateOrderPageInner() {
 
       // Save all claim files as a single bundled JSON download
       // Each entry contains the data needed for claimWithProof on the Private Claim page
-      const claimFiles = claimDataWithEpk.map((c, idx) => ({
+      const claimFiles = claimData.map((c, idx) => ({
         secret: c.secret,
         recipient: c.recipient,
         token: c.token,
@@ -599,7 +599,6 @@ function PrivateOrderPageInner() {
         leafIndex: idx,
         allLeaves: padded.map((l) => l.toString()),
         relayerUrl,
-        ...(c.ephemeralPubKey ? { ephemeralPubKey: c.ephemeralPubKey } : {}),
       }));
       const bundle = {
         order: {
@@ -674,7 +673,7 @@ function PrivateOrderPageInner() {
       setBuyAmount("");
       setPrice("");
       setSelectedCommitment(null);
-      setClaims([{ id: nextClaimId.current++, mode: "standard", address: "", amount: "", delay: "1", delayUnit: "hr" }]);
+      setClaims([{ id: nextClaimId.current++, address: "", amount: "", delay: "1", delayUnit: "hr" }]);
     } catch (e: unknown) {
       setError(friendlyError(e));
       setSigningProgress("");
@@ -1043,22 +1042,6 @@ function PrivateOrderPageInner() {
                   <div key={c.id} className="bg-surface-container-low/50 rounded-lg p-3 border border-outline-variant/5">
                     <div className="flex items-center gap-2 mb-2">
                       <span className="text-xs text-on-surface-variant font-bold">#{idx + 1}</span>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() => updateClaim(c.id, "mode", "standard")}
-                          title="Send to a regular Ethereum address. Recipient claims directly from their wallet; the address is visible on-chain."
-                          className={`px-2 py-0.5 rounded text-xs font-bold ${
-                            c.mode === "standard" ? "bg-surface-container-highest text-on-surface" : "text-on-surface-variant"
-                          }`}
-                        >Standard</button>
-                        <button
-                          onClick={() => updateClaim(c.id, "mode", "stealth")}
-                          title="Send to a meta-address (st:eth:…). A one-time stealth address is derived per claim; the recipient's identity isn't linkable on-chain. Claiming can be completed either gaslessly via relayer or from the claimant's own wallet, depending on the claim mode they pick."
-                          className={`px-2 py-0.5 rounded text-xs font-bold ${
-                            c.mode === "stealth" ? "bg-primary/10 text-primary" : "text-on-surface-variant"
-                          }`}
-                        >Stealth</button>
-                      </div>
                       <div className="flex-1" />
                       {claims.length > 1 && (
                         <button onClick={() => removeClaim(c.id)} className="text-on-surface-variant hover:text-error">
@@ -1072,12 +1055,10 @@ function PrivateOrderPageInner() {
                           <input
                             type="text" value={c.address}
                             onChange={(e) => updateClaim(c.id, "address", e.target.value)}
-                            placeholder={c.mode === "stealth" ? "st:eth:0x..." : "0x... (empty = self)"}
+                            placeholder="0x... (empty = self)"
                             className="flex-1 min-w-0 bg-white/10 border border-outline-variant/30 rounded-lg p-2.5 text-xs font-mono focus:ring-1 focus:ring-primary text-on-surface"
                           />
-                          {c.mode !== "stealth" && (
-                            <AddressPicker onPick={(addr) => updateClaim(c.id, "address", addr)} />
-                          )}
+                          <AddressPicker onPick={(addr) => updateClaim(c.id, "address", addr)} />
                         </div>
                       </div>
                       <div className="col-span-3">
