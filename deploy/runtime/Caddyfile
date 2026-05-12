@@ -1,0 +1,23 @@
+# deploy/runtime/Caddyfile
+# Subdomain routing:
+#   orderbook.<DOMAIN>  →  shared-orderbook:4000
+#   zk.<DOMAIN>         →  zk-relayer:3002
+#
+# A and AAAA records for both subdomains must point at this host before
+# Caddy can complete the ACME HTTP-01 challenge.
+
+{
+	email {$ACME_EMAIL}
+}
+
+orderbook.{$DOMAIN} {
+	reverse_proxy shared-orderbook:4000
+}
+
+zk.{$DOMAIN} {
+	reverse_proxy zk-relayer:3002
+}
+
+{$DOMAIN} {
+	respond "zkScatter relayer node" 200
+}

@@ -1,0 +1,36 @@
+# deploy/runtime/compose.tls.yml
+# Overlay that puts Caddy in front with automatic Let's Encrypt TLS.
+# Requires DOMAIN to be set in .env and an A record pointing at this host.
+#
+# Usage:
+#   docker compose -f compose.yml -f compose.tls.yml --env-file .env up -d
+
+services:
+  # Hide the upstream services behind Caddy: drop their host port mappings.
+  shared-orderbook:
+    ports: !reset []
+
+  zk-relayer:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    depends_on:
+      - shared-orderbook
+      - zk-relayer
+    environment:
+      - DOMAIN=${DOMAIN}
+      - ACME_EMAIL=${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

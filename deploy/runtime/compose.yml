@@ -1,0 +1,67 @@
+# deploy/runtime/compose.yml
+# Runtime composition for a single VM (e.g. GCP e2-micro).
+# Pulls prebuilt images; no source code on the VM.
+#
+# Usage:
+#   docker compose -f compose.yml --env-file .env up -d
+#
+# Add TLS with the overlay (after a domain is pointed at this host):
+#   docker compose -f compose.yml -f compose.tls.yml --env-file .env up -d
+
+services:
+  shared-orderbook:
+    image: ${SHARED_ORDERBOOK_IMAGE}:${IMAGE_TAG:-latest}
+    container_name: shared-orderbook
+    restart: unless-stopped
+    environment:
+      - PORT=4000
+      - DB_PATH=${SHARED_ORDERBOOK_DB_PATH:-/data/shared-orderbook.db}
+    volumes:
+      - orderbook-data:/data
+    ports:
+      - "${SHARED_ORDERBOOK_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:4000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  zk-relayer:
+    image: ${ZK_RELAYER_IMAGE}:${IMAGE_TAG:-latest}
+    container_name: zk-relayer
+    restart: unless-stopped
+    depends_on:
+      shared-orderbook:
+        condition: service_healthy
+    environment:
+      - PORT=3002
+      - DB_PATH=/data/zk-relayer.db
+      - RPC_URL=${RPC_URL}
+      - COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
+      - PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
+      - RELAYER_FEE=${RELAYER_FEE:-30}
+      - CORS_ORIGINS=${CORS_ORIGINS}
+      - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
+      - RELAYER_PRIVATE_KEY_FILE=/run/secrets/relayer_key
+    secrets:
+      - relayer_key
+    volumes:
+      - zk-relayer-data:/data
+      - ${CIRCUITS_BUILD_DIR:-/opt/zkscatter/circuits/build}:/app/circuits/build:ro
+    ports:
+      - "${ZK_RELAYER_PORT:-3002}:3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+secrets:
+  relayer_key:
+    file: ${RELAYER_KEY_FILE:-/opt/zkscatter/secrets/relayer.key}
+
+volumes:
+  orderbook-data:
+  zk-relayer-data:
