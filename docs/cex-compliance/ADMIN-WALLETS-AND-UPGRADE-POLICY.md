@@ -50,7 +50,7 @@ or `setClaimVerifier(uint8 tier, address verifier)`.
 | Role | Authority | Held by (target) |
 |---|---|---|
 | **Proxy admin** | Replaces a proxy's implementation. Cannot read or write contract storage directly. Cannot transfer ownership of the implementation's logic. | Dedicated `ProxyAdmin` contract owned by the multisig. Each upgradeable proxy has its own admin instance to limit blast radius. |
-| **Owner** (per contract, `Ownable2Step` / `Ownable2StepUpgradeable`) | Calls owner-gated mutators on a specific contract (registry add/remove, **pause/unpause via `setPaused(bool)`**, fee-collector update, per-tier verifier registration). The owner is the only role that can pause — there is no separate `Pauser` permission today. | Operations multisig. |
+| **Owner** (per contract, `Ownable2Step` / `Ownable2StepUpgradeable`) | Calls owner-gated mutators on a specific contract (registry add/remove, **pause/unpause via `pause()` / `unpause()`** — OpenZeppelin `PausableUpgradeable` since PR #677), fee-collector update, per-tier verifier registration. The owner is the only role that can pause — there is no separate `Pauser` permission today. | Operations multisig. |
 | **Identity registry CA** | Adds / removes individual zk-X509 registries inside `IdentityGate`. | `IdentityGate.owner`, set to the operations multisig. |
 | **Sanctions list manager** | Adds / removes addresses from `SanctionsList`. | `SanctionsList.owner`, set to the operations multisig. |
 | **Relayer registrar** | Self-service via the `RelayerRegistry` contract; operators bond, post fees, exit on cooldown. | Each relayer EOA, gated by the registry's own modifiers. No external admin role. |
@@ -96,11 +96,11 @@ bug):
 
 Critical bug or active exploit:
 
-1. **Pause first.** The owner multisig calls `setPaused(true)` on
-   the affected contracts (each contract has its own owner-gated
-   setter; there's no global pause). This freezes the relevant
-   entry points immediately; no upgrade is needed to stop the
-   bleed.
+1. **Pause first.** The owner multisig calls `pause()` on the
+   affected contracts (each contract has its own owner-gated
+   `pause()` / `unpause()` from OpenZeppelin `PausableUpgradeable`;
+   there's no global pause). This freezes the relevant entry
+   points immediately; no upgrade is needed to stop the bleed.
 2. **Notify.** Post an incident notice (operator channel, the
    project's public status page, and the exchange contact list
    from this pack). Include: which contract is paused, what's
@@ -126,10 +126,12 @@ Critical bug or active exploit:
   catches a layout that's incompatible with the live state before
   the proxy can be flipped.
 - **Does not provide a global pause for the whole protocol.**
-  Each pausable contract owns its own `paused` flag and
-  `setPaused(bool)` setter; entry points check the flag with a
-  `ContractPaused()` revert. The incident-response team targets
-  only the affected surface — there's no single switch.
+  Each pausable contract owns its own paused state through
+  OpenZeppelin `PausableUpgradeable` and owner-gated `pause()` /
+  `unpause()`; entry points use the `whenNotPaused` modifier (or
+  an equivalent revert) to gate execution. The incident-response
+  team targets only the affected surface — there's no single
+  switch.
 - **Does not permit ownership transfer outside the documented
   multisig.** `Ownable2Step` enforces a two-step accept; an
   accidental ownership transfer to an external EOA is not possible
@@ -149,8 +151,7 @@ What an exchange's compliance team should subscribe to:
 | `Upgraded(address indexed implementation)` | Each upgradeable proxy | Implementation address changes. |
 | `OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner)` | Each `Ownable2Step` / `Ownable2StepUpgradeable` contract (`CommitmentPool`, `PrivateSettlement`, `IdentityGate`, etc.) | Owner transfer is queued (before the new owner accepts). **Not** emitted by OZ `ProxyAdmin`, which uses `Ownable`. |
 | `OwnershipTransferred(address indexed previousOwner, address indexed newOwner)` | Every owned contract above, plus `ProxyAdmin` | Owner transfer is accepted (for `Ownable2Step*`) or transferred outright (for `Ownable`-only `ProxyAdmin`). |
-| `Paused(bool paused)` | `CommitmentPool` | Owner calls `setPaused(true)` or `setPaused(false)`. |
-| `PausedUpdated(bool paused)` | `PrivateSettlement` | Same, distinct event name from `CommitmentPool` — both must be subscribed. |
+| `Paused(address account)` / `Unpaused(address account)` | Every pausable contract (`CommitmentPool`, `PrivateSettlement`) via OZ `PausableUpgradeable` | Owner calls `pause()` or `unpause()`. The `account` is the caller (the owner multisig). Both contracts emit the same canonical OZ event shape; previously each had a custom event (`Paused(bool)` / `PausedUpdated(bool)`), which PR #677 replaced. |
 | `AdminChanged(address previousAdmin, address newAdmin)` | Each `TransparentUpgradeableProxy` | Proxy admin transferred. Rare. |
 | Sanctions list mutation | `SanctionsList` (event named per the contract) | Address added or removed. |
 | `IdentityGate` registry mutation | `IdentityGate` (event named per the contract) | A child registry is added or removed from the aggregator. |
@@ -161,8 +162,14 @@ sources.
 
 ## History
 
-- 2026-05-12 — initial document. Reflects the upgrade-track work
-  landed in PRs #659 (TransparentUpgradeableProxy infra) and #661
-  (FeeVault converted). Subsequent upgrade-track PRs add other
-  upgradeable contracts; this document is updated in the same PR
-  whenever the set changes.
+- 2026-05-12 (initial) — Reflects the upgrade-track work landed in
+  PRs #659 (TransparentUpgradeableProxy infra) and #661 (FeeVault
+  converted). Subsequent upgrade-track PRs add other upgradeable
+  contracts; this document is updated in the same PR whenever
+  the set changes.
+- 2026-05-12 (PR #677 follow-up) — Pause mechanism rewritten to
+  match the `PausableUpgradeable` migration: roles row, incident
+  procedure, and the monitoring events table now describe
+  `pause()` / `unpause()` and the canonical OZ `Paused(address)` /
+  `Unpaused(address)` events. The previous custom `Paused(bool)`
+  / `PausedUpdated(bool)` events no longer exist.
