@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
@@ -7,8 +7,9 @@ import {FeeVault} from "../../src/FeeVault.sol";
 
 /// @dev Centralised proxy boilerplate for upgradeable contracts under test.
 ///      Deploys a fresh implementation + TransparentUpgradeableProxy and
-///      returns the proxy address cast to the contract type. The proxy admin
-///      is set to `proxyAdminOwner`; the contract owner to `initialOwner`.
+///      returns the proxy address cast to the contract type.
+///      `proxyAdminOwner` becomes the owner of the auto-created ProxyAdmin
+///      (the proxy's upgrade authority); `initialOwner` becomes the contract owner.
 library ProxyDeployer {
     function deployFeeVault(address proxyAdminOwner, address initialOwner, address treasury, uint256 platformFeeBps)
         internal
