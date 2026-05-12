@@ -55,8 +55,11 @@ const claimResult = await generateClaimProof(
     secret: claim.secret,
     leafIndex: claim.leafIndex,
     merkleProof,
-    recipient: account,            // where the unlocked tokens land
-    token: claim.token,
+    // The claim circuit hashes recipient + token as field elements,
+    // so both must be bigint (their 0x address strings widened to
+    // uint256). `account` is the 0x-prefixed connecting wallet.
+    recipient: BigInt(account),
+    token: BigInt(claim.token),
     amount: claim.amount,
     releaseTime: claim.releaseTime,
   },

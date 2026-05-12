@@ -112,12 +112,50 @@ function isValidEntry(e: unknown): e is WalletEntry {
  *  `isValidEntry` if they had no default `address`. Treat them as
  *  opportunistically-droppable rather than failing the whole book —
  *  so a user with one legacy stealth-only contact can still read /
- *  restore the rest of their address book. */
+ *  restore the rest of their address book.
+ *
+ *  Tightened predicate: requires the entry to look otherwise
+ *  well-formed (an `id`, a `label`, a `createdAt`, and a string
+ *  `metaAddress`) and to have **no usable on-chain routing target**
+ *  — i.e. neither a string `address` nor an `addressByChain` map.
+ *  An entry that drifts on `address` type alone (`null`, number,
+ *  …) is real corruption and still surfaces as
+ *  `WalletBookCorruptError`. */
 function isLegacyStealthOnlyEntry(e: unknown): boolean {
   if (!e || typeof e !== "object") return false;
   const v = e as Record<string, unknown>;
-  return typeof v.metaAddress === "string" && typeof v.address !== "string";
+  const shapeOk =
+    typeof v.id === "string" &&
+    typeof v.label === "string" &&
+    typeof v.createdAt === "number" &&
+    typeof v.metaAddress === "string";
+  if (!shapeOk) return false;
+  // Has a usable routing target? Don't drop — let isValidEntry decide
+  // whether the per-chain override is well-formed or this entry is
+  // genuinely corrupt.
+  const hasRoutingTarget =
+    typeof v.address === "string" ||
+    (v.addressByChain !== undefined && v.addressByChain !== null);
+  return !hasRoutingTarget;
 }
+
+/** Known fields on the current `WalletEntry` shape. Used as the
+ *  whitelist for the migration strip pass in `loadWalletBook` so a
+ *  stale field from a previous schema (e.g. the long-removed
+ *  `discordHandle`, or the just-removed `metaAddress`) doesn't ride
+ *  along on subsequent writes. Centralised here so new fields added
+ *  to `WalletEntry` only need one edit. */
+const WALLET_ENTRY_KEYS = [
+  "id",
+  "label",
+  "address",
+  "addressByChain",
+  "memo",
+  "email",
+  "telegramHandle",
+  "kakaoId",
+  "createdAt",
+] as const;
 
 /** Resolve the address Pay should use for a run on `chainId`.
  *  Falls back to the entry's default `address` when no per-chain
@@ -174,13 +212,17 @@ export async function loadWalletBook(): Promise<WalletEntry[]> {
   if (!filtered.every(isValidEntry)) {
     throw new WalletBookCorruptError(`${WALLET_BOOK_FILENAME} contains invalid entries`);
   }
-  // Strip any residual `metaAddress` field from migrated entries so it
-  // doesn't ride along on subsequent writes.
+  // Whitelist-strip: keep only the keys on the current `WalletEntry`
+  // shape so legacy fields (metaAddress, discordHandle, …) don't ride
+  // along on subsequent writes. New fields added to `WalletEntry`
+  // need to be added to `WALLET_ENTRY_KEYS` to survive this pass.
   return filtered.map((e) => {
-    const { metaAddress: _legacyMeta, ...rest } = e as WalletEntry & {
-      metaAddress?: string;
-    };
-    return rest;
+    const src = e as unknown as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of WALLET_ENTRY_KEYS) {
+      if (src[k] !== undefined) out[k] = src[k];
+    }
+    return out as unknown as WalletEntry;
   });
 }
 

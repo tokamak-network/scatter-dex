@@ -82,9 +82,10 @@ const authResult = await generateAuthorizeProof(
     nonce,
     relayer: target.address,
     eddsaPrivateKey: eddsa.privateKey,
-    // `recipient` is the wallet address that will be able to claim
-    // this payout. The `claim` circuit binds the payout to this
-    // address — only that EOA can submit the claim.
+    // `recipient` is the address the payout will be paid to. The
+    // `claim` circuit binds the payout to this address — anyone
+    // can submit a valid claim proof (the call is permissionless),
+    // but the funds always land at `recipient`.
     claims: [
       {
         secret: randomFieldElement(),
