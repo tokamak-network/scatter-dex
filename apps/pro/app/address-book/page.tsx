@@ -242,7 +242,7 @@ function RecipientForm({
         ? Boolean(
             await book.add({
               label: trimmedLabel,
-              address: trimmedAddress || undefined,
+              address: trimmedAddress,
               memo: trimmedMemo || undefined,
               email: trimmedEmail || undefined,
               telegramHandle: trimmedTelegram || undefined,
