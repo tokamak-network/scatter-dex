@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
-import { Gift, Loader2, AlertCircle, Check, Upload, Eye, CheckCircle2, Download, Wallet, Radio } from "lucide-react";
+import { Gift, Loader2, AlertCircle, Check, Upload, CheckCircle2, Download, Wallet, Radio } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
 import { getPrivateSettlementAddress } from "../../lib/config";
@@ -71,7 +71,6 @@ interface ClaimData {
   leafIndex: number;
   allLeaves: string[];
   relayerUrl?: string; // relayer that settled this order
-  ephemeralPubKey?: string; // present if stealth address was used
 }
 
 export default function PrivateClaimPage() {
@@ -128,12 +127,6 @@ export default function PrivateClaimPage() {
     }
     for (let i = 0; i < c.allLeaves.length; i++) {
       try { BigInt(c.allLeaves[i]); } catch { throw new Error(`allLeaves[${i}] is not a valid number`); }
-    }
-    // Validate ephemeralPubKey format if present
-    if (c.ephemeralPubKey !== undefined) {
-      if (typeof c.ephemeralPubKey !== "string" || !/^0x[0-9a-fA-F]+$/.test(c.ephemeralPubKey)) {
-        throw new Error("ephemeralPubKey must be a hex string starting with 0x");
-      }
     }
     return c as ClaimData;
   }
@@ -585,14 +578,6 @@ export default function PrivateClaimPage() {
                   </div>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Stealth indicator */}
-          {claimData?.ephemeralPubKey && (
-            <div className="flex items-center gap-2 text-xs text-primary bg-primary/5 px-3 py-2 rounded-md">
-              <Eye className="w-3.5 h-3.5" />
-              Stealth claim — tokens will be sent to a one-time stealth address. Your connected wallet pays gas only.
             </div>
           )}
 
