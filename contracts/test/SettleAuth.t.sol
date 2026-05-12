@@ -9,6 +9,7 @@ import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
@@ -618,11 +619,11 @@ contract SettleAuthTest is Test {
     }
 
     function test_settleAuth_paused_reverts() public {
-        settlement.setPaused(true);
+        settlement.pause();
         PrivateSettlement.SettleAuthParams memory p = _defaultParams();
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.ContractPaused.selector);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         settlement.settleAuth(p);
     }
 
@@ -946,14 +947,14 @@ contract SettleAuthTest is Test {
     }
 
     function test_scatterDirectAuth_revert_paused() public {
-        settlement.setPaused(true);
+        settlement.pause();
         PrivateSettlement.ScatterDirectAuthParams memory p = _defaultScatterDirectAuth();
 
         vm.prank(makerRelayer);
-        vm.expectRevert(PrivateSettlement.ContractPaused.selector);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         settlement.scatterDirectAuth(p);
 
-        settlement.setPaused(false);
+        settlement.unpause();
     }
 
     function test_scatterDirectAuth_revert_tokenNotWhitelisted() public {

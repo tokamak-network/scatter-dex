@@ -1,7 +1,7 @@
 {
   "storage": [
     {
-      "astId": 2671,
+      "astId": 2840,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "levels",
       "offset": 0,
@@ -9,7 +9,7 @@
       "type": "t_uint32"
     },
     {
-      "astId": 2673,
+      "astId": 2842,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "ROOT_HISTORY_SIZE",
       "offset": 4,
@@ -17,7 +17,7 @@
       "type": "t_uint32"
     },
     {
-      "astId": 2677,
+      "astId": 2846,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "filledSubtrees",
       "offset": 0,
@@ -25,7 +25,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 2681,
+      "astId": 2850,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "roots",
       "offset": 0,
@@ -33,7 +33,7 @@
       "type": "t_mapping(t_uint256,t_uint256)"
     },
     {
-      "astId": 2683,
+      "astId": 2852,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "currentRootIndex",
       "offset": 0,
@@ -41,7 +41,7 @@
       "type": "t_uint32"
     },
     {
-      "astId": 2685,
+      "astId": 2854,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "nextIndex",
       "offset": 4,
@@ -49,7 +49,7 @@
       "type": "t_uint32"
     },
     {
-      "astId": 2690,
+      "astId": 2859,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "__gap",
       "offset": 0,
@@ -57,23 +57,23 @@
       "type": "t_array(t_uint256)50_storage"
     },
     {
-      "astId": 1569,
+      "astId": 1731,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "withdrawVerifier",
       "offset": 0,
       "slot": "54",
-      "type": "t_contract(IVerifier)2657"
+      "type": "t_contract(IVerifier)2826"
     },
     {
-      "astId": 1573,
+      "astId": 1735,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "depositVerifier",
       "offset": 0,
       "slot": "55",
-      "type": "t_contract(IDepositVerifier)2631"
+      "type": "t_contract(IDepositVerifier)2800"
     },
     {
-      "astId": 1575,
+      "astId": 1737,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "authorizedSettlement",
       "offset": 0,
@@ -81,15 +81,15 @@
       "type": "t_address"
     },
     {
-      "astId": 1581,
+      "astId": 1744,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
-      "label": "paused",
+      "label": "__deprecated_paused",
       "offset": 20,
       "slot": "56",
       "type": "t_bool"
     },
     {
-      "astId": 1585,
+      "astId": 1748,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "nullifiers",
       "offset": 0,
@@ -97,7 +97,7 @@
       "type": "t_mapping(t_uint256,t_bool)"
     },
     {
-      "astId": 1589,
+      "astId": 1752,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "whitelistedTokens",
       "offset": 0,
@@ -105,15 +105,15 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 1593,
+      "astId": 1756,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "sanctionsList",
       "offset": 0,
       "slot": "59",
-      "type": "t_contract(ISanctionsList)1478"
+      "type": "t_contract(ISanctionsList)1638"
     },
     {
-      "astId": 1600,
+      "astId": 1763,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "pendingSettlement",
       "offset": 0,
@@ -121,7 +121,7 @@
       "type": "t_address"
     },
     {
-      "astId": 1602,
+      "astId": 1765,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "pendingSettlementActivateAt",
       "offset": 0,
@@ -129,7 +129,7 @@
       "type": "t_uint256"
     },
     {
-      "astId": 1607,
+      "astId": 1770,
       "contract": "src/zk/CommitmentPool.sol:CommitmentPool",
       "label": "__gap",
       "offset": 0,
@@ -154,17 +154,17 @@
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "t_contract(IDepositVerifier)2631": {
+    "t_contract(IDepositVerifier)2800": {
       "encoding": "inplace",
       "label": "contract IDepositVerifier",
       "numberOfBytes": "20"
     },
-    "t_contract(ISanctionsList)1478": {
+    "t_contract(ISanctionsList)1638": {
       "encoding": "inplace",
       "label": "contract ISanctionsList",
       "numberOfBytes": "20"
     },
-    "t_contract(IVerifier)2657": {
+    "t_contract(IVerifier)2826": {
       "encoding": "inplace",
       "label": "contract IVerifier",
       "numberOfBytes": "20"

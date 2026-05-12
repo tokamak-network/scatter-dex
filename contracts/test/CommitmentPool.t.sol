@@ -7,6 +7,7 @@ import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 contract MockToken is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
@@ -138,10 +139,10 @@ contract CommitmentPoolTest is Test {
     }
 
     function test_deposit_when_paused_reverts() public {
-        pool.setPaused(true);
+        pool.pause();
 
         vm.prank(alice);
-        vm.expectRevert(CommitmentPool.ContractPaused.selector);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         _deposit(COMMITMENT_1, address(token), 100 ether);
     }
 
@@ -246,14 +247,14 @@ contract CommitmentPoolTest is Test {
         vm.prank(alice);
         _deposit(COMMITMENT_1, address(token), 100 ether);
 
-        pool.setPaused(true);
+        pool.pause();
         uint256 root = pool.getLastRoot();
 
         uint[2] memory proofA;
         uint[2][2] memory proofB;
         uint[2] memory proofC;
 
-        vm.expectRevert(CommitmentPool.ContractPaused.selector);
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         pool.withdraw(proofA, proofB, proofC, root, NULLIFIER_1, 0, address(token), 100 ether, alice, address(0));
     }
 
@@ -300,7 +301,7 @@ contract CommitmentPoolTest is Test {
     function test_only_owner_can_pause() public {
         vm.prank(alice);
         vm.expectRevert();
-        pool.setPaused(true);
+        pool.pause();
     }
 
     function test_only_owner_can_whitelist() public {

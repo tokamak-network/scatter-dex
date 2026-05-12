@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {PoseidonT2} from "poseidon-solidity/PoseidonT2.sol";
@@ -18,7 +19,7 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
 ///      Withdrawals require a ZK proof of commitment ownership + nullifier.
 ///      Commitment = Poseidon(ownerSecret, token, amount, salt)
 ///      Nullifier  = Poseidon(ownerSecret, salt)
-contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ownable2StepUpgradeable {
+contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, PausableUpgradeable, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
 
     // ─── Errors ──────────────────────────────────────────────────
@@ -29,7 +30,6 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
     error UnknownRoot();
     error NullifierAlreadySpent();
     error InvalidProof();
-    error ContractPaused();
     error RenounceOwnershipDisabled();
     error NotAuthorizedSettlement();
     error InsufficientPoolBalance();
@@ -71,7 +71,14 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
     ///      verifier call on values that cannot possibly verify.
     uint256 internal constant BN254_FIELD_MODULUS =
         21888242871839275222246405745257275088548364400416034343698204186575808495617;
-    bool public paused;
+    /// @dev DEPRECATED: was `bool public paused` in v0. Live pause state now
+    ///      lives in `PausableUpgradeable`'s ERC-7201 namespaced storage; this
+    ///      placeholder preserves the slot/offset of every downstream variable
+    ///      so an existing v0 proxy can upgrade without corrupting storage.
+    ///      Never read or write this field. The public `paused()` getter is
+    ///      provided by `PausableUpgradeable`; admin entrypoints moved from
+    ///      `setPaused(bool)` to `pause()` / `unpause()`.
+    bool private __deprecated_paused;
 
     mapping(uint256 => bool) public nullifiers;
     mapping(address => bool) public whitelistedTokens;
@@ -114,6 +121,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
         __Ownable_init(initialOwner);
         __Ownable2Step_init();
         __ReentrancyGuard_init();
+        __Pausable_init();
         __IncrementalMerkleTree_init(_treeLevels, _rootHistorySize);
         withdrawVerifier = IVerifier(_withdrawVerifier);
         depositVerifier = IDepositVerifier(_depositVerifier);
@@ -128,7 +136,8 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
         super.transferOwnership(newOwner);
     }
 
-    event Paused(bool paused);
+    // `Paused(address)` / `Unpaused(address)` are emitted by PausableUpgradeable;
+    // we no longer emit our own `Paused(bool)` event.
     event TokenWhitelistUpdated(address indexed token, bool allowed);
     event AuthorizedSettlementUpdated(address indexed settlement);
 
@@ -162,10 +171,14 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
         emit AuthorizedSettlementUpdated(_settlement);
     }
 
-    function setPaused(bool _paused) external onlyOwner {
-        paused = _paused;
-        emit Paused(_paused);
-    }
+    /// @notice Pause the pool. Flip this on right before an upgrade or in
+    ///         response to an incident — `deposit` and the user-facing
+    ///         `withdraw` are `whenNotPaused`-gated. The settlement-only
+    ///         `withdrawFor` is intentionally NOT gated: in-flight settlement
+    ///         flows must complete once started, since the user has already
+    ///         lost their commitment to the settle path.
+    function pause() external onlyOwner { _pause(); }
+    function unpause() external onlyOwner { _unpause(); }
 
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
@@ -214,8 +227,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
         uint256 commitment,
         address token,
         uint256 amount
-    ) external nonReentrant notSanctioned(msg.sender) {
-        if (paused) revert ContractPaused();
+    ) external nonReentrant whenNotPaused notSanctioned(msg.sender) {
         if (commitment == 0) revert ZeroCommitment();
         if (token == address(0)) revert ZeroAddress();
         if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
@@ -344,8 +356,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Ow
         uint256 amount,
         address recipient,
         address relayer
-    ) external nonReentrant notSanctioned(msg.sender) notSanctioned(recipient) {
-        if (paused) revert ContractPaused();
+    ) external nonReentrant whenNotPaused notSanctioned(msg.sender) notSanctioned(recipient) {
         _processWithdraw(proofA, proofB, proofC, root, nullifierHash, newCommitment, token, amount, recipient, relayer);
     }
 
