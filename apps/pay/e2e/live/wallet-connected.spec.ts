@@ -30,9 +30,7 @@ test.describe("Live stack — /wallet connected view", () => {
       rpcUrl: DEV_STACK_ENDPOINTS.rpcUrl,
     });
     await installTestWallet(page, {
-      account: ANVIL_VERIFIED_TEST.account,
-      chainId: ANVIL_VERIFIED_TEST.chainId,
-      privateKey: ANVIL_VERIFIED_TEST.privateKey,
+      ...ANVIL_VERIFIED_TEST,
       rpcUrl: DEV_STACK_ENDPOINTS.rpcUrl,
     });
     await page.goto("/wallet");
