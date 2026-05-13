@@ -1,8 +1,11 @@
 name: Load test (R-14)
 
-# Manual only. Don't gate PRs on perf — runner CPU varies too much
-# for stable thresholds, and the throughput numbers we care about
-# come from runs against the real deploy, not the CI host.
+# Manual only. PRs are not gated on perf — runner CPU varies too
+# much for stable thresholds, and the throughput numbers we care
+# about come from runs against a deployed staging host, not the CI
+# host. The workflow expects `target` to point at a reachable
+# orderbook instance; spinning shared-orderbook up inside the job
+# is not handled here (would need a registry-pushed image).
 
 on:
   workflow_dispatch:
@@ -22,9 +25,9 @@ on:
         options: [smoke, load, stress]
         default: smoke
       target:
-        description: "Target base URL (e.g. http://localhost:4000 inside the job, or a deployed URL)"
+        description: "Externally reachable orderbook base URL (e.g. https://orderbook-staging.example.com). Must be set; the workflow does not boot the server."
         type: string
-        default: "http://localhost:4000"
+        required: true
 
 permissions:
   contents: read
@@ -34,17 +37,6 @@ jobs:
     name: k6 ${{ inputs.scenario }} @ ${{ inputs.profile }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
-    services:
-      orderbook:
-        # Only spun up when target is the in-job default. For a
-        # deployed URL the runner just hits the network — no service.
-        image: node:20-slim
-        # Service jobs need an image but we can't easily run our
-        # built source in one without a Dockerfile + registry push.
-        # For now this slot is reserved; default `target` points at
-        # an externally-hosted instance for real runs.
-        options: --health-cmd "echo healthy" --health-interval 1s
 
     steps:
       - uses: actions/checkout@v4

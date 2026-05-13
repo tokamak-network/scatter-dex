@@ -1,55 +1,51 @@
-/** Settlement-write burst + paired reads. Mirrors the verify-job
- *  + leaderboard combination that production hits when relayers
- *  push fresh settlements and dashboards refresh in the same
- *  window.
+/** Settlement-write burst + paired dashboard reads. The shared-
+ *  orderbook's auth middleware (`relayerAuth`) runs BEFORE the
+ *  settlement payload parser, so every signed write here short-
+ *  circuits at 401 — the body shape exists only to make the request
+ *  reach the auth middleware in the first place (Content-Length,
+ *  Content-Type, etc).
  *
  *  Run: K6_TARGET=http://localhost:4000 K6_PROFILE=load k6 run orderbook-settlements.js
  */
-import { selectStages, postSigned, getJson, THRESHOLDS } from "./helpers.js";
+import { selectProfile, postSigned, getJson, uniqueHex32, markExpectedStatuses, THRESHOLDS } from "./helpers.js";
 
 export const options = {
-  stages: selectStages(),
+  scenarios: {
+    settlements: selectProfile(),
+  },
   thresholds: THRESHOLDS,
 };
 
-function freshTxHash() {
-  const counter = (Math.random() * 1e16).toString(16).padStart(16, "0");
-  return `0x${counter}${"00".repeat(24)}`;
+export function setup() {
+  markExpectedStatuses();
 }
 
-function freshNullifier() {
-  return "0x" + (Math.random() * 1e16).toString(16).padStart(16, "0") + "00".repeat(24);
-}
+const READ_ENDPOINTS = [
+  "/api/settlements?limit=50",
+  "/api/leaderboard?limit=20",
+  "/api/network/totals",
+];
 
 export default function () {
-  const r = Math.random();
-  if (r < 0.5) {
-    // Settlement POST — body validated even when auth fails, so
-    // make it shape-correct.
+  if (__ITER % 2 === 0) {
     postSigned("/api/settlements", {
-      txHash: freshTxHash(),
-      blockNumber: Math.floor(Math.random() * 1e6) + 1,
+      txHash: uniqueHex32(),
+      blockNumber: __VU * 1000 + __ITER,
       blockTime: Math.floor(Date.now() / 1000),
       makerRelayer: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
       takerRelayer: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      makerNullifier: freshNullifier(),
-      takerNullifier: freshNullifier(),
+      makerNullifier: uniqueHex32(),
+      takerNullifier: uniqueHex32(),
       feeMaker: "100",
       feeTaker: "100",
       userMaxFeeMaker: 30,
       userMaxFeeTaker: 30,
-      sellToken: `0x${"aa".repeat(20)}`,
-      buyToken: `0x${"bb".repeat(20)}`,
+      sellToken: "0x" + "aa".repeat(20),
+      buyToken: "0x" + "bb".repeat(20),
       sellAmount: "1000",
       buyAmount: "2000",
     });
   } else {
-    // Refresh-shape reads that a dashboard would issue.
-    const reads = [
-      "/api/settlements?limit=50",
-      "/api/leaderboard?limit=20",
-      "/api/network/totals",
-    ];
-    getJson(reads[Math.floor(Math.random() * reads.length)]);
+    getJson(READ_ENDPOINTS[__ITER % READ_ENDPOINTS.length]);
   }
 }

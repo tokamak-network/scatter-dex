@@ -5,31 +5,60 @@ Lives outside the npm workspaces because k6 scripts are loaded by the k6
 binary (Goja runtime, not Node), and adding them to a workspace would
 just confuse `npm install`.
 
+## Scope
+
+- IS — a stress on the server's **auth-verify** (`verifyMessage` +
+  body-hash recompute) and **sqlite-read** code paths. Signed writes
+  here all hit 401 because k6's runtime doesn't bundle secp256k1 —
+  the load generator sends a zero signature on purpose. That still
+  exercises the verify path, which is the cost-dominant step on
+  production writes too.
+- ISN'T — a functional test. No order/settlement rows are persisted
+  in these runs. For functional coverage use the vitest suite in
+  `shared-orderbook/test/`.
+
 ## What's covered
 
-- `k6/orderbook-smoke.js` — single-VU health check + 1 order POST + 1
-  leaderboard read. Used to confirm the server is reachable and signed
-  requests pass auth before kicking off heavier scenarios.
-- `k6/orderbook-orders.js` — concurrent order POST/GET burst. Exercises
-  the relayer-auth body-hash path under load.
-- `k6/orderbook-settlements.js` — settlement POST + settlement reads
-  (per-relayer stats, network totals, leaderboard).
-- `k6/orderbook-leaderboard.js` — read-heavy scenario. No writes — useful
-  for measuring how the read-side aggregates scale.
+- `k6/orderbook-smoke.js` — 10 RPS for 30 s, walks every public read
+  endpoint and slips in one signed-write probe per 6 iterations.
+  Always runs at the same rate; doesn't honor `K6_PROFILE`.
+- `k6/orderbook-orders.js` — 80/20 write/read burst on `/api/orders`.
+- `k6/orderbook-settlements.js` — 50/50 write/read burst on
+  `/api/settlements` + paired dashboard reads.
+- `k6/orderbook-leaderboard.js` — read-only round-robin across the
+  settlement-aggregate endpoints.
 
-Each scenario defines its own ramp profile via k6 `stages`. Defaults
-match the "load" tier (100 RPS sustained for 1 minute). Override via
-env:
+## Profiles
 
-```
-K6_PROFILE=smoke    # 10 RPS, 30s    — quick sanity
-K6_PROFILE=load     # 100 RPS, 1min  — default
-K6_PROFILE=stress   # 1000 RPS, 2min — push past expected ceiling
-```
+Set via `K6_PROFILE`. All three use the **constant-arrival-rate**
+executor — `rate` is genuine requests-per-second, not a VU target.
+`preAllocatedVUs` / `maxVUs` cap concurrency in pursuit of the rate;
+a slow server doesn't artificially throttle the test.
+
+| `K6_PROFILE` | Rate (RPS) | Duration | Pre-allocated VUs | Max VUs |
+| --- | --- | --- | --- | --- |
+| `smoke` | 10 | 30s | 20 | 50 |
+| `load` (default) | 100 | 1m | 100 | 200 |
+| `stress` | 1000 | 2m | 500 | 1000 |
+
+The smoke *scenario* (`orderbook-smoke.js`) ignores `K6_PROFILE` and
+runs its own fixed 10 RPS × 30 s shape; the other scenarios honor it.
+
+## Thresholds
+
+Tagged per request via `tags: { type: "read" | "write" }`:
+
+- `http_req_duration{type:read}` — p95 < 200ms (`orderbook-leaderboard`
+  tightens to 150ms since it's reads-only)
+- `http_req_duration{type:write}` — p95 < 400ms (covers auth-verify
+  cost on top of parsing)
+- `http_req_failed` — < 1% real failures (5xx / transport). 4xx is
+  retagged as expected via `markExpectedStatuses()` so the auth-
+  reject doesn't poison the failure rate.
 
 ## Running locally
 
-Install k6 (`brew install k6` on Mac, see <https://k6.io/docs/get-started/installation/>
+Install k6 (`brew install k6` on Mac; see <https://k6.io/docs/get-started/installation/>
 for everything else). Then:
 
 ```sh
@@ -42,25 +71,14 @@ cd loadtest
 K6_TARGET=http://localhost:4000 K6_PROFILE=smoke k6 run k6/orderbook-smoke.js
 ```
 
-The relayer auth fixtures are derived from deterministic private keys
-in `k6/helpers.js` — fine for load testing because every request still
-exercises the real EIP-191 verification path; just don't reuse those
-keys for anything else.
-
 ## Running in CI
 
-Manual `workflow_dispatch` on `.github/workflows/load-test.yml`. Not
-scheduled because k6 against a real environment is bursty and noisy —
-trigger it before a release cut, or when investigating a perf
-regression, or after a code-path change in the orderbook server.
-
-## Thresholds
-
-Defined inside each script's `options.thresholds`. The general baseline
-is `http_req_duration p(95) < 200ms` for read endpoints and `< 400ms`
-for signed writes. Tightening these will gate CI failures; loosening
-them lets noisy runs slip past — calibrate based on what the deploy's
-SLO promises.
+Manual `workflow_dispatch` on `.github/workflows/load-test.yml`. The
+workflow expects an externally-reachable target URL — it does NOT
+boot the orderbook itself (running the server inside the job would
+need a registry-pushed image, which is out of scope here). Run it
+against a deployed staging host or against a `gh-actions`-reachable
+preview deploy.
 
 ## What this doesn't cover
 
@@ -70,3 +88,7 @@ SLO promises.
   the WASM runtime.
 - Long-duration soak tests (multi-hour). The CI runner times out
   well before useful soak data emerges; run those on a dedicated host.
+- Real signed-write throughput. Add a companion Node script that
+  pre-signs N nonces with a deterministic key, dumps them to JSON,
+  and have the k6 scenarios read the pool via `SharedArray` at
+  startup. Deliberately not in this PR.
