@@ -2,22 +2,27 @@
 
 /**
  * `/verify-monitor` — observability surface for the Phase 2.5b
- * settlement verifier (shipped in PR #722 + PR #724). The verifier
- * runs as its own service (compose target `settlement-verifier`),
- * pushes pass stats into the shared-orderbook process via the
- * in-memory `VerifyMonitor`, and exposes them through
- * `GET /api/admin/verify-stats`.
+ * settlement verifier (shipped in PR #722 + PR #724).
+ * `GET /api/admin/verify-stats` returns two things in one payload:
+ *   - DB-derived backlog (`unverifiedCount`, `oldestUnverifiedBlock`) —
+ *     authoritative, always populated.
+ *   - In-process `VerifyMonitor` snapshot (`lastPass`, `totalPasses`) —
+ *     only populated when the verifier loop happens to be running in
+ *     the same Node process as the API server. The production wiring
+ *     in `deploy/runtime/compose.yml` runs the verifier as a separate
+ *     `settlement-verifier` service, so on those deployments the
+ *     in-process monitor stays empty by design and the backlog card
+ *     is the real signal.
  *
  * Operator workflow:
- *   1. Paste the orderbook URL + the same `ADMIN_TOKEN` that was
- *      configured on the orderbook.
+ *   1. Paste the orderbook URL + the same `ADMIN_TOKEN` configured on
+ *      the orderbook.
  *   2. The page polls every 30 s (matching the verifier's default
- *      pass cadence) and renders the backlog + the last pass's
- *      counters.
- *   3. If `unverifiedCount` stays > 0 for hours, an alert tint
- *      flags it — likely an upstream issue (RPC down, wrong
- *      contract address, or a relayer pushing rows the chain never
- *      confirms).
+ *      pass cadence) and renders the backlog + the last pass (when
+ *      available).
+ *   3. If `unverifiedCount` stays > 0 for hours, an alert tint flags
+ *      it — likely an upstream issue (RPC down, wrong contract
+ *      address, or a relayer pushing rows the chain never confirms).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -125,6 +130,7 @@ function ConnectBar({
       <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_1fr_auto]">
         <input
           type="url"
+          aria-label="Shared-orderbook URL"
           placeholder="https://orderbook.example.com"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -133,6 +139,7 @@ function ConnectBar({
         />
         <input
           type="password"
+          aria-label="Orderbook admin token"
           placeholder="ADMIN_TOKEN"
           value={token}
           onChange={(e) => setToken(e.target.value)}
@@ -286,10 +293,11 @@ function StatsCard({ auth }: { auth: VerifyAuth }) {
           </>
         ) : (
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-            No pass observed yet on this orderbook server. The in-process monitor
-            only sees passes the verifier daemon hasn&apos;t scheduled here — if
-            the verifier runs as a separate compose service, this card stays
-            empty by design. Backlog above is still authoritative.
+            No pass observed yet on this orderbook server. The in-process
+            monitor only sees passes the verifier daemon has run in this
+            same Node process — when the verifier runs as a separate
+            compose service (the production wiring), this card stays empty
+            by design. Backlog above is still authoritative.
           </p>
         )}
       </div>

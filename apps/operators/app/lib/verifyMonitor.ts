@@ -68,16 +68,37 @@ export async function fetchVerifyStats(
     headers: { authorization: `Bearer ${auth.token}` },
     signal,
   });
+  // Read as text first so non-JSON responses (HTML 502 from a proxy,
+  // plain-text rate-limit body, etc.) surface as a readable message
+  // instead of a generic SyntaxError out of `res.json()`. Matches the
+  // shape of `adminFetch` in `adminApi.ts`.
+  const text = await res.text();
+  let parsed: unknown = null;
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // leave parsed=null; the failure branches below will fall back to text
+    }
+  }
+  const errMsg =
+    (parsed && typeof parsed === "object" && "error" in parsed && typeof (parsed as { error: unknown }).error === "string"
+      ? (parsed as { error: string }).error
+      : text || `HTTP ${res.status}`);
+
   if (res.status === 503) {
-    throw new VerifyDisabledError("admin endpoints disabled — set ADMIN_TOKEN on the orderbook");
+    throw new VerifyDisabledError(errMsg || "admin endpoints disabled — set ADMIN_TOKEN on the orderbook");
   }
   if (res.status === 401) {
-    throw new VerifyAuthError("invalid bearer token");
+    throw new VerifyAuthError(errMsg || "invalid bearer token");
   }
   if (!res.ok) {
-    throw new Error(`verify-stats ${res.status}: ${await res.text()}`);
+    throw new Error(`verify-stats ${res.status}: ${errMsg}`);
   }
-  return (await res.json()) as VerifyStats;
+  if (parsed === null) {
+    throw new Error(`verify-stats ${res.status}: response was not JSON (got ${text.slice(0, 80)})`);
+  }
+  return parsed as VerifyStats;
 }
 
 export class VerifyAuthError extends Error {
