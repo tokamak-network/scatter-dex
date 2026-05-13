@@ -79,6 +79,20 @@ USDC=$(jq -r '
   [.transactions[] | select(.contractName == "MockToken" and .arguments[1] == "USDC") | .contractAddress] | .[0] // ""
 ' "$BCAST")
 
+# Validate resolved addresses before running scenarios. `read_proxy_after`
+# can return "" if the impl tx is missing, last in the broadcast, or the
+# proxy was deployed via a different path; running scenarios against ""
+# or a malformed address produces confusing far-downstream failures.
+ADDR_RE='^0x[0-9a-fA-F]{40}$'
+for pair in "Pool:$POOL" "Settlement:$SETTLE" "USDC:$USDC"; do
+    name="${pair%%:*}"; addr="${pair#*:}"
+    if ! [[ "$addr" =~ $ADDR_RE ]]; then
+        echo "ERROR: $name address resolved from broadcast is invalid: '$addr'"
+        echo "  Check $BCAST — likely a stale deploy or a renamed contract."
+        exit 2
+    fi
+done
+
 echo "=== ScatterDEX Full E2E Sweep ==="
 echo "  RPC:        $RPC"
 echo "  Pool:       $POOL"
