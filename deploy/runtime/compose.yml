@@ -28,6 +28,29 @@ services:
       retries: 3
       start_period: 20s
 
+  # Settlement verifier — same image as shared-orderbook, different
+  # entrypoint. Reads RPC, matches `PrivateSettledAuth` events against
+  # relayer-pushed rows in the shared DB, flips `verified=1`. Shares
+  # the `orderbook-data` volume because the DB is the rendezvous.
+  # Optional: omit by removing this service if no RPC is configured.
+  settlement-verifier:
+    image: ${SHARED_ORDERBOOK_IMAGE}:${IMAGE_TAG:-latest}
+    container_name: settlement-verifier
+    restart: unless-stopped
+    depends_on:
+      shared-orderbook:
+        condition: service_healthy
+    environment:
+      - DB_PATH=${SHARED_ORDERBOOK_DB_PATH:-/data/shared-orderbook.db}
+      - RPC_URL=${RPC_URL}
+      - PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
+      - VERIFIER_POLL_INTERVAL_SEC=${VERIFIER_POLL_INTERVAL_SEC:-30}
+      - VERIFIER_BLOCK_SAFETY_MARGIN=${VERIFIER_BLOCK_SAFETY_MARGIN:-6}
+      - VERIFIER_LIMIT_PER_PASS=${VERIFIER_LIMIT_PER_PASS:-500}
+    volumes:
+      - orderbook-data:/data
+    command: ["node", "dist/verify.js", "--watch"]
+
   zk-relayer:
     image: ${ZK_RELAYER_IMAGE}:${IMAGE_TAG:-latest}
     container_name: zk-relayer

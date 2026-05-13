@@ -7,6 +7,9 @@
     "dev": "tsx src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "verify": "node dist/verify.js",
+    "verify:dev": "tsx src/verify.ts",
+    "verify:watch": "node dist/verify.js --watch",
     "test": "vitest run",
     "test:watch": "vitest"
   },
