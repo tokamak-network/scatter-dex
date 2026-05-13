@@ -114,9 +114,9 @@ export async function driveWizardToStep4(
         "value",
       )?.set;
       // If the platform ever drops the prototype's value setter we
-      // want the spec to fail loud here with a useful message — not
-      // silently no-op and then time out later on a still-disabled
-      // Next button. (Gemini PR #732 review.)
+      // want the spec to fail loudly here with a useful message —
+      // not silently no-op and then time out later on a still-
+      // disabled Next button. (Gemini PR #732 review.)
       if (!setter) {
         throw new Error("HTMLInputElement.prototype.value setter not found");
       }
