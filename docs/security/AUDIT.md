@@ -20,9 +20,14 @@ Hand-written Solidity under `contracts/src/`:
 | `SanctionsList` | `src/SanctionsList.sol` | OFAC + KoFIU oracle composition |
 | `BatchExecutor` | `src/BatchExecutor.sol` | EIP-7702-style batch tx executor |
 
-All upgradeable contracts use OpenZeppelin's `UUPSUpgradeable` pattern; the
-committed storage layouts under `contracts/storage-layouts/` are the upgrade
-safety baseline.
+All upgradeable contracts sit behind OpenZeppelin's
+`TransparentUpgradeableProxy`. Each proxy spawns its own `ProxyAdmin` at
+deploy time (see `contracts/script/DeployLocal.s.sol` and the helpers in
+`contracts/test/utils/ProxyDeployer.sol`); the proxy-admin owner — set via
+the `UPGRADE_OWNER` env, falling back to the deployer in local — is the
+upgrade authority. Auditors should confirm the production
+`UPGRADE_OWNER` is a multisig and that the storage baselines under
+`contracts/storage-layouts/` match the deployed implementations.
 
 ## Out of scope
 
