@@ -50,10 +50,10 @@ const ANVIL_ACCOUNT_1 = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 function bufferedClaimFrom(): string {
   const t = new Date(Date.now() + 10 * 60_000);
   // datetime-local expects `YYYY-MM-DDTHH:mm:ss` in the browser's
-  // local timezone. Node and the headless Chromium share that tz, so
-  // a manual format from local components avoids the toISOString UTC
-  // offset that would land back in the past after the input's
-  // timezone shift on the wizard's `min` check.
+  // local timezone. Node and the headless Chromium share that tz,
+  // so a manual format from local components avoids the
+  // toISOString UTC offset that would land back in the past after
+  // the input's timezone shift on the wizard's `min` check.
   const pad = (n: number) => n.toString().padStart(2, "0");
   return (
     `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}T` +
@@ -96,13 +96,27 @@ export async function driveWizardToStep4(
   await expect(page.getByRole("heading", { name: /^Recipients$/i })).toBeVisible();
   await page.getByPlaceholder(/,address,amount/i).fill(`${recipientLabel},${recipientAddress},${amount}`);
 
-  // Claim schedule — `datetime-local` input. Playwright's `fill`
-  // sets the underlying value directly, bypassing the browser's
-  // calendar widget.
+  // Claim schedule — `datetime-local` input. Set the value via JS
+  // evaluate instead of Playwright's `.fill()` — `.fill()` validates
+  // against the input's `step={1}` attribute and rejects
+  // intermittently with "Malformed value" depending on how it
+  // resolves second-precision formats. Setting `.value` directly +
+  // dispatching `input`/`change` sidesteps that validator while
+  // still triggering the React onChange handler the wizard relies on.
+  const claimFromValue = bufferedClaimFrom();
   await page
     .locator('input[type="datetime-local"]')
     .first()
-    .fill(bufferedClaimFrom());
+    .evaluate((el, value) => {
+      const input = el as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, claimFromValue);
 
   // Advance to step 4. The Next button stays disabled until both
   // recipient + claimFrom are valid, so Playwright's auto-retry on
