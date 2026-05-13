@@ -198,7 +198,13 @@ if [ -d "$ROOT_DIR/apps/pay" ]; then
     PRESERVED=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL)=' "$PAY_ENV" 2>/dev/null || true)
   fi
   DEPLOY_BLOCK=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo 0)
-  cat > "$PAY_ENV" <<EOF
+  # Build the would-be file in a temp buffer first; only swap if it
+  # differs from the on-disk copy. DeployLocal is deterministic against
+  # a fresh anvil, so the proxy addresses match on every reboot —
+  # skipping the rewrite when nothing changed avoids `next dev`'s
+  # `.env.local` watcher tripping a needless reload (sub-second but
+  # surfaces in WebServer log noise during back-to-back spec runs).
+  NEW_ENV=$(cat <<EOF
 NEXT_PUBLIC_PAY_CHAIN_ID=31337
 NEXT_PUBLIC_PAY_RPC_URL=$RPC_URL
 NEXT_PUBLIC_PAY_PRIVATE_SETTLEMENT=$PRIVATE_SETTLEMENT
@@ -212,8 +218,15 @@ NEXT_PUBLIC_PAY_TON=$TON
 NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$DEPLOY_BLOCK
 EOF
-  [ -n "$PRESERVED" ] && echo "$PRESERVED" >> "$PAY_ENV"
-  echo "  [ok] wrote $PAY_ENV (IdentityGate=$IDENTITY_GATE)"
+)
+  [ -n "$PRESERVED" ] && NEW_ENV="$NEW_ENV
+$PRESERVED"
+  if [ -f "$PAY_ENV" ] && [ "$(cat "$PAY_ENV")" = "$NEW_ENV" ]; then
+    echo "  [ok] $PAY_ENV already in sync (IdentityGate=$IDENTITY_GATE)"
+  else
+    printf "%s\n" "$NEW_ENV" > "$PAY_ENV"
+    echo "  [ok] wrote $PAY_ENV (IdentityGate=$IDENTITY_GATE)"
+  fi
 fi
 
 # ── 3. Shared orderbook ─────────────────────────────────────

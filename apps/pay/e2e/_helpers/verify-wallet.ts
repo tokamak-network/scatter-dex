@@ -57,17 +57,42 @@ const ANVIL_DEFAULT_KEY =
  *  correctly configured. Parse the file directly so callers don't
  *  have to thread the gate address through every spec or wire up
  *  dotenv in `playwright.config.ts`. */
+// `.env.local` doesn't change during a Playwright run, so cache the
+// parse to keep verifyTestWallet's hot path from re-reading + regex-
+// matching the file once per spec. Sentinel `null` distinguishes
+// "tried and not found" from "not yet tried" (which is `undefined`).
+let cachedGateFromFile: string | null | undefined;
 function readGateFromEnvFile(): string | undefined {
+  if (cachedGateFromFile !== undefined) return cachedGateFromFile ?? undefined;
   // Playwright runs from apps/pay (its `testDir: "./e2e"` is relative
   // to the package), so cwd-based lookup is stable across spec files
-  // without needing `import.meta.url` (which the transpiler treats
+  // without needing `import.meta.url` (transpiler treats it
   // inconsistently across ESM/CJS). Caller-supplied `gateAddress`
   // remains the explicit escape hatch.
   const envPath = path.resolve(process.cwd(), ".env.local");
-  if (!fs.existsSync(envPath)) return undefined;
+  if (!fs.existsSync(envPath)) {
+    cachedGateFromFile = null;
+    return undefined;
+  }
   const txt = fs.readFileSync(envPath, "utf8");
   const match = txt.match(/^NEXT_PUBLIC_PAY_IDENTITY_GATE\s*=\s*(\S+)/m);
-  return match?.[1];
+  cachedGateFromFile = match?.[1] ?? null;
+  return cachedGateFromFile ?? undefined;
+}
+
+// JsonRpcProvider keeps a websocket-like connection alive; reusing
+// one across verifyTestWallet calls (typical in suites with multiple
+// verified-wallet specs) avoids the construction + chain-id probe on
+// every call. Keyed by RPC URL so a spec that points elsewhere
+// doesn't accidentally share state.
+const providerCache = new Map<string, ethers.JsonRpcProvider>();
+function providerFor(rpcUrl: string): ethers.JsonRpcProvider {
+  let p = providerCache.get(rpcUrl);
+  if (!p) {
+    p = new ethers.JsonRpcProvider(rpcUrl);
+    providerCache.set(rpcUrl, p);
+  }
+  return p;
 }
 
 export async function verifyTestWallet(opts: VerifyTestWalletOptions): Promise<void> {
@@ -83,7 +108,7 @@ export async function verifyTestWallet(opts: VerifyTestWalletOptions): Promise<v
     );
   }
   const rpcUrl = opts.rpcUrl ?? DEV_STACK_ENDPOINTS.rpcUrl;
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const provider = providerFor(rpcUrl);
   const gate = new ethers.Contract(gateAddress, IDENTITY_GATE_ABI, provider);
   const registries = await gate.getRegistries();
   if (!registries.length) {
