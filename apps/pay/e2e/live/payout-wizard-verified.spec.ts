@@ -4,11 +4,14 @@ import { DEV_STACK_ENDPOINTS } from "../_helpers/stack";
 import { verifyTestWallet } from "../_helpers/verify-wallet";
 
 /**
- * Live-stack payout-wizard spec for a *verified* wallet — the
- * complement to `payout-wizard.spec.ts`'s unverified-gate smoke.
- * Confirms that once `IdentityGate.isVerified(account)` flips true,
- * Pay drops the gate modal and the wizard's step 1 (Category) is
+ * Live-stack payout-wizard spec for a *verified* wallet. Confirms
+ * that once `IdentityGate.isVerified(account)` flips true, Pay
+ * drops the gate modal and the wizard's step 1 (Category) is
  * reachable.
+ *
+ * Companion to `wizard.spec.ts` (the wallet-less static-mount
+ * smoke) — this one proves the same wizard renders for a connected
+ * + verified wallet under the live stack.
  *
  * Why this surface matters: every Pay write flow (deposit, settle,
  * claim, transfer-out) sits behind the wizard. The unverified-gate

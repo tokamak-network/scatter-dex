@@ -175,7 +175,7 @@ PRIVATE_SETTLEMENT=$(parse_addr PrivateSettlement)
 FEE_VAULT=$(parse_addr FeeVault)
 IDENTITY_GATE=$(parse_addr IdentityGate)
 
-for var in RELAYER_REGISTRY WETH USDC COMMITMENT_POOL PRIVATE_SETTLEMENT FEE_VAULT IDENTITY_GATE; do
+for var in RELAYER_REGISTRY WETH USDC USDT TON COMMITMENT_POOL PRIVATE_SETTLEMENT FEE_VAULT IDENTITY_GATE; do
   if [ -z "${!var}" ]; then
     echo "  ERROR: missing $var in deploy output"
     echo "$DEPLOY_OUTPUT"

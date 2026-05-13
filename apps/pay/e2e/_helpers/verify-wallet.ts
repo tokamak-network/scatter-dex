@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { ethers } from "ethers";
 import { DEV_STACK_ENDPOINTS } from "./stack";
 
@@ -48,13 +50,36 @@ export interface VerifyTestWalletOptions {
 const ANVIL_DEFAULT_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
+/** Read `NEXT_PUBLIC_PAY_IDENTITY_GATE` from apps/pay/.env.local.
+ *  Next loads `.env.local` for the dev server it boots, but the
+ *  Playwright runner process itself doesn't — `process.env.NEXT_PUBLIC_*`
+ *  is empty there even though the Pay frontend the browser hits is
+ *  correctly configured. Parse the file directly so callers don't
+ *  have to thread the gate address through every spec or wire up
+ *  dotenv in `playwright.config.ts`. */
+function readGateFromEnvFile(): string | undefined {
+  // Playwright runs from apps/pay (its `testDir: "./e2e"` is relative
+  // to the package), so cwd-based lookup is stable across spec files
+  // without needing `import.meta.url` (which the transpiler treats
+  // inconsistently across ESM/CJS). Caller-supplied `gateAddress`
+  // remains the explicit escape hatch.
+  const envPath = path.resolve(process.cwd(), ".env.local");
+  if (!fs.existsSync(envPath)) return undefined;
+  const txt = fs.readFileSync(envPath, "utf8");
+  const match = txt.match(/^NEXT_PUBLIC_PAY_IDENTITY_GATE\s*=\s*(\S+)/m);
+  return match?.[1];
+}
+
 export async function verifyTestWallet(opts: VerifyTestWalletOptions): Promise<void> {
-  const gateAddress = opts.gateAddress ?? process.env.NEXT_PUBLIC_PAY_IDENTITY_GATE;
+  const gateAddress =
+    opts.gateAddress
+    ?? process.env.NEXT_PUBLIC_PAY_IDENTITY_GATE
+    ?? readGateFromEnvFile();
   if (!gateAddress || gateAddress === ethers.ZeroAddress) {
     throw new Error(
       "verifyTestWallet: NEXT_PUBLIC_PAY_IDENTITY_GATE not set — " +
-        "start-e2e-env.sh writes it after deploy; if you're running tests directly, " +
-        "boot the stack first.",
+        "start-e2e-env.sh writes it to apps/pay/.env.local after deploy; " +
+        "if you're running tests directly, boot the stack first.",
     );
   }
   const rpcUrl = opts.rpcUrl ?? DEV_STACK_ENDPOINTS.rpcUrl;
