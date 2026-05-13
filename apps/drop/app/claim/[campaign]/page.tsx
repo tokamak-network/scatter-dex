@@ -5,19 +5,15 @@ import { use, useState } from "react";
 /**
  * Static marketing mock for the future Scatter Drop claim flow.
  * Renders preview-only UI: clicking "Claim" flips local state but
- * no SDK calls, no signing, no on-chain dispatch happens. The
- * stealth-address checkbox is a deliberate placeholder for the
- * planned drop-specific stealth flow once the SDK's deprecated
- * stealth surface is rebuilt around the new identity-anchored
- * recipient model (tracked separately). Do not wire real submit
- * paths into this page without first removing the mock toggles. */
+ * no SDK calls, no signing, no on-chain dispatch happens. The page
+ * is mounted only for marketing; do not wire real submit paths
+ * into it without a separate design pass for drop's recipient
+ * model (the project hasn't committed to a particular privacy
+ * shape yet — EIP-5564 stealth was removed repo-wide in Phase 2.4,
+ * and the replacement is unspecified).
+ */
 export default function Claim({ params }: { params: Promise<{ campaign: string }> }) {
   const { campaign } = use(params);
-  // Preview-only UI flag — DOES NOT actually derive a stealth
-  // address. Reusing the SDK's previously-deprecated stealth path
-  // here would silently re-introduce the surface we deprecated;
-  // any real claim flow needs its own design pass first.
-  const [stealth, setStealth] = useState(true);
   const [done, setDone] = useState(false);
 
   return (
@@ -40,23 +36,6 @@ export default function Claim({ params }: { params: Promise<{ campaign: string }
               Eligibility verified: <span className="font-medium text-[var(--color-success)]">zk-X509 ✓</span>{" "}
               · 3+ months wallet activity
             </div>
-            <label className="mb-4 flex cursor-pointer items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 text-sm">
-              <input
-                type="checkbox"
-                checked={stealth}
-                onChange={(e) => setStealth(e.target.checked)}
-                className="mt-0.5"
-              />
-              <span>
-                <span className="font-medium">Receive at a stealth address</span>
-                <span className="block text-xs text-[var(--color-text-muted)]">
-                  Recommended. Hides your claim amount from public dashboards.
-                </span>
-                <span className="mt-1 block text-[10px] uppercase tracking-wide text-[var(--color-warning)]">
-                  Preview — not yet active
-                </span>
-              </span>
-            </label>
             <button
               onClick={() => setDone(true)}
               className="w-full rounded-lg bg-[var(--color-primary)] py-3 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
@@ -71,7 +50,7 @@ export default function Claim({ params }: { params: Promise<{ campaign: string }
           <div className="text-center">
             <div className="mx-auto mb-3 inline-block h-10 w-10 rounded-full bg-[var(--color-success-soft)] text-2xl leading-[2.5rem] text-[var(--color-success)]">✓</div>
             <div className="font-semibold">Claimed</div>
-            <div className="mt-1 text-sm text-[var(--color-text-muted)]">12,000 $XYZ received{stealth ? " at stealth address" : ""}.</div>
+            <div className="mt-1 text-sm text-[var(--color-text-muted)]">12,000 $XYZ received.</div>
           </div>
         )}
 
