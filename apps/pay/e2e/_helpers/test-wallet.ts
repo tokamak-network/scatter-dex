@@ -106,11 +106,19 @@ export async function installTestWallet(
     // (`personal_sign`, `eth_signTypedData_v4`) don't need an RPC
     // connection at all; opening one at install time would burn a
     // keepalive socket against an anvil that may not even be running.
-    let connected: ethers.Wallet | null = null;
-    function getConnected(): ethers.Wallet {
+    //
+    // Wrap the connected Wallet in ethers' NonceManager — back-to-back
+    // `sendTransaction` calls (e.g. Pay's deposit flow: ERC-20 approve
+    // + CommitmentPool.deposit) would otherwise both fetch the same
+    // `getTransactionCount("pending")` and sign duplicate nonces,
+    // failing the second tx with `nonce too low` / `NONCE_EXPIRED`.
+    // NonceManager keeps a local monotonic counter that bumps on each
+    // call, sidestepping that race.
+    let connected: ethers.NonceManager | null = null;
+    function getConnected(): ethers.NonceManager {
       if (!connected) {
         const signerProvider = new ethers.JsonRpcProvider(opts.rpcUrl);
-        connected = wallet.connect(signerProvider);
+        connected = new ethers.NonceManager(wallet.connect(signerProvider));
       }
       return connected;
     }
