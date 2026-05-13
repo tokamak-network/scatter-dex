@@ -67,6 +67,19 @@ jobs:
         # source edits don't trigger phantom drift.
         run: ./script/storage-layout/check.sh
 
+      - name: Slither static analysis
+        # Triaged baseline is "0 findings" via contracts/slither.config.json
+        # (suppresses false-positive detectors) plus per-call slither-disable-next-line
+        # annotations for guarded ETH transfers and reentrancy-safe call sites.
+        # Any new finding fails the build; the fix is either an inline annotation
+        # with a justification or a real code change.
+        uses: crytic/slither-action@v0.4.0
+        with:
+          target: contracts/
+          slither-config: contracts/slither.config.json
+          fail-on: low
+          ignore-compile: false
+
   # ────────────────────────────────────────────────────────────────
   #  Frontend — typecheck + lint + production build
   # ────────────────────────────────────────────────────────────────

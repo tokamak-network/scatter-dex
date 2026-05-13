@@ -631,7 +631,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
         // Insert rotated commitment (same balance, new salt).
         // The zero-check at the top of this function guarantees
-        // newCommitment != 0, so this always inserts.
+        // newCommitment != 0, so this always inserts. Leaf index returned
+        // by the pool is consumed via the off-chain CommitmentInserted event.
+        // slither-disable-next-line unused-return
         pool.insertCommitment(uint256(p.newCommitment));
 
         emit PrivateCancel(
@@ -741,9 +743,13 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
         // 12. Execute DEX swap (generic — works with any whitelisted router)
         //     Snapshot buyToken balance before swap to measure actual output.
+        // `nonReentrant` modifier on settleWithDex prevents re-entry. The balance-before/after
+        // pair around the DEX call is the standard exact-out verification pattern.
+        // slither-disable-next-line reentrancy-balance
         uint256 buyBalanceBefore = IERC20(proof.buyToken).balanceOf(address(this));
 
         IERC20(proof.sellToken).forceApprove(p.dexRouter, swapAmount);
+        // slither-disable-next-line reentrancy-balance,reentrancy-benign,reentrancy-events,low-level-calls
         (bool success,) = p.dexRouter.call(p.dexCalldata);
         if (!success) revert DexCallReverted();
         IERC20(proof.sellToken).forceApprove(p.dexRouter, 0);
@@ -839,7 +845,11 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         // Verify root is known
         if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
 
-        // Withdraw from pool: recipient = this contract, relayer = msg.sender
+        // Withdraw from pool: recipient = this contract, relayer = msg.sender.
+        // `nonReentrant` modifier on scatterDirect prevents re-entry. The pool is the
+        // immutable CommitmentPool (set in initialize, mutators are owner-only or guarded),
+        // so the post-call nullifier write is safe against cross-function reentry.
+        // slither-disable-next-line reentrancy-no-eth,reentrancy-events
         pool.withdrawFor(
             p.proofA, p.proofB, p.proofC,
             p.currentRoot,

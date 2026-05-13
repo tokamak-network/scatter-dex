@@ -210,6 +210,8 @@ library SettleVerifyLib {
     ///      body is trivial and the per-call dispatch overhead wasn't worth it.
     function maybeInsertCommitment(CommitmentPool pool, bytes32 commitment) internal {
         if (commitment != bytes32(0)) {
+            // Leaf index returned by the pool is consumed via the off-chain CommitmentInserted event.
+            // slither-disable-next-line unused-return
             pool.insertCommitment(uint256(commitment));
         }
     }
