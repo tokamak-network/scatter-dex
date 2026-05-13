@@ -92,3 +92,31 @@ export function formatProof(proof: any) {
     proofC: [proof.pi_c[0], proof.pi_c[1]],
   };
 }
+
+// Raw JSON-RPC balance reads. ethers' provider caches the "latest" block
+// across `tx.wait()` boundaries, so `provider.getBalance(addr)` (or any
+// `contract.balanceOf(addr)` call) right after a tx confirmation can
+// return the pre-tx value even though the on-chain state already
+// updated (verified independently via `cast balance --block N`). These
+// helpers bypass that cache by going straight to JSON-RPC.
+//
+// Use in any E2E test that snapshots a balance immediately before/after
+// a tx and asserts on the delta.
+export async function getEthBalanceFresh(
+  provider: { send(method: string, params: any[]): Promise<string> },
+  addr: string,
+): Promise<bigint> {
+  const hex = await provider.send("eth_getBalance", [addr, "latest"]);
+  return BigInt(hex);
+}
+
+export async function getErc20BalanceFresh(
+  provider: { send(method: string, params: any[]): Promise<string> },
+  token: string,
+  addr: string,
+): Promise<bigint> {
+  // balanceOf(address) selector = 0x70a08231; address padded to 32 bytes.
+  const data = "0x70a08231" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
+  const hex = await provider.send("eth_call", [{ to: token, data }, "latest"]);
+  return BigInt(hex);
+}

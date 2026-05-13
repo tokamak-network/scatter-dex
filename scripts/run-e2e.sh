@@ -1,49 +1,140 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+#
+# Full E2E sweep — orchestrates the three working TS E2E scripts in
+# `zk-relayer/test/` against a running local stack. Replaces the
+# previous version which referenced a now-non-existent `relayer/`
+# directory and a deleted `E2ELocal.t.sol`.
+#
+# Prerequisites — boot the stack first (any of):
+#   ./scripts/start-e2e-env.sh                 # CI-grade, non-interactive
+#   SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock
+#
+# Then run:
+#   ./scripts/run-e2e.sh                       # full sweep
+#   ./scripts/run-e2e.sh --skip-cross-relayer  # only single-relayer flows
+#
+# Each scenario is exit-code gated; the wrapper returns the count of
+# failed scenarios (0 on full pass).
+set -uo pipefail
 
-echo "=== ScatterDEX Full E2E Test ==="
-echo ""
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR"
 
-# Default addresses from DeployLocal.s.sol on anvil
-SETTLEMENT="${SETTLEMENT_ADDRESS:-0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9}"
-WETH="${WETH_ADDRESS:-0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9}"
-USDC="${USDC_ADDRESS:-0x5FC8d32690cc91D4c39d9d3abcBD16989F875707}"
-RPC="${RPC_URL:-http://localhost:8545}"
-RELAYER="${RELAYER_URL:-http://localhost:3001}"
+RPC=${RPC_URL:-http://localhost:8545}
+RELAYER_A=${RELAYER_A_URL:-http://localhost:3002}
 
-echo "Step 1: Check anvil..."
-if ! curl -fsS "$RPC" -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null 2>&1; then
-  echo "  ERROR: anvil not running at $RPC"
-  echo "  Start with: anvil"
-  exit 1
+SKIP_CROSS=0
+for arg in "$@"; do
+    case "$arg" in
+        --skip-cross-relayer) SKIP_CROSS=1 ;;
+        -h|--help) sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "unknown arg: $arg"; exit 2 ;;
+    esac
+done
+
+# Pre-flight: anvil + relayer A reachable
+if ! curl -fsS -X POST -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+    --max-time 3 "$RPC" >/dev/null 2>&1; then
+    echo "ERROR: anvil not reachable at $RPC"
+    echo "  Boot the stack first: ./scripts/start-e2e-env.sh"
+    exit 2
 fi
-echo "  OK"
-
-echo ""
-echo "Step 2: Check relayer..."
-if ! curl -fsS "$RELAYER/api/info" > /dev/null 2>&1; then
-  echo "  ERROR: relayer not running at $RELAYER"
-  echo "  Start with: cd relayer && npm run dev"
-  exit 1
+if ! curl -fsS "$RELAYER_A/api/info" --max-time 3 >/dev/null 2>&1; then
+    echo "ERROR: relayer A not reachable at $RELAYER_A"
+    exit 2
 fi
-echo "  OK — $(curl -fsS "$RELAYER/api/info" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'fee={d[\"fee\"]}bps, orders={d[\"orderCount\"]}')")"
 
-echo ""
-echo "Step 3: Run Foundry E2E tests..."
-cd contracts
-forge test --match-path test/E2ELocal.t.sol -v
-cd ..
+# Resolve canonical addresses from the latest broadcast — works regardless
+# of whether `dev.sh` or `start-e2e-env.sh` was the boot route.
+BCAST="$ROOT_DIR/contracts/broadcast/DeployLocal.s.sol/31337/run-latest.json"
+if [ ! -f "$BCAST" ]; then
+    echo "ERROR: deploy broadcast missing: $BCAST"
+    exit 2
+fi
+if ! command -v jq >/dev/null 2>&1; then
+    echo "ERROR: jq required to parse broadcast"
+    exit 2
+fi
 
-echo ""
-echo "Step 4: Run relayer integration tests..."
-cd relayer
-SETTLEMENT_ADDRESS=$SETTLEMENT \
-WETH_ADDRESS=$WETH \
-USDC_ADDRESS=$USDC \
-RPC_URL=$RPC \
-RELAYER_URL=$RELAYER \
-npm run test:e2e
-cd ..
+read_proxy_after() {
+    jq -r --arg N "$1" '
+      [.transactions[] | select(.contractAddress != null)]
+      | (map(.contractName) | index($N)) as $i
+      | .[$i + 1] // {}
+      | .contractAddress // ""
+    ' "$BCAST"
+}
+read_token() {
+    jq -r --arg N "$1" '
+      [.transactions[] | select(.contractName == $N) | .contractAddress] | .[0] // ""
+    ' "$BCAST"
+}
 
+POOL=$(read_proxy_after CommitmentPool)
+SETTLE=$(read_proxy_after PrivateSettlement)
+# DeployLocal mints MockTokens in order: USDC (idx 0), USDT, TON.
+# Pick by constructor arg `symbol == "USDC"` to be order-independent.
+USDC=$(jq -r '
+  [.transactions[] | select(.contractName == "MockToken" and .arguments[1] == "USDC") | .contractAddress] | .[0] // ""
+' "$BCAST")
+
+# Validate resolved addresses before running scenarios. `read_proxy_after`
+# can return "" if the impl tx is missing, last in the broadcast, or the
+# proxy was deployed via a different path; running scenarios against ""
+# or a malformed address produces confusing far-downstream failures.
+ADDR_RE='^0x[0-9a-fA-F]{40}$'
+for pair in "Pool:$POOL" "Settlement:$SETTLE" "USDC:$USDC"; do
+    name="${pair%%:*}"; addr="${pair#*:}"
+    if ! [[ "$addr" =~ $ADDR_RE ]]; then
+        echo "ERROR: $name address resolved from broadcast is invalid: '$addr'"
+        echo "  Check $BCAST — likely a stale deploy or a renamed contract."
+        exit 2
+    fi
+done
+
+echo "=== ScatterDEX Full E2E Sweep ==="
+echo "  RPC:        $RPC"
+echo "  Pool:       $POOL"
+echo "  Settlement: $SETTLE"
+echo "  USDC:       $USDC"
 echo ""
-echo "=== ALL E2E TESTS PASSED ==="
+
+declare -a SCENARIOS=(
+    "market-order:e2e-market-order.ts"
+    "scatter-direct-auth:e2e-scatter-direct-auth.ts"
+)
+if [ $SKIP_CROSS -eq 0 ]; then
+    SCENARIOS+=("authorize-cross-relayer:e2e-authorize-cross-relayer.ts")
+fi
+
+PASS=0; FAIL=0
+FAILED=()
+
+for entry in "${SCENARIOS[@]}"; do
+    label="${entry%%:*}"
+    script="${entry##*:}"
+    echo "── scenario: $label ──"
+    if (cd zk-relayer && \
+        E2E_USDC_ADDRESS="$USDC" \
+        E2E_POOL_ADDRESS="$POOL" \
+        E2E_SETTLEMENT_ADDRESS="$SETTLE" \
+        npx tsx "test/$script"); then
+        echo "  ✓ $label PASSED"
+        PASS=$((PASS+1))
+    else
+        echo "  ✗ $label FAILED"
+        FAIL=$((FAIL+1))
+        FAILED+=("$label")
+    fi
+    echo ""
+done
+
+echo "=== Summary ==="
+echo "  PASS: $PASS"
+echo "  FAIL: $FAIL"
+if [ "$FAIL" -gt 0 ]; then
+    echo "Failed scenarios:"
+    for s in "${FAILED[@]}"; do echo "  · $s"; done
+fi
+exit "$FAIL"

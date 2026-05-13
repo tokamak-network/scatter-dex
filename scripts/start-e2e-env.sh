@@ -53,6 +53,69 @@ wait_for() {
 
 echo "=== ScatterDEX E2E env (CI) ==="
 
+# Ensure each gitignored `*Verifier.sol` was generated from the
+# `*_final.zkey` sitting next to it. The zkey/.sol pair is non-deterministic
+# (Groth16 phase-2 picks fresh entropy), so a `*_final.zkey` from a manual
+# rebuild + a `Verifier.sol` from an earlier build = every Groth16 proof
+# reverts `InvalidProof()` after deploy. dev.sh/dev-fork.sh avoid this by
+# regenerating zkeys + verifiers atomically; this script skips that to stay
+# CI-friendly, but it still needs to defend the invariant — so we re-export
+# Verifier.sol straight from the current zkey before deploy. Cheap
+# (~1s/circuit, no phase-2 rerun); no-op when artifacts are already aligned.
+sync_verifiers_from_zkeys() {
+  local circuits_dir="$ROOT_DIR/circuits"
+  local snarkjs="$circuits_dir/node_modules/.bin/snarkjs"
+  if [ ! -x "$snarkjs" ]; then
+    echo "  ERROR: snarkjs not found at $snarkjs — run 'npm ci' in circuits/"
+    exit 1
+  fi
+  # circuit:VerifierName pairs. BatchAuthorizeVerifier is hand-written
+  # (tracked, not gitignored) — kept in sync separately by whoever edits
+  # the circuit. The list mirrors the gitignored entries in .gitignore
+  # and `circuits/scripts/build.sh`'s `verifier_name_for()`.
+  local pairs=(
+    "authorize:AuthorizeVerifier"
+    "authorize_64:AuthorizeVerifier_64"
+    "authorize_128:AuthorizeVerifier_128"
+    "claim:ClaimVerifier"
+    "claim_64:ClaimVerifier_64"
+    "claim_128:ClaimVerifier_128"
+    "deposit:DepositVerifier"
+    "withdraw:WithdrawVerifier"
+    "cancel:CancelVerifier"
+  )
+  local skipped=0 exported=0
+  for pair in "${pairs[@]}"; do
+    local circ="${pair%%:*}"
+    local vname="${pair##*:}"
+    local zkey_rel="build/${circ}_final.zkey"
+    local zkey="$circuits_dir/$zkey_rel"
+    local sol="$ROOT_DIR/contracts/src/zk/${vname}.sol"
+    if [ ! -f "$zkey" ]; then
+      echo "  ERROR: missing $zkey — run circuits/scripts/build.sh first"
+      exit 1
+    fi
+    # Skip when the existing .sol is already newer than the zkey it
+    # was generated from — the export is deterministic for a given
+    # zkey, so an up-to-date .sol cannot disagree. Saves ~2s/run when
+    # nothing changed.
+    if [ -f "$sol" ] && [ "$sol" -nt "$zkey" ]; then
+      skipped=$((skipped + 1))
+      continue
+    fi
+    local out
+    out=$( cd "$circuits_dir" && "$snarkjs" zkey export solidityverifier \
+        "$zkey_rel" "$sol" 2>&1 ) \
+      || { echo "  ERROR: snarkjs export failed for $circ:"; echo "$out"; exit 1; }
+    exported=$((exported + 1))
+  done
+  echo "  [ok] verifiers in sync (re-exported: $exported, already current: $skipped)"
+}
+
+echo ""
+echo "[pre] Syncing Verifier.sol with zkeys..."
+sync_verifiers_from_zkeys
+
 # ── 1. anvil ────────────────────────────────────────────────
 echo ""
 echo "[1/5] Starting anvil..."

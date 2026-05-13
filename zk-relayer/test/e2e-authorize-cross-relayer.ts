@@ -44,7 +44,7 @@ import { fileURLToPath } from "url";
 
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "../src/core/tags.js";
-import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof } from "./helpers/common.js";
+import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof, getEthBalanceFresh, getErc20BalanceFresh } from "./helpers/common.js";
 import { makeDepositProof } from "./helpers/deposit-proof.mjs";
 import { makeAuthorizeProof } from "./helpers/authorize-proof.mjs";
 
@@ -439,6 +439,13 @@ async function claimFor(
     art.claimAmount, user.buyToken, user.recipient, art.claimReleaseTime,
   );
   await tx.wait();
+  // Force an extra block so any subsequent `provider.getBalance(...)`
+  // observes the post-claim state. Without this, `tx.wait()` returns
+  // before anvil's RPC layer surfaces the new state to ethers' default
+  // "latest" tag — manifests as a 0-delta read on `bobRecipient` even
+  // though the on-chain credit happened (verified via `cast balance
+  // --block N` cross-check).
+  await provider.send("evm_mine", []);
   console.log(`  ${user.label} claim: ${tx.hash}`);
 }
 
@@ -583,6 +590,14 @@ async function main(): Promise<void> {
   assertLeaf("Alice", aliceDep.leafIndex, aliceDep.commitment);
   assertLeaf("Bob", bobDep.leafIndex, bobDep.commitment);
 
+  // Snapshot FeeVault relayer balances BEFORE the settlement so step 6 can
+  // assert deltas — anvil state is sticky across e2e runs and a prior
+  // settle would have left non-zero credits here. (Originally the test
+  // assumed a fresh chain; this hardens it against repeated runs.)
+  const feeVaultEarly = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
+  const relAUsdcBefore = BigInt(await feeVaultEarly.balances(RELAYER_A_ADDR, USDC_ADDRESS));
+  const relBWethBefore = BigInt(await feeVaultEarly.balances(RELAYER_B_ADDR, wethAddr));
+
   const aliceArt = await buildAndSubmitOrder(alice, aliceDep, alicePool, leafByIndex);
   const bobArt = await buildAndSubmitOrder(bob, bobDep, bobPool, leafByIndex);
 
@@ -610,10 +625,18 @@ async function main(): Promise<void> {
   const feeVault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, provider);
   const expectedFeeUsdc = (BUY_USDC * ORDER_MAX_FEE_BPS) / 10_000n;
   const expectedFeeWeth = (SELL_WETH * ORDER_MAX_FEE_BPS) / 10_000n;
-  const relAUsdc = await feeVault.balances(RELAYER_A_ADDR, USDC_ADDRESS);
-  const relBWeth = await feeVault.balances(RELAYER_B_ADDR, wethAddr);
-  assert(BigInt(relAUsdc) === expectedFeeUsdc, `Relayer A USDC fee credit = ${expectedFeeUsdc}`);
-  assert(BigInt(relBWeth) === expectedFeeWeth, `Relayer B WETH fee credit = ${expectedFeeWeth}`);
+  const relAUsdcAfter = BigInt(await feeVault.balances(RELAYER_A_ADDR, USDC_ADDRESS));
+  const relBWethAfter = BigInt(await feeVault.balances(RELAYER_B_ADDR, wethAddr));
+  const relAUsdcDelta = relAUsdcAfter - relAUsdcBefore;
+  const relBWethDelta = relBWethAfter - relBWethBefore;
+  assert(
+    relAUsdcDelta === expectedFeeUsdc,
+    `Relayer A USDC fee delta = ${expectedFeeUsdc} (was ${relAUsdcBefore}, now ${relAUsdcAfter})`
+  );
+  assert(
+    relBWethDelta === expectedFeeWeth,
+    `Relayer B WETH fee delta = ${expectedFeeWeth} (was ${relBWethBefore}, now ${relBWethAfter})`
+  );
 
   // ─── Step 7: each user claims their tokens ─────────────────
   // PrivateSettlement auto-unwraps WETH in `claimWithProof`, so Bob's
@@ -623,22 +646,37 @@ async function main(): Promise<void> {
   // before Alice's) so the delta isolates exactly the transaction
   // under test.
   console.log("\n[7/8] Claiming...");
+  // Snapshot Alice's USDC balance BEFORE her claim so step 8 can assert
+  // the delta — anvil accounts have a long memory across e2e runs and
+  // a prior test (e.g. `e2e-market-order.ts`) may have left a USDC
+  // balance on this recipient. Same pattern Bob already uses for ETH.
+  //
+  // Raw JSON-RPC balance reads (see helpers/common.ts:getEthBalanceFresh)
+  // — ethers' provider caches "latest" across tx.wait() so getBalance
+  // returns the pre-tx value despite the on-chain credit landing.
+  const aliceUsdcBefore = await getErc20BalanceFresh(provider, USDC_ADDRESS, aliceRecipient);
   await claimFor(alice, aliceArt, settlementAddr, provider, aliceWallet);
-  const bobEthBefore = await provider.getBalance(bobRecipient);
+  const bobEthBefore = await getEthBalanceFresh(provider, bobRecipient);
   await claimFor(bob, bobArt, settlementAddr, provider, bobWallet);
-  const bobEthAfter = await provider.getBalance(bobRecipient);
+  const bobEthAfter = await getEthBalanceFresh(provider, bobRecipient);
 
   // ─── Step 8: verify recipient balances ─────────────────────
   // Recipients receive `claimAmount` (= buyAmount − fee), not the
   // gross buyAmount — the fee was already routed to FeeVault in step 6.
-  // Alice's side stays WETH→USDC so `balanceOf` is still right for her;
-  // Bob's WETH is unwrapped to ETH at claim time (see snapshot above).
+  // Both Alice (USDC) and Bob (native ETH, auto-unwrapped from WETH)
+  // are checked as deltas to isolate exactly this claim.
   console.log("\n[8/8] Verifying recipient balances...");
-  const usdcRead = new ethers.Contract(USDC_ADDRESS, USDC_ABI, provider);
-  const aliceRecvBal = await usdcRead.balanceOf(aliceRecipient);
+  const aliceUsdcAfter = await getErc20BalanceFresh(provider, USDC_ADDRESS, aliceRecipient);
+  const aliceUsdcDelta = aliceUsdcAfter - aliceUsdcBefore;
   const bobEthDelta = bobEthAfter - bobEthBefore;
-  assert(aliceRecvBal === aliceArt.claimAmount, `Alice recipient received ${aliceArt.claimAmount} USDC`);
-  assert(bobEthDelta === bobArt.claimAmount, `Bob recipient received ${bobArt.claimAmount} native ETH (Settlement auto-unwraps WETH)`);
+  assert(
+    aliceUsdcDelta === aliceArt.claimAmount,
+    `Alice recipient USDC delta = ${aliceArt.claimAmount} (was ${aliceUsdcBefore}, now ${aliceUsdcAfter})`
+  );
+  assert(
+    bobEthDelta === bobArt.claimAmount,
+    `Bob recipient ETH delta = ${bobArt.claimAmount} (was ${bobEthBefore}, now ${bobEthAfter}, delta ${bobEthDelta})`
+  );
 
   console.log("\n═══════════════════════════════════════════════════════");
   console.log("  ✅ AUTHORIZE CROSS-RELAYER E2E — ALL CHECKS PASSED");
