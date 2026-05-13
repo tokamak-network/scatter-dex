@@ -1,5 +1,5 @@
 import { expect, test } from "../_helpers/live-test";
-import { ANVIL_VERIFIED_TEST, installTestWallet } from "../_helpers/test-wallet";
+import { ANVIL_DEFAULT, ANVIL_VERIFIED_TEST, installTestWallet } from "../_helpers/test-wallet";
 import { DEV_STACK_ENDPOINTS } from "../_helpers/stack";
 import { verifyTestWallet } from "../_helpers/verify-wallet";
 import { buildClaimUrlFragment } from "../_helpers/claim-package";
@@ -106,6 +106,52 @@ test.describe("Live stack — /claim route", () => {
     // fragment was empty.
     await expect(
       page.getByText(/Open the original message you received/i),
+    ).not.toBeVisible();
+  });
+
+  test("recipient-mismatch fragment surfaces the 'switch wallets' banner", async ({ page }) => {
+    // Build a claim package bound to anvil #0 (ANVIL_DEFAULT) but
+    // install anvil #5 (ANVIL_VERIFIED_TEST) as the connected
+    // wallet. The /claim page's `wrongRecipient` branch
+    // (page.tsx:421-425) renders a warning naming the package's
+    // recipient. Catches: a regression that silently let any
+    // wallet submit a claim — the wallet/recipient binding is
+    // load-bearing for the per-claim secret model.
+    const { href } = buildClaimUrlFragment({
+      recipient: ANVIL_DEFAULT.account,
+    });
+    await page.goto(href);
+
+    await expect(
+      page.getByText(/switch wallets to claim/i),
+    ).toBeVisible();
+  });
+
+  test("future releaseTime renders the ⏳ Locked-until copy", async ({ page }) => {
+    // Same fragment shape as the happy-path spec but releaseTime
+    // ~1 hour in the future. Page's `isAvailable` branch
+    // (page.tsx:319-322) flips from ✓ Available to ⏳ Available
+    // from <stamp>. Catches: any regression that flipped the
+    // comparison direction (would credit locked claims as
+    // available, surfacing the claim button before the on-chain
+    // releaseTime check would reject the tx).
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    const { href } = buildClaimUrlFragment({
+      recipient: ANVIL_VERIFIED_TEST.account,
+      releaseTimeUnix: future,
+    });
+    await page.goto(href);
+
+    await expect(
+      page.getByText(/⏳ Available from/),
+    ).toBeVisible();
+
+    // The ✓ Available copy must NOT render — both branches share
+    // the prefix `Available`, so explicit checkmark anchoring
+    // catches a regression where the future timestamp slipped
+    // into the available branch.
+    await expect(
+      page.getByText(/✓ Available to claim now/),
     ).not.toBeVisible();
   });
 });
