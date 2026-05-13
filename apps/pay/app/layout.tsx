@@ -6,6 +6,7 @@ import { Brand } from "./_components/Brand";
 import { WrongChainBanner } from "./_components/WrongChainBanner";
 import { IdentityPill } from "./_components/IdentityPill";
 import { IdentityMenu } from "./_components/IdentityMenu";
+import { StealthMenu } from "./_components/StealthMenu";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
 import { chainName } from "@zkscatter/sdk";
 import { getNetworkConfig } from "./_lib/network";
@@ -36,8 +37,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                 <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
                 <Link href="/payouts/new" className="hover:text-[var(--color-text)]">New payout</Link>
-                <Link href="/inbox" className="hover:text-[var(--color-text)]">Claims</Link>
                 <Link href="/address-book" className="hover:text-[var(--color-text)]">Address book</Link>
+                <StealthMenu />
                 <IdentityMenu />
               </>
             }
