@@ -11,7 +11,7 @@ you change one of them, update the corresponding section here.
 | Foundry unit + branch tests + gas snapshot drift | `forge snapshot --check --no-match-contract Fork` in CI | every PR | 400+ tests, all non-fork suites, against `contracts/.gas-snapshot` baseline |
 | Storage layout drift | `script/storage-layout/check.sh` in CI | every PR | every upgradeable contract |
 | Slither static analysis | `crytic/slither-action@v0.4.0` in CI | every PR | `contracts/src/`, 0-findings baseline |
-| Foundry **invariant suite** | bundled with the `forge snapshot --check` run above (default 256 runs × 500 calls) | every PR | 25 invariants across 7 suites |
+| Foundry **invariant suite** | bundled with the `forge snapshot --check` run above (default 256 runs × 500 calls) | every PR | 29 invariants across 8 suites |
 | **Deep fuzz / invariant** | `forge test` w/ `FOUNDRY_PROFILE=deep` | nightly cron @ 02:00 UTC + manual dispatch | 10000 fuzz runs, 1024×2000 invariant |
 | Mainnet fork tests | `forge test --match-contract Fork` | manual dispatch | Uniswap V3 + Curve real-router checks |
 
@@ -31,6 +31,7 @@ PR. Deep profile bumps this to 1024 × 2000.
 | `RelayerRegistry` | `RelayerRegistryInvariant.t.sol` | 3 | bonds covered, active relayers respect `MAX_FEE`, `relayerList` uniqueness |
 | `PrivateSettlement.cancelPrivate` | `PrivateSettlementCancelInvariant.t.sol` | 3 | nullifier monotonicity (escrow + nonce), claim mapping isolation, leaf count ≥ cancel count |
 | `PrivateSettlement.scatterDirect + claimWithProof` | `ScatterClaimInvariant.t.sol` | 4 | **`totalClaimed ≤ totalLocked`**, group mirror, claim nullifier monotonicity, settlement escrow coverage |
+| `PrivateSettlement.settleAuth + settleWithDex + scatterDirectAuth + claimWithProof` | `PrivateSettlementSettleInvariant.t.sol` | 4 | **`totalClaimed ≤ totalLocked`**, group mirror (incl. token), escrow + nonce + claim nullifier monotonicity, per-token settlement escrow coverage |
 | `CommitmentPool` | `CommitmentPoolInvariant.t.sol` | 5 | solvency, withdraw-nullifier monotonicity, leaf-count floor, whitelist stability, `insertCommitment` access control |
 | `SanctionsList` | `SanctionsListInvariant.t.sol` | 2 | self-managed map mirror, `isSanctioned` ≡ `sanctioned` when no oracle wired |
 | `IdentityGate` | `IdentityGateInvariant.t.sol` | 3 | `length ≤ MAX_REGISTRIES`, at-least-one registry, array uniqueness ↔ `registryExists` mirror (both directions) |
@@ -39,15 +40,6 @@ The harness uses `Mock*Verifier` contracts that accept any proof. This
 deliberately moves the harness above the proof layer so the runner stresses the
 **on-chain accounting**, not the proof system — drift in `totalLocked /
 totalClaimed`, nullifier mappings, leaf counts, balance flows.
-
-### Deferred invariant work
-
-- `PrivateSettlement.settleAuth` / `settleWithDex` / `scatterDirectAuth` —
-  these paths consume a full `AuthorizeProof` plus `BatchAuthorizeVerifier`
-  fan-out and need a more elaborate mock harness than the existing
-  `MockAuthorizeVerifier`. ScatterClaim already proves the `ClaimsGroup`
-  accounting on the simpler-proof path; auditors should treat these as the
-  same accounting surface modulo the proof shape.
 
 ## Static analysis
 
