@@ -8,6 +8,7 @@ import {StdUtils} from "forge-std/StdUtils.sol";
 import {RelayerRegistry} from "../../src/RelayerRegistry.sol";
 import {MockIdentityRegistry} from "../mocks/MockIdentityRegistry.sol";
 import {InvariantToken} from "./FeeVaultHandler.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 /// @notice Actor-based handler for RelayerRegistry invariant tests (ERC20 bond mode).
 contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
@@ -19,6 +20,12 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
     address[] public actors;
 
     uint256 public ghostActiveBondSum;
+
+    /// @dev Selector-invocation counters for adversarial paths. Read by
+    ///      `afterInvariant` to prove the selectors stayed wired.
+    uint256 public adversarialDoubleRegisterAttempts;
+    uint256 public adversarialEarlyExitAttempts;
+    uint256 public adversarialUnauthorizedSetMinBondAttempts;
 
     constructor(RelayerRegistry _registry, InvariantToken _bondToken, MockIdentityRegistry _identity, address _owner) {
         registry = _registry;
@@ -101,4 +108,59 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
 
     function actorAt(uint256 i) external view returns (address) { return actors[i % actors.length]; }
     function actorCount() external view returns (uint256) { return actors.length; }
+
+    // ─── Adversarial actions ────────────────────────────────────
+
+    /// @notice Try to register a relayer that's already active. Must
+    ///         revert with `AlreadyRegistered` — duplicate registration
+    ///         would inflate `activeRelayers[]` and break invariants
+    ///         that count active set membership.
+    ///
+    ///         `register()` reverts on the `active` check
+    ///         (RelayerRegistry.sol:126) BEFORE `_pullBond` does any
+    ///         transferFrom, so no mint/approve setup is needed — and
+    ///         skipping it keeps the bond token's totalSupply untouched
+    ///         so adversarial calls can't perturb the `bondsCovered`
+    ///         invariant.
+    function adversarialDoubleRegister(uint256 seed) external {
+        adversarialDoubleRegisterAttempts += 1;
+        address a = _actor(seed);
+        (,,,, , , bool active) = registry.relayers(a);
+        if (!active) return; // pre-registration is the normal path, not adversarial here
+        vm.prank(a);
+        vm.expectRevert(RelayerRegistry.AlreadyRegistered.selector);
+        registry.register("u", "n", 0, registry.minBond());
+    }
+
+    /// @notice executeExit before the cooldown elapses must revert with
+    ///         `CooldownNotPassed`. The normal `executeExit` handler
+    ///         warps past cooldown; this one deliberately skips that
+    ///         warp so we're sure the time gate isn't accidentally
+    ///         removed.
+    function adversarialEarlyExit(uint256 seed) external {
+        adversarialEarlyExitAttempts += 1;
+        address a = _actor(seed);
+        (,,,,, uint256 exitAt, bool active) = registry.relayers(a);
+        if (!active || exitAt == 0) return;
+        uint256 ready = exitAt + registry.EXIT_COOLDOWN();
+        if (block.timestamp >= ready) return; // can't test early-exit if already ready
+        vm.prank(a);
+        vm.expectRevert(RelayerRegistry.CooldownNotPassed.selector);
+        registry.executeExit();
+    }
+
+    /// @notice Non-owner calls setMinBond. Must revert with OZ's
+    ///         `OwnableUnauthorizedAccount`. A regression that removed
+    ///         `onlyOwner` would let any actor lower the bond floor and
+    ///         spam-register relayers.
+    function adversarialUnauthorizedSetMinBond(uint256 seed, uint256 v) external {
+        adversarialUnauthorizedSetMinBondAttempts += 1;
+        v = bound(v, 0, 1e21);
+        address eoa = address(uint160(0xC0E0 + uint160(seed % 16))); // not an owner
+        vm.prank(eoa);
+        vm.expectRevert(abi.encodeWithSelector(
+            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
+        ));
+        registry.setMinBond(v);
+    }
 }

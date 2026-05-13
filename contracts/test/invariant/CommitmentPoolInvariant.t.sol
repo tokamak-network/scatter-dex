@@ -37,12 +37,13 @@ contract CommitmentPoolInvariantTest is StdInvariant, Test {
         handler = new CommitmentPoolHandler(pool, token, address(this), settlement);
         targetContract(address(handler));
 
-        bytes4[] memory sels = new bytes4[](5);
+        bytes4[] memory sels = new bytes4[](6);
         sels[0] = CommitmentPoolHandler.deposit.selector;
         sels[1] = CommitmentPoolHandler.withdraw.selector;
         sels[2] = CommitmentPoolHandler.insertCommitmentAsSettlement.selector;
         sels[3] = CommitmentPoolHandler.insertCommitmentAsRandom.selector;
         sels[4] = CommitmentPoolHandler.flipPause.selector;
+        sels[5] = CommitmentPoolHandler.adversarialDoubleWithdraw.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
@@ -86,5 +87,10 @@ contract CommitmentPoolInvariantTest is StdInvariant, Test {
     ///      it off), otherwise something else mutated state out of band.
     function invariant_whitelistStable() public view {
         assertTrue(pool.whitelistedTokens(address(token)), "test token whitelist flipped off");
+    }
+
+    /// @dev Coverage guard — see PR #718.
+    function afterInvariant() public view {
+        assertGt(handler.adversarialDoubleWithdrawAttempts(), 0, "double-withdraw never attempted");
     }
 }

@@ -34,6 +34,17 @@ contract PrivateSettlementCancelHandler is CommonBase, StdCheats, StdUtils {
     uint256 public ghostSuccessfulCancels;
     uint256 public ghostNextCommitmentSeed = 1;
 
+    /// @dev Spent (escrow, nonce) pairs captured at successful cancel
+    ///      time so the adversarial replay selector has real targets to
+    ///      replay. Mapping alone (ghostEscrowSeenTrue) doesn't give us
+    ///      an enumerable list.
+    bytes32[] public spentEscrowKeys;
+    bytes32[] public spentNonceKeys;
+
+    /// @dev Selector-invocation counter for the adversarial path
+    ///      (incremented at entry per PR #718).
+    uint256 public adversarialReplayCancelAttempts;
+
     constructor(PrivateSettlement _settlement, CommitmentPool _pool, MockCancelVerifier _cancel, address _owner) {
         settlement = _settlement;
         pool = _pool;
@@ -77,10 +88,44 @@ contract PrivateSettlementCancelHandler is CommonBase, StdCheats, StdUtils {
         });
 
         try settlement.cancelPrivate(p) {
-            ghostEscrowSeenTrue[oldEscrow] = true;
-            ghostNonceSeenTrue[oldNonce] = true;
+            if (!ghostEscrowSeenTrue[oldEscrow]) {
+                ghostEscrowSeenTrue[oldEscrow] = true;
+                spentEscrowKeys.push(oldEscrow);
+            }
+            if (!ghostNonceSeenTrue[oldNonce]) {
+                ghostNonceSeenTrue[oldNonce] = true;
+                spentNonceKeys.push(oldNonce);
+            }
             ghostSuccessfulCancels++;
         } catch {}
+    }
+
+    /// @notice Replay a previously-spent escrow nullifier in a cancel.
+    ///         Must always revert with `NullifierAlreadySpent` — the
+    ///         only guard between actors and double-cancel of the same
+    ///         escrow. Counter increments at entry; we pick from the
+    ///         spent set so the call actually exercises the replay
+    ///         check (no escrows yet → skip).
+    function adversarialReplayCancel(uint256 seed) external {
+        adversarialReplayCancelAttempts += 1;
+        if (spentEscrowKeys.length == 0) return;
+        bytes32 spentEscrow = spentEscrowKeys[seed % spentEscrowKeys.length];
+        bytes32 freshNonce = _pickNonce(seed >> 8);
+        if (settlement.paused()) {
+            vm.prank(owner);
+            try settlement.unpause() {} catch { return; }
+        }
+        PrivateSettlement.CancelParams memory p = PrivateSettlement.CancelParams({
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
+            commitmentRoot: pool.getLastRoot(),
+            oldNullifier: spentEscrow,
+            oldNonceNullifier: freshNonce,
+            newCommitment: bytes32(ghostNextCommitmentSeed++)
+        });
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.cancelPrivate(p);
     }
 
     /// @notice Toggle the verifier between accept/reject so revert paths get exercised.

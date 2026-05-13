@@ -18,11 +18,13 @@ contract SanctionsListInvariantTest is StdInvariant, Test {
         handler = new SanctionsListHandler(list, address(this));
         targetContract(address(handler));
 
-        bytes4[] memory sels = new bytes4[](4);
+        bytes4[] memory sels = new bytes4[](6);
         sels[0] = SanctionsListHandler.addSingle.selector;
         sels[1] = SanctionsListHandler.removeSingle.selector;
         sels[2] = SanctionsListHandler.addBatch.selector;
         sels[3] = SanctionsListHandler.removeBatch.selector;
+        sels[4] = SanctionsListHandler.adversarialUnauthorizedAdd.selector;
+        sels[5] = SanctionsListHandler.adversarialUnauthorizedRemove.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
@@ -47,5 +49,11 @@ contract SanctionsListInvariantTest is StdInvariant, Test {
             assertEq(list.isSanctioned(t), list.sanctioned(t),
                 "isSanctioned diverged from sanctioned mapping (no oracle wired)");
         }
+    }
+
+    /// @dev Coverage guard — see PR #718.
+    function afterInvariant() public view {
+        assertGt(handler.adversarialUnauthorizedAddAttempts(), 0, "unauthorized add never attempted");
+        assertGt(handler.adversarialUnauthorizedRemoveAttempts(), 0, "unauthorized remove never attempted");
     }
 }
