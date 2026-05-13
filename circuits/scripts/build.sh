@@ -156,8 +156,10 @@ done
 # Sync BatchAuthorizeVerifier (hand-written aggregator that can't be
 # re-exported via snarkjs) with the freshly-built authorize zkey. Skip
 # silently when the authorize circuit wasn't part of this build run —
-# the script needs `circuits/build/authorize_vkey.json` to exist.
-if [ -f "$BUILD/authorize_vkey.json" ]; then
+# the script reads the vkey from either `authorize_vkey.json` (step 5
+# above) or `authorize_final.zkey` directly, so gate on the zkey since
+# that's the underlying prerequisite for both code paths.
+if [ -f "$BUILD/authorize_final.zkey" ]; then
   echo ""
   echo "Syncing BatchAuthorizeVerifier with authorize zkey..."
   node "$(dirname "$0")/sync-batch-verifier-vk.mjs"
