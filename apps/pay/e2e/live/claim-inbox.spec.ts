@@ -13,16 +13,16 @@ import { verifyTestWallet } from "../_helpers/verify-wallet";
  *   - Folder picked + empty: the textarea for pasting a claim link
  *     + the "No saved claims yet" empty-list copy.
  *
- * This spec covers the first state plus the post-folder error
- * surface (paste an invalid link, see the parse error). The
- * folder-ready empty-list copy + a successful claim entry parse
- * land in a follow-up that ships a Playwright folder-picker stub
- * (out of scope for this PR).
+ * This spec covers the no-folder state only — that's all a stock
+ * Playwright run can reach today. The folder-ready empty-list copy,
+ * the paste-an-invalid-link parse-error surface, and a successful
+ * claim entry parse all land in a follow-up that ships a Playwright
+ * folder-picker stub (out of scope for this PR).
  *
  * Boot: `bash ./scripts/start-e2e-env.sh`. Skips otherwise.
  */
 test.describe("Live stack — /inbox claim route", () => {
-  test("unfolder'd inbox shows the folder-pick banner with the connected wallet", async ({ page }) => {
+  test("no-folder inbox shows the folder-pick banner with the connected wallet", async ({ page }) => {
     await verifyTestWallet({
       account: ANVIL_VERIFIED_TEST.account,
       rpcUrl: DEV_STACK_ENDPOINTS.rpcUrl,

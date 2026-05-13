@@ -27,7 +27,7 @@ import { verifyTestWallet } from "../_helpers/verify-wallet";
  * Boot: `bash ./scripts/start-e2e-env.sh`. Skips otherwise.
  */
 test.describe("Live stack — /claim route", () => {
-  test("missing claim fragment shows the 'open the original message' warning", async ({ page }) => {
+  test.beforeEach(async ({ page }) => {
     await verifyTestWallet({
       account: ANVIL_VERIFIED_TEST.account,
       rpcUrl: DEV_STACK_ENDPOINTS.rpcUrl,
@@ -38,6 +38,9 @@ test.describe("Live stack — /claim route", () => {
       privateKey: ANVIL_VERIFIED_TEST.privateKey,
       rpcUrl: DEV_STACK_ENDPOINTS.rpcUrl,
     });
+  });
+
+  test("missing claim fragment shows the 'open the original message' warning", async ({ page }) => {
     // Hit /claim without an `id` or a `#` fragment — the page
     // renders its `parsed === null` branch.
     await page.goto("/claim");
@@ -48,16 +51,6 @@ test.describe("Live stack — /claim route", () => {
   });
 
   test("malformed claim fragment surfaces a decode error", async ({ page }) => {
-    await verifyTestWallet({
-      account: ANVIL_VERIFIED_TEST.account,
-      rpcUrl: DEV_STACK_ENDPOINTS.rpcUrl,
-    });
-    await installTestWallet(page, {
-      account: ANVIL_VERIFIED_TEST.account,
-      chainId: ANVIL_VERIFIED_TEST.chainId,
-      privateKey: ANVIL_VERIFIED_TEST.privateKey,
-      rpcUrl: DEV_STACK_ENDPOINTS.rpcUrl,
-    });
     // `not-a-valid-package` is base64url-safe but doesn't decode
     // into a v1 ClaimPackage, so decodeClaimPackage throws and
     // page.tsx routes into the `parseError` branch.
