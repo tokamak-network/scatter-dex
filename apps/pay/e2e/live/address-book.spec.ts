@@ -39,12 +39,16 @@ test.describe("Live stack — /address-book route", () => {
       page.getByRole("button", { name: "Pick folder", exact: false }),
     ).toBeVisible();
 
-    // The empty-list / "Reading your address book…" content stays
-    // gated behind `folder.ready` (page.tsx:85). Neither should
-    // render without a folder; a regression that flipped that gate
-    // would surface here.
+    // The folder-gated content (search input + "Reading your
+    // address book…" placeholder) all hide behind `folder.ready`
+    // (page.tsx:85). Asserting BOTH are absent locks in the gate
+    // — a regression that flipped it on the search-input side
+    // wouldn't slip past a single placeholder assertion.
     await expect(
       page.getByText(/Reading your address book/i),
+    ).not.toBeVisible();
+    await expect(
+      page.getByPlaceholder(/Search by name, address/i),
     ).not.toBeVisible();
   });
 });
