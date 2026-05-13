@@ -15,23 +15,21 @@ import { defineConfig, devices } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  // `fullyParallel: true` parallelises both across spec files AND
-  // across tests within a single file — every test gets its own
-  // worker / browser context, so any test that needs ordering must
-  // opt in via `test.describe.serial(...)`. Today no spec shares
-  // state (each test navigates fresh), so this is the right default.
-  fullyParallel: true,
+  // `fullyParallel: false` — paired with `workers: 1` below, the
+  // entire suite runs serially. This is the constraint live specs'
+  // anvil snapshot/revert pattern needs (see
+  // `_helpers/anvil-snapshot.ts`): anvil's snapshot stack is global,
+  // so two parallel workers would clobber each other's snapshots.
+  // Wallet-less + bridge specs would technically be safe to
+  // parallelize, but a multi-project split is more ceremony than
+  // the ~5s walltime saved is worth at this scale.
+  fullyParallel: false,
   // CI gets one retry to absorb flakes from `next dev`'s first-paint
   // jitter; locally we surface failures immediately.
   retries: process.env.CI ? 1 : 0,
-  // Single worker everywhere. Live specs (`e2e/live/*`) take an
-  // anvil snapshot before each test and `evm_revert` on teardown
-  // for state isolation, and anvil's snapshot stack is global —
-  // parallel workers would clobber each other's snapshots
-  // (revert(id) drops every newer snapshot, see
-  // `_helpers/anvil-snapshot.ts`). Wallet-less + bridge specs would
-  // be safe to parallelize, but the multi-project split that would
-  // need is more ceremony than the ~5s walltime difference is worth.
+  // Single worker pairs with `fullyParallel: false` above —
+  // serializes the whole run for the live specs' anvil
+  // snapshot/revert isolation. See that flag for the rationale.
   workers: 1,
   // CI keeps the GitHub annotations reporter for inline failure
   // surfacing AND emits the HTML report so the README's "upload

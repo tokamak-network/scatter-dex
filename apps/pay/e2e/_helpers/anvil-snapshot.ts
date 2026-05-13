@@ -24,7 +24,10 @@ import { DEV_STACK_ENDPOINTS } from "./stack";
  */
 
 const providerCache = new Map<string, ethers.JsonRpcProvider>();
-function providerFor(rpcUrl: string): ethers.JsonRpcProvider {
+/** Cached JsonRpcProvider per RPC URL. Exported so other helpers
+ *  (`verify-wallet`, `fund-wallet`) reuse the same cache and don't
+ *  each pay the chain-id probe ethers does on construction. */
+export function providerFor(rpcUrl: string): ethers.JsonRpcProvider {
   let p = providerCache.get(rpcUrl);
   if (!p) {
     p = new ethers.JsonRpcProvider(rpcUrl);

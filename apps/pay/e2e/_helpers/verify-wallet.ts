@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { ethers } from "ethers";
 import { DEV_STACK_ENDPOINTS } from "./stack";
+import { providerFor } from "./anvil-snapshot";
 
 /**
  * Mark a test wallet as zk-X509 verified by writing directly to the
@@ -75,24 +76,12 @@ function readGateFromEnvFile(): string | undefined {
     return undefined;
   }
   const txt = fs.readFileSync(envPath, "utf8");
-  const match = txt.match(/^NEXT_PUBLIC_PAY_IDENTITY_GATE\s*=\s*(\S+)/m);
+  // Tolerate quoted values + trailing comments the same way standard
+  // .env loaders do; operator-edited files shouldn't silently drop
+  // into the unknown-gate fallback.
+  const match = txt.match(/^NEXT_PUBLIC_PAY_IDENTITY_GATE\s*=\s*["']?([^"'\s#]+)["']?/m);
   cachedGateFromFile = match?.[1] ?? null;
   return cachedGateFromFile ?? undefined;
-}
-
-// JsonRpcProvider keeps a websocket-like connection alive; reusing
-// one across verifyTestWallet calls (typical in suites with multiple
-// verified-wallet specs) avoids the construction + chain-id probe on
-// every call. Keyed by RPC URL so a spec that points elsewhere
-// doesn't accidentally share state.
-const providerCache = new Map<string, ethers.JsonRpcProvider>();
-function providerFor(rpcUrl: string): ethers.JsonRpcProvider {
-  let p = providerCache.get(rpcUrl);
-  if (!p) {
-    p = new ethers.JsonRpcProvider(rpcUrl);
-    providerCache.set(rpcUrl, p);
-  }
-  return p;
 }
 
 export async function verifyTestWallet(opts: VerifyTestWalletOptions): Promise<void> {
