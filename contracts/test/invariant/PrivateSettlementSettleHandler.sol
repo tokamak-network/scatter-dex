@@ -58,6 +58,21 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     bytes32[] public observedNonceNullifiers;
     bytes32[] public observedClaimNullifiers;
 
+    /// @dev Per-(recipient, token) credit ledger. Increments on every
+    ///      successful `claim`; the adversarial invariants compare this
+    ///      against the on-chain ERC20 balance per token to catch any
+    ///      skim / lost transfer / double-credit on the recipient side.
+    ///      Tracked per token because settleAuth / settleWithDex routes
+    ///      different sides through tokenA vs tokenB.
+    mapping(address => mapping(address => uint256)) public ghostRecipientCredited;
+
+    /// @dev Adversarial selector-invocation counters (incremented at
+    ///      function entry, before any early-return — same lesson as
+    ///      PR #718 review). `afterInvariant` reads these to prove the
+    ///      selectors stayed wired in the campaign.
+    uint256 public adversarialDoubleClaimAttempts;
+    uint256 public adversarialZeroAmountClaimAttempts;
+
     /// @dev Single monotonic counter feeds every freshly-minted scalar
     ///      (nullifiers, nonce-nullifiers, claims roots, claim nullifiers,
     ///      order hashes, pubKey binds). Uniqueness across roles is all
@@ -251,9 +266,82 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         amount = uint128(bound(amount, 1, remaining));
 
         bytes32 nullifier = _fresh();
-        if (_attemptClaim(root, nullifier, amount, ghostGroupToken[root], _recipient(recipientSeed))) {
+        address tok = ghostGroupToken[root];
+        address recipient = _recipient(recipientSeed);
+        if (_attemptClaim(root, nullifier, amount, tok, recipient)) {
             ghostTotalClaimed[root] += amount;
+            ghostRecipientCredited[recipient][tok] += amount;
             observedClaimNullifiers.push(nullifier);
+        }
+    }
+
+    // ─── Adversarial actions ────────────────────────────────────
+
+    /// @notice Replay a previously-spent claim nullifier. Must always
+    ///         revert *specifically* with `NullifierAlreadySpent` — a
+    ///         generic catch would silently accept a regression where
+    ///         the call reverted for a different reason (paused,
+    ///         ClaimsGroupNotFound, TokenMismatch) and the nullifier
+    ///         guard itself was removed.
+    ///
+    ///         The fuzz campaign can pause the settlement via
+    ///         `flipPause`, so we use the original root (which is
+    ///         guaranteed to have a real token + match the spent
+    ///         nullifier's group) and unpause before the call to keep
+    ///         the failure surface narrow to the nullifier check.
+    function adversarialDoubleClaim(uint256 nullifierSeed, uint256 recipientSeed, uint128 amount) external {
+        adversarialDoubleClaimAttempts += 1;
+        uint256 n = observedClaimNullifiers.length;
+        if (n == 0) return;
+        bytes32 spentNullifier = observedClaimNullifiers[nullifierSeed % n];
+        // Pick a root with a real token assignment so we don't trip
+        // ClaimsGroupNotFound before reaching the nullifier check.
+        if (knownClaimsRoots.length == 0) return;
+        bytes32 anyRoot = knownClaimsRoots[nullifierSeed % knownClaimsRoots.length];
+        address tok = ghostGroupToken[anyRoot];
+        if (tok == address(0)) return;
+        if (settlement.paused()) {
+            vm.prank(owner);
+            try settlement.unpause() {} catch { return; }
+        }
+        amount = uint128(bound(amount, 1, 1e22));
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.claimWithProof(
+            proofA, proofB, proofC,
+            anyRoot, spentNullifier,
+            uint256(amount), tok,
+            _recipient(recipientSeed), 0
+        );
+    }
+
+    /// @notice Claim with amount = 0. Must never move tokens to the
+    ///         recipient. The contract may either accept (no-op
+    ///         transfer) or revert; we assert balance invariance
+    ///         either way, so the test catches both "amount=0 accepted
+    ///         and skimmed somehow" and "amount=0 rejected but moved
+    ///         tokens" hypotheticals.
+    function adversarialZeroAmountClaim(uint256 rootSeed, uint256 recipientSeed) external {
+        adversarialZeroAmountClaimAttempts += 1;
+        uint256 n = knownClaimsRoots.length;
+        if (n == 0) return;
+        bytes32 root = knownClaimsRoots[rootSeed % n];
+        address tok = ghostGroupToken[root];
+        if (tok == address(0)) tok = address(tokenA);
+        address recipient = _recipient(recipientSeed);
+        uint256 balBefore = IERC20(tok).balanceOf(recipient);
+        try settlement.claimWithProof(
+            proofA, proofB, proofC,
+            root, _fresh(), 0, tok, recipient, 0
+        ) {
+            require(
+                IERC20(tok).balanceOf(recipient) == balBefore,
+                "invariant violation: zero-amount claim moved tokens"
+            );
+        } catch {
+            require(
+                IERC20(tok).balanceOf(recipient) == balBefore,
+                "invariant violation: zero-amount claim reverted but moved tokens"
+            );
         }
     }
 

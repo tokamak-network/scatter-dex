@@ -62,12 +62,14 @@ contract PrivateSettlementSettleInvariantTest is StdInvariant, Test {
         handler = new PrivateSettlementSettleHandler(settlement, pool, tokenA, tokenB, dex, address(this));
         targetContract(address(handler));
 
-        bytes4[] memory sels = new bytes4[](5);
+        bytes4[] memory sels = new bytes4[](7);
         sels[0] = PrivateSettlementSettleHandler.settleAuth.selector;
         sels[1] = PrivateSettlementSettleHandler.settleWithDex.selector;
         sels[2] = PrivateSettlementSettleHandler.scatterDirectAuth.selector;
         sels[3] = PrivateSettlementSettleHandler.claim.selector;
         sels[4] = PrivateSettlementSettleHandler.flipPause.selector;
+        sels[5] = PrivateSettlementSettleHandler.adversarialDoubleClaim.selector;
+        sels[6] = PrivateSettlementSettleHandler.adversarialZeroAmountClaim.selector;
         targetSelector(StdInvariant.FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
@@ -129,5 +131,34 @@ contract PrivateSettlementSettleInvariantTest is StdInvariant, Test {
         }
         assertGe(tokenA.balanceOf(address(settlement)), owedA, "settlement undercollateralized in tokenA");
         assertGe(tokenB.balanceOf(address(settlement)), owedB, "settlement undercollateralized in tokenB");
+    }
+
+    /// @dev Per-(recipient, token) balance matches the credit ledger. The
+    ///      handler's recipient set (0xB201–0xB204) is fresh — nothing
+    ///      else funds them, so on-chain balance == sum of every claim
+    ///      credited to them in that token. Catches skim / lost transfer
+    ///      / claim crediting the wrong recipient.
+    function invariant_recipientLedgerExact() public view {
+        for (uint160 i = 1; i <= 4; ++i) {
+            address recipient = address(uint160(0xB200 + i));
+            assertEq(
+                tokenA.balanceOf(recipient),
+                handler.ghostRecipientCredited(recipient, address(tokenA)),
+                "recipient tokenA ledger drift"
+            );
+            assertEq(
+                tokenB.balanceOf(recipient),
+                handler.ghostRecipientCredited(recipient, address(tokenB)),
+                "recipient tokenB ledger drift"
+            );
+        }
+    }
+
+    /// @dev Coverage guard: both adversarial selectors must have fired
+    ///      during the campaign. See PR #718 for why this lives in
+    ///      `afterInvariant` and not a `view` invariant.
+    function afterInvariant() public view {
+        assertGt(handler.adversarialDoubleClaimAttempts(), 0, "double-claim never attempted");
+        assertGt(handler.adversarialZeroAmountClaimAttempts(), 0, "zero-amount claim never attempted");
     }
 }
