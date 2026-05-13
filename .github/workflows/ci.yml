@@ -34,7 +34,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
 
       - name: Cache forge build artifacts
         uses: actions/cache@v4
@@ -176,7 +176,7 @@ jobs:
 
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -276,7 +276,7 @@ jobs:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
       - name: forge test --match-contract Fork
         env:
           MAINNET_RPC: ${{ secrets.MAINNET_RPC }}
