@@ -414,6 +414,55 @@ export class OrderbookDB {
   }
 
   /**
+   * Phase 2.5b verify job: pull rows still marked verified=0, optionally
+   * older than `maxBlock` (so an in-flight chain tail isn't re-checked
+   * on every pass). Ordered by block_number ASC so the job processes
+   * the oldest unverified rows first — verified=0 rows can pile up
+   * during a chain re-org without starving the queue.
+   */
+  listUnverifiedSettlements(opts: { maxBlock?: number; limit?: number } = {}): StoredSettlement[] {
+    const where: string[] = ["verified = 0"];
+    const params: unknown[] = [];
+    if (typeof opts.maxBlock === "number") {
+      where.push("block_number <= ?");
+      params.push(opts.maxBlock);
+    }
+    const limit = Math.min(opts.limit ?? 500, 5000);
+    const sql = `SELECT * FROM settlements WHERE ${where.join(" AND ")} ORDER BY block_number ASC, tx_hash ASC LIMIT ?`;
+    const rows = this.db.prepare(sql).all(...params, limit) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToSettlement(r));
+  }
+
+  /**
+   * Bulk-mark settlements verified=1 (and backfill block_time when the
+   * verifier resolved it from on-chain log metadata). Runs as a single
+   * sqlite transaction so a crash mid-batch doesn't leave the table in
+   * a half-updated state. Returns the number of rows actually flipped.
+   */
+  markSettlementsVerified(entries: { txHash: string; blockTime?: number }[]): number {
+    if (entries.length === 0) return 0;
+    const stmtBoth = this.db.prepare(
+      `UPDATE settlements SET verified = 1, block_time = COALESCE(block_time, ?) WHERE tx_hash = ? AND verified = 0`,
+    );
+    const stmtOnly = this.db.prepare(
+      `UPDATE settlements SET verified = 1 WHERE tx_hash = ? AND verified = 0`,
+    );
+    let flipped = 0;
+    const txn = this.db.transaction(() => {
+      for (const e of entries) {
+        const txHash = e.txHash.toLowerCase();
+        const result =
+          typeof e.blockTime === "number"
+            ? stmtBoth.run(e.blockTime, txHash)
+            : stmtOnly.run(txHash);
+        flipped += result.changes;
+      }
+    });
+    txn();
+    return flipped;
+  }
+
+  /**
    * Read API used by Phase 2.5c. Filters compose with AND (relayer matches
    * any of submitter/maker/taker; pair matches either direction).
    */
