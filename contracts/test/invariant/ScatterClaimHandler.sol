@@ -44,6 +44,19 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
     uint256 public ghostTotalLockedAtSettlement;
     uint256 public ghostTotalClaimedOut;
 
+    /// @dev Per-recipient credit ledger. Increments on every successful
+    ///      `claim()`; nothing in the handler ever decrements it. The
+    ///      adversarial invariants compare this against the on-chain
+    ///      ERC20 balance to catch any skim / loss / double-credit.
+    mapping(address => uint256) public ghostRecipientCredited;
+
+    /// @dev Adversarial counters surfaced to the invariant suite so a
+    ///      "no attempts were made" pass can't hide the assertion behind
+    ///      `n == 0` early-returns. Both are tested as `>= 1` so the suite
+    ///      fails loud if the handler stops driving these actions.
+    uint256 public adversarialDoubleClaimAttempts;
+    uint256 public adversarialZeroAmountClaimAttempts;
+
     constructor(
         PrivateSettlement _settlement,
         CommitmentPool _pool,
@@ -114,18 +127,74 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
         bytes32 nullifier = bytes32((ghostClaimNullifierCounter++) & FIELD_SAFE_MASK);
         if (nullifier == bytes32(0)) nullifier = bytes32(uint256(1));
 
+        address recipient = _recipient(recipientSeed);
         try settlement.claimWithProof(
             proofA, proofB, proofC,
             root, nullifier,
             uint256(amount),
             address(token),
-            _recipient(recipientSeed),
+            recipient,
             0 // releaseTime = 0 always claimable
         ) {
             ghostTotalClaimed[root] += amount;
             ghostTotalClaimedOut += amount;
+            ghostRecipientCredited[recipient] += amount;
             ghostClaimNullifierSeenTrue[nullifier] = true;
             observedClaimNullifiers.push(nullifier);
+        } catch {}
+    }
+
+    /// @notice Replay a previously-spent claim nullifier. Must always
+    ///         revert — the on-chain `claimNullifiers` mapping is the
+    ///         only thing standing between the recipient ledger and a
+    ///         double-credit. Asserting the revert here (not in the
+    ///         invariant) so the failure surfaces with the exact
+    ///         nullifier in the call stack.
+    function adversarialDoubleClaim(uint256 nullifierSeed, uint128 amount) external {
+        uint256 n = observedClaimNullifiers.length;
+        if (n == 0) return;
+        bytes32 spentNullifier = observedClaimNullifiers[nullifierSeed % n];
+        bytes32 anyRoot = knownClaimsRoots.length == 0
+            ? bytes32(uint256(1))
+            : knownClaimsRoots[nullifierSeed % knownClaimsRoots.length];
+        amount = uint128(bound(amount, 1, 1e22));
+        adversarialDoubleClaimAttempts += 1;
+        // Expect revert with NullifierAlreadySpent. Catch lets the
+        // fuzzer continue when other validation (e.g. UnknownRoot)
+        // happens to revert first — both are valid rejections.
+        try settlement.claimWithProof(
+            proofA, proofB, proofC,
+            anyRoot, spentNullifier,
+            uint256(amount), address(token),
+            _recipient(nullifierSeed), 0
+        ) {
+            revert("invariant violation: double-claim succeeded");
+        } catch {}
+    }
+
+    /// @notice Claim with amount = 0. The contract must reject (or
+    ///         no-op without crediting) — letting amount=0 through
+    ///         would not move funds but would burn a nullifier slot
+    ///         and pollute group accounting.
+    function adversarialZeroAmountClaim(uint256 rootSeed, uint256 recipientSeed) external {
+        uint256 n = knownClaimsRoots.length;
+        if (n == 0) return;
+        bytes32 root = knownClaimsRoots[rootSeed % n];
+        bytes32 nullifier = bytes32((ghostClaimNullifierCounter++) & FIELD_SAFE_MASK);
+        if (nullifier == bytes32(0)) nullifier = bytes32(uint256(1));
+        address recipient = _recipient(recipientSeed);
+        uint256 balBefore = token.balanceOf(recipient);
+        adversarialZeroAmountClaimAttempts += 1;
+        try settlement.claimWithProof(
+            proofA, proofB, proofC,
+            root, nullifier, 0, address(token), recipient, 0
+        ) {
+            // If the contract accepts amount=0, the recipient must be
+            // exactly as before — no skim, no credit.
+            require(
+                token.balanceOf(recipient) == balBefore,
+                "invariant violation: zero-amount claim moved tokens"
+            );
         } catch {}
     }
 
