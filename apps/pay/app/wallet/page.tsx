@@ -6,7 +6,8 @@ import { ethers } from "ethers";
 import {
   ERC20_ABI,
   formatTokenLabel,
-  type WhitelistedToken,
+  LAUNCH_TOKENS,
+  type TokenInfo,
 } from "@zkscatter/sdk";
 import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
@@ -128,7 +129,7 @@ export default function WalletPage() {
                   <td className="px-4 py-3">
                     <div className="font-medium">{formatTokenLabel(r.token.symbol)}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)]">
-                      {r.token.name}
+                      {LAUNCH_TOKENS[r.token.symbol]?.name ?? r.token.symbol}
                       {r.address !== ZERO && (
                         <>
                           {" · "}
@@ -207,7 +208,7 @@ function Crumb() {
   );
 }
 
-function initialRows(tokens: WhitelistedToken[]): BalanceRow[] {
+function initialRows(tokens: TokenInfo[]): BalanceRow[] {
   return tokens.map((token) => ({
     token,
     // Native rows always carry the ZERO sentinel — the rest of the

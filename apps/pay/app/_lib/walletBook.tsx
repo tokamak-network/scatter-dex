@@ -30,7 +30,11 @@ interface WalletBookState {
   error: string | null;
   add(input: {
     label: string;
-    address?: string;
+    /** Required — matches the SDK's `addWallet` contract. Pass the
+     *  raw trimmed string; the SDK throws "Address is required" on
+     *  empty values and the wrapper's catch surfaces that as a
+     *  form error. */
+    address: string;
     memo?: string;
     email?: string;
     telegramHandle?: string;
@@ -108,7 +112,11 @@ export function WalletBookProvider({ children }: { children: React.ReactNode }) 
   const add = useCallback(
     async (input: {
       label: string;
-      address?: string;
+      // Required to match the SDK contract — `addWallet` throws
+      // "Address is required" on empty/missing values, so passing
+      // `""` from the form still surfaces a clean error through
+      // the existing catch below.
+      address: string;
       memo?: string;
       email?: string;
       telegramHandle?: string;
