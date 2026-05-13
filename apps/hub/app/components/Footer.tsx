@@ -3,7 +3,7 @@ import { Brand } from "./Brand";
 import { CurrentYear } from "./CurrentYear";
 import { APP_BY_ID, DOCS_URL } from "../lib/apps";
 
-type FooterLink = { label: string; href: string };
+type FooterLink = { label: string; href: string; comingSoon?: boolean };
 
 export function Footer() {
   return (
@@ -18,18 +18,21 @@ export function Footer() {
         <FooterCol
           title="Apps"
           links={[
-            { label: "Pro", href: APP_BY_ID.pro.href },
-            { label: "Pay", href: APP_BY_ID.pay.href },
-            { label: "Drop", href: APP_BY_ID.drop.href },
+            { label: "Pro", href: APP_BY_ID.pro.href, comingSoon: APP_BY_ID.pro.comingSoon },
+            { label: "Pay", href: APP_BY_ID.pay.href, comingSoon: APP_BY_ID.pay.comingSoon },
+            { label: "Drop", href: APP_BY_ID.drop.href, comingSoon: APP_BY_ID.drop.comingSoon },
             { label: "Mobile", href: "/mobile" },
           ]}
         />
         <FooterCol
           title="Operators"
           links={[
-            { label: "Relayers", href: APP_BY_ID.relayer.href },
+            { label: "Relayers", href: APP_BY_ID.relayer.href, comingSoon: APP_BY_ID.relayer.comingSoon },
             { label: "Run a node", href: `${DOCS_URL}/operate/run-a-relayer-node` },
-            { label: "Leaderboard", href: `${APP_BY_ID.relayer.href}/leaderboard` },
+            // Relayer leaderboard is gated on the relayer app being
+            // live — when relayer is `comingSoon` the deep link
+            // would 404, so dim it the same way.
+            { label: "Leaderboard", href: `${APP_BY_ID.relayer.href}/leaderboard`, comingSoon: APP_BY_ID.relayer.comingSoon },
           ]}
         />
         <FooterCol
@@ -77,9 +80,21 @@ function FooterCol({ title, links }: { title: string; links: FooterLink[] }) {
 }
 
 function FooterLinkItem({ link }: { link: FooterLink }) {
-  const isExternal = /^(https?:|mailto:)/.test(link.href);
   const className =
     "text-[var(--color-text-muted)] hover:text-[var(--color-text)]";
+  if (link.comingSoon) {
+    // Dim + non-interactive so a hosting:disabled target doesn't
+    // present as a working link. AppCard uses the same affordance
+    // for cards; matching the footer treatment keeps the signal
+    // consistent across surfaces.
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[var(--color-text-subtle)]">
+        <span>{link.label}</span>
+        <span className="text-[10px] uppercase tracking-wider">soon</span>
+      </span>
+    );
+  }
+  const isExternal = /^(https?:|mailto:)/.test(link.href);
   if (isExternal) {
     const isMailto = link.href.startsWith("mailto:");
     return (
