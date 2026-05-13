@@ -64,18 +64,22 @@ contract CommitmentPoolInvariantTest is StdInvariant, Test {
         }
     }
 
-    /// @dev Leaf count never regresses and at minimum equals the total successful
-    ///      commitment-inserting actions (deposit + insertCommitment paths). A drop
-    ///      would indicate Merkle-tree state was rewound.
+    /// @dev Leaf count never regresses and at minimum equals the sum of all
+    ///      successful commitment-inserting actions. Both `deposit` and
+    ///      `insertCommitment` (auth path) insert exactly one leaf on success;
+    ///      `withdraw` doesn't insert (newCommitment = 0 in the handler).
     function invariant_leafCountFloor() public view {
-        // Both deposit() and insertCommitmentAsSettlement() insert exactly one leaf on
-        // success. Withdraw doesn't insert (newCommitment = 0).
-        // ghostInsertedByAuth only increments on successful insertCommitment calls.
-        // ghostDeposited tracks token amounts, not call counts, so we use the
-        // contract's own nextIndex as a non-decreasing lower bound that ghosts
-        // can be compared against.
-        assertGe(uint256(pool.nextIndex()), handler.ghostInsertedByAuth(),
-            "leaf count below successful insertCommitment count");
+        uint256 expectedFloor = handler.ghostDepositSuccesses() + handler.ghostInsertedByAuth();
+        assertGe(uint256(pool.nextIndex()), expectedFloor,
+            "leaf count below successful insert/deposit count");
+    }
+
+    /// @dev `insertCommitment` is `onlyAuthorizedSettlement`. The handler's
+    ///      `insertCommitmentAsRandom` path tries as a non-auth actor and must
+    ///      always revert. If this counter ever moves, access control regressed.
+    function invariant_insertCommitmentAccessControl() public view {
+        assertEq(handler.ghostUnauthorizedInsertSuccesses(), 0,
+            "unauthorized insertCommitment succeeded");
     }
 
     /// @dev Whitelist gate: the test token must remain whitelisted (handler never flips

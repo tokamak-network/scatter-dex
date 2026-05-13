@@ -30,7 +30,9 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
 
     uint256 public ghostDeposited;
     uint256 public ghostWithdrawn;
+    uint256 public ghostDepositSuccesses;
     uint256 public ghostInsertedByAuth;
+    uint256 public ghostUnauthorizedInsertSuccesses;
     uint256 public ghostNextCommitment = 1;
     uint256 public ghostNextNullifier = 1;
 
@@ -65,6 +67,7 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(a);
         try pool.deposit(proofA, proofB, proofC, commitment, address(token), amount) {
             ghostDeposited += amount;
+            ghostDepositSuccesses++;
         } catch {}
     }
 
@@ -104,14 +107,14 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
     }
 
     function insertCommitmentAsRandom(uint256 actorSeed) external {
-        // Must revert — only authorizedSettlement can insert. If it ever
-        // succeeds, the access-control invariant will flag the deviation.
+        // Must revert — only authorizedSettlement can insert. If it ever succeeds,
+        // invariant_insertCommitmentAccessControl will assert this counter == 0.
+        // Tracked separately from ghostInsertedByAuth so leaf-count invariants
+        // don't get a spurious bump from a real regression here.
         address a = _actor(actorSeed);
         vm.prank(a);
         try pool.insertCommitment(1) {
-            // Should never reach here — invariant_insertCommitmentAccessControl
-            // will detect this via the ghost-Inserted count drift.
-            ghostInsertedByAuth++;
+            ghostUnauthorizedInsertSuccesses++;
         } catch {}
     }
 
