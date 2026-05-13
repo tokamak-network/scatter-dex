@@ -1,0 +1,66 @@
+name: Load test (R-14)
+
+# Manual only. PRs are not gated on perf — runner CPU varies too
+# much for stable thresholds, and the throughput numbers we care
+# about come from runs against a deployed staging host, not the CI
+# host. The workflow expects `target` to point at a reachable
+# orderbook instance; spinning shared-orderbook up inside the job
+# is not handled here (would need a registry-pushed image).
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Which k6 scenario to run"
+        type: choice
+        options:
+          - orderbook-smoke
+          - orderbook-orders
+          - orderbook-leaderboard
+          - orderbook-settlements
+        default: orderbook-smoke
+      profile:
+        description: "Load profile (smoke / load / stress)"
+        type: choice
+        options: [smoke, load, stress]
+        default: smoke
+      target:
+        description: "Externally reachable orderbook base URL (e.g. https://orderbook-staging.example.com). Must be set; the workflow does not boot the server."
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  loadtest:
+    name: k6 ${{ inputs.scenario }} @ ${{ inputs.profile }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install -y k6
+          k6 version
+
+      - name: Run k6 scenario
+        working-directory: loadtest
+        env:
+          K6_TARGET: ${{ inputs.target }}
+          K6_PROFILE: ${{ inputs.profile }}
+        run: k6 run "k6/${{ inputs.scenario }}.js" --out json=results.json
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-${{ inputs.scenario }}-${{ inputs.profile }}-${{ github.run_id }}
+          path: loadtest/results.json
+          retention-days: 14
