@@ -135,7 +135,8 @@ test.describe("Live stack — /claim route", () => {
     // comparison direction (would credit locked claims as
     // available, surfacing the claim button before the on-chain
     // releaseTime check would reject the tx).
-    const future = Math.floor(Date.now() / 1000) + 3600;
+    const ONE_HOUR_IN_SECONDS = 60 * 60;
+    const future = Math.floor(Date.now() / 1000) + ONE_HOUR_IN_SECONDS;
     const { href } = buildClaimUrlFragment({
       recipient: ANVIL_VERIFIED_TEST.account,
       releaseTimeUnix: future,
