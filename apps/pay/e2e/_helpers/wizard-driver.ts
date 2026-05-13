@@ -113,7 +113,14 @@ export async function driveWizardToStep4(
         HTMLInputElement.prototype,
         "value",
       )?.set;
-      setter?.call(input, value);
+      // If the platform ever drops the prototype's value setter we
+      // want the spec to fail loud here with a useful message — not
+      // silently no-op and then time out later on a still-disabled
+      // Next button. (Gemini PR #732 review.)
+      if (!setter) {
+        throw new Error("HTMLInputElement.prototype.value setter not found");
+      }
+      setter.call(input, value);
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }, claimFromValue);
