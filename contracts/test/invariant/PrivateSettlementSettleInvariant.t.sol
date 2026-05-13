@@ -75,10 +75,9 @@ contract PrivateSettlementSettleInvariantTest is StdInvariant, Test {
     ///      `totalClaimed <= totalLocked` — claims never exceed the escrow
     ///      that the settlement actually holds for that group.
     function invariant_totalClaimedBoundedByLocked() public view {
-        uint256 n = handler.knownClaimsRootsCount();
-        for (uint256 i; i < n; ++i) {
-            bytes32 root = handler.knownClaimsRoots(i);
-            (uint128 locked, uint128 claimed,, ) = settlement.claimsGroups(root);
+        bytes32[] memory roots = handler.allKnownClaimsRoots();
+        for (uint256 i; i < roots.length; ++i) {
+            (uint128 locked, uint128 claimed,, ) = settlement.claimsGroups(roots[i]);
             assertLe(claimed, locked, "totalClaimed exceeded totalLocked");
         }
     }
@@ -86,9 +85,9 @@ contract PrivateSettlementSettleInvariantTest is StdInvariant, Test {
     /// @dev On-chain ClaimsGroup matches the handler ghost — catches state
     ///      writes that diverge from what the handler observed succeeding.
     function invariant_claimsGroupMirror() public view {
-        uint256 n = handler.knownClaimsRootsCount();
-        for (uint256 i; i < n; ++i) {
-            bytes32 root = handler.knownClaimsRoots(i);
+        bytes32[] memory roots = handler.allKnownClaimsRoots();
+        for (uint256 i; i < roots.length; ++i) {
+            bytes32 root = roots[i];
             (uint128 locked, uint128 claimed, address token,) = settlement.claimsGroups(root);
             assertEq(locked, handler.ghostTotalLocked(root), "totalLocked drift");
             assertEq(claimed, handler.ghostTotalClaimed(root), "totalClaimed drift");
@@ -98,17 +97,17 @@ contract PrivateSettlementSettleInvariantTest is StdInvariant, Test {
 
     /// @dev Escrow + nonce nullifiers and claim nullifiers, once spent, never clear.
     function invariant_nullifierMonotonicity() public view {
-        uint256 e = handler.observedEscrowNullifiersCount();
-        for (uint256 i; i < e; ++i) {
-            assertTrue(settlement.nullifiers(handler.observedEscrowNullifiers(i)), "escrow nullifier cleared");
+        bytes32[] memory escrow = handler.allObservedEscrowNullifiers();
+        for (uint256 i; i < escrow.length; ++i) {
+            assertTrue(settlement.nullifiers(escrow[i]), "escrow nullifier cleared");
         }
-        uint256 nn = handler.observedNonceNullifiersCount();
-        for (uint256 i; i < nn; ++i) {
-            assertTrue(settlement.nonceNullifiers(handler.observedNonceNullifiers(i)), "nonce nullifier cleared");
+        bytes32[] memory nonce = handler.allObservedNonceNullifiers();
+        for (uint256 i; i < nonce.length; ++i) {
+            assertTrue(settlement.nonceNullifiers(nonce[i]), "nonce nullifier cleared");
         }
-        uint256 c = handler.observedClaimNullifiersCount();
-        for (uint256 i; i < c; ++i) {
-            assertTrue(settlement.claimNullifiers(handler.observedClaimNullifiers(i)), "claim nullifier cleared");
+        bytes32[] memory claimNulls = handler.allObservedClaimNullifiers();
+        for (uint256 i; i < claimNulls.length; ++i) {
+            assertTrue(settlement.claimNullifiers(claimNulls[i]), "claim nullifier cleared");
         }
     }
 
@@ -120,10 +119,9 @@ contract PrivateSettlementSettleInvariantTest is StdInvariant, Test {
     function invariant_settlementEscrowCoveredPerToken() public view {
         uint256 owedA;
         uint256 owedB;
-        uint256 n = handler.knownClaimsRootsCount();
-        for (uint256 i; i < n; ++i) {
-            bytes32 root = handler.knownClaimsRoots(i);
-            (uint128 locked, uint128 claimed, address token,) = settlement.claimsGroups(root);
+        bytes32[] memory roots = handler.allKnownClaimsRoots();
+        for (uint256 i; i < roots.length; ++i) {
+            (uint128 locked, uint128 claimed, address token,) = settlement.claimsGroups(roots[i]);
             assertLe(claimed, locked, "totalClaimed exceeded totalLocked in coverage loop");
             uint256 remaining = uint256(locked) - uint256(claimed);
             if (token == address(tokenA)) owedA += remaining;

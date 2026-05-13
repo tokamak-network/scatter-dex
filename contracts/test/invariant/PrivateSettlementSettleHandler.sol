@@ -50,7 +50,6 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     uint256 internal constant FIELD_SAFE_MASK = (uint256(1) << 252) - 1;
 
     bytes32[] public knownClaimsRoots;
-    mapping(bytes32 => bool) public seenClaimsRoot;
     mapping(bytes32 => uint128) public ghostTotalLocked;
     mapping(bytes32 => uint128) public ghostTotalClaimed;
     mapping(bytes32 => address) public ghostGroupToken;
@@ -59,12 +58,12 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     bytes32[] public observedNonceNullifiers;
     bytes32[] public observedClaimNullifiers;
 
-    uint256 internal escrowNullCtr = 1;
-    uint256 internal nonceNullCtr  = 1_000_000;
-    uint256 internal claimsRootCtr = 2_000_000;
-    uint256 internal claimNullCtr  = 3_000_000;
-    uint256 internal orderHashCtr  = 4_000_000;
-    uint256 internal pubKeyCtr     = 5_000_000;
+    /// @dev Single monotonic counter feeds every freshly-minted scalar
+    ///      (nullifiers, nonce-nullifiers, claims roots, claim nullifiers,
+    ///      order hashes, pubKey binds). Uniqueness across roles is all
+    ///      that matters — the mocks ignore field semantics — so we don't
+    ///      need per-role buckets.
+    uint256 internal scalarCtr = 1;
 
     constructor(
         PrivateSettlement _settlement,
@@ -89,86 +88,68 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     function _relayer(uint256 s) internal view returns (address) { return relayers[s % relayers.length]; }
     function _recipient(uint256 s) internal view returns (address) { return recipients[s % recipients.length]; }
 
-    function _nextEscrow() internal returns (bytes32) {
-        bytes32 v = bytes32((escrowNullCtr++) & FIELD_SAFE_MASK);
+    /// @dev Fresh non-zero BN254-safe scalar. Used for every nullifier /
+    ///      claims root / order hash etc. — uniqueness is the only property.
+    function _fresh() internal returns (bytes32) {
+        bytes32 v = bytes32((scalarCtr++) & FIELD_SAFE_MASK);
         return v == bytes32(0) ? bytes32(uint256(1)) : v;
     }
-    function _nextNonce() internal returns (bytes32) {
-        bytes32 v = bytes32((nonceNullCtr++) & FIELD_SAFE_MASK);
-        return v == bytes32(0) ? bytes32(uint256(1)) : v;
-    }
-    function _nextClaimsRoot() internal returns (bytes32) {
-        bytes32 v = bytes32((claimsRootCtr++) & FIELD_SAFE_MASK);
-        return v == bytes32(0) ? bytes32(uint256(1)) : v;
-    }
-    function _nextClaimNull() internal returns (bytes32) {
-        bytes32 v = bytes32((claimNullCtr++) & FIELD_SAFE_MASK);
-        return v == bytes32(0) ? bytes32(uint256(1)) : v;
-    }
-    function _nextOrderHash() internal returns (bytes32) {
-        return bytes32((orderHashCtr++) & FIELD_SAFE_MASK);
-    }
-    function _nextPubKey() internal returns (bytes32) {
-        return bytes32((pubKeyCtr++) & FIELD_SAFE_MASK);
+
+    /// @dev Build an AuthorizeProof with the static fields filled in
+    ///      (proof tuples, fresh nullifier/nonce/orderHash/pubKey, expiry,
+    ///      maxFee=0, tier=16, empty change UTXO) and the caller-varying
+    ///      fields stitched on top.
+    function _buildProof(
+        address sellToken,
+        address buyToken,
+        uint128 sellAmount,
+        uint128 buyAmount,
+        uint128 totalLocked,
+        bytes32 claimsRoot,
+        address relayer
+    ) internal returns (SettleVerifyLib.AuthorizeProof memory) {
+        return SettleVerifyLib.AuthorizeProof({
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
+            pubKeyBind: _fresh(),
+            commitmentRoot: pool.getLastRoot(),
+            nullifier: _fresh(),
+            nonceNullifier: _fresh(),
+            newCommitment: bytes32(0),
+            sellToken: sellToken,
+            buyToken: buyToken,
+            sellAmount: sellAmount,
+            buyAmount: buyAmount,
+            maxFee: 0,
+            expiry: uint64(block.timestamp + 1 hours),
+            claimsRoot: claimsRoot,
+            totalLocked: totalLocked,
+            relayer: relayer,
+            orderHash: _fresh(),
+            tier: 16
+        });
     }
 
     // ─── actions ────────────────────────────────────────────────
 
     /// @notice Two-sided half-proof settle. tokenA<->tokenB at 1:1 rate
-    ///         (price-match satisfied by construction). Both relayers
-    ///         registered are pool-funded fresh per call.
+    ///         (price-match satisfied by construction). Pool is pre-funded
+    ///         per call.
     function settleAuth(uint256 relayerSeed, uint128 amtA, uint128 amtB) external {
         amtA = uint128(bound(amtA, 1, 1e22));
         amtB = uint128(bound(amtB, 1, 1e22));
 
-        bytes32 makerClaimsRoot = _nextClaimsRoot();
-        bytes32 takerClaimsRoot = _nextClaimsRoot();
+        bytes32 makerClaimsRoot = _fresh();
+        bytes32 takerClaimsRoot = _fresh();
 
-        // makerSells tokenA, buys tokenB; taker mirror.
-        SettleVerifyLib.AuthorizeProof memory maker = SettleVerifyLib.AuthorizeProof({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            pubKeyBind: _nextPubKey(),
-            commitmentRoot: pool.getLastRoot(),
-            nullifier: _nextEscrow(),
-            nonceNullifier: _nextNonce(),
-            newCommitment: bytes32(0),
-            sellToken: address(tokenA),
-            buyToken: address(tokenB),
-            sellAmount: amtA,
-            buyAmount: amtB,
-            maxFee: 0,
-            expiry: uint64(block.timestamp + 1 hours),
-            claimsRoot: makerClaimsRoot,
-            totalLocked: amtB,
-            relayer: _relayer(relayerSeed),
-            orderHash: _nextOrderHash(),
-            tier: 16
-        });
-        SettleVerifyLib.AuthorizeProof memory taker = SettleVerifyLib.AuthorizeProof({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            pubKeyBind: _nextPubKey(),
-            commitmentRoot: pool.getLastRoot(),
-            nullifier: _nextEscrow(),
-            nonceNullifier: _nextNonce(),
-            newCommitment: bytes32(0),
-            sellToken: address(tokenB),
-            buyToken: address(tokenA),
-            sellAmount: amtB,
-            buyAmount: amtA,
-            maxFee: 0,
-            expiry: uint64(block.timestamp + 1 hours),
-            claimsRoot: takerClaimsRoot,
-            totalLocked: amtA,
-            relayer: _relayer(relayerSeed + 1),
-            orderHash: _nextOrderHash(),
-            tier: 16
-        });
+        SettleVerifyLib.AuthorizeProof memory maker = _buildProof(
+            address(tokenA), address(tokenB), amtA, amtB, amtB, makerClaimsRoot, _relayer(relayerSeed)
+        );
+        SettleVerifyLib.AuthorizeProof memory taker = _buildProof(
+            address(tokenB), address(tokenA), amtB, amtA, amtA, takerClaimsRoot, _relayer(relayerSeed + 1)
+        );
 
-        // Pre-fund pool so the two transferToSettlement calls succeed.
         tokenB.mint(address(pool), amtB);
         tokenA.mint(address(pool), amtA);
 
@@ -182,12 +163,10 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(maker.relayer);
         try settlement.settleAuth(p) {
             knownClaimsRoots.push(makerClaimsRoot);
-            seenClaimsRoot[makerClaimsRoot] = true;
             ghostTotalLocked[makerClaimsRoot] = amtB;
             ghostGroupToken[makerClaimsRoot] = address(tokenB);
 
             knownClaimsRoots.push(takerClaimsRoot);
-            seenClaimsRoot[takerClaimsRoot] = true;
             ghostTotalLocked[takerClaimsRoot] = amtA;
             ghostGroupToken[takerClaimsRoot] = address(tokenA);
 
@@ -202,31 +181,13 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     function settleWithDex(uint256 relayerSeed, uint128 sellAmount) external {
         sellAmount = uint128(bound(sellAmount, 1, 1e22));
         address relayer = _relayer(relayerSeed);
-        bytes32 claimsRoot = _nextClaimsRoot();
+        bytes32 claimsRoot = _fresh();
 
-        SettleVerifyLib.AuthorizeProof memory proof = SettleVerifyLib.AuthorizeProof({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            pubKeyBind: _nextPubKey(),
-            commitmentRoot: pool.getLastRoot(),
-            nullifier: _nextEscrow(),
-            nonceNullifier: _nextNonce(),
-            newCommitment: bytes32(0),
-            sellToken: address(tokenA),
-            buyToken: address(tokenB),
-            sellAmount: sellAmount,
-            buyAmount: sellAmount, // unused in dex validation
-            maxFee: 0,
-            expiry: uint64(block.timestamp + 1 hours),
-            claimsRoot: claimsRoot,
-            totalLocked: sellAmount, // 1:1 rate → amountOut == sellAmount
-            relayer: relayer,
-            orderHash: _nextOrderHash(),
-            tier: 16
-        });
+        // 1:1 router rate → amountOut == sellAmount, so totalLocked == sellAmount.
+        SettleVerifyLib.AuthorizeProof memory proof = _buildProof(
+            address(tokenA), address(tokenB), sellAmount, sellAmount, sellAmount, claimsRoot, relayer
+        );
 
-        // Fund pool for the sell-side transfer and the DEX for the buy-side payout.
         tokenA.mint(address(pool), sellAmount);
         tokenB.mint(address(dex), sellAmount);
 
@@ -245,7 +206,6 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(relayer);
         try settlement.settleWithDex(p) {
             knownClaimsRoots.push(claimsRoot);
-            seenClaimsRoot[claimsRoot] = true;
             ghostTotalLocked[claimsRoot] = sellAmount;
             ghostGroupToken[claimsRoot] = address(tokenB);
 
@@ -258,29 +218,11 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     function scatterDirectAuth(uint256 relayerSeed, uint128 amount) external {
         amount = uint128(bound(amount, 1, 1e22));
         address relayer = _relayer(relayerSeed);
-        bytes32 claimsRoot = _nextClaimsRoot();
+        bytes32 claimsRoot = _fresh();
 
-        SettleVerifyLib.AuthorizeProof memory proof = SettleVerifyLib.AuthorizeProof({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            pubKeyBind: _nextPubKey(),
-            commitmentRoot: pool.getLastRoot(),
-            nullifier: _nextEscrow(),
-            nonceNullifier: _nextNonce(),
-            newCommitment: bytes32(0),
-            sellToken: address(tokenA),
-            buyToken: address(tokenA),
-            sellAmount: amount,
-            buyAmount: amount,
-            maxFee: 0,
-            expiry: uint64(block.timestamp + 1 hours),
-            claimsRoot: claimsRoot,
-            totalLocked: amount,
-            relayer: relayer,
-            orderHash: _nextOrderHash(),
-            tier: 16
-        });
+        SettleVerifyLib.AuthorizeProof memory proof = _buildProof(
+            address(tokenA), address(tokenA), amount, amount, amount, claimsRoot, relayer
+        );
 
         tokenA.mint(address(pool), amount);
 
@@ -290,7 +232,6 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(relayer);
         try settlement.scatterDirectAuth(p) {
             knownClaimsRoots.push(claimsRoot);
-            seenClaimsRoot[claimsRoot] = true;
             ghostTotalLocked[claimsRoot] = amount;
             ghostGroupToken[claimsRoot] = address(tokenA);
 
@@ -309,13 +250,14 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         if (remaining == 0) return;
         amount = uint128(bound(amount, 1, remaining));
 
-        bytes32 nullifier = _nextClaimNull();
+        bytes32 nullifier = _fresh();
         if (_attemptClaim(root, nullifier, amount, ghostGroupToken[root], _recipient(recipientSeed))) {
             ghostTotalClaimed[root] += amount;
             observedClaimNullifiers.push(nullifier);
         }
     }
 
+    /// @dev Extracted from `claim` to keep the parent under solc's stack-depth limit.
     function _attemptClaim(
         bytes32 root,
         bytes32 nullifier,
@@ -346,7 +288,8 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     // ─── views ──────────────────────────────────────────────────
 
     function knownClaimsRootsCount() external view returns (uint256) { return knownClaimsRoots.length; }
-    function observedEscrowNullifiersCount() external view returns (uint256) { return observedEscrowNullifiers.length; }
-    function observedNonceNullifiersCount() external view returns (uint256) { return observedNonceNullifiers.length; }
-    function observedClaimNullifiersCount() external view returns (uint256) { return observedClaimNullifiers.length; }
+    function allKnownClaimsRoots() external view returns (bytes32[] memory) { return knownClaimsRoots; }
+    function allObservedEscrowNullifiers() external view returns (bytes32[] memory) { return observedEscrowNullifiers; }
+    function allObservedNonceNullifiers() external view returns (bytes32[] memory) { return observedNonceNullifiers; }
+    function allObservedClaimNullifiers() external view returns (bytes32[] memory) { return observedClaimNullifiers; }
 }
