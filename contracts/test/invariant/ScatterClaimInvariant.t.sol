@@ -94,6 +94,9 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
         for (uint256 i; i < n; ++i) {
             bytes32 root = handler.knownClaimsRoots(i);
             (uint128 locked, uint128 claimed,, ) = settlement.claimsGroups(root);
+            // Surface the real violation explicitly instead of letting the
+            // subtraction underflow into a generic arithmetic revert.
+            assertLe(claimed, locked, "totalClaimed exceeded totalLocked in coverage loop");
             owed += uint256(locked) - uint256(claimed);
         }
         assertGe(token.balanceOf(address(settlement)), owed, "settlement undercollateralized");
