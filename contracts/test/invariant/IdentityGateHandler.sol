@@ -13,13 +13,17 @@ contract IdentityGateHandler is CommonBase, StdCheats, StdUtils {
     IdentityGate public immutable gate;
     address public immutable owner;
 
-    /// @dev Pre-deployed pool of registries so `addRegistry`'s `code.length` /
-    ///      duplicate guards have something realistic to chew on.
+    /// @dev Pre-deployed pool of registries plus the seeded initial registry
+    ///      so the fuzzer can target every entry the gate has ever known —
+    ///      including the seeded one (otherwise `removeRegistry` can't reach
+    ///      the "last remaining entry" revert branch).
     address[] public registryPool;
 
     constructor(IdentityGate _gate, address _owner) {
         gate = _gate;
         owner = _owner;
+        // Seed the pool with the gate's initial registry (set at initialize()).
+        registryPool.push(address(_gate.registries(0)));
         for (uint256 i; i < 12; ++i) {
             registryPool.push(address(new MockIdentityRegistry()));
         }

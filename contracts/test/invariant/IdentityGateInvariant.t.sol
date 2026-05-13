@@ -53,7 +53,15 @@ contract IdentityGateInvariantTest is StdInvariant, Test {
             }
         }
 
-        // Mirror: for every pool address, registryExists matches array membership.
+        // Mirror, forward direction: every entry actually in `registries[]` must
+        // have `registryExists == true`. Catches "added to array but missed the flag".
+        for (uint256 i; i < len; ++i) {
+            assertTrue(gate.registryExists(list[i]), "array entry missing from registryExists");
+        }
+
+        // Mirror, reverse direction: for every candidate ever passed to the handler
+        // (including the seeded registry), `registryExists` matches array membership.
+        // Catches "flipped registryExists but didn't update array" (or vice versa).
         uint256 n = handler.poolCount();
         for (uint256 i; i < n; ++i) {
             address candidate = handler.poolAt(i);
