@@ -24,10 +24,15 @@ export default defineConfig({
   // CI gets one retry to absorb flakes from `next dev`'s first-paint
   // jitter; locally we surface failures immediately.
   retries: process.env.CI ? 1 : 0,
-  // Single worker on CI to keep memory predictable when `next dev`
-  // is hosted alongside the test runner; locally the OS scheduler
-  // handles the parallelism fine.
-  workers: process.env.CI ? 1 : undefined,
+  // Single worker everywhere. Live specs (`e2e/live/*`) take an
+  // anvil snapshot before each test and `evm_revert` on teardown
+  // for state isolation, and anvil's snapshot stack is global —
+  // parallel workers would clobber each other's snapshots
+  // (revert(id) drops every newer snapshot, see
+  // `_helpers/anvil-snapshot.ts`). Wallet-less + bridge specs would
+  // be safe to parallelize, but the multi-project split that would
+  // need is more ceremony than the ~5s walltime difference is worth.
+  workers: 1,
   // CI keeps the GitHub annotations reporter for inline failure
   // surfacing AND emits the HTML report so the README's "upload
   // playwright-report/" guidance produces a real artefact. Locally
