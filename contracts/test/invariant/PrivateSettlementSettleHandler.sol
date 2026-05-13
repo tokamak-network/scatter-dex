@@ -58,6 +58,21 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     bytes32[] public observedNonceNullifiers;
     bytes32[] public observedClaimNullifiers;
 
+    /// @dev Per-(recipient, token) credit ledger. Increments on every
+    ///      successful `claim`; the adversarial invariants compare this
+    ///      against the on-chain ERC20 balance per token to catch any
+    ///      skim / lost transfer / double-credit on the recipient side.
+    ///      Tracked per token because settleAuth / settleWithDex routes
+    ///      different sides through tokenA vs tokenB.
+    mapping(address => mapping(address => uint256)) public ghostRecipientCredited;
+
+    /// @dev Adversarial selector-invocation counters (incremented at
+    ///      function entry, before any early-return — same lesson as
+    ///      PR #718 review). `afterInvariant` reads these to prove the
+    ///      selectors stayed wired in the campaign.
+    uint256 public adversarialDoubleClaimAttempts;
+    uint256 public adversarialZeroAmountClaimAttempts;
+
     /// @dev Single monotonic counter feeds every freshly-minted scalar
     ///      (nullifiers, nonce-nullifiers, claims roots, claim nullifiers,
     ///      order hashes, pubKey binds). Uniqueness across roles is all
@@ -251,10 +266,63 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         amount = uint128(bound(amount, 1, remaining));
 
         bytes32 nullifier = _fresh();
-        if (_attemptClaim(root, nullifier, amount, ghostGroupToken[root], _recipient(recipientSeed))) {
+        address tok = ghostGroupToken[root];
+        address recipient = _recipient(recipientSeed);
+        if (_attemptClaim(root, nullifier, amount, tok, recipient)) {
             ghostTotalClaimed[root] += amount;
+            ghostRecipientCredited[recipient][tok] += amount;
             observedClaimNullifiers.push(nullifier);
         }
+    }
+
+    // ─── Adversarial actions ────────────────────────────────────
+
+    /// @notice Replay a previously-spent claim nullifier. Must always
+    ///         revert — the on-chain `claimNullifiers` mapping is the
+    ///         only thing standing between the recipient ledger and a
+    ///         double-credit. Counter increments at entry (not after
+    ///         the early-return) per PR #718 lesson.
+    function adversarialDoubleClaim(uint256 nullifierSeed, uint256 recipientSeed, uint128 amount) external {
+        adversarialDoubleClaimAttempts += 1;
+        uint256 n = observedClaimNullifiers.length;
+        if (n == 0) return;
+        bytes32 spentNullifier = observedClaimNullifiers[nullifierSeed % n];
+        bytes32 anyRoot = knownClaimsRoots.length == 0
+            ? bytes32(uint256(1))
+            : knownClaimsRoots[nullifierSeed % knownClaimsRoots.length];
+        address tok = ghostGroupToken[anyRoot];
+        if (tok == address(0)) tok = address(tokenA);
+        amount = uint128(bound(amount, 1, 1e22));
+        try settlement.claimWithProof(
+            proofA, proofB, proofC,
+            anyRoot, spentNullifier,
+            uint256(amount), tok,
+            _recipient(recipientSeed), 0
+        ) {
+            revert("invariant violation: double-claim succeeded");
+        } catch {}
+    }
+
+    /// @notice Claim with amount = 0. May revert or no-op, but must
+    ///         never move tokens to the recipient.
+    function adversarialZeroAmountClaim(uint256 rootSeed, uint256 recipientSeed) external {
+        adversarialZeroAmountClaimAttempts += 1;
+        uint256 n = knownClaimsRoots.length;
+        if (n == 0) return;
+        bytes32 root = knownClaimsRoots[rootSeed % n];
+        address tok = ghostGroupToken[root];
+        if (tok == address(0)) tok = address(tokenA);
+        address recipient = _recipient(recipientSeed);
+        uint256 balBefore = IERC20(tok).balanceOf(recipient);
+        try settlement.claimWithProof(
+            proofA, proofB, proofC,
+            root, _fresh(), 0, tok, recipient, 0
+        ) {
+            require(
+                IERC20(tok).balanceOf(recipient) == balBefore,
+                "invariant violation: zero-amount claim moved tokens"
+            );
+        } catch {}
     }
 
     /// @dev Extracted from `claim` to keep the parent under solc's stack-depth limit.

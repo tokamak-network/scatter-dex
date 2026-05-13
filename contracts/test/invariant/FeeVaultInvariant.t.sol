@@ -25,13 +25,16 @@ contract FeeVaultInvariantTest is StdInvariant, Test {
 
         // Restrict invariant calls to handler entrypoints (avoid direct admin/etc.).
         targetContract(address(handler));
-        bytes4[] memory sels = new bytes4[](6);
+        bytes4[] memory sels = new bytes4[](9);
         sels[0] = FeeVaultHandler.deposit.selector;
         sels[1] = FeeVaultHandler.accrueDexFee.selector;
         sels[2] = FeeVaultHandler.claim.selector;
         sels[3] = FeeVaultHandler.withdrawPlatformRevenue.selector;
         sels[4] = FeeVaultHandler.scheduleFeeChange.selector;
         sels[5] = FeeVaultHandler.applyFeeChange.selector;
+        sels[6] = FeeVaultHandler.adversarialUnauthorizedDeposit.selector;
+        sels[7] = FeeVaultHandler.adversarialEmptyClaim.selector;
+        sels[8] = FeeVaultHandler.adversarialUnauthorizedWithdraw.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
@@ -74,5 +77,16 @@ contract FeeVaultInvariantTest is StdInvariant, Test {
         uint256 cap = vault.MAX_PLATFORM_FEE();
         assertLe(vault.platformFeeBps(), cap, "active fee > cap");
         assertLe(vault.pendingFeeBps(), cap, "pending fee > cap");
+    }
+
+    /// @dev Coverage guard: the three adversarial selectors must have
+    ///      actually fired during the campaign. Runs after the fuzz
+    ///      campaign closes (Foundry's depth-0 sweep would otherwise
+    ///      fail any `> 0` assertion before any call landed). Same
+    ///      pattern + lesson as PR #718.
+    function afterInvariant() public view {
+        assertGt(handler.adversarialUnauthorizedDepositAttempts(), 0, "unauthorized deposit never attempted");
+        assertGt(handler.adversarialEmptyClaimAttempts(), 0, "empty claim never attempted");
+        assertGt(handler.adversarialUnauthorizedWithdrawAttempts(), 0, "unauthorized withdraw never attempted");
     }
 }
