@@ -8,11 +8,10 @@ you change one of them, update the corresponding section here.
 
 | Layer | Gate | Triggered by | Scope |
 | --- | --- | --- | --- |
-| Foundry unit + branch tests | `forge test` in CI | every PR | 400+ tests, all non-fork suites |
-| Gas snapshot drift | `forge snapshot --check` in CI | every PR | `contracts/.gas-snapshot` baseline |
+| Foundry unit + branch tests + gas snapshot drift | `forge snapshot --check --no-match-contract Fork` in CI | every PR | 400+ tests, all non-fork suites, against `contracts/.gas-snapshot` baseline |
 | Storage layout drift | `script/storage-layout/check.sh` in CI | every PR | every upgradeable contract |
 | Slither static analysis | `crytic/slither-action@v0.4.0` in CI | every PR | `contracts/src/`, 0-findings baseline |
-| Foundry **invariant suite** | `forge test` in CI (default 256 runs × 500 calls) | every PR | 25 invariants across 7 suites |
+| Foundry **invariant suite** | bundled with the `forge snapshot --check` run above (default 256 runs × 500 calls) | every PR | 25 invariants across 7 suites |
 | **Deep fuzz / invariant** | `forge test` w/ `FOUNDRY_PROFILE=deep` | nightly cron @ 02:00 UTC + manual dispatch | 10000 fuzz runs, 1024×2000 invariant |
 | Mainnet fork tests | `forge test --match-contract Fork` | manual dispatch | Uniswap V3 + Curve real-router checks |
 
@@ -55,13 +54,17 @@ totalClaimed`, nullifier mappings, leaf counts, balance flows.
 Slither runs on every PR with `fail-on: low`, against a committed
 `contracts/slither.config.json`. The baseline is **0 findings**:
 
-- `filter_paths` excludes auto-generated verifier files
-  (`src/zk/*Verifier*.sol`) and `IncrementalMerkleTree.sol` — these are
-  generated from circom and any new finding there is a circom artifact, not
-  a hand-written bug.
+- `filter_paths` excludes `lib/`, `test/`, `script/`, auto-generated verifier
+  files (`src/zk/*Verifier*.sol`), and `IncrementalMerkleTree.sol`. The
+  verifiers are circom-generated — findings there are artifacts of the
+  generator, not hand-written bugs. `IncrementalMerkleTree.sol` is
+  hand-written but adapted near-verbatim from Tornado Cash (well-audited
+  upstream); we exclude it to keep noise out of the hand-written diff
+  budget. Any change to it should be diffed against the Tornado original.
 - `detectors_to_exclude` strips known-noise detectors only
-  (naming/solc-version/too-many-digits/similar-names/immutable-states/
-  uninitialized-local/calls-loop/timestamp/constable-states). The
+  (`naming-convention`, `solc-version`, `too-many-digits`, `similar-names`,
+  `immutable-states`, `uninitialized-local`, `calls-loop`, `timestamp`,
+  `constable-states`). The
   intentionally **kept** detectors — `assembly`, `low-level-calls`,
   `arbitrary-send-eth`, all reentrancy detectors — make any new occurrence
   in hand-written code fail CI.
@@ -140,8 +143,9 @@ auditor still should verify:
 
 - **New invariant suite.** Place `*Handler.sol` (actor-based) + `*Invariant.t.sol`
   (assertions) under `contracts/test/invariant/`. Run `forge test --match-path
-  "test/invariant/<name>*"`. Then run `forge snapshot --no-match-contract Fork`
-  and commit the new entries.
+  "test/invariant/<name>*"`. Then `cd contracts && forge snapshot
+  --no-match-contract Fork` and commit the new entries in
+  `contracts/.gas-snapshot`.
 - **Tighten an existing one.** Prefer adding a new `invariant_*` function over
   bolting more assertions onto an existing one — surfacing a single failure
   reason is more useful at audit time than a polyglot block.
