@@ -34,7 +34,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
 
       - name: Cache forge build artifacts
         uses: actions/cache@v4
@@ -50,10 +50,13 @@ jobs:
         run: forge fmt --check
         continue-on-error: true
 
-      - name: forge test (non-fork)
-        # `forge test` compiles transitively, so a separate `forge build`
-        # step would just double the work. Skipping it.
-        run: forge test --no-match-contract Fork -vvv
+      - name: forge test + gas snapshot check (non-fork)
+        # `forge snapshot --check` runs the full non-fork suite AND fails the
+        # build if gas usage drifts from the committed `.gas-snapshot` baseline.
+        # Single pass — no separate `forge test` step needed.
+        # To update the baseline locally: `cd contracts && forge snapshot --no-match-contract Fork`
+        # then commit `contracts/.gas-snapshot`.
+        run: forge snapshot --check --no-match-contract Fork
 
       - name: storage-layout check
         # Diff every upgradeable contract's current layout against the
@@ -63,13 +66,6 @@ jobs:
         # script strips solc-version-dependent fields so unrelated
         # source edits don't trigger phantom drift.
         run: ./script/storage-layout/check.sh
-
-      - name: forge snapshot (gas diff)
-        # Doubles the contracts-job wall time and isn't gating anything;
-        # opt-in via the manual workflow_dispatch trigger.
-        if: github.event_name == 'workflow_dispatch'
-        run: forge snapshot --no-match-contract Fork
-        continue-on-error: true
 
   # ────────────────────────────────────────────────────────────────
   #  Frontend — typecheck + lint + production build
@@ -180,7 +176,7 @@ jobs:
 
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -280,7 +276,7 @@ jobs:
           submodules: recursive
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: v1.0.0
+          version: v1.5.1
       - name: forge test --match-contract Fork
         env:
           MAINNET_RPC: ${{ secrets.MAINNET_RPC }}
