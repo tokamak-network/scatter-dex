@@ -107,6 +107,13 @@ docker compose up -d
 | Alice | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | 1000 WETH, 1M USDC |
 | Bob | `0x70997970C51812dc3A010C7d01b50e0d17dc79C8` | 1000 WETH, 1M USDC |
 
+## Security & audit
+
+External auditors: start at [`docs/security/AUDIT.md`](docs/security/AUDIT.md)
+for scope, in/out boundaries, and copy-pasteable reproduction commands. The
+deeper *why* behind each safety-net layer lives in
+[`docs/security/HARDENING.md`](docs/security/HARDENING.md).
+
 ## License
 
 This project is provided under the [Business Source License 1.1](LICENSE) with additional patent provisions. Non-production use (research, auditing, contributions) is permitted. Production use requires a commercial license from Tokamak Network Pte. Ltd. Converts to GPLv2+ on the Change Date specified in LICENSE. See the LICENSE file for full terms. Contact legal@tokamak.network for licensing.

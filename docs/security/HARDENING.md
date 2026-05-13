@@ -4,6 +4,8 @@ What an external auditor should know before reading the contracts. This page is
 the single source of truth for the safety-net layers that run on every PR; if
 you change one of them, update the corresponding section here.
 
+> Looking for scope + reproduction commands? See [`AUDIT.md`](./AUDIT.md).
+
 ## Layers in place
 
 | Layer | Gate | Triggered by | Scope |
