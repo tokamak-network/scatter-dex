@@ -59,13 +59,25 @@ export function Recommender({ className = "" }: { className?: string }) {
             zkScatter <span style={{ color: pick.accent }}>{pick.name}</span>
           </div>
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">{pick.persona}</p>
-          <Link
-            href={pick.href}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-          >
-            {pick.cta}
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+          {pick.comingSoon ? (
+            // Recommendation stands but the CTA is non-clickable —
+            // pointing the user at a `hosting:disable`d target would
+            // 404. Matches `AppCard.tsx`'s comingSoon treatment.
+            <span
+              className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-2 text-sm font-medium text-[var(--color-text-muted)]"
+              aria-disabled
+            >
+              Coming soon
+            </span>
+          ) : (
+            <Link
+              href={pick.href}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+            >
+              {pick.cta}
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          )}
         </div>
       )}
     </div>
