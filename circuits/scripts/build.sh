@@ -153,6 +153,16 @@ for TARGET in "${TARGETS[@]}"; do
   echo "    $TARGET/"
 done
 
+# Sync BatchAuthorizeVerifier (hand-written aggregator that can't be
+# re-exported via snarkjs) with the freshly-built authorize zkey. Skip
+# silently when the authorize circuit wasn't part of this build run —
+# the script needs `circuits/build/authorize_vkey.json` to exist.
+if [ -f "$BUILD/authorize_vkey.json" ]; then
+  echo ""
+  echo "Syncing BatchAuthorizeVerifier with authorize zkey..."
+  node "$(dirname "$0")/sync-batch-verifier-vk.mjs"
+fi
+
 echo ""
 echo "=== Build complete ==="
 for i in "${!CIRCUITS[@]}"; do
