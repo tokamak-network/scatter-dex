@@ -1,0 +1,45 @@
+name: Deep Fuzz / Invariant
+
+on:
+  schedule:
+    # 02:00 UTC daily — well outside review hours.
+    - cron: "0 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deep-fuzz:
+    name: contracts / deep fuzz + invariant
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Cache forge build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-deep-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**') }}
+          restore-keys: |
+            forge-${{ runner.os }}-
+
+      - name: forge test (deep profile — 10x fuzz, 4x invariant)
+        # `[profile.deep]` in foundry.toml bumps fuzz.runs to 10000 and
+        # invariant.runs/depth to 1024/2000 — same suites, 10-20x stress.
+        # Surfaces accounting drift / DoS / accumulated-state bugs that the
+        # 256-run PR profile is too short to find.
+        working-directory: contracts
+        env:
+          FOUNDRY_PROFILE: deep
+        run: forge test --no-match-contract Fork -vv

@@ -32,6 +32,27 @@ skip = [
     "src/zk/BatchAuthorizeVerifier.sol",
 ]
 
+# Fuzz / invariant defaults for PR builds — fast enough to keep PR CI snappy
+# while still exercising every state-mutating function under random input.
+[fuzz]
+runs = 256
+
+[invariant]
+runs = 256
+depth = 500
+fail_on_revert = false
+
+# Profile for deeper hardening runs (nightly CI, pre-audit). 10x fuzz, 4x
+# invariant runs, 4x depth — bumps stress on the same suites without
+# requiring different test code.
+[profile.deep.fuzz]
+runs = 10000
+
+[profile.deep.invariant]
+runs = 1024
+depth = 2000
+fail_on_revert = false
+
 # Profile for BatchAuthorizeVerifier which requires via_ir due to deep Yul nesting.
 # Build: FOUNDRY_PROFILE=batch-verifier forge build
 # Test:  FOUNDRY_PROFILE=batch-verifier forge test --match-contract BatchAuthorize
