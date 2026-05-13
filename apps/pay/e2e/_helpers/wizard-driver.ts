@@ -43,10 +43,11 @@ export interface DriveOptions {
 const ANVIL_ACCOUNT_1 = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
 
 /** Returns an ISO-flavoured `datetime-local` string ~10 minutes from
- *  now. The wizard's minimum buffer is 1 minute (see
- *  `CLAIM_FROM_BUFFER_MINUTES`) — picking 10 gives slack for spec
- *  walltime so the claimFrom doesn't slip into the past mid-run. */
-function farFutureClaimFrom(): string {
+ *  now — comfortably above the wizard's `CLAIM_FROM_BUFFER_MINUTES`
+ *  (1 minute) so spec walltime can't push the value into the past
+ *  mid-run, but not so far ahead that it reads like a production
+ *  schedule. */
+function bufferedClaimFrom(): string {
   const t = new Date(Date.now() + 10 * 60_000);
   // datetime-local expects `YYYY-MM-DDTHH:mm:ss` in the browser's
   // local timezone. Node and the headless Chromium share that tz, so
@@ -69,9 +70,12 @@ export async function driveWizardToStep4(
   const amount = opts.amount ?? "1";
   const recipientLabel = opts.recipientLabel ?? "alice";
 
-  // Step 1 — pick category. The wizard auto-advances label + token
-  // defaults; we still have to click Next.
-  await page.getByRole("button", { name: new RegExp(category, "i") }).first().click();
+  // Step 1 — pick category. The category buttons render their name
+  // alongside tagline + body, so `exact: false` substring-matches on
+  // the accessible name rather than requiring the full DOM text.
+  // `.first()` disambiguates if the category name appears elsewhere
+  // (e.g. inside the wizard's prefill label).
+  await page.getByRole("button", { name: category, exact: false }).first().click();
   await page.getByRole("button", { name: /^Next/ }).click();
 
   // Step 2 — Token / label panel. Defaults are pre-filled by the
@@ -83,9 +87,14 @@ export async function driveWizardToStep4(
   // path (an alternative spreadsheet view exists; the driver sticks
   // with CSV because it's a single fill+blur). Format follows the
   // hint line above the textarea: `<identifier>,<address>,<amount>`.
+  //
+  // The textarea's placeholder embeds the category's identifier
+  // label (`employee` for Payroll, `recipient` for Grants, etc.)
+  // followed by `,address,amount` — anchor on that suffix so the
+  // selector survives a category swap without coupling to the
+  // current category's exact identifier word.
   await expect(page.getByRole("heading", { name: /^Recipients$/i })).toBeVisible();
-  const csv = page.getByRole("textbox").filter({ hasText: "" }).first();
-  await csv.fill(`${recipientLabel},${recipientAddress},${amount}`);
+  await page.getByPlaceholder(/,address,amount/i).fill(`${recipientLabel},${recipientAddress},${amount}`);
 
   // Claim schedule — `datetime-local` input. Playwright's `fill`
   // sets the underlying value directly, bypassing the browser's
@@ -93,7 +102,7 @@ export async function driveWizardToStep4(
   await page
     .locator('input[type="datetime-local"]')
     .first()
-    .fill(farFutureClaimFrom());
+    .fill(bufferedClaimFrom());
 
   // Advance to step 4. The Next button stays disabled until both
   // recipient + claimFrom are valid, so Playwright's auto-retry on
