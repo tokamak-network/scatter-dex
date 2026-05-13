@@ -27,14 +27,26 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           // [L-6] CSP: restrict script/connect sources to mitigate XSS-based key theft.
-          // 'self' + 'unsafe-inline' needed for Next.js; 'unsafe-eval' for snarkjs/wasm.
-          // connect-src allows relayer and RPC endpoints.
-          // localhost is dev-only to prevent production data exfiltration.
+          //
+          // No `unsafe-eval` in `script-src`. snarkjs runs only inside the
+          // `*-worker.ts` files (claim / authorize / deposit / cancel) —
+          // `warmProverAssets` in `lib/zk/zkey-cache.ts` is the only
+          // dynamic `import("snarkjs")`, and grep confirms it's invoked
+          // exclusively from worker context. The main thread never
+          // touches `Function()` / `eval`, so the historical
+          // `'unsafe-eval'` allowance is vestigial and removing it closes
+          // the XSS → RCE escalation route. If a future change reintroduces
+          // a main-thread snarkjs call site, the browser console will flag
+          // a CSP violation — fix the call site, don't loosen the header.
+          //
+          // 'self' + 'unsafe-inline' on script-src still required for
+          // Next.js hydration scripts. connect-src enumerates RPC +
+          // relayer endpoints; localhost is dev-only.
           {
             key: "Content-Security-Policy",
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+              "script-src 'self' 'unsafe-inline'",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob:",
               "font-src 'self' https://fonts.gstatic.com",
