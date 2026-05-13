@@ -24,6 +24,11 @@ export interface ClaimPackageFixtureOptions {
   /** Recipient EOA — must match the wallet the spec installs so the
    *  /claim page's "you are the recipient" gate clears. */
   recipient: string;
+  /** Chain ID baked into the package. Defaults to the env-resolved
+   *  `NEXT_PUBLIC_PAY_CHAIN_ID` (31337 on dev). Override to a value
+   *  that doesn't match the Pay build's chainId to exercise the
+   *  /claim "wrong deployment" banner. */
+  chainId?: number;
   /** Settlement contract address. Defaults to the env-resolved
    *  PrivateSettlement that start-e2e-env.sh writes to .env.local. */
   settlementAddress?: string;
@@ -143,7 +148,7 @@ export function buildClaimUrlFragment(opts: ClaimPackageFixtureOptions): {
 
   const pkg = {
     version: 1,
-    chainId: Number(envLookup("NEXT_PUBLIC_PAY_CHAIN_ID") ?? 31337),
+    chainId: opts.chainId ?? Number(envLookup("NEXT_PUBLIC_PAY_CHAIN_ID") ?? 31337),
     settlementAddress: settlement,
     claimsRoot: "0x" + "1".repeat(64),
     recipient: opts.recipient,

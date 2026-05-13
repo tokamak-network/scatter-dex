@@ -155,4 +155,40 @@ test.describe("Live stack — /claim route", () => {
       page.getByText(/✓ Available to claim now/),
     ).not.toBeVisible();
   });
+
+  test("wrong-chain fragment surfaces the 'Wrong Pay deployment' banner", async ({ page }) => {
+    // Build a fragment with chainId = 1 (mainnet) while the Pay
+    // build targets 31337 (anvil). The /claim page's wrongAppChain
+    // branch (page.tsx:368-376) renders a terminal warning BEFORE
+    // the wallet-connect prompt — protects recipients from being
+    // sent through MetaMask only to be told to switch deployments
+    // afterward. Catches: any regression that lets a cross-chain
+    // link pass the gate (e.g. compare-by-string flip).
+    const { href } = buildClaimUrlFragment({
+      recipient: ANVIL_VERIFIED_TEST.account,
+      chainId: 1,
+    });
+    await page.goto(href);
+
+    await expect(
+      page.getByText(/Wrong Pay deployment/i),
+    ).toBeVisible();
+
+    // The "targets chain N but the link is for chain M" explanation
+    // — anchors on "chain 1" (the package's chainId). `\b` word
+    // boundary prevents a false-positive match on "chain 10" /
+    // "chain 137" if the page ever rendered the wrong value.
+    await expect(
+      page.getByText(/link is for chain 1\b/i),
+    ).toBeVisible();
+
+    // The banner is terminal — it bails BEFORE the wallet-connect
+    // prompt (page.tsx:368-377 early-returns). Asserting the
+    // Connect wallet button is absent locks in that early-return
+    // contract; a regression that moved the chain check below
+    // wallet-connect would surface here.
+    await expect(
+      page.getByRole("button", { name: "Connect wallet", exact: false }),
+    ).not.toBeVisible();
+  });
 });
