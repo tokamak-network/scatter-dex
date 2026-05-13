@@ -232,6 +232,8 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         if (amount == 0) return;
         IERC20 _bondToken = bondToken;
         if (address(_bondToken) == address(0)) {
+            // `to` is always the original bond owner (`msg.sender` in executeExit), not arbitrary.
+            // slither-disable-next-line arbitrary-send-eth
             (bool sent,) = to.call{value: amount}("");
             if (!sent) revert BondTransferFailed();
         } else {

@@ -1,0 +1,8 @@
+{
+  "filter_paths": "lib/|test/|script/",
+  "detectors_to_exclude": "incorrect-return,naming-convention,solc-version,assembly,low-level-calls,too-many-digits,similar-names,immutable-states,uninitialized-local,calls-loop,timestamp,constable-states",
+  "exclude_informational": true,
+  "exclude_low": false,
+  "exclude_medium": false,
+  "exclude_high": false
+}
