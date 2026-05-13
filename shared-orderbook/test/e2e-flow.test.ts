@@ -59,6 +59,16 @@ async function api(path: string, init?: RequestInit) {
   return { status: res.status, body: await res.json() as Record<string, unknown> };
 }
 
+import { makeOfferHandle } from "./helpers.js";
+
+// Order ids captured by the POST steps so later cancel + duplicate
+// steps can reference the exact handle stored. This suite is a single
+// 16-step scenario inside one `describe` — running an individual `it`
+// in isolation will surface these as undefined.
+let orderIdA: string;       // relayer A's first order (WETH→USDC)
+let orderIdB: string;       // relayer B's counterparty order (USDC→WETH)
+let orderIdASecond: string; // relayer A's second order (step 14)
+
 function waitForWsMessage(ws: WebSocket, timeout = 3000): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("WS timeout")), timeout);
@@ -150,11 +160,13 @@ describe("E2E: Shared Orderbook Full Flow", () => {
     await new Promise<void>((resolve) => ws.on("open", resolve));
 
     // Relayer A posts a sell order: sell 1 WETH for 2000 USDC
+    orderIdA = makeOfferHandle();
     const msgPromise = waitForWsMessage(ws);
     const h = await sign(relayerA, "POST", "/api/orders");
     const { status } = await api("/api/orders", {
       method: "POST", headers: h,
       body: JSON.stringify({
+        id: orderIdA,
         sellToken: WETH,
         buyToken: USDC,
         sellAmount: "1000000000000000000",   // 1 WETH
@@ -162,8 +174,6 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         minFillAmount: "0",
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "100",
-        pubKeyAx: "10001",
       }),
     });
     expect(status).toBe(201);
@@ -175,7 +185,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
     expect(order.relayer).toBe(relayerA.address.toLowerCase());
     expect(order.sellToken).toBe(WETH);
     expect(order.buyToken).toBe(USDC);
-    expect(order.nonce).toBe("100");
+    expect(order.id).toBe(orderIdA);
 
     ws.close();
   });
@@ -183,10 +193,12 @@ describe("E2E: Shared Orderbook Full Flow", () => {
   // ─── Step 4: Relayer B posts counterparty order ───
 
   it("relayer B posts counterparty order (buy WETH with USDC)", async () => {
+    orderIdB = makeOfferHandle();
     const h = await sign(relayerB, "POST", "/api/orders");
     const { status, body } = await api("/api/orders", {
       method: "POST", headers: h,
       body: JSON.stringify({
+        id: orderIdB,
         sellToken: USDC,
         buyToken: WETH,
         sellAmount: "2000000000000",          // 2000 USDC
@@ -194,8 +206,6 @@ describe("E2E: Shared Orderbook Full Flow", () => {
         minFillAmount: "0",
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "200",
-        pubKeyAx: "20001",
       }),
     });
     expect(status).toBe(201);
@@ -261,16 +271,17 @@ describe("E2E: Shared Orderbook Full Flow", () => {
   // ─── Step 8: Duplicate order rejected ───
 
   it("duplicate order ID is rejected (409)", async () => {
+    // Re-post the same OFFER_HANDLE relayer A already submitted in step 3
+    // to exercise the dedup path.
     const h = await sign(relayerA, "POST", "/api/orders");
     const { status, body } = await api("/api/orders", {
       method: "POST", headers: h,
       body: JSON.stringify({
+        id: orderIdA,
         sellToken: WETH, buyToken: USDC,
         sellAmount: "500000000000000000", buyAmount: "1000000000000",
         minFillAmount: "0", maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "100",
-        pubKeyAx: "10001",
       }),
     });
     expect(status).toBe(409);
@@ -280,9 +291,8 @@ describe("E2E: Shared Orderbook Full Flow", () => {
   // ─── Step 9: Cancel flow ───
 
   it("relayer A cannot cancel relayer B's order (403)", async () => {
-    const orderId = `${relayerB.address.toLowerCase()}-200`;
-    const h = await sign(relayerA, "DELETE", `/api/orders/${orderId}`);
-    const { status } = await api(`/api/orders/${orderId}`, {
+    const h = await sign(relayerA, "DELETE", `/api/orders/${orderIdB}`);
+    const { status } = await api(`/api/orders/${orderIdB}`, {
       method: "DELETE", headers: h,
     });
     expect(status).toBe(403);
@@ -293,9 +303,8 @@ describe("E2E: Shared Orderbook Full Flow", () => {
     await new Promise<void>((resolve) => ws.on("open", resolve));
 
     const msgPromise = waitForWsMessage(ws);
-    const orderId = `${relayerB.address.toLowerCase()}-200`;
-    const h = await sign(relayerB, "DELETE", `/api/orders/${orderId}`);
-    const { status, body } = await api(`/api/orders/${orderId}`, {
+    const h = await sign(relayerB, "DELETE", `/api/orders/${orderIdB}`);
+    const { status, body } = await api(`/api/orders/${orderIdB}`, {
       method: "DELETE", headers: h,
     });
     expect(status).toBe(200);
@@ -304,7 +313,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
     // WebSocket should broadcast cancellation
     const msg = await msgPromise;
     expect(msg.type).toBe("order:cancelled");
-    expect(msg.orderId).toBe(orderId);
+    expect(msg.orderId).toBe(orderIdB);
 
     ws.close();
   });
@@ -315,9 +324,8 @@ describe("E2E: Shared Orderbook Full Flow", () => {
   });
 
   it("cannot cancel already-cancelled order (409)", async () => {
-    const orderId = `${relayerB.address.toLowerCase()}-200`;
-    const h = await sign(relayerB, "DELETE", `/api/orders/${orderId}`);
-    const { status } = await api(`/api/orders/${orderId}`, {
+    const h = await sign(relayerB, "DELETE", `/api/orders/${orderIdB}`);
+    const { status } = await api(`/api/orders/${orderIdB}`, {
       method: "DELETE", headers: h,
     });
     expect(status).toBe(409);
@@ -330,12 +338,11 @@ describe("E2E: Shared Orderbook Full Flow", () => {
     const { status, body } = await api("/api/orders", {
       method: "POST", headers: h,
       body: JSON.stringify({
+        id: makeOfferHandle(),
         sellToken: USDC, buyToken: WETH,
         sellAmount: "1000000000000", buyAmount: "500000000000000000",
         minFillAmount: "0", maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) - 100,  // already expired
-        nonce: "201",
-        pubKeyAx: "20002",
       }),
     });
     expect(status).toBe(400);
@@ -370,11 +377,10 @@ describe("E2E: Shared Orderbook Full Flow", () => {
     const { status } = await api("/api/orders", {
       method: "POST", headers: h,
       body: JSON.stringify({
+        id: makeOfferHandle(),
         sellToken: WETH, buyToken: USDC,
         sellAmount: "1", buyAmount: "1",
         maxFee: 0, expiry: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "999",
-        pubKeyAx: "99999",
       }),
     });
     // Should fail because signature was for /api/relayers/register, not /api/orders
@@ -409,16 +415,16 @@ describe("E2E: Shared Orderbook Full Flow", () => {
   // ─── Step 14: Multiple orders + ordering ───
 
   it("relayer A posts a second order", async () => {
+    orderIdASecond = makeOfferHandle();
     const h = await sign(relayerA, "POST", "/api/orders");
     const { status } = await api("/api/orders", {
       method: "POST", headers: h,
       body: JSON.stringify({
+        id: orderIdASecond,
         sellToken: WETH, buyToken: USDC,
         sellAmount: "500000000000000000", buyAmount: "1000000000000",
         minFillAmount: "0", maxFee: 20,
         expiry: Math.floor(Date.now() / 1000) + 7200,
-        nonce: "101",
-        pubKeyAx: "10002",
       }),
     });
     expect(status).toBe(201);

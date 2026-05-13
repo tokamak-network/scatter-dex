@@ -38,6 +38,15 @@ async function fetchJSON(path: string, init?: RequestInit) {
   return { status: res.status, body };
 }
 
+import { makeOfferHandle } from "./helpers.js";
+
+// Order ids captured at POST time so the cancel-flow tests can reference
+// the exact handle that was stored. Tests in this suite run sequentially
+// inside one `describe`; later steps depend on earlier ones populating
+// these — narrowing via `it.only`/`-t` will surface as undefined.
+let orderIdA: string;
+let orderIdB: string;
+
 // No-op rate limiter for tests
 const noopLimiter: express.RequestHandler = (_req, _res, next) => next();
 
@@ -111,11 +120,13 @@ describe("API integration", () => {
   });
 
   it("POST /api/orders — relayer A posts an order", async () => {
+    orderIdA = makeOfferHandle();
     const headers = await authHeaders(relayerA, "POST", "/api/orders");
     const { status, body } = await fetchJSON("/api/orders", {
       method: "POST",
       headers,
       body: JSON.stringify({
+        id: orderIdA,
         sellToken: "0x" + "a".repeat(40),
         buyToken: "0x" + "b".repeat(40),
         sellAmount: "1000000000000000000",
@@ -123,8 +134,6 @@ describe("API integration", () => {
         minFillAmount: "0",
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "1",
-        pubKeyAx: "111",
       }),
     });
     expect(status).toBe(201);
@@ -132,11 +141,13 @@ describe("API integration", () => {
   });
 
   it("POST /api/orders — relayer B posts counterparty order", async () => {
+    orderIdB = makeOfferHandle();
     const headers = await authHeaders(relayerB, "POST", "/api/orders");
     const { status, body } = await fetchJSON("/api/orders", {
       method: "POST",
       headers,
       body: JSON.stringify({
+        id: orderIdB,
         sellToken: "0x" + "b".repeat(40),
         buyToken: "0x" + "a".repeat(40),
         sellAmount: "2000000000000000000",
@@ -144,8 +155,6 @@ describe("API integration", () => {
         minFillAmount: "0",
         maxFee: 30,
         expiry: Math.floor(Date.now() / 1000) + 3600,
-        nonce: "1",
-        pubKeyAx: "222",
       }),
     });
     expect(status).toBe(201);
@@ -182,9 +191,8 @@ describe("API integration", () => {
   });
 
   it("DELETE /api/orders/:id — relayer A cancels own order", async () => {
-    const orderId = `${relayerA.address.toLowerCase()}-1`;
-    const headers = await authHeaders(relayerA, "DELETE", `/api/orders/${orderId}`);
-    const { status, body } = await fetchJSON(`/api/orders/${orderId}`, {
+    const headers = await authHeaders(relayerA, "DELETE", `/api/orders/${orderIdA}`);
+    const { status, body } = await fetchJSON(`/api/orders/${orderIdA}`, {
       method: "DELETE",
       headers,
     });
@@ -193,9 +201,8 @@ describe("API integration", () => {
   });
 
   it("DELETE /api/orders/:id — relayer A cannot cancel relayer B's order", async () => {
-    const orderId = `${relayerB.address.toLowerCase()}-1`;
-    const headers = await authHeaders(relayerA, "DELETE", `/api/orders/${orderId}`); // relayer A trying to cancel B's
-    const { status, body } = await fetchJSON(`/api/orders/${orderId}`, {
+    const headers = await authHeaders(relayerA, "DELETE", `/api/orders/${orderIdB}`); // relayer A trying to cancel B's
+    const { status, body } = await fetchJSON(`/api/orders/${orderIdB}`, {
       method: "DELETE",
       headers,
     });
