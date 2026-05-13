@@ -120,6 +120,41 @@ sync_verifiers_from_zkeys() {
   batch_out=$( node "$ROOT_DIR/circuits/scripts/sync-batch-verifier-vk.mjs" 2>&1 ) \
     || { echo "  ERROR: BatchAuthorizeVerifier sync failed:"; echo "$batch_out"; exit 1; }
   echo "  [ok] $batch_out"
+
+  # Sync the canonical zkey + wasm from circuits/build to every
+  # consumer that fetches them at runtime (frontend, apps/pro,
+  # apps/pay). circuits/scripts/build.sh copies to frontend +
+  # apps/pro; apps/pay's predev mirrors apps/pro into its own
+  # public/zk. Each hop is a drift opportunity — if any consumer
+  # zkey diverges from the one the on-chain Verifier.sol was
+  # exported from, every proof on that flow reverts with the
+  # opaque `InvalidProof()` error the per-side Verifier sync
+  # above also guards. Force-overwrite (cmp + cp) here so the
+  # canonical circuits/build copy wins, regardless of which
+  # local rebuild last touched the consumer path.
+  local zk_targets=(
+    "$ROOT_DIR/frontend/public/zk"
+    "$ROOT_DIR/apps/pro/public/zk"
+    "$ROOT_DIR/apps/pay/public/zk"
+  )
+  local zk_circuits=(
+    deposit withdraw cancel claim claim_64 claim_128
+    authorize authorize_64 authorize_128
+  )
+  local zk_copied=0
+  for target in "${zk_targets[@]}"; do
+    [ -d "$target" ] || continue
+    for circ in "${zk_circuits[@]}"; do
+      local zkey="$circuits_dir/build/${circ}_final.zkey"
+      [ -f "$zkey" ] || continue
+      local dst="$target/${circ}_final.zkey"
+      if [ ! -f "$dst" ] || ! cmp -s "$zkey" "$dst"; then
+        cp "$zkey" "$dst"
+        zk_copied=$((zk_copied + 1))
+      fi
+    done
+  done
+  echo "  [ok] consumer zkey assets in sync (copied: $zk_copied)"
 }
 
 echo ""
