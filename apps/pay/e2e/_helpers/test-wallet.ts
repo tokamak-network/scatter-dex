@@ -420,3 +420,16 @@ export const ANVIL_DEFAULT = {
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
   chainId: 31337,
 } as const;
+
+/** Anvil account #5 — kept off the deployer / relayer / dev rotation
+ *  so specs that mutate per-account on-chain state (e.g. the verified
+ *  identity flag) don't pollute the wallet other specs assume is
+ *  clean. The unverified-gate spec sticks with ANVIL_DEFAULT, the
+ *  verified-wallet spec uses this one, and both stay green in the
+ *  same Playwright run. */
+export const ANVIL_VERIFIED_TEST = {
+  account: "0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc",
+  privateKey:
+    "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba",
+  chainId: 31337,
+} as const;

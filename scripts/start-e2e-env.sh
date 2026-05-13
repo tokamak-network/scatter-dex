@@ -168,11 +168,14 @@ parse_addr() {
 RELAYER_REGISTRY=$(parse_addr RelayerRegistry)
 WETH=$(parse_addr WETH)
 USDC=$(parse_addr USDC)
+USDT=$(parse_addr USDT)
+TON=$(parse_addr TON)
 COMMITMENT_POOL=$(parse_addr CommitmentPool)
 PRIVATE_SETTLEMENT=$(parse_addr PrivateSettlement)
 FEE_VAULT=$(parse_addr FeeVault)
+IDENTITY_GATE=$(parse_addr IdentityGate)
 
-for var in RELAYER_REGISTRY WETH USDC COMMITMENT_POOL PRIVATE_SETTLEMENT FEE_VAULT; do
+for var in RELAYER_REGISTRY WETH USDC COMMITMENT_POOL PRIVATE_SETTLEMENT FEE_VAULT IDENTITY_GATE; do
   if [ -z "${!var}" ]; then
     echo "  ERROR: missing $var in deploy output"
     echo "$DEPLOY_OUTPUT"
@@ -180,6 +183,38 @@ for var in RELAYER_REGISTRY WETH USDC COMMITMENT_POOL PRIVATE_SETTLEMENT FEE_VAU
   fi
 done
 echo "  [ok] deployed (CommitmentPool=$COMMITMENT_POOL)"
+
+# Rewrite apps/pay/.env.local with the just-deployed proxy addresses.
+# Pay reads NEXT_PUBLIC_PAY_* at build time, and the previous values were
+# whatever a prior `dev.sh --apps pay` run left behind — silently stale
+# after every redeploy. Pay E2E specs that depend on the IdentityGate
+# (or any other proxy-deployed contract) need this sync to do anything
+# meaningful. Matches the block dev.sh writes; preserves operator-set
+# values (ONEINCH_API_KEY, CSP overrides, etc.) the same way.
+PAY_ENV="$ROOT_DIR/apps/pay/.env.local"
+if [ -d "$ROOT_DIR/apps/pay" ]; then
+  PRESERVED=""
+  if [ -f "$PAY_ENV" ]; then
+    PRESERVED=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL)=' "$PAY_ENV" 2>/dev/null || true)
+  fi
+  DEPLOY_BLOCK=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo 0)
+  cat > "$PAY_ENV" <<EOF
+NEXT_PUBLIC_PAY_CHAIN_ID=31337
+NEXT_PUBLIC_PAY_RPC_URL=$RPC_URL
+NEXT_PUBLIC_PAY_PRIVATE_SETTLEMENT=$PRIVATE_SETTLEMENT
+NEXT_PUBLIC_PAY_COMMITMENT_POOL=$COMMITMENT_POOL
+NEXT_PUBLIC_PAY_IDENTITY_GATE=$IDENTITY_GATE
+NEXT_PUBLIC_PAY_RELAYER_REGISTRY=$RELAYER_REGISTRY
+NEXT_PUBLIC_PAY_WETH=$WETH
+NEXT_PUBLIC_PAY_USDC=$USDC
+NEXT_PUBLIC_PAY_USDT=$USDT
+NEXT_PUBLIC_PAY_TON=$TON
+NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
+NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$DEPLOY_BLOCK
+EOF
+  [ -n "$PRESERVED" ] && echo "$PRESERVED" >> "$PAY_ENV"
+  echo "  [ok] wrote $PAY_ENV (IdentityGate=$IDENTITY_GATE)"
+fi
 
 # ── 3. Shared orderbook ─────────────────────────────────────
 echo ""
