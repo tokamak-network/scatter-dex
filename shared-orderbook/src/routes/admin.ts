@@ -22,8 +22,10 @@ function makeAdminAuth(token: string | undefined): RequestHandler {
       res.status(401).json({ error: "missing bearer token" });
       return;
     }
-    // Constant-time compare — pad both sides to the same length to avoid
-    // a length-based early exit from `timingSafeEqual`.
+    // Constant-time compare. Pad both sides to the same length and ALWAYS
+    // run `timingSafeEqual` regardless of length so a prefix/short token
+    // doesn't return earlier than a same-length wrong token. The length
+    // check is folded into the final boolean, not into control flow.
     const a = Buffer.from(supplied);
     const b = Buffer.from(token);
     const len = Math.max(a.length, b.length);
@@ -31,7 +33,9 @@ function makeAdminAuth(token: string | undefined): RequestHandler {
     a.copy(ap);
     const bp = Buffer.alloc(len);
     b.copy(bp);
-    if (a.length !== b.length || !timingSafeEqual(ap, bp)) {
+    const bytesEq = timingSafeEqual(ap, bp);
+    const lenEq = a.length === b.length;
+    if (!(bytesEq && lenEq)) {
       res.status(401).json({ error: "invalid bearer token" });
       return;
     }
@@ -52,18 +56,21 @@ export function createAdminRoutes(deps: AdminDeps): Router {
   /**
    * GET /api/admin/verify-stats
    *
-   * Reports the last verify pass plus a rolling DB count of how many
-   * settlements are still unverified. The DB count is what an operator
-   * actually wants for alerting — if it stays > 0 for hours, something
-   * upstream is broken (RPC down, contract address wrong, relayer
-   * pushing rows the chain never confirms).
+   * Reports the last verify pass plus the DB-level unverified count.
+   * The count is what an operator actually wants for alerting — if it
+   * stays elevated for hours, something upstream is broken (RPC down,
+   * contract address wrong, relayer pushing rows the chain never
+   * confirms). `oldestUnverifiedBlock` adds the leading edge so ops
+   * can correlate against chain head.
    */
   router.get("/verify-stats", auth, (_req, res) => {
     const monSnap = deps.monitor.snapshot();
-    const unverifiedSample = deps.db.listUnverifiedSettlements({ limit: 1 });
+    const unverifiedCount = deps.db.countUnverifiedSettlements();
+    const unverifiedSample = unverifiedCount > 0 ? deps.db.listUnverifiedSettlements({ limit: 1 }) : [];
     res.json({
       ...monSnap,
-      hasUnverifiedRows: unverifiedSample.length > 0,
+      unverifiedCount,
+      hasUnverifiedRows: unverifiedCount > 0,
       oldestUnverifiedBlock: unverifiedSample[0]?.blockNumber ?? null,
     });
   });

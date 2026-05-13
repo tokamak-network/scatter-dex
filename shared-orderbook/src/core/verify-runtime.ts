@@ -45,14 +45,23 @@ export function makeEventFetcher(opts: MakeFetcherOpts): EventFetcher {
     const logs = await contract.queryFilter(contract.filters.PrivateSettledAuth(), fromBlock, toBlock);
 
     // Look up block timestamps once per unique block (events share blocks).
+    // Bounded concurrency — a wide window during backfill could otherwise
+    // spawn hundreds of simultaneous `eth_getBlockByNumber` calls and trip
+    // a public RPC's per-second cap. 8 is small enough for free-tier
+    // providers and large enough that single-pass latency stays roughly
+    // O(unique-blocks / 8) instead of O(unique-blocks).
     const blockNumbers = Array.from(new Set(logs.map((l) => l.blockNumber)));
     const blockTimes = new Map<number, number>();
-    await Promise.all(
-      blockNumbers.map(async (bn) => {
-        const blk = await provider.getBlock(bn);
-        if (blk) blockTimes.set(bn, blk.timestamp);
-      }),
-    );
+    const CONCURRENCY = 8;
+    for (let i = 0; i < blockNumbers.length; i += CONCURRENCY) {
+      const slice = blockNumbers.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        slice.map(async (bn) => {
+          const blk = await provider.getBlock(bn);
+          if (blk) blockTimes.set(bn, blk.timestamp);
+        }),
+      );
+    }
 
     return logs.map((log) => {
       // ethers v6 typed EventLog exposes .args; widen to any so we don't
@@ -82,7 +91,8 @@ export interface VerifyPassStats {
   unmatchedByReason: Record<VerifyReport["unmatched"][number]["reason"], number>;
   /** maxBlock passed to `runVerifyPass` — useful when chasing "why didn't tail rows get verified". */
   maxBlock: number;
-  /** ISO error string if the pass threw; null on success. */
+  /** Error message if the pass threw (`err.message` or `String(err)`,
+   *  not stack/context); null on success. */
   error: string | null;
 }
 

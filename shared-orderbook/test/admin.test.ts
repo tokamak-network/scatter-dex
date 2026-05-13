@@ -76,6 +76,7 @@ describe("/api/admin/verify-stats", () => {
     expect(r.json).toMatchObject({
       lastPass: null,
       totalPasses: 0,
+      unverifiedCount: 0,
       hasUnverifiedRows: false,
       oldestUnverifiedBlock: null,
     });
@@ -113,6 +114,7 @@ describe("/api/admin/verify-stats", () => {
     const r = await getStats({ Authorization: "Bearer secret-token" });
     expect(r.status).toBe(200);
     expect(r.json.hasUnverifiedRows).toBe(true);
+    expect(r.json.unverifiedCount).toBe(1);
     expect(r.json.oldestUnverifiedBlock).toBe(42);
     expect(r.json.totalPasses).toBe(1);
     expect((r.json.lastPass as { scanned: number }).scanned).toBe(1);

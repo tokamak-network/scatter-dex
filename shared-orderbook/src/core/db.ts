@@ -414,6 +414,18 @@ export class OrderbookDB {
   }
 
   /**
+   * Count of rows still marked verified=0. Cheap scalar — uses the
+   * partial index implicit in SQLite's `COUNT(*)` over a `WHERE`. The
+   * `/api/admin/verify-stats` endpoint reports this so an operator can
+   * alert on "unverified backlog grew past N" without paying for a
+   * full list scan.
+   */
+  countUnverifiedSettlements(): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM settlements WHERE verified = 0`).get() as { c: number };
+    return row.c;
+  }
+
+  /**
    * Phase 2.5b verify job: pull rows still marked verified=0, optionally
    * older than `maxBlock` (so an in-flight chain tail isn't re-checked
    * on every pass). Ordered by block_number ASC so the job processes
