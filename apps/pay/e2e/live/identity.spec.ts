@@ -62,11 +62,28 @@ test.describe("Live stack — /identity route", () => {
     ).toBeVisible();
 
     // The "Trusted authorities" panel renders the IdentityGate
-    // registries the page admin-reads. Asserting on its heading
-    // catches a regression in `useIdentityGateAdmin` that broke
-    // the registry listing.
+    // registries the page admin-reads. The heading alone would
+    // pass if the admin hook just rendered the section shell with
+    // an empty list, so assert on the registry-list item itself —
+    // DeployLocal wires one MockIdentityRegistry, and the dev
+    // build doesn't fetch zk-X509 metadata so the name slot
+    // renders the "Unnamed registry" fallback copy
+    // (page.tsx:181). 10s timeout covers the hook's initial
+    // on-chain `getRegistries()` call.
     await expect(
       page.getByRole("heading", { name: /^Trusted authorities$/i }),
     ).toBeVisible();
+    await expect(
+      page.getByText(/Unnamed registry/i).first(),
+    ).toBeVisible({ timeout: 10_000 });
+
+    // None of the gated loading / empty-state placeholders should
+    // remain after the snapshot resolves.
+    await expect(
+      page.getByText(/Loading registries/i),
+    ).not.toBeVisible();
+    await expect(
+      page.getByText(/No registries configured/i),
+    ).not.toBeVisible();
   });
 });
