@@ -17,7 +17,6 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
     address public immutable owner;
 
     address[] public actors;
-    mapping(address => bool) public seen;
 
     uint256 public ghostActiveBondSum;
 
@@ -52,7 +51,6 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(a);
         try registry.register("u", "n", fee, bond) {
             ghostActiveBondSum += bond;
-            if (!seen[a]) seen[a] = true;
         } catch {}
     }
 

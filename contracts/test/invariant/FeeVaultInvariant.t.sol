@@ -61,6 +61,14 @@ contract FeeVaultInvariantTest is StdInvariant, Test {
             "platformRevenue drift");
     }
 
+    /// @dev Every platform fee skimmed during `claim` and every `withdrawPlatformRevenue`
+    ///      lands at `treasury`. Since the handler never mints directly to treasury,
+    ///      `token.balanceOf(treasury)` must match the cumulative ghost counter.
+    function invariant_treasuryReceipts() public view {
+        assertEq(token.balanceOf(TREASURY), handler.ghostTreasuryReceived(),
+            "treasury balance / ghost mismatch");
+    }
+
     /// @dev Fee bps configuration must stay within the documented cap at all times.
     function invariant_feeBpsBounded() public view {
         uint256 cap = vault.MAX_PLATFORM_FEE();
