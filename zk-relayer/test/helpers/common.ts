@@ -137,17 +137,29 @@ export function resolveBroadcastAddress(args: {
     )?.contractAddress;
   } else {
     // Upgradeable contracts surface as `Name` impl + immediately-following
-    // `ERC1967Proxy` tx. Prefer the proxy; require it to actually be one
-    // so a reordered DeployLocal doesn't silently return an impl with no
-    // storage (production code calls the proxy, not the impl).
+    // `TransparentUpgradeableProxy` tx (DeployLocal.s.sol uses Transparent,
+    // not ERC1967, per OZ's deployUpgradeable pattern). Prefer the proxy.
+    // Non-upgradeable contracts (e.g. WETH9, Poseidon libraries) just have
+    // the single tx — return that. We deliberately do NOT return the impl
+    // when a proxy is expected-but-missing: silently sending production
+    // calls to a storage-less impl is the failure mode the guard exists
+    // to prevent. Add the contract name to PROXY_DEPLOYED below when a
+    // new upgradeable surface ships.
+    const PROXY_DEPLOYED = new Set([
+      "BatchExecutor", "CommitmentPool", "FeeVault", "IdentityGate",
+      "PrivateSettlement", "RelayerRegistry", "SanctionsList",
+    ]);
     const idx = txs.findIndex((t: any) => t.contractName === args.name);
     if (idx >= 0) {
       const next = txs[idx + 1];
-      if (next?.contractName === "ERC1967Proxy") {
+      if (PROXY_DEPLOYED.has(args.name)) {
+        if (next?.contractName !== "TransparentUpgradeableProxy") {
+          throw new Error(
+            `expected TransparentUpgradeableProxy after ${args.name} in broadcast, got '${next?.contractName ?? "<eof>"}' — DeployLocal tx order may have changed`,
+          );
+        }
         addr = next.contractAddress;
-      } else if (idx === txs.length - 1 || next?.contractName !== "ERC1967Proxy") {
-        // Non-upgradeable contract (e.g. WETH9): the impl tx itself is
-        // what apps consume.
+      } else {
         addr = txs[idx].contractAddress;
       }
     }
