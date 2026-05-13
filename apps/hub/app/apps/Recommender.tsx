@@ -61,11 +61,13 @@ export function Recommender({ className = "" }: { className?: string }) {
           <p className="mt-2 text-sm text-[var(--color-text-muted)]">{pick.persona}</p>
           {pick.comingSoon ? (
             // Recommendation stands but the CTA is non-clickable —
-            // pointing the user at a `hosting:disable`d target would
+            // pointing the user at a hosting-disabled target would
             // 404. Matches `AppCard.tsx`'s comingSoon treatment.
+            // No `aria-disabled` since this is a static label, not
+            // a disabled control — the attribute is ignored on a
+            // plain `<span>` without an interactive role.
             <span
               className="mt-4 inline-flex items-center gap-1.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] px-4 py-2 text-sm font-medium text-[var(--color-text-muted)]"
-              aria-disabled
             >
               Coming soon
             </span>
