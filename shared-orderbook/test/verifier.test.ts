@@ -179,6 +179,22 @@ describe("runVerifyPass (DB-integrated)", () => {
     expect(second.flipped).toBe(0);
   });
 
+  it("OVERWRITES a relayer-supplied block_time with the on-chain value", async () => {
+    // Relayer pushed a row with a (potentially stale or bogus) block_time.
+    const row = makeRow({ blockTime: 1_700_000_000 });
+    db.insertSettlement(row.makerRelayer, row);
+    expect(db.getSettlement(row.txHash)?.blockTime).toBe(1_700_000_000);
+
+    const result = await runVerifyPass(
+      db,
+      async () => [makeEvent({ blockTime: 1_750_000_000 })],
+      { maxBlock: 1000 },
+    );
+    expect(result.flipped).toBe(1);
+    // The on-chain timestamp wins.
+    expect(db.getSettlement(row.txHash)?.blockTime).toBe(1_750_000_000);
+  });
+
   it("respects the maxBlock cutoff so the chain tail isn't re-scanned every pass", async () => {
     db.insertSettlement(makeRow().makerRelayer, makeRow({ txHash: "0x" + "a1".repeat(32), blockNumber: 100 }));
     db.insertSettlement(makeRow().makerRelayer, makeRow({ txHash: "0x" + "a2".repeat(32), blockNumber: 500, makerNullifier: "0x" + "03".repeat(32), takerNullifier: "0x" + "04".repeat(32) }));

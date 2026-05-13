@@ -434,15 +434,19 @@ export class OrderbookDB {
   }
 
   /**
-   * Bulk-mark settlements verified=1 (and backfill block_time when the
-   * verifier resolved it from on-chain log metadata). Runs as a single
-   * sqlite transaction so a crash mid-batch doesn't leave the table in
-   * a half-updated state. Returns the number of rows actually flipped.
+   * Bulk-mark settlements verified=1. When the verifier supplies a
+   * `blockTime` (resolved from on-chain log metadata), it OVERWRITES
+   * any relayer-reported value — the on-chain timestamp is canonical,
+   * and a stale relayer-supplied value would skew `since` filters /
+   * `lastSettleAt` metrics. Rows where the verifier didn't compute a
+   * timestamp keep whatever block_time was already there. Runs as a
+   * single sqlite transaction so a crash mid-batch doesn't leave the
+   * table half-updated. Returns the number of rows actually flipped.
    */
   markSettlementsVerified(entries: { txHash: string; blockTime?: number }[]): number {
     if (entries.length === 0) return 0;
     const stmtBoth = this.db.prepare(
-      `UPDATE settlements SET verified = 1, block_time = COALESCE(block_time, ?) WHERE tx_hash = ? AND verified = 0`,
+      `UPDATE settlements SET verified = 1, block_time = ? WHERE tx_hash = ? AND verified = 0`,
     );
     const stmtOnly = this.db.prepare(
       `UPDATE settlements SET verified = 1 WHERE tx_hash = ? AND verified = 0`,

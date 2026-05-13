@@ -37,7 +37,11 @@ export interface SettledAuthEvent {
   makerNullifier: string;
   takerNullifier: string;
   makerRelayer: string;
-  takerRelayer?: string;
+  /** Required: `PrivateSettledAuth` always emits a `takerRelayer` (zero
+   *  address on one-sided settles). Making this non-optional in the
+   *  projection prevents a fetcher from accidentally dropping it and
+   *  weakening the "maker/taker relayer agreement" check below. */
+  takerRelayer: string;
 }
 
 export interface VerifyDecision {
@@ -101,7 +105,7 @@ export function matchSettlements(
       unmatched.push({ txHash: row.txHash, reason: "relayer-mismatch" });
       continue;
     }
-    if (row.takerRelayer && ev.takerRelayer && !eqAddr(ev.takerRelayer, row.takerRelayer)) {
+    if (row.takerRelayer && !eqAddr(ev.takerRelayer, row.takerRelayer)) {
       unmatched.push({ txHash: row.txHash, reason: "relayer-mismatch" });
       continue;
     }
