@@ -2,6 +2,7 @@ import { expect, test } from "../_helpers/live-test";
 import { ANVIL_VERIFIED_TEST, installTestWallet } from "../_helpers/test-wallet";
 import { DEV_STACK_ENDPOINTS } from "../_helpers/stack";
 import { verifyTestWallet } from "../_helpers/verify-wallet";
+import { buildClaimUrlFragment } from "../_helpers/claim-package";
 
 /**
  * Live-stack smokes for `/claim`. Two surfaces the page can show
@@ -59,5 +60,42 @@ test.describe("Live stack — /claim route", () => {
     await expect(
       page.getByText(/Could not read this claim link/i),
     ).toBeVisible();
+  });
+
+  test("valid claim fragment renders the recipient + amount header without a parse error", async ({ page }) => {
+    // Build a structurally-valid v1 ClaimPackage recipient'd to the
+    // installed test wallet. The fragment passes `isClaimPackage`,
+    // so the page enters its happy-path render even though the
+    // claimsRoot doesn't match an on-chain settled group. The page's
+    // alreadyClaimed probe will eventually resolve to undefined /
+    // false against the missing group — that's downstream of this
+    // assertion which fires on the pre-probe header.
+    const { href } = buildClaimUrlFragment({
+      recipient: ANVIL_VERIFIED_TEST.account,
+    });
+    await page.goto(href);
+
+    // Page renders the amount + token symbol header. The "1 USDC"
+    // copy is constructed from pkg.amount + pkg.tokenSymbol + pkg.
+    // tokenDecimals — its appearance confirms decodeClaimPackage
+    // succeeded and the page is in the parsed branch (not the
+    // parseError fallback).
+    await expect(
+      page.getByText(/1.*USDC/i).first(),
+    ).toBeVisible();
+
+    // The `parseError` banner from the earlier test must NOT be
+    // present — a regression that broke decodeClaimPackage's happy
+    // path would flip this assertion immediately.
+    await expect(
+      page.getByText(/Could not read this claim link/i),
+    ).not.toBeVisible();
+
+    // No "open the original message" warning either — that branch
+    // only fires when `parsed === null`, which would mean the
+    // fragment was empty.
+    await expect(
+      page.getByText(/Open the original message you received/i),
+    ).not.toBeVisible();
   });
 });
