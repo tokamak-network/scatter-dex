@@ -49,6 +49,7 @@ contracts/src/zk/SettleVerifier.sol
 
 # zk-relayer build artifacts
 zk-relayer/dist/
+shared-orderbook/dist/
 
 # Auto-generated SDK reference (TypeDoc output) produced by
 # `cd apps/docs && npm run api`. Committing it drifts across Node
