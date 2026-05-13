@@ -155,10 +155,25 @@ export async function installTestWallet(
             // RPC. Returns the broadcast tx hash to the caller —
             // matches what `eth_sendTransaction` is contractually
             // supposed to return.
-            const tx = await getConnected().sendTransaction(
-              payload as ethers.TransactionRequest,
-            );
-            return tx.hash;
+            //
+            // NonceManager bumps its local counter when the tx is
+            // prepared, BEFORE the network confirms acceptance. A
+            // revert during gas estimation / RPC failure / nonce
+            // collision leaves the counter ahead of the on-chain
+            // nonce — the next sendTransaction would then sign a
+            // nonce with a gap and hang in the mempool. Reset on
+            // any failure so the manager resyncs from the network
+            // for the retry.
+            const conn = getConnected();
+            try {
+              const tx = await conn.sendTransaction(
+                payload as ethers.TransactionRequest,
+              );
+              return tx.hash;
+            } catch (err) {
+              conn.reset();
+              throw err;
+            }
           }
           default:
             throw new Error(`[test-wallet] unknown sign kind: ${kind}`);
