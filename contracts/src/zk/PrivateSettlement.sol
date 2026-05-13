@@ -632,7 +632,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         // Insert rotated commitment (same balance, new salt).
         // The zero-check at the top of this function guarantees
         // newCommitment != 0, so this always inserts. Leaf index returned
-        // by the pool is consumed via the off-chain LeafInserted event.
+        // by the pool is consumed via the off-chain CommitmentInserted event.
         // slither-disable-next-line unused-return
         pool.insertCommitment(uint256(p.newCommitment));
 

@@ -1,6 +1,6 @@
 {
-  "filter_paths": "lib/|test/|script/",
-  "detectors_to_exclude": "incorrect-return,naming-convention,solc-version,assembly,low-level-calls,too-many-digits,similar-names,immutable-states,uninitialized-local,calls-loop,timestamp,constable-states",
+  "filter_paths": "lib/|test/|script/|src/zk/.*Verifier.*\\.sol|src/zk/IncrementalMerkleTree\\.sol",
+  "detectors_to_exclude": "naming-convention,solc-version,too-many-digits,similar-names,immutable-states,uninitialized-local,calls-loop,timestamp,constable-states",
   "exclude_informational": true,
   "exclude_low": false,
   "exclude_medium": false,
