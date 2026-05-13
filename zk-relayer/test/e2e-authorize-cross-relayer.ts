@@ -44,7 +44,7 @@ import { fileURLToPath } from "url";
 
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "../src/core/tags.js";
-import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof, getEthBalanceFresh, getErc20BalanceFresh } from "./helpers/common.js";
+import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof, getEthBalanceFresh, getErc20BalanceFresh, resolveBroadcastAddress } from "./helpers/common.js";
 import { makeDepositProof } from "./helpers/deposit-proof.mjs";
 import { makeAuthorizeProof } from "./helpers/authorize-proof.mjs";
 
@@ -64,7 +64,12 @@ const CLAIMS_TREE_DEPTH = 4;
 const CLAIMS_TREE_SIZE = 2 ** CLAIMS_TREE_DEPTH;
 
 // USDC default — DeployLocal mock token; override via env for fork mode.
-const USDC_ADDRESS = process.env.E2E_USDC_ADDRESS ?? "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
+const USDC_ADDRESS = resolveBroadcastAddress({
+  name: "MockToken",
+  tokenSymbol: "USDC",
+  envVar: "E2E_USDC_ADDRESS",
+  rootDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+});
 
 // Anvil deterministic accounts — Alice/Bob are users; #1/#2 are the
 // relayer signers, set by dev-fork.sh / start-cross-relayer-e2e.sh.

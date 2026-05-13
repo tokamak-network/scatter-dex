@@ -29,7 +29,7 @@ import { TIER_16 } from "@zkscatter/sdk/zk";
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL, TAG_COMMITMENT_V2 } from "../src/core/tags.js";
 import { eqAddr } from "../src/lib/address.js";
-import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof } from "./helpers/common.js";
+import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof, resolveBroadcastAddress } from "./helpers/common.js";
 
 // @ts-ignore — JS module
 import { makeDepositProof } from "./helpers/deposit-proof.mjs";
@@ -46,9 +46,16 @@ const CLAIMS_TREE_DEPTH = 4;
 const CLAIMS_TREE_SIZE = 2 ** CLAIMS_TREE_DEPTH;
 const PLATFORM_FEE_BPS = 100n; // 1% — set during test
 
-// USDC address — default from DeployLocal on fresh anvil. Override via env var.
-const USDC_ADDRESS = process.env.E2E_USDC_ADDRESS
-  ?? "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853";
+// USDC address: prefer env override (CI / explicit harness pin); else
+// resolve from the latest DeployLocal broadcast so a contract-shuffle
+// in the deploy script doesn't break the test. The legacy hardcoded
+// 0xa513... fallback moved out of band when the proxy migration landed.
+const USDC_ADDRESS = resolveBroadcastAddress({
+  name: "MockToken",
+  tokenSymbol: "USDC",
+  envVar: "E2E_USDC_ADDRESS",
+  rootDir: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+});
 
 const USER_KEY = process.env.E2E_PRIVATE_KEY
   ?? "0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6";
