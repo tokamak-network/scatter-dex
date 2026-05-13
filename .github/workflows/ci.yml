@@ -42,7 +42,7 @@ jobs:
           path: |
             contracts/out
             contracts/cache
-          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**') }}
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**', 'contracts/test/**', 'contracts/script/**') }}
           restore-keys: forge-${{ runner.os }}-
 
       - name: forge fmt --check
@@ -50,13 +50,15 @@ jobs:
         run: forge fmt --check
         continue-on-error: true
 
-      - name: forge test + gas snapshot check (non-fork)
-        # `forge snapshot --check` runs the full non-fork suite AND fails the
-        # build if gas usage drifts from the committed `.gas-snapshot` baseline.
-        # Single pass — no separate `forge test` step needed.
-        # To update the baseline locally: `cd contracts && forge snapshot --no-match-contract Fork`
+      - name: forge test + gas snapshot check (unit + branch, non-fork, non-invariant)
+        # Invariants are split into a parallel job (`contracts-invariant`)
+        # because they dominate runtime (~25-35 min) and their gas line is
+        # not a meaningful drift signal — only the unit + branch suites
+        # are tracked against the committed `.gas-snapshot` baseline.
+        # To update the baseline locally:
+        #   cd contracts && forge snapshot --no-match-contract "Fork|Invariant"
         # then commit `contracts/.gas-snapshot`.
-        run: forge snapshot --check --no-match-contract Fork
+        run: forge snapshot --check --no-match-contract "Fork|Invariant"
 
       - name: storage-layout check
         # Diff every upgradeable contract's current layout against the
@@ -79,6 +81,44 @@ jobs:
           slither-config: contracts/slither.config.json
           fail-on: low
           ignore-compile: false
+
+  # ────────────────────────────────────────────────────────────────
+  #  Contracts (invariants) — Foundry invariant suites only
+  #
+  #  Runs in parallel with `contracts` so the unit + static-analysis
+  #  signal arrives in ~5 min while the slower invariant suite (~25-35
+  #  min at the default 256 × 500 profile) finishes on its own track.
+  #  Both jobs must pass for a PR to be mergeable. Nightly `deep-fuzz`
+  #  re-runs the same suites at FOUNDRY_PROFILE=deep (1024 × 2000).
+  # ────────────────────────────────────────────────────────────────
+  contracts-invariant:
+    name: contracts / invariant
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.5.1
+
+      - name: Cache forge build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            contracts/out
+            contracts/cache
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**', 'contracts/test/**', 'contracts/script/**') }}
+          restore-keys: forge-${{ runner.os }}-
+
+      - name: forge test (invariant suites only)
+        run: forge test --match-contract "Invariant" --no-match-contract Fork
 
   # ────────────────────────────────────────────────────────────────
   #  Frontend — typecheck + lint + production build
@@ -249,7 +289,7 @@ jobs:
           path: |
             contracts/out
             contracts/cache
-          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**') }}
+          key: forge-${{ runner.os }}-${{ hashFiles('contracts/foundry.toml', 'contracts/src/**', 'contracts/lib/**', 'contracts/test/**', 'contracts/script/**') }}
           restore-keys: forge-${{ runner.os }}-
 
       - name: Bring up E2E env
