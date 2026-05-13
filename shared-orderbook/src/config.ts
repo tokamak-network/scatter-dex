@@ -42,4 +42,9 @@ export const config = {
 
   // Total max orders in memory
   maxOrders: envInt("MAX_ORDERS", "50000"),
+
+  // Admin endpoints (currently just /api/admin/verify-stats). Unset =
+  // disabled. We never default this to a fixed value — an unset env
+  // must mean "off" or every default deployment exposes the surface.
+  adminToken: process.env.ADMIN_TOKEN?.trim() || undefined,
 };

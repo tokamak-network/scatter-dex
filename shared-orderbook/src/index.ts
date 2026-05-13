@@ -11,6 +11,8 @@ import { createRelayerRoutes } from "./routes/relayers.js";
 import { createStatsRoutes } from "./routes/stats.js";
 import { createPeerRoutes } from "./routes/peer.js";
 import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/settlements.js";
+import { createAdminRoutes } from "./routes/admin.js";
+import { VerifyMonitor } from "./core/verify-runtime.js";
 
 async function main() {
   const db = new OrderbookDB();
@@ -84,6 +86,15 @@ async function main() {
   // Per-relayer + network read views from the settlements indexer. Mounted
   // at root so the URLs read naturally (/api/relayers/:addr/stats etc).
   app.use("/api", createSettlementStatsRoutes(db, readLimiter));
+
+  // Operator-only — single shared monitor instance. The verifier daemon
+  // (`src/verify.ts`) is the writer; this server is the read-side
+  // surface that ops dashboards poll. The two processes don't share
+  // memory, so the monitor here only reflects in-process activity —
+  // production deployments rely on the DB (`hasUnverifiedRows`) for
+  // alerting, not on `lastPass`.
+  const verifyMonitor = new VerifyMonitor();
+  app.use("/api/admin", createAdminRoutes({ db, monitor: verifyMonitor, adminToken: config.adminToken }));
 
   // Health check
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
