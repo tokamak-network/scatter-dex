@@ -6,8 +6,9 @@ import { DEV_STACK_ENDPOINTS } from "../_helpers/stack";
  * Live-stack payout-wizard identity gate smoke.
  *
  * Pay gates `/payouts/new` behind zk-X509 verification (see
- * `apps/pay/app/_lib/identityGuard.ts`): an unverified wallet sees a
- * "Verify your identity" dialog instead of the wizard. This spec
+ * `NewPayoutGate` + `IdentityGateModal` in `apps/pay/app/payouts/new/page.tsx`
+ * and `apps/pay/app/_components/IdentityGateModal.tsx`): an unverified
+ * wallet sees a "Verify your identity" dialog instead of the wizard. This spec
  * confirms that gate engages correctly when a funded-but-unverified
  * anvil wallet visits the route — without it, a regression that
  * silently lets unverified wallets through into the wizard (or
@@ -35,7 +36,8 @@ test.describe("Live stack — payout wizard identity gate", () => {
     // Identity gate copy is the most stable anchor for the unverified
     // surface — it's the heading on both the inline guard panel AND
     // the dialog it spawns, so the regex matches whichever one renders
-    // first. (See `apps/pay/app/_components/IdentityGate.tsx`.)
+    // first. (See `IdentityGateModal` at
+    // `apps/pay/app/_components/IdentityGateModal.tsx`.)
     await expect(
       page.getByText(/Verify your identity/i).first(),
     ).toBeVisible();
