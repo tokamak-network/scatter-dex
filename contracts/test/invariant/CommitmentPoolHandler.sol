@@ -130,11 +130,15 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
     }
 
     /// @notice Replay a previously-spent withdraw nullifier. Must always
-    ///         revert with `NullifierAlreadySpent` — this is the only
-    ///         guard between actors and double-spend of pool escrow.
-    ///         Counter increments at entry per PR #718 lesson; unpauses
-    ///         and ensures the pool has balance so the revert surface
-    ///         stays narrowed to the nullifier check.
+    ///         revert with `NullifierAlreadySpent`. `_processWithdraw`
+    ///         checks the nullifier mapping BEFORE any ERC20 path
+    ///         (CommitmentPool.sol:398, before the proof verify and
+    ///         transfer), so no balance setup is needed — keeping the
+    ///         pool's token state untouched also means a 1-wei solvency
+    ///         regression can't be hidden by handler-side mints.
+    ///         Counter increments at entry per PR #718 lesson; unpause
+    ///         in case the fuzz flipped pause so we don't trip
+    ///         `EnforcedPause` first.
     function adversarialDoubleWithdraw(uint256 nullifierSeed, uint256 recipientSeed) external {
         adversarialDoubleWithdrawAttempts += 1;
         uint256 n = observedNullifiers.length;
@@ -145,12 +149,6 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
             vm.prank(owner);
             try pool.unpause() {} catch { return; }
         }
-        // Ensure the pool can satisfy a hypothetical transfer so the
-        // call would reach the nullifier check rather than tripping
-        // InsufficientPoolBalance first.
-        if (token.balanceOf(address(pool)) == 0) {
-            token.mint(address(pool), 1);
-        }
         uint256 root = pool.getLastRoot();
         vm.expectRevert(CommitmentPool.NullifierAlreadySpent.selector);
         pool.withdraw(
@@ -159,7 +157,7 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
             spentNullifier,
             0, // newCommitment
             address(token),
-            1, // tiny amount — pool has at least 1
+            1, // amount — never reached, nullifier check fires first
             _actor(recipientSeed),
             address(0)
         );

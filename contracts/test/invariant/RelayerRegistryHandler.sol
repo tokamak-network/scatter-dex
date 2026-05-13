@@ -115,18 +115,21 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
     ///         revert with `AlreadyRegistered` — duplicate registration
     ///         would inflate `activeRelayers[]` and break invariants
     ///         that count active set membership.
+    ///
+    ///         `register()` reverts on the `active` check
+    ///         (RelayerRegistry.sol:126) BEFORE `_pullBond` does any
+    ///         transferFrom, so no mint/approve setup is needed — and
+    ///         skipping it keeps the bond token's totalSupply untouched
+    ///         so adversarial calls can't perturb the `bondsCovered`
+    ///         invariant.
     function adversarialDoubleRegister(uint256 seed) external {
         adversarialDoubleRegisterAttempts += 1;
         address a = _actor(seed);
         (,,,, , , bool active) = registry.relayers(a);
         if (!active) return; // pre-registration is the normal path, not adversarial here
-        uint256 bond = registry.minBond();
-        bondToken.mint(a, bond);
-        vm.prank(a);
-        bondToken.approve(address(registry), bond);
         vm.prank(a);
         vm.expectRevert(RelayerRegistry.AlreadyRegistered.selector);
-        registry.register("u", "n", 0, bond);
+        registry.register("u", "n", 0, registry.minBond());
     }
 
     /// @notice executeExit before the cooldown elapses must revert with
