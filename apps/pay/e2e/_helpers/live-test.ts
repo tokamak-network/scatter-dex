@@ -1,5 +1,6 @@
 import { test as baseTest } from "@playwright/test";
 import { DEV_STACK_ENDPOINTS, isStackReachable } from "./stack";
+import { revertAnvil, snapshotAnvil } from "./anvil-snapshot";
 
 /**
  * `test` flavour for the `e2e/live/` specs that require dev.sh to be
@@ -8,10 +9,16 @@ import { DEV_STACK_ENDPOINTS, isStackReachable } from "./stack";
  * passes without surfacing a wall of skips with copy-pasted skip
  * messages.
  *
+ * Also takes an anvil snapshot before each spec and reverts on
+ * teardown. Specs that mutate on-chain state (verifyTestWallet,
+ * fundUsdc, deposit txs, etc.) get a clean slate per test without
+ * the previous test's leftovers — `setVerified` flips, token
+ * balances, claim nullifiers all roll back. The snapshot/revert
+ * pair is anvil-global, so live specs MUST run under a single
+ * worker (see anvil-snapshot.ts module doc).
+ *
  * Import this `test` (instead of `@playwright/test`'s) in any spec
- * under `e2e/live/`. The check runs once per test (matches the prior
- * `test.beforeEach` pattern); making it `auto: true` means a future
- * live spec doesn't have to repeat the skip block.
+ * under `e2e/live/`. The fixture runs once per test (auto: true).
  */
 export const test = baseTest.extend<{ liveStack: void }>({
   liveStack: [
@@ -23,7 +30,12 @@ export const test = baseTest.extend<{ liveStack: void }>({
             `(checked anvil at ${DEV_STACK_ENDPOINTS.rpcUrl} and zk-relayer at ${DEV_STACK_ENDPOINTS.relayerUrl})`,
         );
       }
-      await use();
+      const snapshotId = await snapshotAnvil();
+      try {
+        await use();
+      } finally {
+        await revertAnvil(snapshotId);
+      }
     },
     { auto: true },
   ],
