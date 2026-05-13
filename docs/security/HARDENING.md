@@ -10,7 +10,7 @@ you change one of them, update the corresponding section here.
 
 | Layer | Gate | Triggered by | Scope |
 | --- | --- | --- | --- |
-| Foundry unit + branch tests + gas snapshot drift | `forge snapshot --check --no-match-contract Fork` in CI | every PR | 400+ tests, all non-fork suites, against `contracts/.gas-snapshot` baseline |
+| Foundry unit + branch tests + gas snapshot drift | `forge snapshot --check --no-match-contract "Fork\|Invariant"` in CI | every PR | 388 unit + branch tests against `contracts/.gas-snapshot` baseline (invariants split into the parallel job below) |
 | Storage layout drift | `script/storage-layout/check.sh` in CI | every PR | every upgradeable contract |
 | Slither static analysis | `crytic/slither-action@v0.4.0` in CI | every PR | `contracts/src/`, 0-findings baseline |
 | Foundry **invariant suite** | parallel `contracts / invariant` CI job (default 256 runs × 500 calls) | every PR | 31 invariants across 8 suites |
