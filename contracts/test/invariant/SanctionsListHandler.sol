@@ -6,6 +6,7 @@ import {StdCheats} from "forge-std/StdCheats.sol";
 import {StdUtils} from "forge-std/StdUtils.sol";
 
 import {SanctionsList} from "../../src/SanctionsList.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
 /// @notice Actor-based handler for SanctionsList invariant tests.
 /// @dev    Routes fuzzed add/remove (single + batch) actions through the owner,
@@ -17,6 +18,10 @@ contract SanctionsListHandler is CommonBase, StdCheats, StdUtils {
 
     address[] public targets;
     mapping(address => bool) public ghostSanctioned;
+
+    /// @dev Selector-invocation counters for adversarial paths (PR #718).
+    uint256 public adversarialUnauthorizedAddAttempts;
+    uint256 public adversarialUnauthorizedRemoveAttempts;
 
     constructor(SanctionsList _list, address _owner) {
         list = _list;
@@ -70,4 +75,30 @@ contract SanctionsListHandler is CommonBase, StdCheats, StdUtils {
 
     function targetCount() external view returns (uint256) { return targets.length; }
     function targetAt(uint256 i) external view returns (address) { return targets[i % targets.length]; }
+
+    // ─── Adversarial actions ────────────────────────────────────
+
+    /// @notice Non-owner tries to add a sanction. Must revert with OZ's
+    ///         `OwnableUnauthorizedAccount` — sanctions list integrity
+    ///         is compliance-critical and onlyOwner is the gate.
+    function adversarialUnauthorizedAdd(uint256 seed) external {
+        adversarialUnauthorizedAddAttempts += 1;
+        address eoa = address(uint160(0xD0E0 + uint160(seed % 16)));
+        vm.prank(eoa);
+        vm.expectRevert(abi.encodeWithSelector(
+            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
+        ));
+        list.addSanction(_t(seed));
+    }
+
+    /// @notice Non-owner tries to remove a sanction. Same lesson.
+    function adversarialUnauthorizedRemove(uint256 seed) external {
+        adversarialUnauthorizedRemoveAttempts += 1;
+        address eoa = address(uint160(0xD0E0 + uint160(seed % 16)));
+        vm.prank(eoa);
+        vm.expectRevert(abi.encodeWithSelector(
+            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
+        ));
+        list.removeSanction(_t(seed));
+    }
 }

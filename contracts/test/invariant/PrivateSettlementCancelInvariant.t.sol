@@ -42,10 +42,11 @@ contract PrivateSettlementCancelInvariantTest is StdInvariant, Test {
         handler = new PrivateSettlementCancelHandler(settlement, pool, cancelVerifier, address(this));
         targetContract(address(handler));
 
-        bytes4[] memory sels = new bytes4[](3);
+        bytes4[] memory sels = new bytes4[](4);
         sels[0] = PrivateSettlementCancelHandler.cancel.selector;
         sels[1] = PrivateSettlementCancelHandler.flipVerifier.selector;
         sels[2] = PrivateSettlementCancelHandler.flipPause.selector;
+        sels[3] = PrivateSettlementCancelHandler.adversarialReplayCancel.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
@@ -85,5 +86,10 @@ contract PrivateSettlementCancelInvariantTest is StdInvariant, Test {
         // per insertCommitment. Every successful cancelPrivate calls insertCommitment exactly once.
         assertGe(uint256(pool.nextIndex()), handler.ghostSuccessfulCancels(),
             "leaf count regressed below successful cancel count");
+    }
+
+    /// @dev Coverage guard — see PR #718.
+    function afterInvariant() public view {
+        assertGt(handler.adversarialReplayCancelAttempts(), 0, "replay-cancel never attempted");
     }
 }

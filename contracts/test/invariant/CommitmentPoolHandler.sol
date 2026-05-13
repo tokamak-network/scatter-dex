@@ -39,6 +39,11 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
     mapping(uint256 => bool) public ghostNullifierSeenTrue;
     uint256[] public observedNullifiers;
 
+    /// @dev Selector-invocation counters for adversarial paths
+    ///      (incremented at entry, before any early return). Read by
+    ///      `afterInvariant` to prove the selectors stayed wired.
+    uint256 public adversarialDoubleWithdrawAttempts;
+
     constructor(CommitmentPool _pool, InvariantToken _token, address _owner, address _settlement) {
         pool = _pool;
         token = _token;
@@ -122,6 +127,42 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(owner);
         if (paused) try pool.pause() {} catch {}
         else try pool.unpause() {} catch {}
+    }
+
+    /// @notice Replay a previously-spent withdraw nullifier. Must always
+    ///         revert with `NullifierAlreadySpent` — this is the only
+    ///         guard between actors and double-spend of pool escrow.
+    ///         Counter increments at entry per PR #718 lesson; unpauses
+    ///         and ensures the pool has balance so the revert surface
+    ///         stays narrowed to the nullifier check.
+    function adversarialDoubleWithdraw(uint256 nullifierSeed, uint256 recipientSeed) external {
+        adversarialDoubleWithdrawAttempts += 1;
+        uint256 n = observedNullifiers.length;
+        if (n == 0) return;
+        uint256 spentNullifier = observedNullifiers[nullifierSeed % n];
+
+        if (pool.paused()) {
+            vm.prank(owner);
+            try pool.unpause() {} catch { return; }
+        }
+        // Ensure the pool can satisfy a hypothetical transfer so the
+        // call would reach the nullifier check rather than tripping
+        // InsufficientPoolBalance first.
+        if (token.balanceOf(address(pool)) == 0) {
+            token.mint(address(pool), 1);
+        }
+        uint256 root = pool.getLastRoot();
+        vm.expectRevert(CommitmentPool.NullifierAlreadySpent.selector);
+        pool.withdraw(
+            proofA, proofB, proofC,
+            root,
+            spentNullifier,
+            0, // newCommitment
+            address(token),
+            1, // tiny amount — pool has at least 1
+            _actor(recipientSeed),
+            address(0)
+        );
     }
 
     function nullifiersObservedCount() external view returns (uint256) { return observedNullifiers.length; }

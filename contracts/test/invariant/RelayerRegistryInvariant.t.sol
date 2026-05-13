@@ -27,13 +27,16 @@ contract RelayerRegistryInvariantTest is StdInvariant, Test {
         handler = new RelayerRegistryHandler(registry, bondToken, identity, address(this));
 
         targetContract(address(handler));
-        bytes4[] memory sels = new bytes4[](6);
+        bytes4[] memory sels = new bytes4[](9);
         sels[0] = RelayerRegistryHandler.register.selector;
         sels[1] = RelayerRegistryHandler.addBond.selector;
         sels[2] = RelayerRegistryHandler.updateInfo.selector;
         sels[3] = RelayerRegistryHandler.requestExit.selector;
         sels[4] = RelayerRegistryHandler.executeExit.selector;
         sels[5] = RelayerRegistryHandler.setMinBond.selector;
+        sels[6] = RelayerRegistryHandler.adversarialDoubleRegister.selector;
+        sels[7] = RelayerRegistryHandler.adversarialEarlyExit.selector;
+        sels[8] = RelayerRegistryHandler.adversarialUnauthorizedSetMinBond.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
@@ -76,5 +79,12 @@ contract RelayerRegistryInvariantTest is StdInvariant, Test {
                 assertTrue(ai != registry.relayerList(j), "duplicate in relayerList");
             }
         }
+    }
+
+    /// @dev Coverage guard — see PR #718.
+    function afterInvariant() public view {
+        assertGt(handler.adversarialDoubleRegisterAttempts(), 0, "double-register never attempted");
+        assertGt(handler.adversarialEarlyExitAttempts(), 0, "early-exit never attempted");
+        assertGt(handler.adversarialUnauthorizedSetMinBondAttempts(), 0, "unauthorized setMinBond never attempted");
     }
 }

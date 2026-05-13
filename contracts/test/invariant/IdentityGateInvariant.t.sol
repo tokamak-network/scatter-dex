@@ -22,9 +22,11 @@ contract IdentityGateInvariantTest is StdInvariant, Test {
         handler = new IdentityGateHandler(gate, address(this));
         targetContract(address(handler));
 
-        bytes4[] memory sels = new bytes4[](2);
+        bytes4[] memory sels = new bytes4[](4);
         sels[0] = IdentityGateHandler.addRegistry.selector;
         sels[1] = IdentityGateHandler.removeRegistry.selector;
+        sels[2] = IdentityGateHandler.adversarialUnauthorizedAdd.selector;
+        sels[3] = IdentityGateHandler.adversarialUnauthorizedRemove.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
@@ -72,5 +74,11 @@ contract IdentityGateInvariantTest is StdInvariant, Test {
             assertEq(gate.registryExists(candidate), inArray,
                 "registryExists out of sync with array");
         }
+    }
+
+    /// @dev Coverage guard — see PR #718.
+    function afterInvariant() public view {
+        assertGt(handler.adversarialUnauthorizedAddAttempts(), 0, "unauthorized add never attempted");
+        assertGt(handler.adversarialUnauthorizedRemoveAttempts(), 0, "unauthorized remove never attempted");
     }
 }
