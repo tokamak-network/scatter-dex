@@ -68,8 +68,8 @@ test.describe("Live stack — /claim route", () => {
     // so the page enters its happy-path render even though the
     // claimsRoot doesn't match an on-chain settled group. The page's
     // alreadyClaimed probe will eventually resolve to undefined /
-    // false against the missing group — that's downstream of this
-    // assertion which fires on the pre-probe header.
+    // false against the missing group — that's downstream of these
+    // assertions which fire on the pre-probe header.
     const { href } = buildClaimUrlFragment({
       recipient: ANVIL_VERIFIED_TEST.account,
     });
@@ -82,6 +82,16 @@ test.describe("Live stack — /claim route", () => {
     // parseError fallback).
     await expect(
       page.getByText(/1.*USDC/i).first(),
+    ).toBeVisible();
+
+    // The recipient address renders in the "🔒 Funds can only go
+    // to <addr>" lock banner (claim/page.tsx:290-296). Asserting
+    // on the full address (case-insensitive — the page renders the
+    // checksummed mixed-case form) confirms the page actually
+    // read pkg.recipient out of the decoded fragment, not just
+    // that decode succeeded.
+    await expect(
+      page.getByText(new RegExp(ANVIL_VERIFIED_TEST.account, "i")).first(),
     ).toBeVisible();
 
     // The `parseError` banner from the earlier test must NOT be
