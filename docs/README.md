@@ -28,6 +28,10 @@ User/developer walkthroughs.
 - [demo-script-en.md](guides/demo-script-en.md), [demo-script-ko.md](guides/demo-script-ko.md)
 - [test-scenarios.md](guides/test-scenarios.md)
 
+## security/
+Smart-contract hardening notes for external audit onboarding.
+- [HARDENING.md](security/HARDENING.md) — invariant suites, Slither config, gas/storage gates, manual verification checklist
+
 ## research/
 Whitepaper, patent draft, performance and archived analyses.
 - [PAPER.md](research/PAPER.md), [PAPER-ko.md](research/PAPER-ko.md) — whitepaper (standard)
