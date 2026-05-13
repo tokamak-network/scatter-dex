@@ -239,13 +239,14 @@ function RecipientForm({
         ? Boolean(
             await book.add({
               label: trimmedLabel,
-              // Pass empty strings through verbatim — the SDK
-              // (`addWallet`) throws "Address is required" on empty
-              // values, and the wrapper's catch in walletBook.tsx
-              // surfaces that as a form error. Collapsing "" to
-              // `undefined` would make TS happy under the loosened
-              // wrapper signature but silently hide the validation
-              // error from the user.
+              // Pass the trimmed string through verbatim. The SDK's
+              // `addWallet` throws "Address is required" on empty
+              // input, and the wrapper's catch in walletBook.tsx
+              // surfaces that to the form. (Previously this was
+              // `trimmedAddress || undefined` to satisfy the
+              // wrapper's then-optional signature — now that the
+              // wrapper requires `address: string` we pass the
+              // string and let SDK-level validation run.)
               address: trimmedAddress,
               memo: trimmedMemo || undefined,
               email: trimmedEmail || undefined,

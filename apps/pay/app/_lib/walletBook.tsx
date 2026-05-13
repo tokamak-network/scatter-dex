@@ -30,7 +30,11 @@ interface WalletBookState {
   error: string | null;
   add(input: {
     label: string;
-    address?: string;
+    /** Required — matches the SDK's `addWallet` contract. Pass the
+     *  raw trimmed string; the SDK throws "Address is required" on
+     *  empty values and the wrapper's catch surfaces that as a
+     *  form error. */
+    address: string;
     memo?: string;
     email?: string;
     telegramHandle?: string;
