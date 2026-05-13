@@ -151,13 +151,12 @@ contract FeeVaultHandler is CommonBase, StdCheats, StdUtils {
         address relayer = relayers[relayerSeed % relayers.length];
         address eoa = address(uint160(0xE0A0)); // never registered as a depositor
         // Pre-fund so an accidentally-permissive deposit wouldn't fail
-        // for the wrong reason (insufficient backing); we want to prove
-        // the authorization check itself rejected the call.
+        // for the wrong reason (`_assertBalanceBacked`); we want to
+        // prove the authorization check itself rejected the call.
         token.mint(address(vault), amount);
         vm.prank(eoa);
-        try vault.deposit(relayer, address(token), amount) {
-            revert("invariant violation: unauthorized deposit succeeded");
-        } catch {}
+        vm.expectRevert(FeeVault.NotAuthorized.selector);
+        vault.deposit(relayer, address(token), amount);
     }
 
     /// @notice Relayer with zero balance calls claim(). FeeVault.claim
@@ -169,9 +168,8 @@ contract FeeVaultHandler is CommonBase, StdCheats, StdUtils {
         if (ghostBalance[relayer] != 0) return; // not an empty-claim attempt
         uint256 balBefore = token.balanceOf(relayer);
         vm.prank(relayer);
-        try vault.claim(address(token)) {
-            revert("invariant violation: empty claim succeeded");
-        } catch {}
+        vm.expectRevert(FeeVault.NothingToClaim.selector);
+        vault.claim(address(token));
         require(
             token.balanceOf(relayer) == balBefore,
             "invariant violation: empty claim moved tokens"
@@ -179,13 +177,25 @@ contract FeeVaultHandler is CommonBase, StdCheats, StdUtils {
     }
 
     /// @notice Random EOA tries to drain platform revenue. Must revert
-    ///         with NotAuthorized — only treasury/owner can withdraw.
-    function adversarialUnauthorizedWithdraw() external {
+    ///         specifically with `NotAuthorized` — a generic catch would
+    ///         miss an auth-bypass regression that left the call reverting
+    ///         on `NothingToClaim` instead (when `platformRevenue == 0`).
+    ///         Pre-accrue revenue so the call would otherwise succeed for
+    ///         a legitimate caller; assert the precise revert selector.
+    function adversarialUnauthorizedWithdraw(uint256 amount) external {
         adversarialUnauthorizedWithdrawAttempts += 1;
+        amount = bound(amount, 1, 1e22);
+        // Pre-fund so a hypothetical auth-bypass would actually move
+        // tokens — without this, NothingToClaim would mask the bug.
+        token.mint(address(vault), amount);
+        address allowedDepositor = depositors[0];
+        vm.prank(allowedDepositor);
+        vault.accrueDexFee(address(token), amount);
+        ghostPlatformRevenue += amount;
+
         address eoa = address(uint160(0xE0A1));
         vm.prank(eoa);
-        try vault.withdrawPlatformRevenue(address(token)) {
-            revert("invariant violation: unauthorized withdraw succeeded");
-        } catch {}
+        vm.expectRevert(FeeVault.NotAuthorized.selector);
+        vault.withdrawPlatformRevenue(address(token));
     }
 }

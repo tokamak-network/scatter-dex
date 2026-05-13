@@ -278,33 +278,48 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     // ─── Adversarial actions ────────────────────────────────────
 
     /// @notice Replay a previously-spent claim nullifier. Must always
-    ///         revert — the on-chain `claimNullifiers` mapping is the
-    ///         only thing standing between the recipient ledger and a
-    ///         double-credit. Counter increments at entry (not after
-    ///         the early-return) per PR #718 lesson.
+    ///         revert *specifically* with `NullifierAlreadySpent` — a
+    ///         generic catch would silently accept a regression where
+    ///         the call reverted for a different reason (paused,
+    ///         ClaimsGroupNotFound, TokenMismatch) and the nullifier
+    ///         guard itself was removed.
+    ///
+    ///         The fuzz campaign can pause the settlement via
+    ///         `flipPause`, so we use the original root (which is
+    ///         guaranteed to have a real token + match the spent
+    ///         nullifier's group) and unpause before the call to keep
+    ///         the failure surface narrow to the nullifier check.
     function adversarialDoubleClaim(uint256 nullifierSeed, uint256 recipientSeed, uint128 amount) external {
         adversarialDoubleClaimAttempts += 1;
         uint256 n = observedClaimNullifiers.length;
         if (n == 0) return;
         bytes32 spentNullifier = observedClaimNullifiers[nullifierSeed % n];
-        bytes32 anyRoot = knownClaimsRoots.length == 0
-            ? bytes32(uint256(1))
-            : knownClaimsRoots[nullifierSeed % knownClaimsRoots.length];
+        // Pick a root with a real token assignment so we don't trip
+        // ClaimsGroupNotFound before reaching the nullifier check.
+        if (knownClaimsRoots.length == 0) return;
+        bytes32 anyRoot = knownClaimsRoots[nullifierSeed % knownClaimsRoots.length];
         address tok = ghostGroupToken[anyRoot];
-        if (tok == address(0)) tok = address(tokenA);
+        if (tok == address(0)) return;
+        if (settlement.paused()) {
+            vm.prank(owner);
+            try settlement.unpause() {} catch { return; }
+        }
         amount = uint128(bound(amount, 1, 1e22));
-        try settlement.claimWithProof(
+        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
+        settlement.claimWithProof(
             proofA, proofB, proofC,
             anyRoot, spentNullifier,
             uint256(amount), tok,
             _recipient(recipientSeed), 0
-        ) {
-            revert("invariant violation: double-claim succeeded");
-        } catch {}
+        );
     }
 
-    /// @notice Claim with amount = 0. May revert or no-op, but must
-    ///         never move tokens to the recipient.
+    /// @notice Claim with amount = 0. Must never move tokens to the
+    ///         recipient. The contract may either accept (no-op
+    ///         transfer) or revert; we assert balance invariance
+    ///         either way, so the test catches both "amount=0 accepted
+    ///         and skimmed somehow" and "amount=0 rejected but moved
+    ///         tokens" hypotheticals.
     function adversarialZeroAmountClaim(uint256 rootSeed, uint256 recipientSeed) external {
         adversarialZeroAmountClaimAttempts += 1;
         uint256 n = knownClaimsRoots.length;
@@ -322,7 +337,12 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
                 IERC20(tok).balanceOf(recipient) == balBefore,
                 "invariant violation: zero-amount claim moved tokens"
             );
-        } catch {}
+        } catch {
+            require(
+                IERC20(tok).balanceOf(recipient) == balBefore,
+                "invariant violation: zero-amount claim reverted but moved tokens"
+            );
+        }
     }
 
     /// @dev Extracted from `claim` to keep the parent under solc's stack-depth limit.
