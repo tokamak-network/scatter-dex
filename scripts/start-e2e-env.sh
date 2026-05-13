@@ -103,10 +103,10 @@ sync_verifiers_from_zkeys() {
       skipped=$((skipped + 1))
       continue
     fi
-    local err
-    err=$( cd "$circuits_dir" && "$snarkjs" zkey export solidityverifier \
-        "$zkey_rel" "$sol" 2>&1 >/dev/null ) \
-      || { echo "  ERROR: snarkjs export failed for $circ: $err"; exit 1; }
+    local out
+    out=$( cd "$circuits_dir" && "$snarkjs" zkey export solidityverifier \
+        "$zkey_rel" "$sol" 2>&1 ) \
+      || { echo "  ERROR: snarkjs export failed for $circ:"; echo "$out"; exit 1; }
     exported=$((exported + 1))
   done
   echo "  [ok] verifiers in sync (re-exported: $exported, already current: $skipped)"
