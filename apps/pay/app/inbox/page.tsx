@@ -106,7 +106,7 @@ export default function ClaimInbox() {
   if (!folder.ready) {
     return (
       <div className="mx-auto max-w-3xl space-y-4">
-        <h1 className="text-2xl font-semibold">Claims</h1>
+        <h1 className="text-2xl font-semibold">Inbox</h1>
         <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text-muted)]">
           Pick a working folder first so received-claim history can be
           stored locally. Use the dashboard's folder picker on the home
@@ -119,7 +119,7 @@ export default function ClaimInbox() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Claims</h1>
+        <h1 className="text-2xl font-semibold">Inbox</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
           Tracks claims sent to your wallet address.
           {account && (
