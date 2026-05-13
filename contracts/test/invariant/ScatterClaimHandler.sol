@@ -151,6 +151,12 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
     ///         invariant) so the failure surfaces with the exact
     ///         nullifier in the call stack.
     function adversarialDoubleClaim(uint256 nullifierSeed, uint128 amount) external {
+        // Count every selector invocation up-front — `afterInvariant`
+        // uses this to prove the selector is still wired in. Counting
+        // after the early-return would silently zero the counter on
+        // any run where `scatter`+`claim` never created a nullifier
+        // first, defeating the coverage guard.
+        adversarialDoubleClaimAttempts += 1;
         uint256 n = observedClaimNullifiers.length;
         if (n == 0) return;
         bytes32 spentNullifier = observedClaimNullifiers[nullifierSeed % n];
@@ -158,7 +164,6 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
             ? bytes32(uint256(1))
             : knownClaimsRoots[nullifierSeed % knownClaimsRoots.length];
         amount = uint128(bound(amount, 1, 1e22));
-        adversarialDoubleClaimAttempts += 1;
         // Expect revert with NullifierAlreadySpent. Catch lets the
         // fuzzer continue when other validation (e.g. UnknownRoot)
         // happens to revert first — both are valid rejections.
@@ -177,6 +182,8 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
     ///         would not move funds but would burn a nullifier slot
     ///         and pollute group accounting.
     function adversarialZeroAmountClaim(uint256 rootSeed, uint256 recipientSeed) external {
+        // Count first — see the matching comment on adversarialDoubleClaim.
+        adversarialZeroAmountClaimAttempts += 1;
         uint256 n = knownClaimsRoots.length;
         if (n == 0) return;
         bytes32 root = knownClaimsRoots[rootSeed % n];
@@ -184,7 +191,6 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
         if (nullifier == bytes32(0)) nullifier = bytes32(uint256(1));
         address recipient = _recipient(recipientSeed);
         uint256 balBefore = token.balanceOf(recipient);
-        adversarialZeroAmountClaimAttempts += 1;
         try settlement.claimWithProof(
             proofA, proofB, proofC,
             root, nullifier, 0, address(token), recipient, 0
