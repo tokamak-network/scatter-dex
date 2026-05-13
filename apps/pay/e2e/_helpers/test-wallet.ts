@@ -106,11 +106,19 @@ export async function installTestWallet(
     // (`personal_sign`, `eth_signTypedData_v4`) don't need an RPC
     // connection at all; opening one at install time would burn a
     // keepalive socket against an anvil that may not even be running.
-    let connected: ethers.Wallet | null = null;
-    function getConnected(): ethers.Wallet {
+    //
+    // Wrap the connected Wallet in ethers' NonceManager — back-to-back
+    // `sendTransaction` calls (e.g. Pay's deposit flow: ERC-20 approve
+    // + CommitmentPool.deposit) would otherwise both fetch the same
+    // `getTransactionCount("pending")` and sign duplicate nonces,
+    // failing the second tx with `nonce too low` / `NONCE_EXPIRED`.
+    // NonceManager keeps a local monotonic counter that bumps on each
+    // call, sidestepping that race.
+    let connected: ethers.NonceManager | null = null;
+    function getConnected(): ethers.NonceManager {
       if (!connected) {
         const signerProvider = new ethers.JsonRpcProvider(opts.rpcUrl);
-        connected = wallet.connect(signerProvider);
+        connected = new ethers.NonceManager(wallet.connect(signerProvider));
       }
       return connected;
     }
@@ -147,10 +155,25 @@ export async function installTestWallet(
             // RPC. Returns the broadcast tx hash to the caller —
             // matches what `eth_sendTransaction` is contractually
             // supposed to return.
-            const tx = await getConnected().sendTransaction(
-              payload as ethers.TransactionRequest,
-            );
-            return tx.hash;
+            //
+            // NonceManager bumps its local counter when the tx is
+            // prepared, BEFORE the network confirms acceptance. A
+            // revert during gas estimation / RPC failure / nonce
+            // collision leaves the counter ahead of the on-chain
+            // nonce — the next sendTransaction would then sign a
+            // nonce with a gap and hang in the mempool. Reset on
+            // any failure so the manager resyncs from the network
+            // for the retry.
+            const conn = getConnected();
+            try {
+              const tx = await conn.sendTransaction(
+                payload as ethers.TransactionRequest,
+              );
+              return tx.hash;
+            } catch (err) {
+              conn.reset();
+              throw err;
+            }
           }
           default:
             throw new Error(`[test-wallet] unknown sign kind: ${kind}`);
