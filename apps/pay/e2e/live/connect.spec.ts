@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../_helpers/live-test";
 import { ANVIL_DEFAULT, installTestWallet } from "../_helpers/test-wallet";
-import { DEV_STACK_ENDPOINTS, isStackReachable } from "../_helpers/stack";
+import { DEV_STACK_ENDPOINTS } from "../_helpers/stack";
 
 /**
  * First live-stack scenario. Skips when dev.sh isn't running —
@@ -21,14 +21,6 @@ import { DEV_STACK_ENDPOINTS, isStackReachable } from "../_helpers/stack";
  * on top.
  */
 test.describe("Live stack — wallet connect", () => {
-  test.beforeEach(async () => {
-    test.skip(
-      !(await isStackReachable()),
-      `dev.sh not running — start with: bash scripts/dev.sh --apps pay --mock\n` +
-        `(checked anvil at ${DEV_STACK_ENDPOINTS.rpcUrl} and zk-relayer at ${DEV_STACK_ENDPOINTS.relayerUrl})`,
-    );
-  });
-
   test("dashboard hydrates connected against live anvil", async ({ page }) => {
     await installTestWallet(page, {
       account: ANVIL_DEFAULT.account,
