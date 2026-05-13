@@ -5,20 +5,30 @@ import { useCallback, useRef, useState } from "react";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
 
-/** Top-nav "Stealth" dropdown — groups the receiver-side surfaces
- *  (`/wallet` and `/inbox`) under one menu so the flat nav doesn't
- *  balloon past four items. Always visible once a wallet is
- *  connected; the receiver-side flows assume the user owns a
- *  signing key (the same one that owns the meta-address). Mirrors
- *  the `IdentityMenu` interaction model — hover/focus/click open,
+/** Top-nav "Receive" dropdown — groups the recipient-side surfaces
+ *  under one menu so the flat nav doesn't balloon past four items.
+ *
+ *  - `/wallet` — per-token ERC-20 + native ETH balance table with
+ *    a Send modal. Plain transfers, not stealth.
+ *  - `/inbox` — claim-package inbox for batch payouts received via
+ *    `PrivateSettlement.scatterDirect`. Notes are stored locally
+ *    (folder JSON) and route to `/claim/...` for the actual claim.
+ *
+ *  Neither sub-page uses EIP-5564 stealth addresses (Phase 2.4
+ *  removed that machinery repo-wide); the menu groups them under
+ *  "Receive" because both are recipient-side surfaces for funds
+ *  that arrived at this wallet.
+ *
+ *  Always visible once a wallet is connected. Mirrors the
+ *  `IdentityMenu` interaction model — hover/focus/click open,
  *  click-outside / Escape close. */
-export function StealthMenu() {
+export function ReceiveMenu() {
   const { account } = useWallet();
   if (!account) return null;
-  return <StealthMenuImpl />;
+  return <ReceiveMenuImpl />;
 }
 
-function StealthMenuImpl() {
+function ReceiveMenuImpl() {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
@@ -44,7 +54,7 @@ function StealthMenuImpl() {
         onClick={() => setOpen((v) => !v)}
         className="hover:text-[var(--color-text)]"
       >
-        Stealth <span aria-hidden>▾</span>
+        Receive <span aria-hidden>▾</span>
       </button>
       {open && (
         <div className="absolute left-0 top-full z-10 w-44 pt-2">
