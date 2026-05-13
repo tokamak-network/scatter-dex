@@ -126,12 +126,16 @@ sync_verifiers_from_zkeys() {
   # apps/pay). circuits/scripts/build.sh copies to frontend +
   # apps/pro; apps/pay's predev mirrors apps/pro into its own
   # public/zk. Each hop is a drift opportunity — if any consumer
-  # zkey diverges from the one the on-chain Verifier.sol was
-  # exported from, every proof on that flow reverts with the
-  # opaque `InvalidProof()` error the per-side Verifier sync
-  # above also guards. Force-overwrite (cmp + cp) here so the
-  # canonical circuits/build copy wins, regardless of which
-  # local rebuild last touched the consumer path.
+  # zkey OR wasm diverges from the canonical one the on-chain
+  # Verifier.sol was exported from, every proof on that flow
+  # reverts with the opaque `InvalidProof()` error the per-side
+  # Verifier sync above also guards. (wasm drift breaks witness
+  # generation before proving even reaches the verifier, so both
+  # must stay in lock-step.) Force-overwrite (cmp + cp) so the
+  # canonical circuits/build copy wins regardless of which local
+  # rebuild last touched the consumer path. `mkdir -p` the target
+  # so a fresh checkout where the consumer's public/zk dir doesn't
+  # exist yet gets created cleanly instead of silently skipped.
   local zk_targets=(
     "$ROOT_DIR/frontend/public/zk"
     "$ROOT_DIR/apps/pro/public/zk"
@@ -143,18 +147,33 @@ sync_verifiers_from_zkeys() {
   )
   local zk_copied=0
   for target in "${zk_targets[@]}"; do
-    [ -d "$target" ] || continue
+    # Only sync into a consumer whose parent app dir exists in
+    # this checkout — skips e.g. apps/pay when running against a
+    # frontend-only tree, while still creating public/zk on first
+    # boot of an app that ships with empty public/.
+    local parent="$(dirname "$target")"
+    [ -d "$parent" ] || continue
+    mkdir -p "$target"
     for circ in "${zk_circuits[@]}"; do
       local zkey="$circuits_dir/build/${circ}_final.zkey"
-      [ -f "$zkey" ] || continue
-      local dst="$target/${circ}_final.zkey"
-      if [ ! -f "$dst" ] || ! cmp -s "$zkey" "$dst"; then
-        cp "$zkey" "$dst"
-        zk_copied=$((zk_copied + 1))
+      local wasm="$circuits_dir/build/${circ}_js/${circ}.wasm"
+      if [ -f "$zkey" ]; then
+        local dst="$target/${circ}_final.zkey"
+        if [ ! -f "$dst" ] || ! cmp -s "$zkey" "$dst"; then
+          cp "$zkey" "$dst"
+          zk_copied=$((zk_copied + 1))
+        fi
+      fi
+      if [ -f "$wasm" ]; then
+        local dst="$target/${circ}.wasm"
+        if [ ! -f "$dst" ] || ! cmp -s "$wasm" "$dst"; then
+          cp "$wasm" "$dst"
+          zk_copied=$((zk_copied + 1))
+        fi
       fi
     done
   done
-  echo "  [ok] consumer zkey assets in sync (copied: $zk_copied)"
+  echo "  [ok] consumer zk assets in sync (copied: $zk_copied)"
 }
 
 echo ""
