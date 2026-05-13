@@ -15,6 +15,7 @@ export function Stepper({ step, onJump }: { step: number; onJump: (n: number) =>
           <button
             key={l}
             disabled={!clickable}
+            aria-current={active ? "step" : undefined}
             onClick={() => clickable && onJump(n)}
             className={`flex-1 rounded-md border px-3 py-2 text-left text-sm ${
               active
