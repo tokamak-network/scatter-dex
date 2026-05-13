@@ -110,6 +110,16 @@ sync_verifiers_from_zkeys() {
     exported=$((exported + 1))
   done
   echo "  [ok] verifiers in sync (re-exported: $exported, already current: $skipped)"
+
+  # BatchAuthorizeVerifier is hand-written (5-pairing aggregator over
+  # two authorize.circom proofs) so the snarkjs loop above can't touch
+  # it. Run the dedicated patcher to keep its VK constants in sync with
+  # the authorize zkey — without this, any future `setBatchAuthorizeVerifier`
+  # wire-up reverts every same-tier settleAuth with `InvalidProof()`.
+  local batch_out
+  batch_out=$( node "$ROOT_DIR/circuits/scripts/sync-batch-verifier-vk.mjs" 2>&1 ) \
+    || { echo "  ERROR: BatchAuthorizeVerifier sync failed:"; echo "$batch_out"; exit 1; }
+  echo "  [ok] $batch_out"
 }
 
 echo ""
