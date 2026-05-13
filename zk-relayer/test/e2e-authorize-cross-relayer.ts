@@ -44,7 +44,7 @@ import { fileURLToPath } from "url";
 
 import { getEdDSA as getEdDSAImpl } from "../src/core/zk-prover.js";
 import { TAG_ESCROW_NULL, TAG_NONCE_NULL, TAG_CLAIM_NULL } from "../src/core/tags.js";
-import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof } from "./helpers/common.js";
+import { poseidonHash, computeCommitmentV2, randomFieldElement, toHex, assert, buildTree, getMerkleProof, getEthBalanceFresh, getErc20BalanceFresh } from "./helpers/common.js";
 import { makeDepositProof } from "./helpers/deposit-proof.mjs";
 import { makeAuthorizeProof } from "./helpers/authorize-proof.mjs";
 
@@ -651,27 +651,14 @@ async function main(): Promise<void> {
   // a prior test (e.g. `e2e-market-order.ts`) may have left a USDC
   // balance on this recipient. Same pattern Bob already uses for ETH.
   //
-  // We bypass ethers' provider cache by calling JSON-RPC directly; a
-  // prior `provider.getBalance(...)` after `tx.wait()` was observed to
-  // return the pre-claim balance even though the on-chain credit
-  // happened (verified via `cast balance --block N`). The raw RPC call
-  // honours the chain's current latest tag without ethers' internal
-  // block-cache layer.
-  const getBalanceFresh = async (addr: string): Promise<bigint> => {
-    const hex = await provider.send("eth_getBalance", [addr, "latest"]);
-    return BigInt(hex);
-  };
-  const getErc20BalanceFresh = async (token: string, addr: string): Promise<bigint> => {
-    // balanceOf(address) selector = 0x70a08231; pad addr to 32 bytes
-    const data = "0x70a08231" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-    const hex = await provider.send("eth_call", [{ to: token, data }, "latest"]);
-    return BigInt(hex);
-  };
-  const aliceUsdcBefore = await getErc20BalanceFresh(USDC_ADDRESS, aliceRecipient);
+  // Raw JSON-RPC balance reads (see helpers/common.ts:getEthBalanceFresh)
+  // — ethers' provider caches "latest" across tx.wait() so getBalance
+  // returns the pre-tx value despite the on-chain credit landing.
+  const aliceUsdcBefore = await getErc20BalanceFresh(provider, USDC_ADDRESS, aliceRecipient);
   await claimFor(alice, aliceArt, settlementAddr, provider, aliceWallet);
-  const bobEthBefore = await getBalanceFresh(bobRecipient);
+  const bobEthBefore = await getEthBalanceFresh(provider, bobRecipient);
   await claimFor(bob, bobArt, settlementAddr, provider, bobWallet);
-  const bobEthAfter = await getBalanceFresh(bobRecipient);
+  const bobEthAfter = await getEthBalanceFresh(provider, bobRecipient);
 
   // ─── Step 8: verify recipient balances ─────────────────────
   // Recipients receive `claimAmount` (= buyAmount − fee), not the
@@ -679,7 +666,7 @@ async function main(): Promise<void> {
   // Both Alice (USDC) and Bob (native ETH, auto-unwrapped from WETH)
   // are checked as deltas to isolate exactly this claim.
   console.log("\n[8/8] Verifying recipient balances...");
-  const aliceUsdcAfter = await getErc20BalanceFresh(USDC_ADDRESS, aliceRecipient);
+  const aliceUsdcAfter = await getErc20BalanceFresh(provider, USDC_ADDRESS, aliceRecipient);
   const aliceUsdcDelta = aliceUsdcAfter - aliceUsdcBefore;
   const bobEthDelta = bobEthAfter - bobEthBefore;
   assert(
