@@ -55,6 +55,8 @@ export function IdentityPill() {
                 >
                   {state.kind === "expired" || state.kind === "expiring"
                     ? "Renew"
+                    : state.kind === "error"
+                    ? "Retry"
                     : "Register with zk-X509"}
                 </a>
               )}

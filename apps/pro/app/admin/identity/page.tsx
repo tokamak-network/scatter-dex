@@ -16,7 +16,16 @@ import { ZK_X509_URL } from "../../lib/features";
  *  rather than dangling a broken target. */
 function zkX509RegistryUrl(address: string): string | null {
   if (!ZK_X509_URL) return null;
-  return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}?tab=register`;
+  try {
+    const url = new URL(
+      `${ZK_X509_URL.replace(/\/$/, "")}/registry/${encodeURIComponent(address)}`,
+    );
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.searchParams.set("tab", "register");
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function explorerTxLink(

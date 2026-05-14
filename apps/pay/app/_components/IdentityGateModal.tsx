@@ -87,5 +87,6 @@ function defaultBody(state: IdentityState): string {
 
 function ctaLabel(state: IdentityState): string {
   if (state.kind === "expired" || state.kind === "expiring") return "Renew now";
+  if (state.kind === "error") return "Retry";
   return "Register with zk-X509";
 }

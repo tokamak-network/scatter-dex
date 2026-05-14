@@ -32,7 +32,16 @@ const REGISTRY_FACTORY_INFO_ABI = [
  *  omit the link than dangle a broken target. */
 function zkX509RegistryUrl(address: string): string | null {
   if (!ZK_X509_URL) return null;
-  return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}?tab=register`;
+  try {
+    const url = new URL(
+      `${ZK_X509_URL.replace(/\/$/, "")}/registry/${encodeURIComponent(address)}`,
+    );
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.searchParams.set("tab", "register");
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 /** Resolve `{addressLower → registryName}` for the trusted-authorities
