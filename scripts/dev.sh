@@ -397,15 +397,15 @@ if [ "$MOCK_MODE" = true ]; then
     exit 1
   fi
 
-  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep -E "^  RelayerRegistry( proxy)?:" | tail -1 | awk '{print $NF}')
+  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *RelayerRegistry( proxy)?:" | tail -1 | awk '{print $NF}')
   WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
   USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
   USDT=$(echo "$DEPLOY_OUTPUT" | grep "^  USDT:" | awk '{print $NF}')
   TON=$(echo "$DEPLOY_OUTPUT" | grep "^  TON:" | awk '{print $NF}')
-  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep -E "^  CommitmentPool( proxy)?:" | tail -1 | awk '{print $NF}')
-  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep -E "^  PrivateSettlement( proxy)?:" | tail -1 | awk '{print $NF}')
-  IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep -E "^  IdentityGate( proxy)?:" | tail -1 | awk '{print $NF}')
-  FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep -E "^  FeeVault( proxy)?:" | tail -1 | awk '{print $NF}')
+  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *CommitmentPool( proxy)?:" | tail -1 | awk '{print $NF}')
+  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *PrivateSettlement( proxy)?:" | tail -1 | awk '{print $NF}')
+  IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *IdentityGate( proxy)?:" | tail -1 | awk '{print $NF}')
+  FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *FeeVault( proxy)?:" | tail -1 | awk '{print $NF}')
   BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^  BatchExecutor:" | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
@@ -500,11 +500,11 @@ else
     exit 1
   fi
 
-  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep -E "^  RelayerRegistry( proxy)?:" | tail -1 | awk '{print $NF}')
-  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep -E "^  CommitmentPool( proxy)?:" | tail -1 | awk '{print $NF}')
-  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep -E "^  PrivateSettlement( proxy)?:" | tail -1 | awk '{print $NF}')
-  IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep -E "^  IdentityGate( proxy)?:" | tail -1 | awk '{print $NF}')
-  FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep -E "^  FeeVault( proxy)?:" | tail -1 | awk '{print $NF}')
+  RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *RelayerRegistry( proxy)?:" | tail -1 | awk '{print $NF}')
+  COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *CommitmentPool( proxy)?:" | tail -1 | awk '{print $NF}')
+  PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *PrivateSettlement( proxy)?:" | tail -1 | awk '{print $NF}')
+  IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *IdentityGate( proxy)?:" | tail -1 | awk '{print $NF}')
+  FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *FeeVault( proxy)?:" | tail -1 | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
     echo "  ERROR: deployment failed (missing contract addresses)"
