@@ -432,7 +432,7 @@ function ClaimInner() {
                         href="/identity"
                         className="font-medium underline underline-offset-2"
                       >
-                        Verify with phone →
+                        Register with zk-X509 →
                       </a>
                     </div>
                   )}

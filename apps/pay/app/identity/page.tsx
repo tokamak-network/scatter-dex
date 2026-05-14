@@ -25,13 +25,14 @@ const REGISTRY_FACTORY_INFO_ABI = [
   "function registryInfo(address) view returns (address creator, string name, uint32 maxWallets, uint8 minDisclosureMask, uint256 maxProofAge, uint256 createdAt, uint256 vKeyVersion)",
 ];
 
-/** Build a per-registry deep-link to the external zk-X509 site
- *  so users can see the CA's certificate detail / registration
- *  flow. Returns null when `NEXT_PUBLIC_PAY_ZK_X509_URL` is
- *  empty — we'd rather omit the link than dangle a broken target. */
+/** Build a per-registry deep-link to the external zk-X509 site,
+ *  landing on the `register` tab so the user goes straight to the
+ *  registration form instead of the read-only overview. Returns
+ *  null when `NEXT_PUBLIC_PAY_ZK_X509_URL` is empty — we'd rather
+ *  omit the link than dangle a broken target. */
 function zkX509RegistryUrl(address: string): string | null {
   if (!ZK_X509_URL) return null;
-  return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}`;
+  return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}?tab=register`;
 }
 
 /** Resolve `{addressLower → registryName}` for the trusted-authorities
