@@ -1,8 +1,9 @@
 # Smart-contract hardening
 
 What an external auditor should know before reading the contracts. This page is
-the single source of truth for the safety-net layers that run on every PR; if
-you change one of them, update the corresponding section here.
+the single source of truth for the CI safety-net layers (see the `Triggered by`
+column for each layer's exact trigger); if you change one of them, update the
+corresponding section here.
 
 > Looking for scope + reproduction commands? See [`AUDIT.md`](./AUDIT.md).
 
@@ -13,7 +14,7 @@ you change one of them, update the corresponding section here.
 | Foundry unit + branch tests + gas snapshot drift | `forge snapshot --check --no-match-contract "Fork\|Invariant"` in CI | every PR | 388 unit + branch tests against `contracts/.gas-snapshot` baseline (invariants split into the parallel job below) |
 | Storage layout drift | `script/storage-layout/check.sh` in CI | every PR | every upgradeable contract |
 | Slither static analysis | `crytic/slither-action@v0.4.0` in CI | every PR | `contracts/src/`, 0-findings baseline |
-| Foundry **invariant suite** | parallel `contracts / invariant` CI job (default 256 runs × 500 calls) | every PR | 31 invariants across 8 suites |
+| Foundry **invariant suite** | parallel `contracts / invariant` CI job (default 256 runs × 500 calls) | PRs touching `contracts/**` or `ci.yml`; always on `push` to `main` | 31 invariants across 8 suites |
 | **Deep fuzz / invariant** | `forge test` w/ `FOUNDRY_PROFILE=deep` | nightly cron @ 02:00 UTC + manual dispatch | 10000 fuzz runs, 1024×2000 invariant |
 | Mainnet fork tests | `forge test --match-contract Fork` | manual dispatch | Uniswap V3 + Curve real-router checks |
 
