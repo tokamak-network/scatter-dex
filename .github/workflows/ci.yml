@@ -18,6 +18,27 @@ concurrency:
 
 jobs:
   # ────────────────────────────────────────────────────────────────
+  #  Change detection — gates the slow invariant suite so it only
+  #  runs when contract sources (or this workflow) actually changed.
+  #  On `push` to main the gate is bypassed (see `contracts-invariant`
+  #  `if:`), so main always gets the full signal.
+  # ────────────────────────────────────────────────────────────────
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            contracts:
+              - 'contracts/**'
+              - '.github/workflows/ci.yml'
+
+  # ────────────────────────────────────────────────────────────────
   #  Contracts — Foundry build + non-fork test suite
   # ────────────────────────────────────────────────────────────────
   contracts:
@@ -95,6 +116,12 @@ jobs:
     name: contracts / invariant
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # The invariant suite dominates CI runtime (~25-35 min). Skip it on
+    # PRs that don't touch contracts (frontend / relayer / docs-only),
+    # but always run it on `push` to main so the green-on-tip signal is
+    # never weaker than a full run.
+    needs: changes
+    if: ${{ needs.changes.outputs.contracts == 'true' || github.event_name == 'push' }}
     defaults:
       run:
         working-directory: contracts
