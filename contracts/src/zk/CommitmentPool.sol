@@ -95,8 +95,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     address public pendingSettlement;
     uint256 public pendingSettlementActivateAt;
 
-    /// @notice Optional zk-X509 identity gate. If set, the depositor (deposit)
-    ///         and the recipient (withdraw) must be currently identity-verified.
+    /// @notice Optional zk-X509 identity gate. If set, every active participant
+    ///         must be currently identity-verified: the depositor on `deposit`,
+    ///         and both the caller and the recipient on `withdraw`.
     ///         `address(0)` disables the check — same opt-in model as `sanctionsList`.
     IIdentityRegistry public identityGate;
 
@@ -387,6 +388,13 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
         address recipient,
         address relayer
     ) external nonReentrant whenNotPaused notSanctioned(msg.sender) notSanctioned(recipient) {
+        // Both active participants are gated: the caller (`msg.sender` — a
+        // self-withdrawer, or a relayer submitting on a user's behalf) and the
+        // `recipient` receiving funds. `withdrawFor` (the settlement path) is
+        // the only withdrawal route that skips the caller check — its caller
+        // is the PrivateSettlement contract, and the end-user recipient is
+        // gated in `_executeClaim` instead.
+        _requireIdentityVerified(msg.sender);
         _requireIdentityVerified(recipient);
         _processWithdraw(proofA, proofB, proofC, root, nullifierHash, newCommitment, token, amount, recipient, relayer);
     }

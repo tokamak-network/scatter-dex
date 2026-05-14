@@ -56,13 +56,15 @@ contract CommitmentPoolIdentityGateTest is Test {
         pool.deposit(pa, pb, pc, commitment, address(token), amount);
     }
 
-    function _withdraw(address recipient, uint256 amount) internal {
+    function _withdraw(address caller, address recipient, uint256 amount) internal {
         uint[2] memory pa;
         uint[2][2] memory pb;
         uint[2] memory pc;
-        pool.withdraw(
-            pa, pb, pc, pool.getLastRoot(), NULLIFIER_1, 0, address(token), amount, recipient, address(0)
-        );
+        // Hoist the view read — `vm.prank` binds to the *next* call, and an
+        // inline `pool.getLastRoot()` arg would consume the prank instead.
+        uint256 root = pool.getLastRoot();
+        vm.prank(caller);
+        pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), amount, recipient, address(0));
     }
 
     // ─── setIdentityGate ─────────────────────────────────────────
@@ -116,10 +118,10 @@ contract CommitmentPoolIdentityGateTest is Test {
         assertEq(token.balanceOf(address(pool)), 100 ether);
     }
 
-    // ─── withdraw gating (recipient) ─────────────────────────────
+    // ─── withdraw gating (caller + recipient) ────────────────────
 
     function test_withdraw_gated_unverifiedRecipientReverts() public {
-        // alice is verified to get funds in; recipient bob is not.
+        // caller alice is verified; recipient bob is not.
         pool.setIdentityGate(address(gate));
         gate.setVerified(alice, true);
         _deposit(alice, COMMITMENT_1, 100 ether);
@@ -130,23 +132,41 @@ contract CommitmentPoolIdentityGateTest is Test {
         // Hoist the view read — `vm.expectRevert` binds to the *next* call,
         // and an inline `pool.getLastRoot()` arg would consume it instead.
         uint256 root = pool.getLastRoot();
+        vm.prank(alice);
         vm.expectRevert(CommitmentPool.NotIdentityVerified.selector);
         pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), 100 ether, bob, address(0));
     }
 
-    function test_withdraw_gated_verifiedRecipientSucceeds() public {
+    function test_withdraw_gated_unverifiedCallerReverts() public {
+        // recipient bob is verified; caller alice (e.g. an unverified relayer)
+        // is not — the caller check must still block the withdrawal.
         pool.setIdentityGate(address(gate));
-        gate.setVerified(alice, true);
         gate.setVerified(bob, true);
-        _deposit(alice, COMMITMENT_1, 100 ether);
+        _deposit(bob, COMMITMENT_1, 100 ether);
 
-        _withdraw(bob, 100 ether);
-        assertEq(token.balanceOf(bob), 1100 ether);
+        uint[2] memory pa;
+        uint[2][2] memory pb;
+        uint[2] memory pc;
+        uint256 root = pool.getLastRoot();
+        vm.prank(alice);
+        vm.expectRevert(CommitmentPool.NotIdentityVerified.selector);
+        pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), 100 ether, bob, address(0));
     }
 
-    function test_withdraw_noGate_unverifiedRecipientSucceeds() public {
+    function test_withdraw_gated_verifiedSucceeds() public {
+        // Self-withdrawal: caller == recipient == bob, both verified.
+        pool.setIdentityGate(address(gate));
+        gate.setVerified(bob, true);
+        _deposit(bob, COMMITMENT_1, 100 ether);
+
+        _withdraw(bob, bob, 100 ether);
+        assertEq(token.balanceOf(bob), 1000 ether);
+    }
+
+    function test_withdraw_noGate_unverifiedSucceeds() public {
+        // Gate unset → opt-in check skipped, withdraw behaves as before.
         _deposit(alice, COMMITMENT_1, 100 ether);
-        _withdraw(bob, 100 ether);
+        _withdraw(alice, bob, 100 ether);
         assertEq(token.balanceOf(bob), 1100 ether);
     }
 
@@ -165,6 +185,7 @@ contract CommitmentPoolIdentityGateTest is Test {
         uint[2][2] memory pb;
         uint[2] memory pc;
         uint256 root = pool.getLastRoot();
+        vm.prank(alice);
         vm.expectRevert(CommitmentPool.NotIdentityVerified.selector);
         pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), 100 ether, bob, address(0));
     }
