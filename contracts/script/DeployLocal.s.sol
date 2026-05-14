@@ -180,6 +180,13 @@ contract DeployLocal is Script {
         //     adapter around the Chainalysis SDN Oracle.
         _deployAndWireSanctionsList(address(pool), address(privateSettlement));
 
+        // 15. Point both boundary contracts at the User-CA IdentityGate so
+        //     deposits (depositor) and claims/withdraws (recipient) are
+        //     gated on a current zk-X509 attestation on-chain — not just in
+        //     the frontend. Wired in a helper for the same stack-limit
+        //     reason as `_deployAndWireSanctionsList`.
+        _wireIdentityGate(address(pool), address(privateSettlement), address(gate));
+
         // Deploy the minimal EIP-7702 batch executor. The frontend
         // authorizes EOAs to delegate to this address when available,
         // collapsing deposit's wrap+approve+deposit popups into one tx.
@@ -349,6 +356,15 @@ contract DeployLocal is Script {
             SanctionsList(address(proxy)).setExternalOracle(externalOracle);
             console.log("SanctionsList externalOracle wired:", externalOracle);
         }
+    }
+
+    /// @dev Register the IdentityGate on both boundary contracts. Kept in its
+    ///      own frame so `run()` doesn't spend stack slots on the calls — same
+    ///      rationale as `_deployAndWireSanctionsList`.
+    function _wireIdentityGate(address pool_, address settlement_, address gate_) internal {
+        CommitmentPool(pool_).setIdentityGate(gate_);
+        PrivateSettlement(payable(settlement_)).setIdentityGate(gate_);
+        console.log("IdentityGate registered on CommitmentPool + PrivateSettlement");
     }
 
     /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.
