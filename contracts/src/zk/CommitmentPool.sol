@@ -12,6 +12,7 @@ import {IncrementalMerkleTree} from "./IncrementalMerkleTree.sol";
 import {IVerifier} from "./IVerifier.sol";
 import {IDepositVerifier} from "./IDepositVerifier.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {IIdentityRegistry} from "../interfaces/IIdentityRegistry.sol";
 
 /// @title CommitmentPool
 /// @notice UTXO-based private escrow using Poseidon Merkle tree and Groth16 ZK proofs.
@@ -40,6 +41,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     error TimelockNotExpired();
     error NoPendingSettlement();
     error SettlementAlreadySet();
+    error NotIdentityVerified();
 
     // ─── Events ──────────────────────────────────────────────────
     event CommitmentInserted(
@@ -93,8 +95,13 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     address public pendingSettlement;
     uint256 public pendingSettlementActivateAt;
 
+    /// @notice Optional zk-X509 identity gate. If set, the depositor (deposit)
+    ///         and the recipient (withdraw) must be currently identity-verified.
+    ///         `address(0)` disables the check — same opt-in model as `sanctionsList`.
+    IIdentityRegistry public identityGate;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
 
     // ─── Initializer ─────────────────────────────────────────────
@@ -205,6 +212,28 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
         _;
     }
 
+    event IdentityGateUpdated(address indexed oldGate, address indexed newGate);
+
+    /// @notice Set the zk-X509 identity gate. Pass address(0) to disable the check.
+    function setIdentityGate(address _gate) external onlyOwner {
+        if (_gate != address(0) && _gate.code.length == 0) revert NotAContract();
+        emit IdentityGateUpdated(address(identityGate), _gate);
+        identityGate = IIdentityRegistry(_gate);
+    }
+
+    /// @dev Revert if the address is not currently zk-X509 verified (when the
+    ///      identity gate is configured). `isVerified` already returns false
+    ///      for expired attestations, so this also rejects lapsed identities.
+    ///      Shaped as a function, not a modifier like `notSanctioned`, because
+    ///      `withdraw` is already near the "stack too deep" limit and inlining
+    ///      one more modifier tips it over.
+    function _requireIdentityVerified(address addr) internal view {
+        IIdentityRegistry _gate = identityGate;
+        if (address(_gate) != address(0) && !_gate.isVerified(addr)) {
+            revert NotIdentityVerified();
+        }
+    }
+
     // ─── Deposit ─────────────────────────────────────────────────
 
     /// @notice Deposit tokens and add a commitment to the Merkle tree.
@@ -228,6 +257,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
         address token,
         uint256 amount
     ) external nonReentrant whenNotPaused notSanctioned(msg.sender) {
+        _requireIdentityVerified(msg.sender);
         if (commitment == 0) revert ZeroCommitment();
         if (token == address(0)) revert ZeroAddress();
         if (!whitelistedTokens[token]) revert TokenNotWhitelisted();
@@ -357,6 +387,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
         address recipient,
         address relayer
     ) external nonReentrant whenNotPaused notSanctioned(msg.sender) notSanctioned(recipient) {
+        _requireIdentityVerified(recipient);
         _processWithdraw(proofA, proofB, proofC, root, nullifierHash, newCommitment, token, amount, recipient, relayer);
     }
 

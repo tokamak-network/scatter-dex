@@ -19,6 +19,7 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {RelayerRegistry} from "../RelayerRegistry.sol";
 import {FeeVault} from "../FeeVault.sol";
 import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
+import {IIdentityRegistry} from "../interfaces/IIdentityRegistry.sol";
 import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 
 /// @title PrivateSettlement
@@ -52,6 +53,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     ///         `setAuthorizeVerifier(tier, addr)` for the tier first.
     error TierNotConfigured(uint8 tier);
     error CancelVerifierNotSet();
+    error NotIdentityVerified();
 
     // Errors that are actually reverted from SettleVerifyLib but re-declared
     // here to preserve the contract's ABI surface — downstream Solidity code
@@ -235,8 +237,13 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     /// @notice Optional sanctions list. If set, sanctioned addresses cannot claim or settle.
     ISanctionsList public sanctionsList;
 
+    /// @notice Optional zk-X509 identity gate. If set, the recipient of a claim
+    ///         must be currently identity-verified. `address(0)` disables the
+    ///         check — same opt-in model as `sanctionsList`.
+    IIdentityRegistry public identityGate;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     // ─── Initializer ─────────────────────────────────────────────
 
@@ -365,6 +372,23 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     function _requireNotSanctioned(address addr) internal view {
         ISanctionsList _list = sanctionsList;
         if (address(_list) != address(0) && _list.isSanctioned(addr)) revert AddressSanctioned();
+    }
+
+    event IdentityGateUpdated(address indexed oldGate, address indexed newGate);
+
+    /// @notice Set the zk-X509 identity gate. Pass address(0) to disable the check.
+    function setIdentityGate(address _gate) external onlyOwner {
+        if (_gate != address(0) && _gate.code.length == 0) revert NotAContract();
+        emit IdentityGateUpdated(address(identityGate), _gate);
+        identityGate = IIdentityRegistry(_gate);
+    }
+
+    /// @dev Revert if the address is not currently zk-X509 verified (when the
+    ///      identity gate is configured). `isVerified` already returns false
+    ///      for expired attestations, so this also rejects lapsed identities.
+    function _requireIdentityVerified(address addr) internal view {
+        IIdentityRegistry _gate = identityGate;
+        if (address(_gate) != address(0) && !_gate.isVerified(addr)) revert NotIdentityVerified();
     }
 
     /// @dev Revert if relayer registry is set and caller is not an active relayer.
@@ -1019,6 +1043,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     ) internal {
         if (recipient == address(0)) revert ZeroAddress();
         _requireNotSanctioned(recipient);
+        _requireIdentityVerified(recipient);
 
         SettleVerifyLib.ClaimsGroup storage group = claimsGroups[claimsRoot];
         if (group.token == address(0)) revert ClaimsGroupNotFound();
