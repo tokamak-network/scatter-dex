@@ -55,7 +55,9 @@ export function IdentityPill() {
                 >
                   {state.kind === "expired" || state.kind === "expiring"
                     ? "Renew"
-                    : "Verify with phone"}
+                    : state.kind === "error"
+                    ? "Retry"
+                    : "Register with zk-X509"}
                 </a>
               )}
               <button

@@ -9,13 +9,23 @@ import { DEMO_NETWORK } from "../../lib/network";
 import { useIdentityGateAdmin } from "../../lib/identity";
 import { ZK_X509_URL } from "../../lib/features";
 
-/** Build a per-registry deep-link to the external zk-X509 console.
- *  Returns null when the deploy didn't configure
+/** Build a per-registry deep-link to the external zk-X509 console,
+ *  landing on the `register` tab so the user goes straight to the
+ *  registration form. Returns null when the deploy didn't configure
  *  `NEXT_PUBLIC_ZK_X509_URL`, in which case we omit the link
  *  rather than dangling a broken target. */
 function zkX509RegistryUrl(address: string): string | null {
   if (!ZK_X509_URL) return null;
-  return `${ZK_X509_URL.replace(/\/$/, "")}/registry/${address}`;
+  try {
+    const url = new URL(
+      `${ZK_X509_URL.replace(/\/$/, "")}/registry/${encodeURIComponent(address)}`,
+    );
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.searchParams.set("tab", "register");
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function explorerTxLink(

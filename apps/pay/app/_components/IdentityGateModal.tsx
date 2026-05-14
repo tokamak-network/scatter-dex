@@ -77,7 +77,7 @@ function defaultBody(state: IdentityState): string {
     case "expiring":
       return "Your verification expires soon. Renew now so you don't get blocked mid-flow.";
     case "unverified":
-      return "Scatter Pay requires a one-time zk-X509 verification before sending or claiming. Takes about 30 seconds with your phone or signing device.";
+      return "Scatter Pay requires a one-time zk-X509 verification before sending or claiming. Submit your certificate on the zk-X509 dashboard to register your wallet.";
     case "error":
       return `We couldn't read your verification status: ${state.message}. Retry or contact the operator if the registry is unreachable.`;
     default:
@@ -87,5 +87,6 @@ function defaultBody(state: IdentityState): string {
 
 function ctaLabel(state: IdentityState): string {
   if (state.kind === "expired" || state.kind === "expiring") return "Renew now";
-  return "Verify with phone";
+  if (state.kind === "error") return "Retry";
+  return "Register with zk-X509";
 }

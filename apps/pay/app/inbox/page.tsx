@@ -16,6 +16,7 @@ import {
 } from "@zkscatter/sdk/storage";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { formatLocalStampSec } from "../_lib/format";
+import { WorkspaceBar } from "../_components/WorkspaceBar";
 
 /** Reconstruct the /claim URL from a stored entry. We always have the
  *  decoded package, so we re-encode it. The `id` query param is just a
@@ -103,19 +104,6 @@ export default function ClaimInbox() {
     await refresh();
   }
 
-  if (!folder.ready) {
-    return (
-      <div className="mx-auto max-w-3xl space-y-4">
-        <h1 className="text-2xl font-semibold">Inbox</h1>
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text-muted)]">
-          Pick a working folder first so received-claim history can be
-          stored locally. Use the dashboard's folder picker on the home
-          page.
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="space-y-1">
@@ -130,6 +118,15 @@ export default function ClaimInbox() {
         </p>
       </header>
 
+      <WorkspaceBar />
+
+      {!folder.ready ? (
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text-muted)]">
+          Pick a working folder first so received-claim history can be
+          stored locally.
+        </div>
+      ) : (
+        <>
       <section className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
         <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
           Save a claim link
@@ -243,7 +240,8 @@ export default function ClaimInbox() {
           </ul>
         )}
       </section>
-
+        </>
+      )}
     </div>
   );
 }

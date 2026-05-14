@@ -9,8 +9,9 @@
 /** Deep-link to the external zk-X509 registration / inspection
  *  app. Surfaced on the user-facing /identity page and next to
  *  the admin "Add registry" form so operators can paste the
- *  resulting contract address straight in. Empty string = no
- *  link is rendered. Default `http://localhost:3000` matches
- *  zk-X509's `next dev` default. */
+ *  resulting contract address straight in. Empty string (the
+ *  default when `NEXT_PUBLIC_PAY_ZK_X509_URL` is unset) means no
+ *  link is rendered — set the env in local dev / deploys that run
+ *  a zk-X509 instance so prod never dangles a `localhost` target. */
 export const ZK_X509_URL =
-  process.env.NEXT_PUBLIC_PAY_ZK_X509_URL ?? "http://localhost:3000";
+  process.env.NEXT_PUBLIC_PAY_ZK_X509_URL ?? "";
