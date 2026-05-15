@@ -158,13 +158,11 @@ function rowsFromMatrix(
   }
 
   const out: ParsedRecipient[] = [];
-  const seenAddrs = new Set<string>();
   let skippedNoAddr = 0;
   let skippedBadAddr = 0;
   let skippedBadAmount = 0;
   let skippedBadEmail = 0;
   let skippedBadDate = 0;
-  let skippedDup = 0;
   for (let i = dataStart; i < matrix.length; i++) {
     const row = matrix[i] ?? [];
     if (row.every((c) => cellToString(c) === "")) continue;
@@ -194,13 +192,13 @@ function rowsFromMatrix(
       skippedBadDate++;
       continue;
     }
-    const dupKey = address.toLowerCase();
-    if (seenAddrs.has(dupKey)) {
-      skippedDup++;
-      continue;
-    }
-    seenAddrs.add(dupKey);
 
+    // No address dedup: two claims to the same address (different
+    // amounts or release times) is legitimate in both Pay (paying
+    // alice twice) and Pro (split-claim schedules). Detection of
+    // accidental duplicates is the operator's responsibility — the
+    // editor surfaces the row count + sum panel so a typo's effect
+    // is visible before submit.
     out.push({
       name: enabled.has("name") ? get(cols.name) : "",
       address,
@@ -214,7 +212,6 @@ function rowsFromMatrix(
   if (skippedBadAmount > 0) warnings.push(`Skipped ${skippedBadAmount} row(s) with non-numeric amount.`);
   if (skippedBadEmail > 0) warnings.push(`Skipped ${skippedBadEmail} row(s) with malformed email.`);
   if (skippedBadDate > 0) warnings.push(`Skipped ${skippedBadDate} row(s) with unparseable release time.`);
-  if (skippedDup > 0) warnings.push(`Skipped ${skippedDup} duplicate row(s).`);
   return { rows: out, warnings };
 }
 

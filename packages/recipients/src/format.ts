@@ -13,10 +13,12 @@ export function formatRecipientCsvRow(
     .map((col) => {
       const raw = r[col] ?? "";
       // Free-text label fields get their commas/newlines stripped so
-      // the textarea path keeps reading as plain "a,b,c". Address
-      // and amount are already constrained shape, but escape them too
-      // so a stray edit never breaks the CSV.
-      if (col === "name") return csvSafeLabel(raw);
+      // the textarea path keeps reading as plain "a,b,c". `csvEscape`
+      // then runs on top so the formula-injection guard (`'=...`)
+      // still applies — an attacker-controlled recipient name like
+      // `=HYPERLINK(...)` would otherwise execute as a formula when
+      // the operator opens the downloaded CSV in Excel.
+      if (col === "name") return csvEscape(csvSafeLabel(raw));
       return csvEscape(raw);
     })
     .join(",");

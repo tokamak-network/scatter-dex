@@ -120,35 +120,40 @@ export function RecipientsEditor({
     }
   }, [storageKey, mode]);
 
-  // Stable React keys per row position so removing row #3 doesn't
-  // shift focus on row #4. Generated lazily; we extend / trim
-  // when the external `value` length changes (uploads, picker,
-  // splice). Kept in a ref since identity matters only for the
-  // render that consumes it.
+  // Stable React keys per row position. Managed inside the
+  // handlers (splice in `removeRow`, push in `addRow`) so removing
+  // row #3 doesn't shift the focus state on row #4 — that was the
+  // bug the earlier "trim on length mismatch" approach didn't fix.
+  // Render-time fallback below regenerates the key list when the
+  // length changes through a path the editor didn't intermediate
+  // (file upload, address-book pick, parent reset).
   const keyCounterRef = useRef(0);
   const rowKeysRef = useRef<number[]>([]);
-  // Sync key list length to value length on every render. New rows
-  // get fresh keys (appended); removals are caller-driven so we
-  // can't know which index was dropped — fall back to position.
   if (rowKeysRef.current.length !== value.length) {
-    if (rowKeysRef.current.length < value.length) {
-      while (rowKeysRef.current.length < value.length) {
-        rowKeysRef.current.push(++keyCounterRef.current);
-      }
-    } else {
-      rowKeysRef.current.length = value.length;
-    }
+    rowKeysRef.current = Array.from(
+      { length: value.length },
+      () => ++keyCounterRef.current,
+    );
   }
 
   // ---- CSV view derived from `value` -----------------------------
   // Skip the serialize when the user is in Rows mode — keystrokes
   // create a fresh `value` identity per row edit, and at 128 rows
   // the format work isn't free. Re-derive on mode flip.
+  //
+  // The serialised form always carries the header row so the
+  // round-trip through `parseCsv` maps every enabled column —
+  // without a header the positional fallback only handles
+  // name/address/amount, silently dropping email/releaseAt for
+  // apps that opted in.
   const derivedCsv = useMemo(
     () =>
       mode === "rows"
         ? ""
-        : value.map((r) => formatRecipientCsvRow(r, columns)).join("\n"),
+        : [
+            formatRecipientCsvHeader(columns),
+            ...value.map((r) => formatRecipientCsvRow(r, columns)),
+          ].join("\n"),
     [mode, value, columns],
   );
 
@@ -199,14 +204,23 @@ export function RecipientsEditor({
   const removeRow = useCallback(
     (index: number) => {
       const next = value.filter((_, i) => i !== index);
+      // Splice the parallel key array at the same index so rows
+      // after the removed one keep their original React key (and
+      // their input focus state).
+      if (next.length > 0) {
+        rowKeysRef.current.splice(index, 1);
+      }
       // Keep at least one editable blank row in Rows mode — that's
-      // the contract the row UI assumes (no zero-row state).
+      // the contract the row UI assumes (no zero-row state). The
+      // render-time regenerate handles the key for the synthetic
+      // blank row since rowKeysRef ends up length 0 here.
       onChange(next.length === 0 ? [emptyRecipient()] : (next as ParsedRecipient[]));
     },
     [value, onChange],
   );
   const addRow = useCallback(() => {
     if (value.length >= maxRows) return;
+    rowKeysRef.current.push(++keyCounterRef.current);
     onChange([...value, emptyRecipient()] as ParsedRecipient[]);
   }, [value, maxRows, onChange]);
 
@@ -274,8 +288,6 @@ export function RecipientsEditor({
   );
 
   // ---- Render -----------------------------------------------------
-  const headerLine = formatRecipientCsvHeader(columns);
-
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -384,20 +396,18 @@ export function RecipientsEditor({
 
       {mode === "csv" && (
         <div className="space-y-1">
-          <div className="text-[10px] font-mono text-[var(--color-text-subtle)]">
-            {headerLine}
-          </div>
           <textarea
             value={csvDraft}
             disabled={readOnly}
             onChange={(e) => setCsvDraft(e.target.value)}
             onBlur={() => commitCsv(csvDraft)}
             placeholder="One row per line — comma-separated."
-            rows={Math.min(12, Math.max(4, value.length + 1))}
+            rows={Math.min(12, Math.max(4, value.length + 2))}
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs disabled:opacity-60"
           />
           <p className="text-[10px] text-[var(--color-text-subtle)]">
-            Changes apply when you click outside the box.
+            First line is the column header. Edits apply when you click
+            outside the box.
           </p>
         </div>
       )}

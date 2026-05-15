@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import Spreadsheet, { type Matrix } from "react-spreadsheet";
-import type { RecipientField } from "../types";
-import { csvSafeLabel } from "../csv";
+import type { ParsedRecipient, RecipientField } from "../types";
+import { splitCsvLine } from "../csv";
+import { formatRecipientCsvHeader, formatRecipientCsvRow } from "../format";
 
 type Cell = { value: string };
 
@@ -26,26 +27,6 @@ const TRAILING_BLANK_ROWS = 1;
 // before the host app's per-run cap rejects it elsewhere.
 const MAX_VISIBLE_ROWS = 200;
 
-function splitCsvLineRespectingQuotes(line: string, columnCount: number): string[] {
-  // Take the last (columnCount-1) comma-separated fields as the tail
-  // columns and everything before them as the leading free-text
-  // field. Defensive: csvSafeLabel upstream strips commas from names,
-  // but a user who hand-edits the textarea could still slip one in
-  // (e.g. "Doe, John") — keeping the splitter robust avoids silently
-  // shifting their columns into the wrong cells.
-  const parts = line.split(",");
-  if (parts.length <= columnCount) {
-    const padded = parts.concat(Array(columnCount - parts.length).fill(""));
-    return padded.map((p) => p.trim());
-  }
-  const tail: string[] = [];
-  for (let i = 0; i < columnCount - 1; i++) {
-    tail.unshift((parts.pop() ?? "").trim());
-  }
-  const head = parts.join(",").trim();
-  return [head, ...tail];
-}
-
 function parseCsvLines(csv: string): string[] {
   return csv
     .split("\n")
@@ -53,31 +34,41 @@ function parseCsvLines(csv: string): string[] {
     .filter(Boolean);
 }
 
+/** Drop the header row when present so it doesn't render as a data
+ *  row in the grid. The header is identified by exact match against
+ *  the canonical header line for the current column set — any other
+ *  shape (e.g. user-edited header) flows through as data, same as
+ *  before. */
+function stripHeaderLine(lines: string[], columns: readonly RecipientField[]): string[] {
+  if (lines.length === 0) return lines;
+  return lines[0] === formatRecipientCsvHeader(columns) ? lines.slice(1) : lines;
+}
+
 function parseCsvToMatrix(csv: string, columns: readonly RecipientField[]): Matrix<Cell> {
-  const lines = parseCsvLines(csv);
+  const lines = stripHeaderLine(parseCsvLines(csv), columns);
   return lines.slice(0, MAX_VISIBLE_ROWS).map((line) => {
-    const fields = splitCsvLineRespectingQuotes(line, columns.length);
+    // Real RFC 4180 quote-aware split — `"Doe, John",0x…,100` no
+    // longer shifts columns. The grid pads/truncates to `columns`.
+    const fields = splitCsvLine(line);
     return columns.map((_, i) => ({ value: fields[i] ?? "" }));
   });
 }
 
 function matrixToCsv(matrix: Matrix<Cell>, columns: readonly RecipientField[]): string {
-  // Drop fully-empty rows when serializing so trailing blanks don't
-  // leak into the textarea (and downstream parser).
+  // Funnel every serialization through `formatRecipientCsvRow` so
+  // CSV-escaping (quoted fields, formula-injection guard) stays in
+  // one place. The grid hands us strings per column already — just
+  // shape a per-row partial.
   return matrix
     .map((row) => row?.map((cell) => cell?.value ?? "") ?? [])
     .filter((cells) => cells.some((c) => c && c.trim().length > 0))
-    .map((cells) =>
-      columns
-        .map((col, i) => {
-          const raw = (cells[i] ?? "").trim();
-          // Same sanitization as the row-mode → CSV path so a label
-          // typed in the grid round-trips through the textarea
-          // without splitting into the wrong column.
-          return col === "name" ? csvSafeLabel(raw) : raw;
-        })
-        .join(","),
-    )
+    .map((cells) => {
+      const partial: Partial<ParsedRecipient> = {};
+      columns.forEach((col, i) => {
+        partial[col] = (cells[i] ?? "").trim();
+      });
+      return formatRecipientCsvRow(partial, columns);
+    })
     .join("\n");
 }
 

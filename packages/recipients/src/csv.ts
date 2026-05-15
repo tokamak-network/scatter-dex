@@ -42,3 +42,37 @@ export function downloadCsv(body: string, filename: string): void {
 export function csvSafeLabel(label: string): string {
   return (label || "").replace(/[,\n\r]/g, " ").trim();
 }
+
+/** Quote-aware single-line CSV splitter. Handles `"Doe, John"`,
+ *  embedded escaped quotes (`""`), and bare commas. The full
+ *  `parseCsv` in `parseRecipientFile.ts` does the same with row
+ *  semantics; this is the per-line variant the grid editor uses
+ *  to map a row of CSV into its cell columns without dragging in
+ *  the validator/dedup machinery. */
+export function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQ) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { cur += '"'; i++; }
+        else { inQ = false; }
+      } else {
+        cur += c;
+      }
+      continue;
+    }
+    if (c === '"' && cur === "") {
+      inQ = true;
+    } else if (c === ",") {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
