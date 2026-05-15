@@ -393,7 +393,16 @@ if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
 fi
 ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
 cd "$ROOT_DIR/shared-orderbook"
-PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
+# Mirror dev.sh's CORS allowlist union — see scripts/dev.sh DEV_CORS_ORIGINS
+# for the rationale. Without this an --apps mode app (Pay :4001, Drop
+# :4002, Pro :4003, Operators :4004) running against this fork stack
+# would hit the orderbook's deficient hardcoded default and get
+# blocked by CORS preflight. Keep this list in sync with the dev.sh
+# version (APP_PORTS) — they're separate scripts so the duplication
+# is explicit.
+DEV_CORS_ORIGINS="http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003,http://localhost:4004"
+CORS_ORIGINS="$DEV_CORS_ORIGINS" PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 \
+  npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
 if ! wait_for "http://localhost:4000/health" "shared-orderbook" 20; then
@@ -431,7 +440,9 @@ echo "  Admin API key: $ADMIN_KEY"
 
 ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
 cd "$ROOT_DIR/zk-relayer"
-ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
+# Same CORS allowlist as the orderbook above — same rationale.
+CORS_ORIGINS="$DEV_CORS_ORIGINS" ALLOW_PRIVATE_RELAYER_URLS=1 \
+  npm run dev > "$LOG_DIR/relayer-a.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
 if ! wait_for "http://localhost:3002/api/info" "relayer-a" 30; then
@@ -463,6 +474,7 @@ SHARED_ORDERBOOK_URL=http://localhost:4000 \
 RELAYER_PUBLIC_URL=http://localhost:3003 \
 RELAYER_NAME=Relayer-B \
 DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
+CORS_ORIGINS="$DEV_CORS_ORIGINS" \
 ALLOW_PRIVATE_RELAYER_URLS=1 \
 npm run dev > "$LOG_DIR/relayer-b.log" 2>&1 &
 last_pid=$!

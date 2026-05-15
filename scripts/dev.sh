@@ -62,6 +62,20 @@ declare -A APP_PORTS=(
 # (the legacy default).
 APPS_LIST=""
 
+# Build the CORS allowlist union once and pass it to every dev server
+# that opens an HTTP endpoint the apps may call (shared-orderbook,
+# zk-relayer A, zk-relayer B). Previously two of those three baked
+# different subsets of localhost ports into their own defaults, and
+# shared-orderbook wasn't even passed CORS_ORIGINS — so adding a new
+# --apps entry (e.g. operators on :4004) silently broke its API calls
+# with `No 'Access-Control-Allow-Origin' header` on the affected
+# server. Sourcing one variable from APP_PORTS keeps the four ports
+# in lock-step with the rest of dev.sh's app-port truth.
+DEV_CORS_ORIGINS="http://localhost:3000,http://localhost:3002,http://localhost:3003"
+for _port in "${APP_PORTS[@]}"; do
+  DEV_CORS_ORIGINS="$DEV_CORS_ORIGINS,http://localhost:$_port"
+done
+
 usage() {
   echo "Usage: $0 [--mock] [--apps <a,b,c>]"
   echo ""
@@ -568,7 +582,13 @@ cd "$ROOT_DIR/shared-orderbook"
 # `ALLOW_PRIVATE_RELAYER_URLS=1` opts the SSRF guard out for local
 # dev so the zk-relayer can register `http://localhost:3002` etc.
 # This MUST stay unset in production; see shared-orderbook/src/lib/url-guard.ts.
-PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
+# `CORS_ORIGINS=$DEV_CORS_ORIGINS` is the union of frontend + relayer
+# + every --apps port. shared-orderbook's config.ts default omits the
+# 4001-4004 range, so without this an --apps caller (Pay, Pro, Drop,
+# Operators) fetching `/api/orders/…` gets blocked by the CORS
+# preflight with no Access-Control-Allow-Origin header.
+CORS_ORIGINS="$DEV_CORS_ORIGINS" PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 \
+  npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
 if ! wait_for "http://localhost:4000/health" "shared-orderbook" 20; then
@@ -602,7 +622,7 @@ SHARED_ORDERBOOK_URL=http://localhost:4000
 RELAYER_PUBLIC_URL=http://localhost:3002
 RELAYER_NAME=Relayer-A
 DB_PATH=$ROOT_DIR/zk-relayer/zk-relayer.db
-CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003
+CORS_ORIGINS=$DEV_CORS_ORIGINS
 GASLESS_FEE_USDC=0.10
 GASLESS_FEE_USDT=0.10
 GASLESS_FEE_TON=1.0
@@ -643,7 +663,7 @@ SHARED_ORDERBOOK_URL=http://localhost:4000 \
 RELAYER_PUBLIC_URL=http://localhost:3003 \
 RELAYER_NAME=Relayer-B \
 DB_PATH="$ROOT_DIR/zk-relayer/zk-relayer-b.db" \
-CORS_ORIGINS=http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003 \
+CORS_ORIGINS="$DEV_CORS_ORIGINS" \
 GASLESS_FEE_USDC=0.05 \
 GASLESS_FEE_USDT=0.05 \
 GASLESS_FEE_TON=0.5 \
