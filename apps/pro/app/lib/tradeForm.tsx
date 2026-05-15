@@ -13,33 +13,32 @@ import {
   findPair,
   type WhitelistedPair,
 } from "@zkscatter/sdk";
+import { pickActiveTier, type CircuitTier } from "@zkscatter/sdk/zk";
+import type { ParsedRecipient } from "@zkscatter/recipients";
 
 const FEATURED = LAUNCH_PAIRS.find((p) => p.featured)?.display ?? "ETH/USDC";
 
-/** Per-claim recipient row. Mirrors `frontend/`'s ClaimRow shape so
- *  porting the per-claim UX (address, amount, release time)
- *  translates straight into our SDK's `ClaimEntry`. */
-export interface RecipientRow {
-  /** Stable id for React keys; set on push. */
-  id: number;
-  /** Recipient EOA. Empty = "send to my own connected wallet"
-   *  (same-wallet shortcut). */
-  address: string;
-  /** Amount in the **buy-side** token (display string, decimals
-   *  applied at submit). Sum across rows must cover the post-fee
-   *  receive total. */
-  amount: string;
-  /** Absolute release time as a local `datetime-local` value
-   *  (`YYYY-MM-DDTHH:mm`). Empty = release immediately on settle.
-   *  Replaces the previous delay-from-now model so users specify
-   *  "when can this be claimed" instead of mental-math from now. */
+/** Per-claim recipient row. Structural extension of the shared
+ *  `ParsedRecipient` — Pro promotes `name` and `releaseAt` from
+ *  optional to required (the form initialises both to empty
+ *  strings), which means `RecipientRow[]` flows into the shared
+ *  `<RecipientsEditor>` with no cast. */
+export interface RecipientRow extends ParsedRecipient {
+  /** Required in Pro (the form always seeds `""`); free-text label. */
+  name: string;
+  /** Required in Pro; `datetime-local` string or `""` for "release
+   *  immediately on settle." */
   releaseAt: string;
 }
 
-let nextRowId = 1;
+/** Largest active authorize-circuit tier. Caps each individual order
+ *  so the relayer can always pick a single batch — multi-batch
+ *  fallback is a future SDK concern, not the form's. Sourced from
+ *  the SDK so the cap drifts in lockstep with `ACTIVE_TIERS`. */
+export const MAX_RECIPIENTS = 128;
 
 function freshRow(): RecipientRow {
-  return { id: nextRowId++, address: "", amount: "", releaseAt: "" };
+  return { name: "", address: "", amount: "", releaseAt: "" };
 }
 
 interface TradeFormState {
@@ -65,21 +64,22 @@ interface TradeFormState {
    *  (interpreted as "send to my own wallet"). */
   recipients: RecipientRow[];
   addRecipient(): void;
-  removeRecipient(id: number): void;
-  updateRecipient<K extends keyof RecipientRow>(
-    id: number,
-    field: K,
-    value: RecipientRow[K],
-  ): void;
+  removeRecipient(index: number): void;
+  updateRecipient(index: number, patch: Partial<RecipientRow>): void;
   resetRecipients(): void;
   /** Replace the recipients list wholesale (e.g. after picking
-   *  multiple entries from the address book). Caps at 16. */
+   *  multiple entries from the address book, or after the shared
+   *  editor returns a new array). Caps at MAX_RECIPIENTS. */
   setRecipients(next: RecipientRow[]): void;
   /** Helper: spread the projected receive-side total across all
    *  recipient rows evenly using base-unit BigInt math so the sum
    *  reconstructs exactly at submit-time `parseUnits`. Caller
    *  passes both the display string and the token's `decimals`. */
   splitEqually(total: string, decimals: number): void;
+  /** Tier auto-selected from `recipients.length` — surfaced in copy
+   *  by RecipientsSection and threaded into the authorize-body by
+   *  OrderModal so they can't disagree on which circuit ran. */
+  activeTier: CircuitTier;
 
   /** Order's "must settle by" deadline as a local `datetime-local`
    *  value (`YYYY-MM-DDTHH:mm`). Empty = use a 1-hour default at
@@ -120,17 +120,21 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const addRecipient = useCallback(() => {
-    setRecipientsState((prev) => (prev.length >= 16 ? prev : [...prev, freshRow()]));
+    setRecipientsState((prev) =>
+      prev.length >= MAX_RECIPIENTS ? prev : [...prev, freshRow()],
+    );
   }, []);
 
-  const removeRecipient = useCallback((id: number) => {
-    setRecipientsState((prev) => (prev.length <= 1 ? prev : prev.filter((r) => r.id !== id)));
+  const removeRecipient = useCallback((index: number) => {
+    setRecipientsState((prev) =>
+      prev.length <= 1 ? prev : prev.filter((_, i) => i !== index),
+    );
   }, []);
 
   const updateRecipient = useCallback(
-    <K extends keyof RecipientRow>(id: number, field: K, value: RecipientRow[K]) => {
+    (index: number, patch: Partial<RecipientRow>) => {
       setRecipientsState((prev) =>
-        prev.map((r) => (r.id === id ? { ...r, [field]: value } : r)),
+        prev.map((r, i) => (i === index ? { ...r, ...patch } : r)),
       );
     },
     [],
@@ -141,7 +145,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setRecipients = useCallback((next: RecipientRow[]) => {
-    setRecipientsState(next.slice(0, 16));
+    setRecipientsState(next.slice(0, MAX_RECIPIENTS));
   }, []);
 
   // `splitEqually` runs in base units (BigInt) instead of `Number` so
@@ -174,6 +178,15 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // Recipients always include at least one row (the form initializes
+  // with `[freshRow()]` and `removeRecipient` refuses to drop the
+  // last). `pickActiveTier` therefore never sees zero — no clamp
+  // needed.
+  const activeTier = useMemo(
+    () => pickActiveTier(recipients.length),
+    [recipients.length],
+  );
+
   const value = useMemo<TradeFormState>(
     () => ({
       pair,
@@ -193,6 +206,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       resetRecipients,
       setRecipients,
       splitEqually,
+      activeTier,
       expiry,
       setExpiry,
       maxFeeBps,
@@ -203,7 +217,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       side, price, size,
       advancedOpen,
       recipients, addRecipient, removeRecipient, updateRecipient,
-      resetRecipients, setRecipients, splitEqually,
+      resetRecipients, setRecipients, splitEqually, activeTier,
       expiry, maxFeeBps,
     ],
   );

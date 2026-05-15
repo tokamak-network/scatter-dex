@@ -1,15 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { Button } from "@zkscatter/ui";
-import { useTradeForm, type RecipientRow } from "../lib/tradeForm";
+import { useCallback, useMemo } from "react";
+import { RecipientsEditor } from "@zkscatter/recipients";
+import type { ParsedRecipient } from "@zkscatter/recipients";
+import { MAX_RECIPIENTS, useTradeForm, type RecipientRow } from "../lib/tradeForm";
 import { useConfirm } from "../lib/useConfirm";
 import { useWalletBook } from "../lib/walletBook";
-import { AddressBookPicker } from "./AddressBookPicker";
 import { parseUnits } from "../lib/parseUnits";
 import { formatTokenAmount } from "../lib/format";
-
-const MAX_RECIPIENTS = 16;
 
 interface RecipientsSectionProps {
   /** Quote-token symbol displayed alongside amount inputs so the
@@ -35,35 +33,27 @@ export function RecipientsSection({
 }: RecipientsSectionProps) {
   const {
     recipients,
-    addRecipient,
-    removeRecipient,
-    updateRecipient,
     resetRecipients,
     setRecipients,
     splitEqually,
+    activeTier,
   } = useTradeForm();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const walletBook = useWalletBook();
-  const [pickerOpen, setPickerOpen] = useState(false);
 
-  const onPickFromBook = useCallback(
-    (picked: typeof walletBook.entries) => {
-      // Replace the rows with one per picked entry. The wizard
-      // pattern from Pay matches what users expect — "I picked 3
-      // contacts, I now see 3 rows" — instead of merging into the
-      // current set.
-      if (picked.length === 0) {
-        setPickerOpen(false);
-        return;
-      }
-      const rows: RecipientRow[] = picked.slice(0, MAX_RECIPIENTS).map((e, i) => ({
-        id: Date.now() + i,
-        address: e.address ?? "",
-        amount: "",
-        releaseAt: "",
-      }));
-      setRecipients(rows);
-      setPickerOpen(false);
+  // The editor talks in `ParsedRecipient`; `RecipientRow` extends
+  // that, narrowing `name`/`releaseAt` to required strings. The
+  // editor's shape is permissive on those (optional), so we coerce
+  // the rare missing values to `""` on the way back into the form.
+  const onChange = useCallback(
+    (rows: ParsedRecipient[]) => {
+      setRecipients(
+        rows.map((r) => ({
+          ...r,
+          name: r.name ?? "",
+          releaseAt: r.releaseAt ?? "",
+        })),
+      );
     },
     [setRecipients],
   );
@@ -106,96 +96,73 @@ export function RecipientsSection({
     };
   }, [recipients, receiveTotal, receiveDecimals, quoteSymbol]);
 
+  const onReset = useCallback(async () => {
+    // Confirm whenever the user has typed anything across any row —
+    // including a `releaseAt` they set without touching
+    // address/amount. Without scanning every field the reset can
+    // silently nuke a non-trivial schedule with no prompt.
+    const hasInput = recipients.some(
+      (r) =>
+        r.address.trim() !== "" ||
+        r.amount.trim() !== "" ||
+        r.releaseAt.trim() !== "" ||
+        (r.name ?? "").trim() !== "" ||
+        (r.email ?? "").trim() !== "",
+    );
+    if (hasInput) {
+      const ok = await confirm({
+        title: "Reset recipients?",
+        message: "Any addresses and amounts you've entered will be cleared.",
+        confirmLabel: "Reset",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    resetRecipients();
+  }, [confirm, recipients, resetRecipients]);
+
   return (
     <section className="mt-4 space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Recipients ({recipients.length}/{MAX_RECIPIENTS})
-        </span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => splitEqually(receiveTotal, receiveDecimals)}
-            disabled={!receiveTotal || receiveTotal.replace(/,/g, "") === ""}
-            className="text-[11px] font-medium text-[var(--color-primary)] hover:underline disabled:opacity-40"
-            title="Spread the projected receive total evenly across all rows"
-          >
-            Split equally
-          </button>
-          <span className="text-[var(--color-text-subtle)]">·</span>
-          <button
-            type="button"
-            onClick={async () => {
-              // Confirm whenever the user has typed anything across
-              // any row — including a `releaseAt` they set without
-              // touching address/amount. Without scanning every row +
-              // every field the reset can silently nuke a non-trivial
-              // schedule with no prompt.
-              const hasInput = recipients.some(
-                (r) =>
-                  r.address.trim() !== "" ||
-                  r.amount.trim() !== "" ||
-                  r.releaseAt.trim() !== "",
-              );
-              if (hasInput) {
-                const ok = await confirm({
-                  title: "Reset recipients?",
-                  message: "Any addresses and amounts you've entered will be cleared.",
-                  confirmLabel: "Reset",
-                  danger: true,
-                });
-                if (!ok) return;
-              }
-              resetRecipients();
-            }}
-            className="text-[11px] text-[var(--color-text-subtle)] hover:text-[var(--color-primary)]"
-          >
-            Reset
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-1.5">
-        {recipients.map((r, i) => (
-          <RecipientRowItem
-            key={r.id}
-            index={i}
-            row={r}
-            canRemove={recipients.length > 1}
-            quoteSymbol={quoteSymbol}
-            onChange={updateRecipient}
-            onRemove={() => removeRecipient(r.id)}
-          />
-        ))}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        {recipients.length < MAX_RECIPIENTS && (
-          <Button size="sm" variant="secondary" onClick={addRecipient}>
-            + Add recipient
-          </Button>
-        )}
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => setPickerOpen(true)}
-          disabled={walletBook.entries.length === 0}
-          title={
-            walletBook.entries.length === 0
-              ? "Address book is empty — add contacts on the /address-book page"
-              : `Pick from ${walletBook.entries.length} contact${
-                  walletBook.entries.length === 1 ? "" : "s"
-                }`
-          }
-        >
-          📇 Pick from address book
-        </Button>
-      </div>
+      <RecipientsEditor
+        value={recipients}
+        onChange={onChange}
+        columns={["name", "address", "amount", "email", "releaseAt"]}
+        modes={["rows", "csv", "spreadsheet"]}
+        maxRows={MAX_RECIPIENTS}
+        amountSymbol={quoteSymbol}
+        addressBook={walletBook.entries}
+        sampleHref="/samples/recipients-sample.csv"
+        storageKey="pro:recipients-editor-mode"
+        helperActions={
+          <div className="flex items-center gap-2 text-[11px]">
+            <button
+              type="button"
+              onClick={() => splitEqually(receiveTotal, receiveDecimals)}
+              disabled={!receiveTotal || receiveTotal.replace(/,/g, "") === ""}
+              className="font-medium text-[var(--color-primary)] hover:underline disabled:opacity-40"
+              title="Spread the projected receive total evenly across all rows"
+            >
+              Split equally
+            </button>
+            <span className="text-[var(--color-text-subtle)]">·</span>
+            <button
+              type="button"
+              onClick={onReset}
+              className="text-[var(--color-text-subtle)] hover:text-[var(--color-primary)]"
+            >
+              Reset
+            </button>
+          </div>
+        }
+      />
 
       <p className="text-[11px] text-[var(--color-text-subtle)]">
-        Up to 16 recipients per order. Empty address = your own wallet. Empty
-        release time = claim immediately on settle.
+        Up to {MAX_RECIPIENTS} recipients per order — routed through the{" "}
+        <span className="font-mono">tier-{activeTier.cap}</span> circuit.
+        Empty address = your own wallet. Empty release time = claim immediately
+        on settle.
       </p>
+
       <div
         className={`flex items-center justify-between text-[11px] ${
           invalidRow !== null
@@ -214,82 +181,6 @@ export function RecipientsSection({
       </div>
 
       {confirmDialog}
-      {pickerOpen && (
-        <AddressBookPicker
-          entries={walletBook.entries}
-          onCancel={() => setPickerOpen(false)}
-          onPick={onPickFromBook}
-        />
-      )}
     </section>
-  );
-}
-
-function RecipientRowItem({
-  index,
-  row,
-  canRemove,
-  quoteSymbol,
-  onChange,
-  onRemove,
-}: {
-  index: number;
-  row: RecipientRow;
-  canRemove: boolean;
-  quoteSymbol: string;
-  onChange: <K extends keyof RecipientRow>(id: number, field: K, value: RecipientRow[K]) => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="space-y-1.5 rounded-md border border-[var(--color-border)] bg-white p-2 text-xs">
-      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-1.5">
-        <span className="font-mono text-[var(--color-text-subtle)]">#{index + 1}</span>
-        <input
-          type="text"
-          placeholder="0x… (empty = self)"
-          value={row.address}
-          onChange={(e) => onChange(row.id, "address", e.target.value)}
-          aria-label={`Recipient ${index + 1} address`}
-          className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono text-[11px]"
-        />
-        <button
-          type="button"
-          onClick={onRemove}
-          disabled={!canRemove}
-          aria-label={`Remove recipient ${index + 1}`}
-          className="rounded p-0.5 text-[var(--color-text-subtle)] hover:text-[var(--color-danger)] disabled:opacity-30"
-        >
-          ×
-        </button>
-      </div>
-      <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-1.5 pl-7">
-        <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-          Amount
-        </span>
-        <input
-          type="text"
-          placeholder="0.0"
-          value={row.amount}
-          onChange={(e) => onChange(row.id, "amount", e.target.value)}
-          aria-label={`Recipient ${index + 1} amount`}
-          className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono"
-        />
-        <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-          {quoteSymbol}
-        </span>
-        <span className="ml-2 text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-          Claim from
-        </span>
-      </div>
-      <div className="pl-7">
-        <input
-          type="datetime-local"
-          value={row.releaseAt}
-          onChange={(e) => onChange(row.id, "releaseAt", e.target.value)}
-          aria-label={`Recipient ${index + 1} claim release time`}
-          className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono"
-        />
-      </div>
-    </div>
   );
 }

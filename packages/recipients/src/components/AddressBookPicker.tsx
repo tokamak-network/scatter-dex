@@ -4,10 +4,9 @@ import { useMemo, useState } from "react";
 import { Modal } from "@zkscatter/ui";
 import type { WalletEntry } from "@zkscatter/sdk/storage";
 
-/** Multi-select picker over the address book. The wizard's
- *  Recipients step calls this; future surfaces (claim-link
- *  recipient, dashboard quick-send) will hit it too — that's why it
- *  lives in `_components/` rather than co-located with the wizard. */
+/** Multi-select picker over the address book. Used by both Pay's
+ *  payout wizard and Pro's order form — that's why it lives in the
+ *  shared package instead of either app's component tree. */
 export function AddressBookPicker({
   entries,
   onCancel,
@@ -19,10 +18,10 @@ export function AddressBookPicker({
 }) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Drop entries without a default 0x address up front. The payout
-  // wizard only consumes plain EOAs, so surfacing meta-only legacy
-  // entries here would let users select rows that the wizard then
-  // silently skips on submit — no rows added, no feedback shown.
+  // Drop entries without a default 0x address up front. The recipient
+  // editor only consumes plain EOAs, so surfacing meta-only legacy
+  // entries here would let users select rows that the editor then
+  // silently skips on insert — no rows added, no feedback shown.
   const addressable = useMemo(
     () => entries.filter((e) => !!e.address),
     [entries],
