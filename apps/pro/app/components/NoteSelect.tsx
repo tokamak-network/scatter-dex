@@ -19,8 +19,11 @@ interface Props {
   onSelect(id: string | null): void;
   /** Inline Deposit CTA. Hooked to the same `DepositModal` the
    *  position-panel button opens, so users notice the entry point
-   *  without having to scan the left column. */
-  onDeposit(): void;
+   *  without having to scan the left column. The token symbol is
+   *  passed so the caller can pre-select the right token on the
+   *  modal — the trigger label says "+ Deposit USDC" while in
+   *  Buy ETH mode, and the modal needs to land on USDC to match. */
+  onDeposit(tokenSymbol: string): void;
 }
 
 /** Workbench's funding-note picker. Filters by sell-side token and
@@ -70,7 +73,7 @@ export function NoteSelect({
             No {sellTokenSymbol} notes in your vault yet. Deposit{" "}
             {sellTokenSymbol} to fund this side of the order.
           </p>
-          <Button onClick={onDeposit} size="sm" block>
+          <Button onClick={() => onDeposit(sellTokenSymbol)} size="sm" block>
             + Deposit {sellTokenSymbol}
           </Button>
         </div>

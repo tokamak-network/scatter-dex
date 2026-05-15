@@ -45,16 +45,35 @@ type Phase =
 interface DepositModalProps {
   open: boolean;
   onClose: () => void;
+  /** Token symbol to pre-select when the modal opens. Lets context-aware
+   *  callers (e.g. NoteSelect's "+ Deposit USDC" button while the order
+   *  form is on Buy ETH = fund-with-USDC) land on the right token
+   *  without the user having to flip the selector. Generic callers
+   *  (the left-panel "+ Deposit" CTA) leave this undefined and keep
+   *  the historical ETH default. */
+  initialTokenSymbol?: string;
 }
 
-export function DepositModal({ open, onClose }: DepositModalProps) {
+export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addNote } = useVault();
   const { account, signer } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
-  const [tokenSymbol, setTokenSymbol] = useState("ETH");
+  const [tokenSymbol, setTokenSymbol] = useState(initialTokenSymbol ?? "ETH");
+
+  // Reset the selector to the caller's preferred token every time the
+  // modal re-opens. Without this the modal keeps the previous session's
+  // choice across reopens (the component instance is page-level —
+  // shared between the generic left-panel CTA and the per-order-side
+  // NoteSelect inline button), so a "Buy ETH → + Deposit USDC" click
+  // would silently land on whatever token the user picked last time.
+  useEffect(() => {
+    if (open && initialTokenSymbol) {
+      setTokenSymbol(initialTokenSymbol);
+    }
+  }, [open, initialTokenSymbol]);
   const [amount, setAmount] = useState("1.0");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
