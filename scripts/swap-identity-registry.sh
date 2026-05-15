@@ -125,22 +125,42 @@ done
 #      caught.
 STRICT_VKEY="${STRICT_VKEY:-1}"
 echo "  Pre-check: registry program VK..."
-VKEY_RAW=$(cast call "$ZK_REG" "effectiveProgramVKey()(bytes32)" --rpc-url "$RPC_URL" 2>&1) \
-    || VKEY_RAW=""
-if [ -z "$VKEY_RAW" ] || [[ "$VKEY_RAW" == *"reverted"* ]] || [[ "$VKEY_RAW" == *"error"* ]]; then
-    if [ "$STRICT_VKEY" = "1" ]; then
+# Detect getter availability by exit code, not substring matching on
+# the returned hex. A legitimate 32-byte VK can contain the byte
+# patterns 0x6572726f72 ("error") or 0x726576657274 ("reverted")
+# in its body, and the previous `*"reverted"*` / `*"error"*` checks
+# would false-fail on those — flagging a working registry as broken
+# (Gemini review on PR #754).
+set +e
+VKEY_RAW=$(cast call "$ZK_REG" "effectiveProgramVKey()(bytes32)" --rpc-url "$RPC_URL" 2>/dev/null)
+VKEY_STATUS=$?
+set -e
+# When `EXPECTED_VKEY` is set, the caller is explicitly anchoring the
+# swap on a known VK — promote a missing getter to a hard error
+# regardless of `STRICT_VKEY`, because the soft-warn path below would
+# silently skip the EXPECTED_VKEY assertion the caller asked for
+# (Copilot review on PR #754).
+if [ "$VKEY_STATUS" -ne 0 ] || [ -z "$VKEY_RAW" ]; then
+    if [ "$STRICT_VKEY" = "1" ] || [ -n "${EXPECTED_VKEY:-}" ]; then
         echo "ERROR: registry $ZK_REG has no usable effectiveProgramVKey()."
         echo "       Either it's not a zk-X509 IdentityRegistry, or it's an"
-        echo "       older build without the getter. Set STRICT_VKEY=0 to"
-        echo "       skip this check and continue at your own risk."
+        echo "       older build without the getter."
+        if [ -n "${EXPECTED_VKEY:-}" ]; then
+            echo "       (STRICT_VKEY=0 is NOT honored while EXPECTED_VKEY is"
+            echo "       set — unset EXPECTED_VKEY too if you really mean to"
+            echo "       skip the VK check.)"
+        else
+            echo "       Set STRICT_VKEY=0 to skip this check at your own risk."
+        fi
         exit 1
     fi
     echo "  ⚠ effectiveProgramVKey() not callable — skipping VK check (STRICT_VKEY=0)."
 else
     ZERO_BYTES32="0x0000000000000000000000000000000000000000000000000000000000000000"
-    # Case-insensitive bytes32 compare — same rationale as the
-    # registry-address compare further down.
-    VKEY_LOWER=$(printf '%s' "$VKEY_RAW" | tr 'A-F' 'a-f')
+    # Full A–Z lowercase (not just A–F) so a `0X…` prefix the user
+    # might paste also normalizes correctly (Copilot+Gemini review
+    # on PR #754).
+    VKEY_LOWER=$(printf '%s' "$VKEY_RAW" | tr 'A-Z' 'a-z')
     if [ "$VKEY_LOWER" = "$ZERO_BYTES32" ]; then
         echo "ERROR: registry $ZK_REG has a zero programVKey — proofs will"
         echo "       always revert. Did deploy-on-existing-anvil.sh fail"
@@ -150,14 +170,16 @@ else
     echo "  effectiveProgramVKey: $VKEY_RAW"
 
     if [ -n "${EXPECTED_VKEY:-}" ]; then
-        EXP_LOWER=$(printf '%s' "$EXPECTED_VKEY" | tr 'A-F' 'a-f')
+        EXP_LOWER=$(printf '%s' "$EXPECTED_VKEY" | tr 'A-Z' 'a-z')
         if [ "$VKEY_LOWER" != "$EXP_LOWER" ]; then
             echo "ERROR: registry VK ($VKEY_RAW) ≠ EXPECTED_VKEY ($EXPECTED_VKEY)."
             echo "       This swap would point IdentityGate at a registry that"
-            echo "       rejects every proof from the current ELF. Fix VK on"
-            echo "       the registry side first:"
-            echo "         cd \$ZK_X509_REPO && bash script/deploy-on-existing-anvil.sh"
-            echo "         # or, if only the factory's VK needs updating:"
+            echo "       rejects every proof from the current ELF. To fix the"
+            echo "       registry side first, in your zk-X509 checkout:"
+            echo "         bash script/deploy-on-existing-anvil.sh   # redeploys + sets correct VK"
+            echo "       Or update an already-deployed factory's VK in place"
+            echo "       (need its address from .env.shared-anvil):"
+            echo "         FACTORY=\$(grep ^FACTORY_ADDRESS= \$ZK_X509_REPO/.env.shared-anvil | cut -d= -f2- | tr -d '\"')"
             echo "         cast send \$FACTORY 'updateProgramVKey(bytes32)' \\"
             echo "           $EXPECTED_VKEY --rpc-url $RPC_URL --private-key \$DEPLOYER_KEY"
             exit 1
@@ -168,9 +190,14 @@ fi
 
 if [ -n "${ZK_X509_REPO:-}" ]; then
     VERIFY_SCRIPT="$ZK_X509_REPO/script/verify-deployment.sh"
-    if [ ! -x "$VERIFY_SCRIPT" ]; then
-        echo "ERROR: ZK_X509_REPO=$ZK_X509_REPO set, but $VERIFY_SCRIPT is not"
-        echo "       executable. Make sure that repo is on the branch that"
+    # `-r` instead of `-x`: we invoke via `bash $VERIFY_SCRIPT` below
+    # (an explicit interpreter call), so the executable bit isn't
+    # consulted. A checkout that lost the +x bit (filesystem
+    # transfer / archive extract) would still work, but the earlier
+    # `-x` would false-fail it (Copilot review on PR #754).
+    if [ ! -r "$VERIFY_SCRIPT" ]; then
+        echo "ERROR: ZK_X509_REPO=$ZK_X509_REPO set, but $VERIFY_SCRIPT is"
+        echo "       not readable. Make sure that repo is on the branch that"
         echo "       added verify-deployment.sh (or unset ZK_X509_REPO to"
         echo "       skip the delegated check)."
         exit 1
