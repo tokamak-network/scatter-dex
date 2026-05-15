@@ -160,14 +160,23 @@ async function main() {
 
   const app = express();
 
-  // Security: CORS whitelist
+  // Security: CORS whitelist. Default covers every localhost dev port
+  // scatter-dex's dev stack might call from — frontend (3000),
+  // relayer A/B (3002/3003), and the four --apps mode apps (4001-4004,
+  // per `scripts/dev.sh` APP_PORTS). dev.sh passes CORS_ORIGINS
+  // explicitly when it starts the relayer, so this default mostly
+  // matters for ad-hoc `npm run dev` from this directory without env.
   const allowedOrigins = (
     process.env.CORS_ORIGINS?.trim()
       ? process.env.CORS_ORIGINS.split(",")
       : [
-          "http://localhost:3000",
-          "http://localhost:3002",
-          "http://localhost:3003",
+          "http://localhost:3000", // frontend (legacy)
+          "http://localhost:3002", // zk-relayer A
+          "http://localhost:3003", // zk-relayer B
+          "http://localhost:4001", // apps/pay
+          "http://localhost:4002", // apps/drop
+          "http://localhost:4003", // apps/pro
+          "http://localhost:4004", // apps/operators
         ]
   ).map(s => s.trim()).filter(Boolean);
   const corsWildcard = allowedOrigins.includes("*");
