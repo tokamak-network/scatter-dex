@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { Button, EmptyState, Field } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
@@ -130,6 +130,37 @@ export default function Workbench() {
       ) ?? null
     );
   }, [notes, selectedNoteId, sellTokenAddress]);
+
+  // Seed the Size input to the selected fund-note's full amount each
+  // time the note (id) changes. Before this, Size sat on the global
+  // hardcoded `useTradeForm` default ("2.0"), which produced an
+  // inconsistent screen: "Fund with: lot-1 · 1.0 ETH" + "Size: 2.0"
+  // (Size bigger than the note's balance — submit would always
+  // revert). Reseeding on id transition lets the user start from a
+  // sensible default and still edit Size freely between fund picks;
+  // picking a different note resets it to that note's full balance.
+  //
+  // **Sell-side only.** On the sell side the funding note's token
+  // IS the Size field's token, so seeding with `note.amount` is a
+  // direct copy. On the buy side the note holds the *quote* token
+  // (USDC funding an ETH purchase) while Size is the *base* token
+  // — copying `note.amount` would mis-scale the order
+  // (Size=4,205 ETH instead of Size=1 ETH). Buy-side users have to
+  // type Size manually until we surface a price-aware derived
+  // default; the prior eslint-disabled effect silently broke this
+  // path.
+  const prevNoteIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const id = selectedNote?.id ?? null;
+    if (
+      side === "sell" &&
+      selectedNote &&
+      id !== prevNoteIdRef.current
+    ) {
+      setSize(selectedNote.amount);
+    }
+    prevNoteIdRef.current = id;
+  }, [side, selectedNote, setSize]);
 
   const projected = useMemo(
     () => (ob.orders ? projectOrderbook(ob.orders, baseAddress) : null),
