@@ -284,10 +284,19 @@ $PRESERVED"
 fi
 
 # ── 3. Shared orderbook ─────────────────────────────────────
+# Mirror dev.sh's CORS allowlist union so CI e2e specs that drive
+# any --apps mode app (Pay :4001, Drop :4002, Pro :4003, Operators
+# :4004) don't get blocked by CORS preflight. Kept hardcoded here
+# (rather than sourced from dev.sh) since this script is CI-targeted
+# and must run without an active dev.sh shell — keep this list in
+# sync with dev.sh's APP_PORTS dictionary.
+DEV_CORS_ORIGINS="http://localhost:3000,http://localhost:3002,http://localhost:3003,http://localhost:4001,http://localhost:4002,http://localhost:4003,http://localhost:4004"
+
 echo ""
 echo "[3/5] Starting shared-orderbook (port 4000)..."
 cd "$ROOT_DIR/shared-orderbook"
-PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/orderbook.log" 2>&1 &
+CORS_ORIGINS="$DEV_CORS_ORIGINS" PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 \
+  npm run dev > "$LOG_DIR/orderbook.log" 2>&1 &
 record_pid $!
 wait_for "http://localhost:4000/health" "shared-orderbook" 30 \
   || { tail -30 "$LOG_DIR/orderbook.log"; exit 1; }
@@ -308,6 +317,7 @@ start_relayer() {
   SHARED_ORDERBOOK_URL="http://localhost:4000" \
   RELAYER_PUBLIC_URL="http://localhost:$port" \
   RELAYER_NAME="$name" \
+  CORS_ORIGINS="$DEV_CORS_ORIGINS" \
   ALLOW_PRIVATE_RELAYER_URLS=1 npm run dev > "$LOG_DIR/$log" 2>&1 &
   record_pid $!
   wait_for "http://localhost:$port/api/info" "$name" 30 \
