@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   generateNote,
   toBytes32Hex,
@@ -63,19 +63,29 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
   const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState(initialTokenSymbol ?? "ETH");
 
-  // Reset the selector every time the modal re-opens — the page-level
-  // instance is shared between the generic left-panel CTA and the
-  // per-order-side NoteSelect inline button, so the previous session's
-  // choice would otherwise stick. The `?? "ETH"` matters: the generic
-  // caller passes `initialTokenSymbol=undefined` to mean "no
-  // preference, fall back to default", and a guard on truthy-only
-  // would silently skip the reset and leak the last token (e.g. a
-  // "Buy ETH → + Deposit USDC" close-and-reopen-via-left-panel
-  // sequence would re-open on USDC, not ETH).
+  // Reset the selector only on the closed→open transition. The
+  // page-level instance is shared between the generic left-panel CTA
+  // and the per-order-side NoteSelect inline button, so the previous
+  // session's choice would otherwise stick. The `?? "ETH"` fallback
+  // matters: the generic caller passes `initialTokenSymbol=undefined`
+  // to mean "no preference, fall back to default", and a guard on
+  // truthy-only would leak the last token after a
+  // "Buy ETH → + Deposit USDC" close → reopen-via-left-panel
+  // sequence.
+  //
+  // The `wasOpen` ref guards against parent re-renders while the
+  // modal is already open: without it, any re-render that arrives
+  // with the same `initialTokenSymbol` (or with a new one) would
+  // re-trigger the effect and overwrite a manual token selection the
+  // user made *inside* the modal. We only want to seed on the open
+  // transition, not on every render where `open === true`.
+  // (Gemini-suggested ref pattern on PR #756.)
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       setTokenSymbol(initialTokenSymbol ?? "ETH");
     }
+    wasOpen.current = open;
   }, [open, initialTokenSymbol]);
   const [amount, setAmount] = useState("1.0");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
