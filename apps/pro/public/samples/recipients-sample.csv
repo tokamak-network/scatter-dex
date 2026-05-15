@@ -1,0 +1,17 @@
+# THIS IS A TEMPLATE — replace every value below before submitting.
+# Addresses are 0x000…000 placeholders. Submitting them as-is would BURN funds.
+#
+# Columns:
+#   name         optional free-text label; surfaced in CSV/Excel round-trips.
+#   address      recipient EOA. Empty = "send to my own connected wallet".
+#   amount       in the buy-side token (USDC / TON / etc.); sum must equal the order's receive total.
+#   email        optional; used for the row-level "claim is ready" notification.
+#   releaseAt    absolute claim-from datetime (`YYYY-MM-DDTHH:mm`, local time). Empty = claimable immediately on settle.
+#
+# Up to 128 recipients per order — Pro auto-selects the tier-16/64/128 circuit
+# from your row count, so the same template scales from a 3-way OTC split to a
+# 100-person token-grant tranche.
+name,address,amount,email,releaseAt
+Alice (sample — replace),0x0000000000000000000000000000000000000000,100,alice@example.com,2026-06-01T09:00
+Bob (sample — replace),0x0000000000000000000000000000000000000000,150,bob@example.com,
+Self-sweep (sample — leave address blank),,250,,

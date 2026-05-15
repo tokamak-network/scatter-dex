@@ -10,7 +10,11 @@ const nextConfig: NextConfig = {
   // source from packages/* (see packages/sdk/README.md > Distribution).
   // transpilePackages tells Next to compile them through the same
   // pipeline as app code so we don't need a separate tsc/dist step.
-  transpilePackages: ["@zkscatter/sdk", "@zkscatter/ui"],
+  transpilePackages: [
+    "@zkscatter/recipients",
+    "@zkscatter/sdk",
+    "@zkscatter/ui",
+  ],
   turbopack: {
     // Each app under apps/* has its own package-lock.json, which makes
     // Turbopack auto-detect the app dir as project root. That refuses

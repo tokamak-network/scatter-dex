@@ -187,7 +187,13 @@ export function OrderModal({
   // is still used for record-keeping (so the OrderRecord ends up
   // tagged with the user-facing label even if the form's active
   // pair changes mid-modal).
-  const { pair: activePair, recipients, expiry: expiryAtLocal, maxFeeBps } = useTradeForm();
+  const {
+    pair: activePair,
+    recipients,
+    activeTier,
+    expiry: expiryAtLocal,
+    maxFeeBps,
+  } = useTradeForm();
 
   // Probe each non-empty recipient against the IdentityRegistry so
   // we can short-circuit submit before paying the 1–2 s prove cost
@@ -412,13 +418,13 @@ export function OrderModal({
       // is configured or the privateSettlement address isn't wired up
       // for the active network — the local order record still persists
       // in either case so the user can exercise the claim/cancel UI.
+      // Same `activeTier` RecipientsSection rendered in its copy, so
+      // the authorize circuit can't drift from the label the user
+      // just read. Source-of-truth lives on the form context.
       const body = buildAuthorizeOrderBody(
         proveResult,
         eddsaKey.publicKey,
-        // tier 16 is the only authorize circuit currently shipped to
-        // apps/pro; tier 64/128 land alongside multi-recipient
-        // expansion past the 16-claim cap.
-        16,
+        activeTier.cap,
       );
       const dispatch = await dispatchAuthorize(
         selectedRelayer?.url ?? null,
