@@ -131,6 +131,24 @@ export default function Workbench() {
     );
   }, [notes, selectedNoteId, sellTokenAddress]);
 
+  // Seed the Size input to the selected fund-note's full amount each
+  // time the note (id) changes. Before this, Size sat on the global
+  // hardcoded `useTradeForm` default ("2.0"), which produced an
+  // inconsistent screen: "Fund with: lot-1 · 1.0 ETH" + "Size: 2.0"
+  // (Size bigger than the note's balance — submit would always
+  // revert). Reseeding on id transition lets the user start from a
+  // sensible default and still edit Size freely between fund picks;
+  // picking a different note resets it to that note's full balance.
+  // Keyed on `selectedNote?.id` (not the object reference) so a
+  // re-rendered notes array doesn't fire the effect when the
+  // selection didn't actually change.
+  useEffect(() => {
+    if (selectedNote) {
+      setSize(selectedNote.amount);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNote?.id]);
+
   const projected = useMemo(
     () => (ob.orders ? projectOrderbook(ob.orders, baseAddress) : null),
     [ob.orders, baseAddress],
