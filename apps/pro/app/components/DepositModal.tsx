@@ -63,15 +63,18 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
   const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState(initialTokenSymbol ?? "ETH");
 
-  // Reset the selector to the caller's preferred token every time the
-  // modal re-opens. Without this the modal keeps the previous session's
-  // choice across reopens (the component instance is page-level —
-  // shared between the generic left-panel CTA and the per-order-side
-  // NoteSelect inline button), so a "Buy ETH → + Deposit USDC" click
-  // would silently land on whatever token the user picked last time.
+  // Reset the selector every time the modal re-opens — the page-level
+  // instance is shared between the generic left-panel CTA and the
+  // per-order-side NoteSelect inline button, so the previous session's
+  // choice would otherwise stick. The `?? "ETH"` matters: the generic
+  // caller passes `initialTokenSymbol=undefined` to mean "no
+  // preference, fall back to default", and a guard on truthy-only
+  // would silently skip the reset and leak the last token (e.g. a
+  // "Buy ETH → + Deposit USDC" close-and-reopen-via-left-panel
+  // sequence would re-open on USDC, not ETH).
   useEffect(() => {
-    if (open && initialTokenSymbol) {
-      setTokenSymbol(initialTokenSymbol);
+    if (open) {
+      setTokenSymbol(initialTokenSymbol ?? "ETH");
     }
   }, [open, initialTokenSymbol]);
   const [amount, setAmount] = useState("1.0");
