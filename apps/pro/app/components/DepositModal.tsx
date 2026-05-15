@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   generateNote,
   toBytes32Hex,
@@ -45,16 +45,48 @@ type Phase =
 interface DepositModalProps {
   open: boolean;
   onClose: () => void;
+  /** Token symbol to pre-select when the modal opens. Lets context-aware
+   *  callers (e.g. NoteSelect's "+ Deposit USDC" button while the order
+   *  form is on Buy ETH = fund-with-USDC) land on the right token
+   *  without the user having to flip the selector. Generic callers
+   *  (the left-panel "+ Deposit" CTA) leave this undefined and keep
+   *  the historical ETH default. */
+  initialTokenSymbol?: string;
 }
 
-export function DepositModal({ open, onClose }: DepositModalProps) {
+export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addNote } = useVault();
   const { account, signer } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
-  const [tokenSymbol, setTokenSymbol] = useState("ETH");
+  const [tokenSymbol, setTokenSymbol] = useState(initialTokenSymbol ?? "ETH");
+
+  // Reset the selector only on the closed→open transition. The
+  // page-level instance is shared between the generic left-panel CTA
+  // and the per-order-side NoteSelect inline button, so the previous
+  // session's choice would otherwise stick. The `?? "ETH"` fallback
+  // matters: the generic caller passes `initialTokenSymbol=undefined`
+  // to mean "no preference, fall back to default", and a guard on
+  // truthy-only would leak the last token after a
+  // "Buy ETH → + Deposit USDC" close → reopen-via-left-panel
+  // sequence.
+  //
+  // The `wasOpen` ref guards against parent re-renders while the
+  // modal is already open: without it, any re-render that arrives
+  // with the same `initialTokenSymbol` (or with a new one) would
+  // re-trigger the effect and overwrite a manual token selection the
+  // user made *inside* the modal. We only want to seed on the open
+  // transition, not on every render where `open === true`.
+  // (Gemini-suggested ref pattern on PR #756.)
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      setTokenSymbol(initialTokenSymbol ?? "ETH");
+    }
+    wasOpen.current = open;
+  }, [open, initialTokenSymbol]);
   const [amount, setAmount] = useState("1.0");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);

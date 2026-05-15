@@ -83,7 +83,16 @@ export default function Workbench() {
   // the same instance — the left-panel "+ Deposit" button and the
   // inline empty-state CTA inside `NoteSelect`. Two modal instances
   // would race on the vault's `addNote` write.
+  //
+  // `depositInitialToken` lets the inline CTA pre-select the token
+  // that matches the order side the user is funding (e.g. Buy ETH ⇒
+  // fund-with-USDC ⇒ "+ Deposit USDC" should land on USDC, not ETH).
+  // The left-panel button is generic, so it clears this back to
+  // undefined so the modal falls through to its ETH default.
   const [depositOpen, setDepositOpen] = useState(false);
+  const [depositInitialToken, setDepositInitialToken] = useState<
+    string | undefined
+  >(undefined);
   const { notes } = useVault();
   const ob = useSharedOrderbook(pair.display);
 
@@ -184,7 +193,14 @@ export default function Workbench() {
       </div>
 
       <div className="grid grid-cols-12 gap-4">
-        <MyPositionPanel onDeposit={() => setDepositOpen(true)} />
+        <MyPositionPanel
+          onDeposit={() => {
+            // Generic "+ Deposit" — no token preference; modal keeps
+            // its historical ETH default.
+            setDepositInitialToken(undefined);
+            setDepositOpen(true);
+          }}
+        />
 
         {/* Order form — takes the orderbook's slot when it's hidden so
             the wizard-style fields below have room to breathe. */}
@@ -217,7 +233,12 @@ export default function Workbench() {
               notes={notes}
               selectedId={selectedNote?.id ?? null}
               onSelect={setSelectedNoteId}
-              onDeposit={() => setDepositOpen(true)}
+              onDeposit={(symbol) => {
+                // Inline "+ Deposit USDC|ETH" — pre-select the
+                // funding-side token on the modal.
+                setDepositInitialToken(symbol);
+                setDepositOpen(true);
+              }}
             />
             {/* Wizard-style progressive disclosure: every field below
                 the funding-note picker is hidden until a real note is
@@ -335,7 +356,11 @@ export default function Workbench() {
         note={selectedNote}
       />
 
-      <DepositModal open={depositOpen} onClose={() => setDepositOpen(false)} />
+      <DepositModal
+        open={depositOpen}
+        onClose={() => setDepositOpen(false)}
+        initialTokenSymbol={depositInitialToken}
+      />
     </div>
   );
 }
