@@ -13,10 +13,22 @@ fi
 # versa. Some users have an x86_64 homebrew bash at /usr/local/bin/bash that
 # `/usr/bin/env bash` picks first; re-exec under the native arm64 bash so
 # `uname -m` matches the installed module arch.
-if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "x86_64" ] \
+#
+# IMPORTANT: a plain `exec /opt/homebrew/bin/bash …` does NOT switch arch
+# when the current process is already running under x86_64 Rosetta —
+# macOS inherits the caller's arch across exec for fat / arm64-native
+# binaries, so `uname -m` keeps returning x86_64, this branch keeps
+# firing, and we end up in a silent infinite re-exec loop (process
+# stays at 0% CPU, no output, no children). `arch -arm64` is the only
+# call that forces the kernel to spawn the new bash as arm64. The
+# DEV_SH_ARM64_REEXECED guard is a belt-and-braces against the same
+# loop on hosts where `arch` is missing or non-functional.
+if [ -z "${DEV_SH_ARM64_REEXECED:-}" ] \
+    && [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "x86_64" ] \
     && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ] \
+    && command -v arch >/dev/null 2>&1 \
     && [ -x /opt/homebrew/bin/bash ]; then
-  exec /opt/homebrew/bin/bash "$0" "$@"
+  DEV_SH_ARM64_REEXECED=1 exec arch -arm64 /opt/homebrew/bin/bash "$0" "$@"
 fi
 set -e
 
