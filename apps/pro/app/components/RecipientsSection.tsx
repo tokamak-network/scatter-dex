@@ -146,6 +146,8 @@ export function RecipientsSection({
         modes={["rows", "csv", "spreadsheet"]}
         maxRows={MAX_RECIPIENTS}
         amountSymbol={quoteSymbol}
+        totalAmount={receiveTotal}
+        amountDecimals={receiveDecimals}
         addressBook={walletBook.entries}
         getAddressVerification={getAddressVerification}
         sampleHref="/samples/recipients-sample.csv"

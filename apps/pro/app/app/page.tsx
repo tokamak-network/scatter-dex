@@ -484,10 +484,13 @@ export default function Workbench() {
 }
 
 /** Read-only indicator showing the auto-derived settle-by deadline.
- *  No input — the deadline follows from the recipients' claim times
- *  by the same rule OrderModal.submit uses (earliest claim − 5 min,
- *  capped at now + 1 h, floored at now + 5 min). Re-renders on a
- *  60s tick so the relative "in 58 min" copy doesn't freeze. */
+ *  Settle MUST be before earliest claim (recipients can't claim from
+ *  an unsettled order), so the rule is simply
+ *  `settle = min(earliestClaim) − 5min`. No 1h cap — capping past
+ *  the earliest claim broke the invariant. When no claim time is
+ *  set, default `now + 1h` (legacy). When earliest claim is < 6 min
+ *  away, the order is unservable; surface that as a warning state.
+ *  Re-renders on a 60s tick so the relative copy doesn't freeze. */
 function AutoSettleIndicator() {
   const { recipients } = useTradeForm();
   const [now, setNow] = useState(() => Date.now());
@@ -495,24 +498,45 @@ function AutoSettleIndicator() {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
-  const expiryMs = useMemo(() => {
+  const derived = useMemo<
+    | { kind: "default"; expiryMs: number }
+    | { kind: "from-claim"; expiryMs: number }
+    | { kind: "too-tight"; earliestClaimMs: number }
+  >(() => {
     const claimMs = recipients
       .map((r) => (r.releaseAt ? Date.parse(r.releaseAt) : NaN))
-      .filter((m) => Number.isFinite(m) && m > now);
-    const oneHour = now + 3_600_000;
-    const fiveMin = now + 300_000;
-    if (claimMs.length === 0) return oneHour;
+      .filter((m): m is number => Number.isFinite(m));
+    if (claimMs.length === 0) {
+      return { kind: "default", expiryMs: now + 3_600_000 };
+    }
     const minClaim = Math.min(...claimMs);
-    return Math.max(fiveMin, Math.min(minClaim - 300_000, oneHour));
+    // Need at least 5 min between settle and claim (relayer latency
+    // + block confirmation). Plus 1 min headroom from now to settle.
+    if (minClaim - now < 6 * 60_000) {
+      return { kind: "too-tight", earliestClaimMs: minClaim };
+    }
+    return { kind: "from-claim", expiryMs: minClaim - 5 * 60_000 };
   }, [recipients, now]);
-  const dt = new Date(expiryMs);
+
+  if (derived.kind === "too-tight") {
+    return (
+      <div className="mt-3 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-1.5 text-[11px] text-[var(--color-warning)]">
+        ⚠ Earliest claim time is{" "}
+        {Math.max(0, Math.round((derived.earliestClaimMs - now) / 60_000))} min
+        away — too tight to settle before. Push claim time at least 6 min
+        out.
+      </div>
+    );
+  }
+
+  const dt = new Date(derived.expiryMs);
   const absolute = dt.toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
-  const relMin = Math.max(1, Math.round((expiryMs - now) / 60_000));
+  const relMin = Math.max(1, Math.round((derived.expiryMs - now) / 60_000));
   return (
     <div className="mt-3 flex items-baseline justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-[11px]">
       <span className="font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
@@ -521,7 +545,7 @@ function AutoSettleIndicator() {
       <span className="font-mono text-[var(--color-text)]">
         {absolute}
         <span className="ml-1 text-[var(--color-text-subtle)]">
-          (in {relMin} min)
+          (in {relMin} min{derived.kind === "from-claim" ? ", 5 min before claim" : ""})
         </span>
       </span>
     </div>

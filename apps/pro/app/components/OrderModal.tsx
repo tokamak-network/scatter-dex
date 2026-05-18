@@ -98,9 +98,6 @@ function estimateFill(price: string, size: string): string {
  *  ClaimsCapExceeded after the prove burn. */
 const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 
-const bigIntMin = (a: bigint, b: bigint): bigint => (a < b ? a : b);
-const bigIntMax = (a: bigint, b: bigint): bigint => (a > b ? a : b);
-
 function resolveClaims(
   rows: readonly RecipientRow[],
   defaultRecipient: string,
@@ -431,22 +428,27 @@ export function OrderModal({
       }));
 
       // Auto-derive settle-by from the (now-resolved) per-recipient
-      // release times. No separate "Order must settle by" input — the
-      // operator picks claim times, settle deadline follows. Rule:
-      //   - earliest claim minus 5min buffer, but at most 1h from now
-      //     (long-horizon vesting orders shouldn't sit unmatched for
-      //     months)
-      //   - floor at now+5min so we never sign an already-expired order
-      // No claim times set → 1h from now (preserves the legacy default).
+      // release times. Settle MUST be before earliest claim — capping
+      // beyond it (a previous "max 1h from now" rule) would let the
+      // order expire while claim times remain in the future, leaving
+      // recipients with nothing to claim. Rule is just:
+      //   - earliest claim minus 5min buffer (matches the indicator)
+      //   - if no claim times set → now + 1h (legacy default)
+      //   - if earliest claim < 6min away → refuse (no time to settle)
       const claimSecs = claims.map((c) => c.releaseTime).filter((s) => s > nowSec);
       const minClaim = claimSecs.length > 0
         ? claimSecs.reduce((a, b) => (a < b ? a : b))
         : null;
-      const oneHour = nowSec + 3600n;
-      const fiveMinFromNow = nowSec + 300n;
-      const expirySec = minClaim !== null
-        ? bigIntMax(fiveMinFromNow, bigIntMin(minClaim - 300n, oneHour))
-        : oneHour;
+      let expirySec: bigint;
+      if (minClaim === null) {
+        expirySec = nowSec + 3600n;
+      } else if (minClaim - nowSec < 360n) {
+        throw new Error(
+          `Earliest claim time is ${Number(minClaim - nowSec)} sec away — too tight to settle before. Push the claim time at least 6 minutes out.`,
+        );
+      } else {
+        expirySec = minClaim - 300n;
+      }
 
       const commitment = await computeCommitment(note.note);
       const { merkleProof, leafIndex } = await getMerkleProofWithFallback(

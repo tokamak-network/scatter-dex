@@ -56,6 +56,13 @@ export interface RecipientsEditorProps {
   maxRows: number;
   /** Token symbol shown next to amount inputs (e.g. `USDC`). */
   amountSymbol?: string;
+  /** Display string for the order's projected receive total. When
+   *  provided alongside `amountDecimals`, RowEditor renders a "Rest"
+   *  button on each row that fills the remaining unallocated amount
+   *  (total − sum of other rows) into that row. Without it the
+   *  button is hidden — the editor doesn't know how much "rest" is. */
+  totalAmount?: string;
+  amountDecimals?: number;
   /** Optional address-book entries. If omitted, the picker button
    *  is hidden — Pro and Pay both pass this when available. */
   addressBook?: readonly WalletEntry[];
@@ -85,6 +92,8 @@ export function RecipientsEditor({
   modes = DEFAULT_MODES,
   maxRows,
   amountSymbol,
+  totalAmount,
+  amountDecimals,
   addressBook,
   getAddressVerification,
   sampleHref,
@@ -425,6 +434,8 @@ export function RecipientsEditor({
           columns={columns}
           maxRows={maxRows}
           amountSymbol={amountSymbol}
+          totalAmount={totalAmount}
+          amountDecimals={amountDecimals}
           rowWarnings={rowWarnings}
           readOnly={readOnly}
           onUpdate={updateRow}
