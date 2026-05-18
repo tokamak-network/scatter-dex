@@ -31,6 +31,15 @@ frontend/public/zk/
 # avoid duplicating 24 MB of binaries in git.
 apps/pay/public/zk/
 
+# Pro circuit assets — mirrored from circuits/build by dev.sh's
+# `sync_zk_assets_from_build`. Tracked-in-git caused recurring drift:
+# branch switches would swap the files to whatever each branch had
+# committed, and the running browser would serve stale zkeys against
+# the deployed verifier → `InvalidProof()`. Gitignoring follows the
+# same pattern as frontend/public/zk and apps/pay/public/zk so the
+# canonical source is always circuits/build.
+apps/pro/public/zk/
+
 # Generated Groth16 verifier contracts. Each phase-2 setup uses a fresh
 # random beacon, so the embedded vkey constants change per build. Committing
 # them would let the tracked copy disagree with the locally-built zkey →
