@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Contract, formatUnits } from "ethers";
 import {
   generateNote,
   toBytes32Hex,
@@ -90,6 +91,49 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
   const [amount, setAmount] = useState("1.0");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
+
+  // Wallet balance of the selected token. `null` while a fetch is in
+  // flight or the wallet isn't connected; bigint once resolved. Refetches
+  // when the user flips tokens or reconnects. Pro shows "ETH" but the
+  // on-chain token is WETH (LAUNCH_TOKENS folds them), so balanceOf
+  // reads the WETH contract — matching what dispatchDeposit will pull.
+  const [balance, setBalance] = useState<bigint | null>(null);
+  const selectedToken = useMemo(
+    () => DEPOSITABLE.find((t) => t.symbol === tokenSymbol),
+    [tokenSymbol],
+  );
+  // Extract the only phase transition the balance effect cares about
+  // (deposit success → balance changed). Pulling this out keeps the
+  // dependency array readable and avoids react-hooks/exhaustive-deps
+  // complaining about an inline expression in the deps list.
+  const depositSucceeded = phase.kind === "success";
+  useEffect(() => {
+    if (!open || !account || !signer || !selectedToken) {
+      setBalance(null);
+      return;
+    }
+    if (!isConfigured(selectedToken.address)) {
+      setBalance(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const erc20 = new Contract(
+          selectedToken.address,
+          ["function balanceOf(address) view returns (uint256)"],
+          signer,
+        );
+        const bal = (await erc20.balanceOf(account)) as bigint;
+        if (!cancelled) setBalance(bal);
+      } catch {
+        if (!cancelled) setBalance(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, account, signer, selectedToken, depositSucceeded]);
 
   const reset = useCallback(() => {
     setPhase({ kind: "idle" });
@@ -257,14 +301,47 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
           </select>
         </Field>
         <Field label="Amount">
-          <input
-            type="text"
-            inputMode="decimal"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
-            placeholder="0.0"
-          />
+          <div className="space-y-1">
+            <div className="flex items-stretch gap-2">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className="flex-1 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+                placeholder="0.0"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (balance !== null && selectedToken) {
+                    setAmount(formatUnits(balance, selectedToken.decimals));
+                  }
+                }}
+                disabled={balance === null || balance === 0n}
+                className="rounded-md border border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)] hover:bg-[var(--color-bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+                title="Use full wallet balance"
+              >
+                Max
+              </button>
+            </div>
+            {account && selectedToken && isConfigured(selectedToken.address) && (
+              <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
+                <span className="font-mono">
+                  {account.slice(0, 6)}…{account.slice(-4)}
+                </span>
+                <span>
+                  Balance:{" "}
+                  <span className="font-mono">
+                    {balance === null
+                      ? "—"
+                      : formatUnits(balance, selectedToken.decimals)}
+                  </span>{" "}
+                  {tokenSymbol}
+                </span>
+              </div>
+            )}
+          </div>
         </Field>
       </fieldset>
 
@@ -286,23 +363,49 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
             </Button>
             {(() => {
               // Gate the Deposit button when the chosen token isn't
-              // wired up for the active network. Without this the
-              // submit kicks off a 1–2 s prove only to fail at
-              // `dispatchDeposit`'s zero-address guard.
-              const picked = DEPOSITABLE.find((t) => t.symbol === tokenSymbol);
+              // wired up for the active network, OR when the wallet
+              // doesn't hold enough of it. The insufficient-balance
+              // check matches dispatchDeposit's eventual revert
+              // (`ERC20InsufficientBalance`) so users see the issue
+              // before paying gas + prove time.
+              const picked = selectedToken;
               const tokenConfigured = picked ? isConfigured(picked.address) : false;
+              let amountWei: bigint | null = null;
+              try {
+                if (picked && amount.trim()) {
+                  amountWei = parseUnits(amount, picked.decimals);
+                }
+              } catch {
+                amountWei = null;
+              }
+              const insufficient =
+                balance !== null && amountWei !== null && amountWei > balance;
               const disableReason = !account
                 ? "Connect a wallet first"
                 : !tokenConfigured
                   ? `${tokenSymbol} isn't deployed on this network yet`
-                  : undefined;
+                  : insufficient
+                    ? `Insufficient ${tokenSymbol} balance`
+                    : undefined;
               return (
                 <Button
                   onClick={submit}
-                  disabled={busy || isDeriving || !account || !tokenConfigured}
+                  disabled={
+                    busy ||
+                    isDeriving ||
+                    !account ||
+                    !tokenConfigured ||
+                    insufficient
+                  }
                   title={disableReason}
                 >
-                  {busy ? "Working…" : isDeriving ? "Awaiting signature…" : "Deposit"}
+                  {busy
+                    ? "Working…"
+                    : isDeriving
+                      ? "Awaiting signature…"
+                      : insufficient
+                        ? "Insufficient balance"
+                        : "Deposit"}
                 </Button>
               );
             })()}

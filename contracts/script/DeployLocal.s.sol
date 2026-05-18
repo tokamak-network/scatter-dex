@@ -482,23 +482,33 @@ contract DeployLocal is Script {
             console.log("USDT:", usdt);
             console.log("TON:", wton);
 
-            // Pre-fund the first five anvil accounts so deposit / settle
-            // / claim demos work for any tester without hand-minting.
-            // Real USDC can't be minted; dev-fork.sh prefunds via
-            // impersonation in fork mode.
-            address[5] memory testers = [
+            // Pre-fund anvil accounts #0–#10 so deposit / settle / claim
+            // demos work for any tester without hand-minting. WETH has no
+            // mint() (it's a real WETH9 mock), so the deployer wraps ETH
+            // once and transfers — uses ~1100 ETH from anvil's deployer
+            // prefund, which is fine. Real USDC can't be minted;
+            // dev-fork.sh prefunds via impersonation in fork mode.
+            address[11] memory testers = [
                 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266, // anvil #0
                 0x70997970C51812dc3A010C7d01b50e0d17dc79C8, // anvil #1
                 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC, // anvil #2
                 0x90F79bf6EB2c4f870365E785982E1f101E93b906, // anvil #3
-                0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65  // anvil #4
+                0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65, // anvil #4
+                0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc, // anvil #5
+                0x976EA74026E726554dB657fA54763abd0C3a0aa9, // anvil #6
+                0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, // anvil #7
+                0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f, // anvil #8
+                0xa0Ee7A142d267C1f36714E4a8F75612F20a79720, // anvil #9
+                0xBcd4042DE499D14e55001CcbB24a551F3b954096  // anvil #10
             ];
+            wethMock.deposit{value: uint256(testers.length) * 100 ether}();
             for (uint256 i = 0; i < testers.length; i++) {
-                usdcMock.mint(testers[i], 1_000_000e6);   // 1M USDC (6 dec)
-                usdtMock.mint(testers[i], 1_000_000e6);   // 1M USDT (6 dec)
-                tonMock.mint(testers[i], 100_000e18);     // 100k TON (18 dec)
+                wethMock.transfer(testers[i], 100 ether);  // 100 WETH (18 dec)
+                usdcMock.mint(testers[i], 1_000_000e6);    // 1M USDC (6 dec)
+                usdtMock.mint(testers[i], 1_000_000e6);    // 1M USDT (6 dec)
+                tonMock.mint(testers[i], 100_000e18);      // 100k TON (18 dec)
             }
-            console.log("Minted USDC/USDT/TON to anvil testers (5 accounts)");
+            console.log("Minted WETH/USDC/USDT/TON to anvil testers (11 accounts: #0-#10)");
         }
     }
 
