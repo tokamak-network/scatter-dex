@@ -1131,7 +1131,7 @@ function NewPayout() {
     }
     if (!tokenAddress) {
       issues.push(
-        `${token} isn't deployed on this network — pick another token in the Funds step.`,
+        `${token} isn't deployed on this network — pick another token in Step 2.`,
       );
     }
     const seen = new Set<string>();
@@ -1168,32 +1168,23 @@ function NewPayout() {
         `Unverified recipient${unverifiedLabels.length === 1 ? "" : "s"}: ${preview}${tail}. They must complete zk-X509 verification before they can claim.`,
       );
     }
-    if (shortfallRaw > 0n) {
-      issues.push(
-        `Funds short by ${ethers.formatUnits(shortfallRaw, decimals)} ${token} — deposit more or remove recipients.`,
-      );
-    }
-    // multiBatchFit === null when token/batches haven't resolved yet
-    // (e.g. first paint, empty rows). Only flag when the picker
-    // actually ran and returned uncovered.
-    if (multiBatchFit && !multiBatchFit.covered) {
-      issues.push(
-        "Source notes don't fit the batched settlement — try splitting recipients or topping up larger notes.",
-      );
-    }
     if (!claimFrom) {
-      issues.push("Set the claim time in the Funds step.");
+      issues.push("Set the claim time in the Recipients step.");
     }
+    // Funds-step concerns (shortfallRaw, multiBatchFit.covered) are
+    // intentionally NOT included here — the Step 3 → 4 next-button
+    // is gated on `validation.length > 0`, and the only way to fix a
+    // shortfall is to advance to Step 4 and deposit more. They're
+    // already enforced separately by `step4Block` and the submit
+    // button's pre-submit check, so duplicating them here would
+    // trap users on Step 3.
     return issues.slice(0, 5);
   }, [
     rows,
     recipientIdentity,
     tokenAddress,
     token,
-    shortfallRaw,
-    multiBatchFit,
     claimFrom,
-    decimals,
   ]);
 
   return (
@@ -1838,12 +1829,20 @@ function NewPayout() {
             )}
             <button
               disabled={
-                validation.length > 0 || submitting || claimFromTooEarly
+                validation.length > 0 ||
+                submitting ||
+                claimFromTooEarly ||
+                shortfallRaw > 0n ||
+                (multiBatchFit !== null && !multiBatchFit.covered)
               }
               title={
                 claimFromTooEarly
                   ? `Claim time must be at least ${CLAIM_FROM_BUFFER_MINUTES} minutes from now`
-                  : undefined
+                  : shortfallRaw > 0n
+                    ? `Funds short by ${ethers.formatUnits(shortfallRaw, decimals)} ${token} — top up in Step 4`
+                    : multiBatchFit && !multiBatchFit.covered
+                      ? "Source notes don't fit the batched settlement — adjust in Step 4"
+                      : undefined
               }
               onClick={() => {
                 if (total >= LARGE_AMOUNT_THRESHOLD) setShowConfirm(true);
