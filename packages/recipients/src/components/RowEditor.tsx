@@ -11,6 +11,12 @@ interface Props {
   maxRows: number;
   /** Token symbol shown next to the amount input (e.g. `USDC`, `ETH`). */
   amountSymbol?: string;
+  /** Order's projected receive total (display string, comma-allowed).
+   *  Combined with `amountDecimals` it enables the per-row Rest
+   *  button — fills `(total − sum(other rows))` into the row so the
+   *  operator doesn't have to compute the leftover by hand. */
+  totalAmount?: string;
+  amountDecimals?: number;
   /** Per-row warning surfaced inline under the row (caller-computed,
    *  e.g. "amount is invalid"). */
   rowWarnings?: Record<number, string>;
@@ -31,6 +37,8 @@ export function RowEditor({
   columns,
   maxRows,
   amountSymbol,
+  totalAmount,
+  amountDecimals,
   rowWarnings,
   readOnly,
   onUpdate,
@@ -41,6 +49,36 @@ export function RowEditor({
   const showEmail = columns.includes("email");
   const showReleaseAt = columns.includes("releaseAt");
   const hasMetaLine = showName || showEmail || showReleaseAt;
+
+  // Compute "rest" (total − sum of other rows) for `rowIndex` as a
+  // display string. Returns null when totals aren't wired up or the
+  // row would receive ≤0 (already over-allocated). Done in display
+  // units to round-trip cleanly through the same `parseUnits` the
+  // submit path uses.
+  const restFor = (rowIndex: number): string | null => {
+    if (!totalAmount || amountDecimals === undefined) return null;
+    const totalClean = totalAmount.replace(/,/g, "");
+    if (!totalClean) return null;
+    let totalWei: bigint;
+    try {
+      totalWei = parseDisplay(totalClean, amountDecimals);
+    } catch {
+      return null;
+    }
+    let othersWei = 0n;
+    for (let i = 0; i < rows.length; i++) {
+      if (i === rowIndex) continue;
+      const raw = rows[i]!.amount.replace(/,/g, "");
+      if (!raw) continue;
+      try {
+        othersWei += parseDisplay(raw, amountDecimals);
+      } catch {
+        // Skip unparseable rows — Rest reflects validated input only.
+      }
+    }
+    if (othersWei >= totalWei) return null;
+    return formatDisplay(totalWei - othersWei, amountDecimals);
+  };
 
   return (
     <div className="space-y-1.5">
@@ -77,6 +115,22 @@ export function RowEditor({
                 aria-label={`Recipient ${i + 1} amount`}
                 className="w-28 shrink-0 rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono font-semibold disabled:opacity-60"
               />
+              {(() => {
+                // Hide the button when totals aren't wired up or the
+                // row already covers (or exceeds) the remainder.
+                const rest = restFor(i);
+                if (!rest || readOnly) return null;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => onUpdate(i, { amount: rest })}
+                    title={`Fill remaining ${rest}${amountSymbol ? ` ${amountSymbol}` : ""}`}
+                    className="shrink-0 rounded border border-[var(--color-border-strong)] bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                  >
+                    Rest
+                  </button>
+                );
+              })()}
               {amountSymbol && (
                 <span className="w-12 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                   {amountSymbol}
@@ -160,4 +214,25 @@ export function RowEditor({
       )}
     </div>
   );
+}
+
+/** Display-string → base units. Throws on malformed input or
+ *  fractional precision beyond `decimals` (mirrors the apps'
+ *  `parseUnits` so Rest's math round-trips through submit). */
+function parseDisplay(value: string, decimals: number): bigint {
+  if (!/^\d+(\.\d+)?$/.test(value)) throw new Error("invalid");
+  const [whole, frac = ""] = value.split(".");
+  if (frac.length > decimals) throw new Error("too many decimals");
+  const padded = frac.padEnd(decimals, "0");
+  const wholeClean = whole!.replace(/^0+(?=\d)/, "");
+  return BigInt(wholeClean + padded);
+}
+
+/** Base units → display string, trailing zeros trimmed so a
+ *  whole-token rest renders as `"1000"` not `"1000.000000"`. */
+function formatDisplay(value: bigint, decimals: number): string {
+  const s = value.toString().padStart(decimals + 1, "0");
+  const whole = s.slice(0, s.length - decimals);
+  const frac = s.slice(s.length - decimals).replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : whole;
 }

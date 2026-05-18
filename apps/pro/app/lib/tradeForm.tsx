@@ -54,12 +54,6 @@ interface TradeFormState {
   size: string;
   setSize(s: string): void;
 
-  /** Advanced settings collapsed by default; expanding reveals the
-   *  max-fee tuner. Expiry surfaces in the main form because the
-   *  user is now picking an absolute deadline, not a preset. */
-  advancedOpen: boolean;
-  setAdvancedOpen(v: boolean): void;
-
   /** Multi-recipient distribution. Default: 1 row, empty
    *  (interpreted as "send to my own wallet"). */
   recipients: RecipientRow[];
@@ -81,17 +75,6 @@ interface TradeFormState {
    *  OrderModal so they can't disagree on which circuit ran. */
   activeTier: CircuitTier;
 
-  /** Order's "must settle by" deadline as a local `datetime-local`
-   *  value (`YYYY-MM-DDTHH:mm`). Empty = use a 1-hour default at
-   *  submit. Surfaced as an absolute date so the user doesn't have
-   *  to mental-math a preset against the current clock. */
-  expiry: string;
-  setExpiry(v: string): void;
-
-  /** Max relayer fee in basis points. Range 0–100 (0–1%). Default
-   *  30 mirrors the frontend reference impl. */
-  maxFeeBps: number;
-  setMaxFeeBps(n: number): void;
 }
 
 const TradeFormCtx = createContext<TradeFormState | null>(null);
@@ -109,10 +92,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   const [side, setSide] = useState<"sell" | "buy">("sell");
   const [price, setPrice] = useState("4,205");
   const [size, setSize] = useState("2.0");
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [recipients, setRecipientsState] = useState<RecipientRow[]>(() => [freshRow()]);
-  const [expiry, setExpiry] = useState<string>("");
-  const [maxFeeBps, setMaxFeeBps] = useState(30);
 
   const setPairBy = useCallback((display: string) => {
     const next = findPair(display);
@@ -197,8 +177,6 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       setPrice,
       size,
       setSize,
-      advancedOpen,
-      setAdvancedOpen,
       recipients,
       addRecipient,
       removeRecipient,
@@ -207,44 +185,25 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       setRecipients,
       splitEqually,
       activeTier,
-      expiry,
-      setExpiry,
-      maxFeeBps,
-      setMaxFeeBps,
     }),
     [
       pair, setPairBy,
       side, price, size,
-      advancedOpen,
       recipients, addRecipient, removeRecipient, updateRecipient,
       resetRecipients, setRecipients, splitEqually, activeTier,
-      expiry, maxFeeBps,
     ],
   );
 
   return <TradeFormCtx.Provider value={value}>{children}</TradeFormCtx.Provider>;
 }
 
-/** Convert the `datetime-local` expiry string to an absolute Unix
- *  timestamp (seconds). Empty / malformed input falls back to
- *  `nowSec + 1h`. The optional `nowSec` parameter lets the caller
- *  capture a single timestamp once and thread it through all the
- *  per-order calls (expiry + every claim's release) so they can't
- *  drift across a second boundary mid-build. */
-export function expiryToUnixSec(value: string, nowSec?: bigint): bigint {
-  if (value) {
-    const ms = Date.parse(value);
-    if (Number.isFinite(ms)) return BigInt(Math.floor(ms / 1000));
-  }
-  const base = nowSec ?? BigInt(Math.floor(Date.now() / 1000));
-  return base + 3600n;
-}
-
 /** Convert a recipient row's `releaseAt` to an absolute Unix
  *  timestamp (seconds). Empty value = release immediately on
  *  settle, expressed as `nowSec` (or the current second when
- *  unspecified). See `expiryToUnixSec` for the rationale on
- *  threading a shared `nowSec`. */
+ *  unspecified). The optional `nowSec` parameter lets the caller
+ *  capture a single timestamp once and thread it through all the
+ *  per-order calls (expiry + every claim's release) so they can't
+ *  drift across a second boundary mid-build. */
 export function releaseAtToUnixSec(
   row: Pick<RecipientRow, "releaseAt">,
   nowSec?: bigint,

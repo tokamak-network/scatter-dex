@@ -56,6 +56,13 @@ export interface RecipientsEditorProps {
   maxRows: number;
   /** Token symbol shown next to amount inputs (e.g. `USDC`). */
   amountSymbol?: string;
+  /** Display string for the order's projected receive total. When
+   *  provided alongside `amountDecimals`, RowEditor renders a "Rest"
+   *  button on each row that fills the remaining unallocated amount
+   *  (total − sum of other rows) into that row. Without it the
+   *  button is hidden — the editor doesn't know how much "rest" is. */
+  totalAmount?: string;
+  amountDecimals?: number;
   /** Optional address-book entries. If omitted, the picker button
    *  is hidden — Pro and Pay both pass this when available. */
   addressBook?: readonly WalletEntry[];
@@ -85,6 +92,8 @@ export function RecipientsEditor({
   modes = DEFAULT_MODES,
   maxRows,
   amountSymbol,
+  totalAmount,
+  amountDecimals,
   addressBook,
   getAddressVerification,
   sampleHref,
@@ -100,6 +109,10 @@ export function RecipientsEditor({
   const [mode, setMode] = useState<EditorMode>(() => modes[0]!);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<UploadStatus | null>(null);
+  // Bulk claim-from setter. Per-row editing stays available (vesting
+  // ladders) but the common case is "one claim time for everyone";
+  // typing it 128× was the previous default.
+  const [bulkClaimFrom, setBulkClaimFrom] = useState("");
 
   // Restore the user's last-picked mode once on mount. Guarded
   // against `modes` shrinking between sessions — fall back to the
@@ -329,6 +342,40 @@ export function RecipientsEditor({
         </div>
       </div>
 
+      {/* Bulk "Claim from" — only when the column is enabled.
+          Applies the chosen datetime to every row in one click;
+          per-row override stays editable below. */}
+      {!readOnly && columns.includes("releaseAt") && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5">
+          <label
+            htmlFor="recipients-bulk-claim-from"
+            className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]"
+          >
+            Claim from (all)
+          </label>
+          <input
+            id="recipients-bulk-claim-from"
+            type="datetime-local"
+            value={bulkClaimFrom}
+            onChange={(e) => setBulkClaimFrom(e.target.value)}
+            aria-label="Bulk claim-from datetime — applies to every recipient row when you click Apply to all"
+            className="flex-1 rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-0.5 font-mono text-xs"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              if (!bulkClaimFrom) return;
+              onChange(value.map((r) => ({ ...r, releaseAt: bulkClaimFrom })));
+            }}
+            disabled={!bulkClaimFrom || value.length === 0}
+            title="Set this claim time on every recipient row"
+          >
+            Apply to all
+          </Button>
+        </div>
+      )}
+
       {/* Upload + sample + address book — always available regardless of mode. */}
       {!readOnly && (
         <div className="flex flex-wrap items-center gap-2">
@@ -392,6 +439,8 @@ export function RecipientsEditor({
           columns={columns}
           maxRows={maxRows}
           amountSymbol={amountSymbol}
+          totalAmount={totalAmount}
+          amountDecimals={amountDecimals}
           rowWarnings={rowWarnings}
           readOnly={readOnly}
           onUpdate={updateRow}
