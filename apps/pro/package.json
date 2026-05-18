@@ -6,7 +6,9 @@
     "dev": "next dev -p 4003",
     "build": "next build",
     "start": "next start -p 4003",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@zkscatter/recipients": "file:../../packages/recipients",
@@ -28,6 +30,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.0"
   }
 }
