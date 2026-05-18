@@ -102,6 +102,11 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
     () => DEPOSITABLE.find((t) => t.symbol === tokenSymbol),
     [tokenSymbol],
   );
+  // Extract the only phase transition the balance effect cares about
+  // (deposit success → balance changed). Pulling this out keeps the
+  // dependency array readable and avoids react-hooks/exhaustive-deps
+  // complaining about an inline expression in the deps list.
+  const depositSucceeded = phase.kind === "success";
   useEffect(() => {
     if (!open || !account || !signer || !selectedToken) {
       setBalance(null);
@@ -128,7 +133,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
     return () => {
       cancelled = true;
     };
-  }, [open, account, signer, selectedToken, phase.kind]);
+  }, [open, account, signer, selectedToken, depositSucceeded]);
 
   const reset = useCallback(() => {
     setPhase({ kind: "idle" });
