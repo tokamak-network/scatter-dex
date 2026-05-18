@@ -251,6 +251,26 @@ export default function Workbench() {
     setSize(row.size);
   };
 
+  // Lifted out of the render body so the parity check runs once per
+  // input change instead of on every Workbench re-render. Reason text
+  // doubles as the inline hint below the CTA (native `title` doesn't
+  // surface on touch / to AT, so the affordance has to be visible).
+  const submitGate = useMemo(() => {
+    const { balanced, invalidRow, noTarget } = evaluateRecipientsAllocation(
+      recipients,
+      netReceiveDisplay,
+      receiveDecimals,
+    );
+    const reason = invalidRow !== null
+      ? `Recipient #${invalidRow} amount is invalid`
+      : noTarget
+        ? "Enter size and price first"
+        : !balanced
+          ? "Recipient allocation must match the projected receive total"
+          : null;
+    return { canSubmit: balanced, reason };
+  }, [recipients, netReceiveDisplay, receiveDecimals]);
+
   return (
     <div className="space-y-6">
       <WorkspaceBar />
@@ -412,30 +432,24 @@ export default function Workbench() {
                 baseSymbol={pair.base}
                 quoteSymbol={pair.quote}
               />
-              {(() => {
-                const { balanced, invalidRow } = evaluateRecipientsAllocation(
-                  recipients,
-                  netReceiveDisplay,
-                  receiveDecimals,
-                );
-                const reason = invalidRow !== null
-                  ? `Recipient #${invalidRow} amount is invalid`
-                  : !balanced
-                    ? "Recipient allocation must match the projected receive total"
-                    : undefined;
-                return (
-                  <Button
-                    onClick={() => setOrderOpen(true)}
-                    block
-                    size="lg"
-                    className="mt-3"
-                    disabled={!balanced}
-                    title={reason}
-                  >
-                    Sign &amp; submit
-                  </Button>
-                );
-              })()}
+              <Button
+                onClick={() => setOrderOpen(true)}
+                block
+                size="lg"
+                className="mt-3"
+                disabled={!submitGate.canSubmit}
+                title={submitGate.reason ?? undefined}
+              >
+                Sign &amp; submit
+              </Button>
+              {submitGate.reason && (
+                <p
+                  role="status"
+                  className="mt-1.5 text-center text-[11px] text-[var(--color-text-muted)]"
+                >
+                  {submitGate.reason}
+                </p>
+              )}
             </>
           )}
         </section>

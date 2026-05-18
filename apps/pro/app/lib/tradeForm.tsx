@@ -202,7 +202,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       side, price, size,
       recipients, addRecipient, removeRecipient, updateRecipient,
       resetRecipients, setRecipients, splitEqually, activeTier,
-      bulkClaimFrom,
+      bulkClaimFrom, setBulkClaimFrom,
     ],
   );
 

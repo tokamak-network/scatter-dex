@@ -124,10 +124,23 @@ export function RecipientsEditor({
   // ladders) but the common case is "one claim time for everyone";
   // typing it 128× was the previous default.
   const [internalBulkClaimFrom, setInternalBulkClaimFrom] = useState("");
-  const bulkControlled = bulkClaimFromProp !== undefined;
+  // Both props or neither — passing the value without the change
+  // handler (or vice versa) would silently drop edits. Surface that
+  // as a dev-time error rather than letting the bulk input look
+  // alive while doing nothing.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    (bulkClaimFromProp !== undefined) !== (onBulkClaimFromChange !== undefined)
+  ) {
+    throw new Error(
+      "RecipientsEditor: pass both `bulkClaimFrom` and `onBulkClaimFromChange` to control the bulk field, or neither to use the internal state.",
+    );
+  }
+  const bulkControlled =
+    bulkClaimFromProp !== undefined && onBulkClaimFromChange !== undefined;
   const bulkClaimFrom = bulkControlled ? bulkClaimFromProp : internalBulkClaimFrom;
   const setBulkClaimFrom = (next: string) => {
-    if (bulkControlled) onBulkClaimFromChange?.(next);
+    if (bulkControlled) onBulkClaimFromChange(next);
     else setInternalBulkClaimFrom(next);
   };
 

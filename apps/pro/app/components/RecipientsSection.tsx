@@ -7,7 +7,6 @@ import { MAX_RECIPIENTS, useTradeForm, type RecipientRow } from "../lib/tradeFor
 import { useConfirm } from "../lib/useConfirm";
 import { useWalletBook } from "../lib/walletBook";
 import { useIdentityForAddresses } from "../lib/identity";
-import { parseUnits } from "../lib/parseUnits";
 import { formatTokenAmount } from "../lib/format";
 import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
 
@@ -84,29 +83,11 @@ export function RecipientsSection({
   // parse — silently summing past it would hide validation errors
   // until submit and surface as a misleading "short by X" delta.
   const { sumStr, deltaStr, balanced, invalidRow } = useMemo(() => {
-    const { balanced, invalidRow } = evaluateRecipientsAllocation(
-      recipients,
-      receiveTotal,
-      receiveDecimals,
-    );
-    if (!receiveTotal || receiveTotal.replace(/,/g, "") === "") {
+    const { balanced, invalidRow, noTarget, sum, target } =
+      evaluateRecipientsAllocation(recipients, receiveTotal, receiveDecimals);
+    if (noTarget) {
       return { sumStr: "—", deltaStr: "", balanced, invalidRow };
     }
-    let target: bigint;
-    try {
-      target = parseUnits(receiveTotal.replace(/,/g, ""), receiveDecimals);
-    } catch {
-      return { sumStr: "—", deltaStr: "", balanced, invalidRow };
-    }
-    let sum = 0n;
-    recipients.forEach((r) => {
-      if (!r.amount.trim()) return;
-      try {
-        sum += parseUnits(r.amount.replace(/,/g, ""), receiveDecimals);
-      } catch {
-        /* invalidRow already captured by evaluateRecipientsAllocation */
-      }
-    });
     const diff = sum > target ? sum - target : target - sum;
     return {
       sumStr: `${formatTokenAmount(sum, receiveDecimals)} ${quoteSymbol}`,
