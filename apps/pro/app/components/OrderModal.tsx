@@ -19,6 +19,7 @@ import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
 import { buildClaimsTree, computeCommitment, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { formatTokenAmount, formatWhen } from "../lib/format";
+import { applyFeeBig } from "../lib/fee";
 import type { VaultNote } from "../lib/vault";
 import {
   expiryToUnixSec,
@@ -87,11 +88,15 @@ function estimateFill(price: string, size: string): string {
 /** Map the form's recipient rows into circuit `ClaimEntry`s.
  *
  *  Default single-row case: empty address → "send the full
- *  buyAmount to my own connected wallet". Common path; no manual
- *  amount needed.
+ *  net receive (buyAmount − relayer fee) to my own connected
+ *  wallet".
  *
  *  Multi-row case: every row needs an explicit amount; the sum must
- *  equal `buyAmount` (no auto-fill — fill-rest UX is a follow-up). */
+ *  equal `netReceive` (= buyAmount − fee). The on-chain check is
+ *  `totalLocked + fee ≤ sellAmount` (validateScatterAuth) /
+ *  `maker.totalLocked + feeTokenMaker ≤ taker.sellAmount`
+ *  (validateAuthorize) — so any larger sum would settle-revert with
+ *  ClaimsCapExceeded after the prove burn. */
 const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 
 function resolveClaims(
@@ -99,12 +104,12 @@ function resolveClaims(
   defaultRecipient: string,
   buyTokenAddress: string,
   buyTokenDecimals: number,
-  buyAmount: bigint,
+  netReceive: bigint,
 ): ClaimEntry[] {
   // Auto-fill convention: a single row with no amount = "send the
-  // entire buyAmount to this recipient". In every other case (single
-  // row with explicit amount, or multi-row), the sum of all
-  // explicit amounts must equal buyAmount — including the single-
+  // entire net-receive to this recipient". In every other case
+  // (single row with explicit amount, or multi-row), the sum of all
+  // explicit amounts must equal netReceive — including the single-
   // row case, so a typo can't underspend the order silently.
   const autoFillSingle = rows.length === 1 && !rows[0]!.amount.trim();
 
@@ -124,11 +129,11 @@ function resolveClaims(
       );
     }
   }
-  if (!autoFillSingle && total !== buyAmount) {
-    const diff = total > buyAmount ? total - buyAmount : buyAmount - total;
+  if (!autoFillSingle && total !== netReceive) {
+    const diff = total > netReceive ? total - netReceive : netReceive - total;
     throw new Error(
-      `Recipient amounts must sum to the order's buy amount. Off by ${
-        total > buyAmount ? "+" : "−"
+      `Recipient amounts must sum to the post-fee net receive. Off by ${
+        total > netReceive ? "+" : "−"
       }${formatTokenAmount(diff, buyTokenDecimals)}.`,
     );
   }
@@ -152,7 +157,7 @@ function resolveClaims(
     const trimmed = trimmedAddrs[i]!;
     const recipient = trimmed || defaultRecipient;
     const amount = autoFillSingle
-      ? buyAmount
+      ? netReceive
       : parseUnits(r.amount.replace(/,/g, ""), buyTokenDecimals);
     return {
       secret: randomFieldElement(),
@@ -194,6 +199,37 @@ export function OrderModal({
     expiry: expiryAtLocal,
     maxFeeBps,
   } = useTradeForm();
+
+  // Gross buy in token-base units, computed from the form's `side` /
+  // `price` / `size` once and reused by submit, the confirm-step
+  // Relayer-fee row, and any future receive-breakdown rendering. Was
+  // open-coded in two places with subtly different decimals
+  // (Copilot/Gemini caught the second copy parsing price against the
+  // buy-token decimals instead of the always-quote price scale).
+  const confirmGrossBuy = useMemo<
+    { gross: bigint; decimals: number; symbol: string } | null
+  >(() => {
+    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
+    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    const buyTok = side === "sell" ? quoteTok : baseTok;
+    if (!baseTok || !quoteTok || !buyTok) return null;
+    try {
+      const cleanPrice = price.replace(/,/g, "");
+      const cleanSize = size.replace(/,/g, "");
+      if (!cleanPrice || !cleanSize) return null;
+      // Price is always quote-per-base, so parse with quote decimals
+      // regardless of side. Size is always in base.
+      const priceUnits = parseUnits(cleanPrice, quoteTok.decimals);
+      const sizeUnits = parseUnits(cleanSize, baseTok.decimals);
+      if (sizeUnits <= 0n) return null;
+      const gross = side === "sell"
+        ? (priceUnits * sizeUnits) / 10n ** BigInt(baseTok.decimals)
+        : sizeUnits;
+      return { gross, decimals: buyTok.decimals, symbol: buyTok.symbol };
+    } catch {
+      return null;
+    }
+  }, [side, activePair.base, activePair.quote, price, size]);
 
   // Probe each non-empty recipient against the IdentityRegistry so
   // we can short-circuit submit before paying the 1–2 s prove cost
@@ -328,10 +364,25 @@ export function OrderModal({
       return;
     }
 
+    // Compute the relayer fee that maker authorizes against this
+    // buyAmount. `maxFeeBps` (user-signed) is the cap; the relayer's
+    // currently-quoted `fee` is the projected actual charge. Until
+    // the matcher reports a final fee, the safe upper bound for what
+    // recipients receive is `buyAmount − fee_at_max(buyAmount, maxFee)`
+    // — but for UX we plan against the relayer's quote (which the
+    // matcher will respect), keeping the cap as a back-stop. Either
+    // way, sum(claims) ≤ buyAmount − fee (on-chain ClaimsCapExceeded
+    // otherwise).
+    const projectedFeeBps = Math.min(
+      selectedRelayer?.fee ?? 0,
+      Number(maxFeeBps),
+    );
+    const { net: netReceive } = applyFeeBig(buyAmount, projectedFeeBps);
+
     // Resolve recipient distribution from the trade-form context.
-    // Default (single empty row) is interpreted as "send everything
-    // to my own connected wallet". Multi-row mode requires explicit
-    // amount entry per row; the sum must equal `buyAmount` post-fee.
+    // Default (single empty row) is interpreted as "send the net
+    // receive to my own connected wallet". Multi-row mode requires
+    // explicit amount entry per row; the sum must equal `netReceive`.
     let resolved: ClaimEntry[];
     try {
       resolved = resolveClaims(
@@ -339,7 +390,7 @@ export function OrderModal({
         account,
         buyToken.address,
         buyToken.decimals,
-        buyAmount,
+        netReceive,
       );
     } catch (e) {
       setPhase({
@@ -524,7 +575,22 @@ export function OrderModal({
             critical decision point. Removed until we wire FillEstimate's
             real spot diff here (it's already computed on the trade
             form via useReferencePrice). */}
-        <Row k="Fee" v="Free (launch event until Dec 31, 2026)" />
+        {/* Relayer fee row — taken from the connected relayer's
+            quoted bps, clamped to the user-signed maxFee cap. The
+            "Free (launch event)" copy referred to a *platform* fee
+            that doesn't apply here; this row is the actual amount
+            deducted from buyAmount before recipient distribution. */}
+        {(() => {
+          const bps = Math.min(selectedRelayer?.fee ?? 0, Number(maxFeeBps));
+          if (!confirmGrossBuy) {
+            return <Row k="Relayer fee" v="—" />;
+          }
+          const { fee } = applyFeeBig(confirmGrossBuy.gross, bps);
+          const feeStr = bps > 0
+            ? `${formatTokenAmount(fee, confirmGrossBuy.decimals)} ${confirmGrossBuy.symbol} (${bps} bps)`
+            : `0 ${confirmGrossBuy.symbol} (0 bps)`;
+          return <Row k="Relayer fee" v={feeStr} />;
+        })()}
       </dl>
 
       {/* Surface every row at confirm so an N-recipient vesting
