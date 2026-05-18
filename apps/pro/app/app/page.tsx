@@ -294,6 +294,12 @@ export default function Workbench() {
                     className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
                   />
                 </Field>
+                {/* Relayer picker BEFORE the receive card and
+                    recipients — the relayer's fee bps determines the
+                    net receive (and therefore the recipients budget).
+                    Operators who pick recipients first then discover
+                    a different fee have to redo the split. */}
+                <RelayerPicker />
                 {/* Anchors the "over/short by X" delta in
                     RecipientsSection — without the receive total
                     visible, that delta has no reference point. */}
@@ -339,9 +345,6 @@ export default function Workbench() {
                 Launch event: 0% trading fee until Dec 31, 2026. Proof
                 generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
                 mobile. Post-launch fee schedule set by governance.
-              </div>
-              <div className="mt-4">
-                <RelayerPicker />
               </div>
               <Button
                 onClick={() => setOrderOpen(true)}
