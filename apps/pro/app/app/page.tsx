@@ -13,7 +13,7 @@ import { PairSelector } from "../components/PairSelector";
 import { AdvancedSettings } from "../components/AdvancedSettings";
 import { RecipientsSection } from "../components/RecipientsSection";
 import { NoteSelect } from "../components/NoteSelect";
-import { RelayerPill } from "../components/RelayerPill";
+import { RelayerPicker } from "../components/RelayerPicker";
 import { DepositModal } from "../components/DepositModal";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { DEMO_NETWORK } from "../lib/network";
@@ -340,9 +340,8 @@ export default function Workbench() {
                 generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
                 mobile. Post-launch fee schedule set by governance.
               </div>
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <span className="text-xs text-[var(--color-text-muted)]">Route via</span>
-                <RelayerPill />
+              <div className="mt-4">
+                <RelayerPicker />
               </div>
               <Button
                 onClick={() => setOrderOpen(true)}
