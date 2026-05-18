@@ -5,6 +5,7 @@ import { Button } from "@zkscatter/ui";
 import type { OrderRecord } from "../lib/orders";
 import { StatusBadge } from "./StatusBadge";
 import { useActiveNetwork } from "../lib/activeNetwork";
+import { useVault } from "../lib/vault";
 import { formatClaimAmount, formatField, formatWhen } from "../lib/format";
 
 const CLOSE_ANIM_MS = 200;
@@ -32,6 +33,7 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
   const titleId = useId();
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
   const { network } = useActiveNetwork();
+  const { notes } = useVault();
   // Lag the displayed order behind the prop: when `order` becomes
   // null we keep the previous payload mounted long enough for the
   // slide-out animation to finish. Without this the contents pop
@@ -125,7 +127,21 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
             {displayed.nonce !== undefined && (
               <Row k="Nonce" v={formatField(displayed.nonce)} mono truncate />
             )}
-            {displayed.noteId && <Row k="Funding note" v={displayed.noteId} mono truncate />}
+            {displayed.noteId && (() => {
+              // Render the vault's human label ("lot-3") when the note
+              // still exists, otherwise fall back to the internal id —
+              // a withdrawn/missing note shouldn't make the drawer
+              // render blank.
+              const note = notes.find((n) => n.id === displayed.noteId);
+              return (
+                <Row
+                  k="Funding note"
+                  v={note ? note.label : displayed.noteId}
+                  mono={!note}
+                  truncate={!note}
+                />
+              );
+            })()}
           </Section>
 
           {displayed.claim && (

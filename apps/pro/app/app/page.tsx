@@ -434,10 +434,12 @@ function ExpiryField() {
         aria-label="Order expiry deadline"
         className="mt-1.5 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-sm"
       />
-      <p className="mt-1 text-[11px] text-[var(--color-text-subtle)]">
-        Hard deadline. If the relayer doesn&apos;t match this order by then,
-        it expires and your funds stay in your vault. Empty = 1&nbsp;hour from
-        now.
+      <p className={`mt-1 text-[11px] ${expiry ? "text-[var(--color-text-subtle)]" : "text-[var(--color-text-muted)]"}`}>
+        {expiry ? (
+          <>Hard deadline. If the relayer doesn&apos;t match this order by then, it expires and your funds stay in your vault.</>
+        ) : (
+          <><strong>Defaults to 1&nbsp;hour from now</strong> when left empty. Hard deadline — if the relayer doesn&apos;t match by then, the order expires and your funds stay in your vault.</>
+        )}
       </p>
     </div>
   );
@@ -554,12 +556,23 @@ function FillEstimate({
         : refUsd - fillUsd
       : null;
   const savingsPct = savings !== null && refUsd && refUsd > 0 ? (savings / refUsd) * 100 : null;
-  const positive = savings !== null && savings > 0;
+  // Two separate signals: `savingsSign` ("did we come out ahead at
+  // all?") drives the Better/Worse text label, while `materiallyBetter`
+  // ("did we beat oracle / spread noise?") gates the success panel
+  // colour. Without separating them, a +0.10% savings rendered the
+  // neutral panel ("Worse than spot") while displaying "+0.10%" — a
+  // contradiction Copilot flagged on #762.
+  const SAVINGS_THRESHOLD_PCT = 0.25;
+  const savingsSign = savings !== null && savings > 0;
+  const materiallyBetter =
+    savingsSign &&
+    savingsPct !== null &&
+    savingsPct >= SAVINGS_THRESHOLD_PCT;
 
   return (
     <div
       className={`mt-4 rounded-md border p-3 text-xs ${
-        positive
+        materiallyBetter
           ? "border-[var(--color-success-soft)] bg-[var(--color-success-soft)]"
           : "border-[var(--color-border)] bg-[var(--color-bg)]"
       }`}
@@ -575,10 +588,10 @@ function FillEstimate({
       {savings !== null && refUsd !== null ? (
         <div
           className={`mt-1 flex justify-between font-medium ${
-            positive ? "text-[var(--color-success)]" : "text-[var(--color-text-muted)]"
+            materiallyBetter ? "text-[var(--color-success)]" : "text-[var(--color-text-muted)]"
           }`}
         >
-          <span>{positive ? "Better than spot" : "Worse than spot"}</span>
+          <span>{savingsSign ? "Better than spot" : "Worse than spot"}</span>
           <span>
             {savings >= 0 ? "+" : "−"}
             {Math.abs(savingsPct ?? 0).toFixed(2)}% ({savings >= 0 ? "+" : "−"}
