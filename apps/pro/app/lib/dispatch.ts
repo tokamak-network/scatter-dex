@@ -1,7 +1,6 @@
 "use client";
 
 import { chainName, isConfiguredAddress } from "@zkscatter/sdk";
-import { ethers } from "ethers";
 import {
   callCancel,
   callDeposit,
@@ -224,78 +223,4 @@ export async function dispatchAuthorize(
   const client = new RelayerClient(relayerUrl);
   const status = await client.submitAuthorizeOrder(body, signal);
   return { kind: "relayer", status };
-}
-
-/** Parameters for `dispatchWithdraw`. Mirrors `CommitmentPool.withdraw`'s
- *  on-chain signature plus the witnesses needed for the optional
- *  post-withdraw WETH→native ETH unwrap. */
-export interface WithdrawDispatchParams {
-  proof: Groth16Proof;
-  root: bigint;
-  nullifierHash: bigint;
-  newCommitment: bigint;
-  /** ERC20 token being released from escrow (WETH for the ETH path). */
-  tokenAddress: string;
-  amount: bigint;
-  recipient: string;
-  /** Set to true when the user requested native ETH and the token is
-   *  WETH. After the pool transfers WETH to `recipient`, the same
-   *  signer (which must equal recipient) calls `WETH.withdraw(amount)`
-   *  to unwrap into native ETH. The unwrap only works for self-
-   *  withdraws because `WETH.withdraw` releases to `msg.sender`. */
-  unwrapToNative?: boolean;
-}
-
-const COMMITMENT_POOL_WITHDRAW_IFACE = [
-  "function withdraw(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 root, uint256 nullifierHash, uint256 newCommitment, address token, uint256 amount, address recipient, address relayer) external",
-];
-const WETH_WITHDRAW_IFACE = [
-  "function withdraw(uint256 amount) external",
-];
-
-/** Submit a withdraw proof to `CommitmentPool.withdraw`, then
- *  optionally unwrap WETH → native ETH when the user picked the
- *  ETH path. Same simulate-vs-onchain policy as the other dispatch
- *  helpers: falls back to simulated when the pool isn't configured
- *  or no signer is attached. */
-export async function dispatchWithdraw(
-  signer: Signer | null,
-  params: WithdrawDispatchParams,
-): Promise<DispatchResult> {
-  const pool = DEMO_NETWORK.contracts.commitmentPool;
-  if (!isConfiguredAddress(pool)) return { kind: "simulated", reason: "not_configured" };
-  if (!isConfiguredAddress(params.tokenAddress)) {
-    return { kind: "simulated", reason: "not_configured" };
-  }
-  if (!signer) return { kind: "simulated", reason: "no_signer" };
-  await assertChainMatch(signer);
-
-  const poolContract = new ethers.Contract(pool, COMMITMENT_POOL_WITHDRAW_IFACE, signer);
-  const { a, b, c } = params.proof;
-  // Relayer = zero-address for self-withdraw; the matcher-driven
-  // relayer-pay path is a separate flow that lives in PrivateSettlement.
-  const relayer = "0x0000000000000000000000000000000000000000";
-  const tx = (await poolContract.withdraw(
-    a, b, c,
-    params.root,
-    params.nullifierHash,
-    params.newCommitment,
-    params.tokenAddress,
-    params.amount,
-    params.recipient,
-    relayer,
-  )) as ethers.TransactionResponse;
-  await tx.wait();
-
-  if (params.unwrapToNative) {
-    // WETH.withdraw releases native ETH to msg.sender — only valid
-    // when the caller IS the recipient (self-withdraw). The caller
-    // chose the unwrap so we don't re-validate here; mis-use sends
-    // the WETH to recipient and then this would unwrap nothing.
-    const weth = new ethers.Contract(params.tokenAddress, WETH_WITHDRAW_IFACE, signer);
-    const unwrap = (await weth.withdraw(params.amount)) as ethers.TransactionResponse;
-    await unwrap.wait();
-  }
-
-  return { kind: "onchain", txHash: tx.hash };
 }
