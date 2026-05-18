@@ -5,7 +5,7 @@ import { Button } from "@zkscatter/ui";
 import type { OrderRecord } from "../lib/orders";
 import { StatusBadge } from "./StatusBadge";
 import { useActiveNetwork } from "../lib/activeNetwork";
-import { formatField, formatTokenAmount, formatWhen } from "../lib/format";
+import { formatClaimAmount, formatField, formatWhen } from "../lib/format";
 
 const CLOSE_ANIM_MS = 200;
 
@@ -167,20 +167,6 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
       </aside>
     </div>
   );
-}
-
-/** Render the claim amount with the token's decimal precision when
- *  the active network has the token in its list; fall back to the
- *  raw bigint string with a `(raw)` suffix so the user can tell the
- *  difference. */
-function formatClaimAmount(
-  amount: bigint,
-  tokenAddress: string,
-  tokens: readonly { address: string; decimals: number }[],
-): string {
-  const tok = tokens.find((t) => t.address.toLowerCase() === tokenAddress.toLowerCase());
-  if (tok) return formatTokenAmount(amount, tok.decimals);
-  return `${amount.toString()} (raw)`;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

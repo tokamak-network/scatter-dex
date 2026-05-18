@@ -8,6 +8,8 @@ import { TestnetNotice } from "./TestnetNotice";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { claimProver } from "../lib/claimProver";
 import { abortableSleep, isAbortError } from "../lib/abort";
+import { formatClaimAmount } from "../lib/format";
+import { useActiveNetwork } from "../lib/activeNetwork";
 
 type Phase =
   | { kind: "idle" }
@@ -26,6 +28,7 @@ interface ClaimModalProps {
 export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
   const { markClaimed } = useOrders();
+  const { network } = useActiveNetwork();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const abortCtrlRef = useRef<AbortController | null>(null);
@@ -133,7 +136,14 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
         <Row k="Price" v={order.price} />
         <Row k="Size" v={order.size} />
         {order.claim && (
-          <Row k="Receive" v={`${order.claim.amount.toString()} (raw units)`} />
+          <Row
+            k="Receive"
+            v={formatClaimAmount(
+              order.claim.amount,
+              order.claim.token,
+              network.tokens,
+            )}
+          />
         )}
       </dl>
 

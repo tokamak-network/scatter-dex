@@ -18,7 +18,7 @@ import { parseUnits } from "../lib/parseUnits";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
 import { buildClaimsTree, computeCommitment, toBytes32Hex } from "@zkscatter/sdk/zk";
-import { formatTokenAmount } from "../lib/format";
+import { formatTokenAmount, formatWhen } from "../lib/format";
 import type { VaultNote } from "../lib/vault";
 import {
   expiryToUnixSec,
@@ -519,9 +519,78 @@ export function OrderModal({
         <Row k="Price" v={price} />
         <Row k="Size" v={size} />
         <Row k="Estimated fill" v={estimateFill(price, size)} />
-        <Row k="vs Uniswap" v="−0.7% slippage" />
+        {/* "vs Uniswap" was hardcoded `−0.7% slippage` regardless of
+            pair / price / size — a confident-looking lie at the most
+            critical decision point. Removed until we wire FillEstimate's
+            real spot diff here (it's already computed on the trade
+            form via useReferencePrice). */}
         <Row k="Fee" v="Free (launch event until Dec 31, 2026)" />
       </dl>
+
+      {/* Surface every row at confirm so an N-recipient vesting
+          schedule isn't signed blind. Empty fields mirror runtime
+          defaults (self / immediate). */}
+      {recipients.length > 0 && (() => {
+        const receiveSymbol = side === "sell" ? activePair.quote : activePair.base;
+        // Normalize the row amount through parseUnits → formatTokenAmount
+        // so the confirm-step display matches what gets signed
+        // (e.g. "1,000.0" and "1000" both render as "1000"); fall
+        // back to a "—" placeholder when the row can't parse so a typo
+        // doesn't look like a valid amount at the most critical step.
+        const receiveToken = DEMO_NETWORK.tokens.find((t) => t.symbol === receiveSymbol);
+        const receiveDecimals = receiveToken?.decimals ?? 18;
+        const formatRowAmount = (raw: string): string => {
+          if (!raw.trim()) return "—";
+          try {
+            const wei = parseUnits(raw.replace(/,/g, ""), receiveDecimals);
+            return formatTokenAmount(wei, receiveDecimals);
+          } catch {
+            return "—";
+          }
+        };
+        return (
+          <section className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+            <div className="border-b border-[var(--color-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+              Recipients ({recipients.length})
+            </div>
+            <ol className="divide-y divide-[var(--color-border)] text-xs">
+              {recipients.map((r, i) => {
+                const addr = r.address.trim();
+                // Use releaseAtToUnixSec (same helper the submit path
+                // uses) so the timestamp shown at confirm matches what
+                // gets committed in the claim, byte-for-byte. Empty
+                // releaseAt still surfaces as "immediate" — the submit
+                // path falls back to `nowSec`, which is semantically
+                // identical from the user's perspective.
+                const releaseLabel = r.releaseAt.trim()
+                  ? formatWhen(Number(releaseAtToUnixSec(r)) * 1000)
+                  : "immediate";
+                // Address may be blank (self), so key on address+index
+                // — index alone is fragile if rows reorder.
+                return (
+                  <li
+                    key={`${addr || "self"}-${i}`}
+                    className="grid grid-cols-[24px_1fr_auto] items-center gap-3 px-3 py-2"
+                  >
+                    <span className="text-[var(--color-text-subtle)]">{i + 1}</span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-mono">
+                        {addr ? shortAddr(addr) : "self (your wallet)"}
+                      </span>
+                      <span className="text-[10px] text-[var(--color-text-subtle)]">
+                        {releaseLabel}
+                      </span>
+                    </span>
+                    <span className="font-mono">
+                      {formatRowAmount(r.amount)} {receiveSymbol}
+                    </span>
+                  </li>
+                );
+              })}
+            </ol>
+          </section>
+        );
+      })()}
 
       <PhaseStatus phase={phase} />
 
