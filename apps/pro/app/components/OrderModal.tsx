@@ -200,6 +200,37 @@ export function OrderModal({
     maxFeeBps,
   } = useTradeForm();
 
+  // Gross buy in token-base units, computed from the form's `side` /
+  // `price` / `size` once and reused by submit, the confirm-step
+  // Relayer-fee row, and any future receive-breakdown rendering. Was
+  // open-coded in two places with subtly different decimals
+  // (Copilot/Gemini caught the second copy parsing price against the
+  // buy-token decimals instead of the always-quote price scale).
+  const confirmGrossBuy = useMemo<
+    { gross: bigint; decimals: number; symbol: string } | null
+  >(() => {
+    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
+    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    const buyTok = side === "sell" ? quoteTok : baseTok;
+    if (!baseTok || !quoteTok || !buyTok) return null;
+    try {
+      const cleanPrice = price.replace(/,/g, "");
+      const cleanSize = size.replace(/,/g, "");
+      if (!cleanPrice || !cleanSize) return null;
+      // Price is always quote-per-base, so parse with quote decimals
+      // regardless of side. Size is always in base.
+      const priceUnits = parseUnits(cleanPrice, quoteTok.decimals);
+      const sizeUnits = parseUnits(cleanSize, baseTok.decimals);
+      if (sizeUnits <= 0n) return null;
+      const gross = side === "sell"
+        ? (priceUnits * sizeUnits) / 10n ** BigInt(baseTok.decimals)
+        : sizeUnits;
+      return { gross, decimals: buyTok.decimals, symbol: buyTok.symbol };
+    } catch {
+      return null;
+    }
+  }, [side, activePair.base, activePair.quote, price, size]);
+
   // Probe each non-empty recipient against the IdentityRegistry so
   // we can short-circuit submit before paying the 1–2 s prove cost
   // when a recipient hasn't completed zk-X509 verification. Empty
@@ -346,10 +377,7 @@ export function OrderModal({
       selectedRelayer?.fee ?? 0,
       Number(maxFeeBps),
     );
-    const { fee: projectedFee, net: netReceive } = applyFeeBig(
-      buyAmount,
-      projectedFeeBps,
-    );
+    const { net: netReceive } = applyFeeBig(buyAmount, projectedFeeBps);
 
     // Resolve recipient distribution from the trade-form context.
     // Default (single empty row) is interpreted as "send the net
@@ -553,32 +581,14 @@ export function OrderModal({
             that doesn't apply here; this row is the actual amount
             deducted from buyAmount before recipient distribution. */}
         {(() => {
-          const buy = (() => {
-            try {
-              const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
-              const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
-              const buyTok = side === "sell" ? quoteTok : baseTok;
-              if (!buyTok) return null;
-              const cleanPrice = price.replace(/,/g, "");
-              const cleanSize = size.replace(/,/g, "");
-              const priceUnits = parseUnits(cleanPrice, buyTok.decimals);
-              const sizeUnits = parseUnits(cleanSize, baseTok!.decimals);
-              const gross = side === "sell"
-                ? (priceUnits * sizeUnits) / 10n ** BigInt(baseTok!.decimals)
-                : sizeUnits;
-              return { gross, decimals: buyTok.decimals, symbol: buyTok.symbol };
-            } catch {
-              return null;
-            }
-          })();
           const bps = Math.min(selectedRelayer?.fee ?? 0, Number(maxFeeBps));
-          if (!buy) {
+          if (!confirmGrossBuy) {
             return <Row k="Relayer fee" v="—" />;
           }
-          const { fee } = applyFeeBig(buy.gross, bps);
+          const { fee } = applyFeeBig(confirmGrossBuy.gross, bps);
           const feeStr = bps > 0
-            ? `${formatTokenAmount(fee, buy.decimals)} ${buy.symbol} (${bps} bps)`
-            : `0 ${buy.symbol} (0 bps)`;
+            ? `${formatTokenAmount(fee, confirmGrossBuy.decimals)} ${confirmGrossBuy.symbol} (${bps} bps)`
+            : `0 ${confirmGrossBuy.symbol} (0 bps)`;
           return <Row k="Relayer fee" v={feeStr} />;
         })()}
       </dl>
