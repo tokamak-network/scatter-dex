@@ -1112,9 +1112,13 @@ function NewPayout() {
 
   const validation = useMemo(() => {
     const issues: string[] = [];
-    // Cap-exceeded comes first because it blocks the run regardless of
-    // per-row fixes — and slice(0, 5) below would otherwise hide it
-    // behind five ordinary validation errors.
+    // Shape-of-input checks (empty / cap-exceeded) come first because
+    // they block the run regardless of per-row fixes — and slice(0, 5)
+    // below would otherwise hide them behind five ordinary validation
+    // errors. The two are mutually exclusive (0 vs >MAX).
+    if (rows.length === 0) {
+      issues.push("Add at least one recipient.");
+    }
     if (rows.length > MAX_RECIPIENTS_PER_RUN) {
       const roadmap = PLANNED_TIER_CAPS.length > 0
         ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — for now, split into multiple runs.`
@@ -1124,6 +1128,11 @@ function NewPayout() {
         : `${MAX_BATCHES_PER_RUN} settlement transactions`;
       issues.push(
         `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (${txCopy}).${roadmap}`,
+      );
+    }
+    if (!tokenAddress) {
+      issues.push(
+        `${token} isn't deployed on this network — pick another token in Step 2.`,
       );
     }
     const seen = new Set<string>();
@@ -1160,8 +1169,24 @@ function NewPayout() {
         `Unverified recipient${unverifiedLabels.length === 1 ? "" : "s"}: ${preview}${tail}. They must complete zk-X509 verification before they can claim.`,
       );
     }
+    if (!claimFrom) {
+      issues.push("Set the claim time in the Recipients step.");
+    }
+    // Funds-step concerns (shortfallRaw, multiBatchFit.covered) are
+    // intentionally NOT included here — the Step 3 → 4 next-button
+    // is gated on `validation.length > 0`, and the only way to fix a
+    // shortfall is to advance to Step 4 and deposit more. They're
+    // already enforced separately by `step4Block` and the submit
+    // button's pre-submit check, so duplicating them here would
+    // trap users on Step 3.
     return issues.slice(0, 5);
-  }, [rows, recipientIdentity]);
+  }, [
+    rows,
+    recipientIdentity,
+    tokenAddress,
+    token,
+    claimFrom,
+  ]);
 
   return (
     <div className="space-y-8">
@@ -1805,12 +1830,20 @@ function NewPayout() {
             )}
             <button
               disabled={
-                validation.length > 0 || submitting || claimFromTooEarly
+                validation.length > 0 ||
+                submitting ||
+                claimFromTooEarly ||
+                shortfallRaw > 0n ||
+                (multiBatchFit !== null && !multiBatchFit.covered)
               }
               title={
                 claimFromTooEarly
                   ? `Claim time must be at least ${CLAIM_FROM_BUFFER_MINUTES} minutes from now`
-                  : undefined
+                  : shortfallRaw > 0n
+                    ? `Funds short by ${ethers.formatUnits(shortfallRaw, decimals)} ${token} — top up in Step 4`
+                    : multiBatchFit && !multiBatchFit.covered
+                      ? "Source notes don't fit the batched settlement — adjust in Step 4"
+                      : undefined
               }
               onClick={() => {
                 if (total >= LARGE_AMOUNT_THRESHOLD) setShowConfirm(true);
