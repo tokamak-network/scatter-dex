@@ -46,6 +46,11 @@ type Phase =
 interface OrderModalProps {
   open: boolean;
   onClose: () => void;
+  /** Fires once the order has been confirmed in `phase=success`.
+   *  Page-level state (Sign & submit button, recipients list,
+   *  bulk claim-from) resets here so the workbench doesn't stay
+   *  on the just-submitted form after the user dismisses. */
+  onSubmitted?: () => void;
   side: "sell" | "buy";
   pair: string;
   price: string;
@@ -172,6 +177,7 @@ function resolveClaims(
 export function OrderModal({
   open,
   onClose,
+  onSubmitted,
   side,
   pair,
   price,
@@ -256,9 +262,17 @@ export function OrderModal({
   const close = useCallback(() => {
     abortCtrlRef.current?.abort();
     abortCtrlRef.current = null;
+    // Closing after a successful submit means the user has
+    // acknowledged the confirmation — tell the page to reset its
+    // post-order form so the workbench doesn't stay on the same
+    // pre-submit state with Sign & submit still enabled. Fire
+    // before mutating phase so the page reset and modal-close
+    // happen in the same tick.
+    const wasSuccess = phase.kind === "success";
     setPhase({ kind: "idle" });
+    if (wasSuccess) onSubmitted?.();
     onClose();
-  }, [onClose]);
+  }, [onClose, onSubmitted, phase.kind]);
 
   const submit = useCallback(async () => {
     if (!account) {

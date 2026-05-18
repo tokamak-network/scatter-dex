@@ -83,6 +83,15 @@ export interface RecipientsEditorProps {
   /** Slot above the editor for app-specific helper buttons
    *  (e.g. Pro's "Split equally", Pay's "Sample template"). */
   helperActions?: ReactNode;
+  /** Optional controlled value for the bulk "Claim from (all)" field.
+   *  When the parent passes both, the editor becomes a controlled
+   *  component for this field — letting the host (Pro) read the bulk
+   *  setting from downstream consumers (auto-settle indicator) so
+   *  it can treat the bulk value as a fallback for rows whose
+   *  per-row `releaseAt` is empty. Omit both to keep the previous
+   *  internal-state behaviour. */
+  bulkClaimFrom?: string;
+  onBulkClaimFromChange?: (value: string) => void;
 }
 
 export function RecipientsEditor({
@@ -101,6 +110,8 @@ export function RecipientsEditor({
   storageKey,
   readOnly,
   helperActions,
+  bulkClaimFrom: bulkClaimFromProp,
+  onBulkClaimFromChange,
 }: RecipientsEditorProps) {
   // SSR + first-paint: always start from the first allowed mode;
   // the mount-only effect below promotes the stored preference once
@@ -112,7 +123,26 @@ export function RecipientsEditor({
   // Bulk claim-from setter. Per-row editing stays available (vesting
   // ladders) but the common case is "one claim time for everyone";
   // typing it 128× was the previous default.
-  const [bulkClaimFrom, setBulkClaimFrom] = useState("");
+  const [internalBulkClaimFrom, setInternalBulkClaimFrom] = useState("");
+  // Both props or neither — passing the value without the change
+  // handler (or vice versa) would silently drop edits. Surface that
+  // as a dev-time error rather than letting the bulk input look
+  // alive while doing nothing.
+  if (
+    process.env.NODE_ENV !== "production" &&
+    (bulkClaimFromProp !== undefined) !== (onBulkClaimFromChange !== undefined)
+  ) {
+    throw new Error(
+      "RecipientsEditor: pass both `bulkClaimFrom` and `onBulkClaimFromChange` to control the bulk field, or neither to use the internal state.",
+    );
+  }
+  const bulkControlled =
+    bulkClaimFromProp !== undefined && onBulkClaimFromChange !== undefined;
+  const bulkClaimFrom = bulkControlled ? bulkClaimFromProp : internalBulkClaimFrom;
+  const setBulkClaimFrom = (next: string) => {
+    if (bulkControlled) onBulkClaimFromChange(next);
+    else setInternalBulkClaimFrom(next);
+  };
 
   // Restore the user's last-picked mode once on mount. Guarded
   // against `modes` shrinking between sessions — fall back to the

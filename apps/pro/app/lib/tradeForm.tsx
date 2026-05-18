@@ -75,6 +75,14 @@ interface TradeFormState {
    *  OrderModal so they can't disagree on which circuit ran. */
   activeTier: CircuitTier;
 
+  /** Bulk "Claim from (all)" datetime. Lifted out of the shared
+   *  RecipientsEditor's internal state so AutoSettleIndicator can
+   *  honour it as a fallback when per-row `releaseAt` is empty —
+   *  otherwise a user who types the bulk value (but never clicks
+   *  Apply to all) gets a default `now + 1h` settle estimate that
+   *  can land *after* their intended claim time. */
+  bulkClaimFrom: string;
+  setBulkClaimFrom(value: string): void;
 }
 
 const TradeFormCtx = createContext<TradeFormState | null>(null);
@@ -93,6 +101,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   const [price, setPrice] = useState("4,205");
   const [size, setSize] = useState("2.0");
   const [recipients, setRecipientsState] = useState<RecipientRow[]>(() => [freshRow()]);
+  const [bulkClaimFrom, setBulkClaimFrom] = useState("");
 
   const setPairBy = useCallback((display: string) => {
     const next = findPair(display);
@@ -185,12 +194,15 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       setRecipients,
       splitEqually,
       activeTier,
+      bulkClaimFrom,
+      setBulkClaimFrom,
     }),
     [
       pair, setPairBy,
       side, price, size,
       recipients, addRecipient, removeRecipient, updateRecipient,
       resetRecipients, setRecipients, splitEqually, activeTier,
+      bulkClaimFrom, setBulkClaimFrom,
     ],
   );
 
