@@ -1115,6 +1115,9 @@ function NewPayout() {
     // Cap-exceeded comes first because it blocks the run regardless of
     // per-row fixes — and slice(0, 5) below would otherwise hide it
     // behind five ordinary validation errors.
+    if (rows.length === 0) {
+      issues.push("Add at least one recipient.");
+    }
     if (rows.length > MAX_RECIPIENTS_PER_RUN) {
       const roadmap = PLANNED_TIER_CAPS.length > 0
         ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — for now, split into multiple runs.`
@@ -1124,6 +1127,11 @@ function NewPayout() {
         : `${MAX_BATCHES_PER_RUN} settlement transactions`;
       issues.push(
         `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (${txCopy}).${roadmap}`,
+      );
+    }
+    if (!tokenAddress) {
+      issues.push(
+        `${token} isn't deployed on this network — pick another token in the Funds step.`,
       );
     }
     const seen = new Set<string>();
@@ -1160,8 +1168,33 @@ function NewPayout() {
         `Unverified recipient${unverifiedLabels.length === 1 ? "" : "s"}: ${preview}${tail}. They must complete zk-X509 verification before they can claim.`,
       );
     }
+    if (shortfallRaw > 0n) {
+      issues.push(
+        `Funds short by ${ethers.formatUnits(shortfallRaw, decimals)} ${token} — deposit more or remove recipients.`,
+      );
+    }
+    // multiBatchFit === null when token/batches haven't resolved yet
+    // (e.g. first paint, empty rows). Only flag when the picker
+    // actually ran and returned uncovered.
+    if (multiBatchFit && !multiBatchFit.covered) {
+      issues.push(
+        "Source notes don't fit the batched settlement — try splitting recipients or topping up larger notes.",
+      );
+    }
+    if (!claimFrom) {
+      issues.push("Set the claim time in the Funds step.");
+    }
     return issues.slice(0, 5);
-  }, [rows, recipientIdentity]);
+  }, [
+    rows,
+    recipientIdentity,
+    tokenAddress,
+    token,
+    shortfallRaw,
+    multiBatchFit,
+    claimFrom,
+    decimals,
+  ]);
 
   return (
     <div className="space-y-8">
