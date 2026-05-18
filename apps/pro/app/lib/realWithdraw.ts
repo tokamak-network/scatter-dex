@@ -35,6 +35,17 @@ export interface SubmitWithdrawArgs {
    *  msg.sender). */
   wethAddress?: string;
   onPhase?: (phase: WithdrawPhase) => void;
+  /** Optional cancellation signal. The helper checks before each
+   *  on-chain broadcast and bails with an AbortError when set, so the
+   *  modal's Cancel button doesn't leave a tx in flight after the
+   *  user dismissed. After the pool tx is broadcast it's too late to
+   *  abort — by then the proof has been verified on-chain and the
+   *  caller is committed. */
+  signal?: AbortSignal;
+}
+
+function assertNotAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 }
 
 export interface SubmitWithdrawResult {
@@ -44,6 +55,10 @@ export interface SubmitWithdrawResult {
   /** True when the helper unwrapped WETH → native ETH after the pool
    *  call (self-withdraw of a WETH note with `wethAddress` supplied). */
   unwrapped: boolean;
+  /** Set when the unwrap step was attempted but failed — pool tx
+   *  succeeded so funds are in the user's wallet as WETH, the caller
+   *  should surface a warning so the user can re-wrap manually. */
+  unwrapError: unknown;
 }
 
 /** Full pool withdraw via the `withdraw` circuit. Ported from
@@ -59,6 +74,7 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     tree,
     wethAddress,
     onPhase,
+    signal,
   } = args;
   if (note.leafIndex < 0) {
     throw new Error("Note hasn't reconciled on-chain yet — wait one block then retry.");
@@ -74,6 +90,15 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
   }
   if (!ethers.isAddress(recipient) || recipient === ethers.ZeroAddress) {
     throw new Error("Recipient must be a valid non-zero address.");
+  }
+  // Address guards so a misconfigured deploy can't silently send a
+  // tx to an EOA / ZeroAddress and return a status=1 receipt that
+  // looks like success.
+  if (!ethers.isAddress(commitmentPoolAddress) || commitmentPoolAddress === ethers.ZeroAddress) {
+    throw new Error("CommitmentPool address is unset for this network.");
+  }
+  if (wethAddress && (!ethers.isAddress(wethAddress) || wethAddress === ethers.ZeroAddress)) {
+    throw new Error("WETH address is set but not a valid address.");
   }
 
   onPhase?.("preparing");
@@ -127,7 +152,11 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
   }
 
   onPhase?.("proving");
-  const tokenAddrHex = "0x" + note.note.token.toString(16).padStart(40, "0");
+  assertNotAborted(signal);
+  // `getAddress(toBeHex)` round-trips through the checksum so an
+  // off-by-one in token bigint width surfaces as a thrown error
+  // instead of a silently-wrong lowercase address.
+  const tokenAddrHex = ethers.getAddress(ethers.toBeHex(note.note.token, 20));
   const proofResult = await generateWithdrawProof(
     {
       note: note.note,
@@ -143,6 +172,9 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
   const changeNote = proofResult.changeNote;
 
   onPhase?.("submitting");
+  // Last chance to abort — once the tx broadcasts, the proof has
+  // been consumed and there's no taking it back.
+  assertNotAborted(signal);
   const pool = new ethers.Contract(commitmentPoolAddress, COMMITMENT_POOL_ABI, signer);
   const { proof } = proofResult;
   const tx = (await pool.withdraw(
@@ -165,8 +197,15 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
   }
 
   // WETH unwrap is opt-in via wethAddress + recipient must equal the
-  // signer (WETH.withdraw releases to msg.sender). Skip otherwise.
+  // signer (WETH.withdraw releases to msg.sender). Wrapped in
+  // try/catch so a unwrap failure doesn't block the caller from
+  // removing the spent note — the pool tx already settled
+  // authoritatively, and the user now holds WETH instead of native
+  // ETH. They can re-wrap manually if needed; treating the unwrap
+  // failure as fatal would strand the local vault note while the
+  // commitment is already burnt on-chain.
   let unwrapped = false;
+  let unwrapError: unknown = null;
   if (
     wethAddress &&
     tokenAddrHex.toLowerCase() === wethAddress.toLowerCase()
@@ -174,17 +213,25 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     const signerAddr = await signer.getAddress();
     if (signerAddr.toLowerCase() === recipient.toLowerCase()) {
       onPhase?.("unwrapping");
-      const weth = new ethers.Contract(
-        wethAddress,
-        ["function withdraw(uint256) external"],
-        signer,
-      );
-      const unwrapTx = (await weth.withdraw(amountRaw)) as ethers.ContractTransactionResponse;
-      const unwrapReceipt = await unwrapTx.wait();
-      if (!unwrapReceipt || unwrapReceipt.status !== 1) {
-        throw new Error(`WETH.withdraw unwrap failed: ${unwrapTx.hash}`);
+      try {
+        const weth = new ethers.Contract(
+          wethAddress,
+          ["function withdraw(uint256) external"],
+          signer,
+        );
+        const unwrapTx = (await weth.withdraw(amountRaw)) as ethers.ContractTransactionResponse;
+        const unwrapReceipt = await unwrapTx.wait();
+        if (!unwrapReceipt || unwrapReceipt.status !== 1) {
+          throw new Error(`WETH.withdraw unwrap failed: ${unwrapTx.hash}`);
+        }
+        unwrapped = true;
+      } catch (err) {
+        // Preserve the raw error for diagnostics; the caller decides
+        // whether to surface this to the user. The withdraw itself
+        // succeeded — funds are in the user's wallet as WETH.
+        unwrapError = err;
+        console.warn("[withdraw] WETH unwrap failed (funds held as WETH)", err);
       }
-      unwrapped = true;
     }
   }
 
@@ -196,5 +243,5 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
       }
     : null;
 
-  return { txHash: tx.hash, change, unwrapped };
+  return { txHash: tx.hash, change, unwrapped, unwrapError };
 }

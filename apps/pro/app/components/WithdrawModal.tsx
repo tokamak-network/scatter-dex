@@ -8,14 +8,19 @@ import { PreSignPreview } from "./PreSignPreview";
 import { isAbortError } from "../lib/abort";
 import { useCommitmentTree } from "../lib/commitmentTree";
 import { submitWithdraw, type WithdrawPhase } from "../lib/realWithdraw";
-import { DEMO_NETWORK } from "../lib/network";
+import { useActiveNetwork } from "../lib/activeNetwork";
 
 type DestKind = "self" | "custom";
 
 type Phase =
   | { kind: "idle" }
-  | { kind: "proving"; message?: string }
-  | { kind: "submitting" }
+  // `kind: "busy"` collapses preparing/proving/submitting/confirming
+  // /unwrapping into one "show the spinner" state but keeps the
+  // distinct message string so PhaseStatus can render what stage
+  // the user is actually in. Previously every non-proving stage
+  // rendered the same "Submitting on-chain…" copy regardless of
+  // what was happening underneath.
+  | { kind: "busy"; message: string }
   | { kind: "success" }
   | { kind: "error"; message: string };
 
@@ -32,6 +37,11 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
   const { account, signer } = useWallet();
   const { notes, remove } = useVault();
   const tree = useCommitmentTree();
+  // Pull pool + WETH addresses from the active-network context so a
+  // mid-session network switch routes the tx + tree + addresses to
+  // the same chain. Hard-coding DEMO_NETWORK risked proving against
+  // one pool's tree and submitting to a different deployment.
+  const { network: cfg } = useActiveNetwork();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [noteId, setNoteId] = useState<string | null>(initialNote?.id ?? null);
@@ -96,15 +106,14 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
     const phaseSetter = (p: WithdrawPhase) => {
+      if (ctrl.signal.aborted) return;
       const message =
         p === "preparing" ? "Preparing withdraw…"
         : p === "proving" ? "Generating ZK withdraw proof…"
         : p === "submitting" ? "Submitting on-chain…"
         : p === "confirming" ? "Awaiting confirmation…"
         : "Unwrapping WETH → ETH…";
-      const kind: "proving" | "submitting" =
-        p === "proving" ? "proving" : "submitting";
-      setPhase({ kind, message });
+      setPhase({ kind: "busy", message });
     };
     try {
       // Port from Pay's submitWithdraw — same merkle proof + prover
@@ -115,9 +124,10 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
         recipient: destAddr!,
         amountRaw: note.note.amount,
         signer,
-        commitmentPoolAddress: DEMO_NETWORK.contracts.commitmentPool,
+        commitmentPoolAddress: cfg.contracts.commitmentPool,
         tree,
-        wethAddress: DEMO_NETWORK.contracts.weth,
+        wethAddress: cfg.contracts.weth,
+        signal: ctrl.signal,
         onPhase: phaseSetter,
       });
       if (ctrl.signal.aborted) return;
@@ -130,12 +140,25 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
         console.warn("[withdraw] vault.remove failed", removeErr);
       }
       setPhase({ kind: "success" });
-      const tokenLabel = result.unwrapped ? "ETH" : note.symbol;
-      toast.push({
-        kind: "success",
-        title: `Withdrew ${note.amount} ${tokenLabel}`,
-        description: `Tx ${result.txHash.slice(0, 10)}…`,
-      });
+      // Surface the unwrap error separately — the withdraw itself
+      // settled (funds in wallet as WETH), but the user should know
+      // they need to manually unwrap if they wanted native ETH.
+      if (result.unwrapError) {
+        const reason =
+          result.unwrapError instanceof Error ? result.unwrapError.message : "unknown";
+        toast.push({
+          kind: "info",
+          title: `Withdrew ${note.amount} WETH (unwrap to ETH failed)`,
+          description: `Funds are in your wallet as WETH. Unwrap manually: ${reason}`,
+        });
+      } else {
+        const tokenLabel = result.unwrapped ? "ETH" : note.symbol;
+        toast.push({
+          kind: "success",
+          title: `Withdrew ${note.amount} ${tokenLabel}`,
+          description: `Tx ${result.txHash.slice(0, 10)}…`,
+        });
+      }
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
       const msg = e instanceof Error ? e.message : "Withdraw failed.";
@@ -144,9 +167,9 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [note, destValid, destKind, destAddr, signer, tree, remove, toast]);
+  }, [note, destValid, destKind, destAddr, signer, tree, cfg, remove, toast]);
 
-  const busy = phase.kind === "proving" || phase.kind === "submitting";
+  const busy = phase.kind === "busy";
 
   return (
     <Modal open={open} onClose={close} title="Withdraw from vault">
@@ -298,12 +321,14 @@ function PhaseStatus({ phase }: { phase: Phase }) {
       </div>
     );
   }
-  const label =
-    phase.kind === "proving" ? phase.message ?? "Generating ZK proof…" : "Submitting on-chain…";
+  // `kind === "busy"` carries the per-stage message from realWithdraw
+  // (Preparing / Generating ZK proof / Submitting / Confirming /
+  // Unwrapping) — render it verbatim instead of collapsing every
+  // non-proving stage to "Submitting on-chain…".
   return (
     <div className="mt-4 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm">
       <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
-      <span>{label}</span>
+      <span>{phase.message}</span>
     </div>
   );
 }
