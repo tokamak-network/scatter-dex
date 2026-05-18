@@ -21,6 +21,7 @@ import { formatTokenAmount, formatUsd, parseLooseNumber } from "../lib/format";
 import { useRelayers } from "../lib/relayers";
 import { applyFeeBig } from "../lib/fee";
 import { parseUnits } from "../lib/parseUnits";
+import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
 
 const MOCK_ORDERBOOK = {
   asks: [
@@ -74,7 +75,10 @@ function projectOrderbook(
 }
 
 export default function Workbench() {
-  const { pair, side, setSide, price, setPrice, size, setSize } = useTradeForm();
+  const {
+    pair, side, setSide, price, setPrice, size, setSize,
+    recipients, resetRecipients, setBulkClaimFrom,
+  } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   // Orderbook starts hidden so the form gets the full middle width.
@@ -408,19 +412,30 @@ export default function Workbench() {
                 baseSymbol={pair.base}
                 quoteSymbol={pair.quote}
               />
-              <div className="mt-3 text-xs text-[var(--color-text-muted)]">
-                Launch event: 0% trading fee until Dec 31, 2026. Proof
-                generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
-                mobile. Post-launch fee schedule set by governance.
-              </div>
-              <Button
-                onClick={() => setOrderOpen(true)}
-                block
-                size="lg"
-                className="mt-3"
-              >
-                Sign &amp; submit
-              </Button>
+              {(() => {
+                const { balanced, invalidRow } = evaluateRecipientsAllocation(
+                  recipients,
+                  netReceiveDisplay,
+                  receiveDecimals,
+                );
+                const reason = invalidRow !== null
+                  ? `Recipient #${invalidRow} amount is invalid`
+                  : !balanced
+                    ? "Recipient allocation must match the projected receive total"
+                    : undefined;
+                return (
+                  <Button
+                    onClick={() => setOrderOpen(true)}
+                    block
+                    size="lg"
+                    className="mt-3"
+                    disabled={!balanced}
+                    title={reason}
+                  >
+                    Sign &amp; submit
+                  </Button>
+                );
+              })()}
             </>
           )}
         </section>
@@ -467,6 +482,17 @@ export default function Workbench() {
       <OrderModal
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
+        onSubmitted={() => {
+          // Note that funded this order is now spent; the page
+          // re-derives `selectedNote` from the vault, which the
+          // submit flow already updated. Clear the order-specific
+          // inputs so the next order starts from a clean slate
+          // (keep pair/side/price — common to reuse those).
+          setSize("");
+          resetRecipients();
+          setBulkClaimFrom("");
+          setSelectedNoteId(null);
+        }}
         side={side}
         pair={pair.display}
         price={price}
@@ -492,7 +518,7 @@ export default function Workbench() {
  *  away, the order is unservable; surface that as a warning state.
  *  Re-renders on a 60s tick so the relative copy doesn't freeze. */
 function AutoSettleIndicator() {
-  const { recipients } = useTradeForm();
+  const { recipients, bulkClaimFrom } = useTradeForm();
   // SSR ↔ first-client-render must agree to avoid hydration mismatch.
   // Initialise `now` to null and populate it from useEffect; the
   // indicator renders a placeholder dash on the server until the
@@ -510,8 +536,17 @@ function AutoSettleIndicator() {
     | null
   >(() => {
     if (now === null) return null;
+    // Effective per-row claim: explicit row value, else bulk
+    // "Claim from (all)" (typing it without clicking Apply to all
+    // still counts — otherwise the auto-settle default `now + 1h`
+    // could land *after* the user's intended claim time).
+    const bulkMs = bulkClaimFrom ? Date.parse(bulkClaimFrom) : NaN;
     const claimMs = recipients
-      .map((r) => (r.releaseAt ? Date.parse(r.releaseAt) : NaN))
+      .map((r) => {
+        const own = r.releaseAt ? Date.parse(r.releaseAt) : NaN;
+        if (Number.isFinite(own)) return own;
+        return Number.isFinite(bulkMs) ? bulkMs : NaN;
+      })
       .filter((m): m is number => Number.isFinite(m));
     if (claimMs.length === 0) {
       return { kind: "default", expiryMs: now + 3_600_000 };
@@ -523,7 +558,7 @@ function AutoSettleIndicator() {
       return { kind: "too-tight", earliestClaimMs: minClaim };
     }
     return { kind: "from-claim", expiryMs: minClaim - 5 * 60_000 };
-  }, [recipients, now]);
+  }, [recipients, now, bulkClaimFrom]);
 
   if (derived === null) {
     // SSR / pre-mount fallback — render a placeholder so the markup

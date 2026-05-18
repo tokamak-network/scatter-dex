@@ -9,6 +9,7 @@ import { useWalletBook } from "../lib/walletBook";
 import { useIdentityForAddresses } from "../lib/identity";
 import { parseUnits } from "../lib/parseUnits";
 import { formatTokenAmount } from "../lib/format";
+import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
 
 interface RecipientsSectionProps {
   /** Quote-token symbol displayed alongside amount inputs so the
@@ -38,6 +39,8 @@ export function RecipientsSection({
     setRecipients,
     splitEqually,
     activeTier,
+    bulkClaimFrom,
+    setBulkClaimFrom,
   } = useTradeForm();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const walletBook = useWalletBook();
@@ -81,26 +84,29 @@ export function RecipientsSection({
   // parse — silently summing past it would hide validation errors
   // until submit and surface as a misleading "short by X" delta.
   const { sumStr, deltaStr, balanced, invalidRow } = useMemo(() => {
+    const { balanced, invalidRow } = evaluateRecipientsAllocation(
+      recipients,
+      receiveTotal,
+      receiveDecimals,
+    );
     if (!receiveTotal || receiveTotal.replace(/,/g, "") === "") {
-      return { sumStr: "—", deltaStr: "", balanced: false, invalidRow: null };
+      return { sumStr: "—", deltaStr: "", balanced, invalidRow };
     }
     let target: bigint;
     try {
       target = parseUnits(receiveTotal.replace(/,/g, ""), receiveDecimals);
     } catch {
-      return { sumStr: "—", deltaStr: "", balanced: false, invalidRow: null };
+      return { sumStr: "—", deltaStr: "", balanced, invalidRow };
     }
     let sum = 0n;
-    let firstInvalid: number | null = null;
-    recipients.forEach((r, i) => {
+    recipients.forEach((r) => {
       if (!r.amount.trim()) return;
       try {
         sum += parseUnits(r.amount.replace(/,/g, ""), receiveDecimals);
       } catch {
-        if (firstInvalid === null) firstInvalid = i + 1;
+        /* invalidRow already captured by evaluateRecipientsAllocation */
       }
     });
-    const balanced = sum === target && firstInvalid === null;
     const diff = sum > target ? sum - target : target - sum;
     return {
       sumStr: `${formatTokenAmount(sum, receiveDecimals)} ${quoteSymbol}`,
@@ -108,7 +114,7 @@ export function RecipientsSection({
         ? ""
         : `${sum > target ? "over" : "short"} by ${formatTokenAmount(diff, receiveDecimals)} ${quoteSymbol}`,
       balanced,
-      invalidRow: firstInvalid,
+      invalidRow,
     };
   }, [recipients, receiveTotal, receiveDecimals, quoteSymbol]);
 
@@ -150,6 +156,8 @@ export function RecipientsSection({
         amountDecimals={receiveDecimals}
         addressBook={walletBook.entries}
         getAddressVerification={getAddressVerification}
+        bulkClaimFrom={bulkClaimFrom}
+        onBulkClaimFromChange={setBulkClaimFrom}
         sampleHref="/samples/recipients-sample.csv"
         storageKey="pro:recipients-editor-mode"
         helperActions={
