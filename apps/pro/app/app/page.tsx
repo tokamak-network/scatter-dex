@@ -10,7 +10,6 @@ import { useTradeForm } from "../lib/tradeForm";
 import { OrderModal } from "../components/OrderModal";
 import { MyPositionPanel } from "../components/MyPositionPanel";
 import { PairSelector } from "../components/PairSelector";
-import { AdvancedSettings } from "../components/AdvancedSettings";
 import { RecipientsSection } from "../components/RecipientsSection";
 import { NoteSelect } from "../components/NoteSelect";
 import { RelayerPicker } from "../components/RelayerPicker";
@@ -75,7 +74,7 @@ function projectOrderbook(
 }
 
 export default function Workbench() {
-  const { pair, side, setSide, price, setPrice, size, setSize, maxFeeBps } = useTradeForm();
+  const { pair, side, setSide, price, setPrice, size, setSize } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   // Orderbook starts hidden so the form gets the full middle width.
@@ -185,12 +184,12 @@ export default function Workbench() {
   // its denominator, otherwise sum(claims) > buyAmount − fee will
   // pass UI validation only to revert at settle with ClaimsCapExceeded.
   const { selected: selectedRelayer } = useRelayers();
-  // Clamp the relayer's quoted fee to the user-signed cap (maxFeeBps).
-  // Without this clamp the display fee would differ from what the
-  // submit path passes to `resolveClaims` — operators with a low
-  // maxFeeBps would see a budget larger than what the proof will
-  // actually permit. Mirrors the same `min` used in OrderModal.submit.
-  const effectiveFeeBps = Math.min(selectedRelayer?.fee ?? 0, maxFeeBps);
+  // Display the relayer's quoted fee. The signed on-chain cap
+  // (`autoMaxFeeBps` in OrderModal) is derived independently with
+  // ~10% headroom so a relayer bumping their registry fee between
+  // sign and settle still settles within bounds — the display value
+  // here is what the operator pays in the common case.
+  const effectiveFeeBps = selectedRelayer?.fee ?? 0;
   const {
     receiveSymbol,
     receiveDecimals,
@@ -400,9 +399,7 @@ export default function Workbench() {
                 receiveDecimals={receiveDecimals}
               />
 
-              <ExpiryField />
-
-              <AdvancedSettings />
+              <AutoSettleIndicator />
 
               <FillEstimate
                 side={side}
@@ -486,33 +483,47 @@ export default function Workbench() {
   );
 }
 
-/** Order's "must settle by" deadline. Surfaced in the main form
- *  because the user is picking an absolute deadline, not one of a
- *  handful of presets — and because every recipient's release time
- *  is relative to "after the order actually settles". Hidden inside
- *  Advanced would let users miss that their order has a hard
- *  expiry. */
-function ExpiryField() {
-  const { expiry, setExpiry } = useTradeForm();
+/** Read-only indicator showing the auto-derived settle-by deadline.
+ *  No input — the deadline follows from the recipients' claim times
+ *  by the same rule OrderModal.submit uses (earliest claim − 5 min,
+ *  capped at now + 1 h, floored at now + 5 min). Re-renders on a
+ *  60s tick so the relative "in 58 min" copy doesn't freeze. */
+function AutoSettleIndicator() {
+  const { recipients } = useTradeForm();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const expiryMs = useMemo(() => {
+    const claimMs = recipients
+      .map((r) => (r.releaseAt ? Date.parse(r.releaseAt) : NaN))
+      .filter((m) => Number.isFinite(m) && m > now);
+    const oneHour = now + 3_600_000;
+    const fiveMin = now + 300_000;
+    if (claimMs.length === 0) return oneHour;
+    const minClaim = Math.min(...claimMs);
+    return Math.max(fiveMin, Math.min(minClaim - 300_000, oneHour));
+  }, [recipients, now]);
+  const dt = new Date(expiryMs);
+  const absolute = dt.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const relMin = Math.max(1, Math.round((expiryMs - now) / 60_000));
   return (
-    <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-      <label className="block text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-        Order must settle by
-      </label>
-      <input
-        type="datetime-local"
-        value={expiry}
-        onChange={(e) => setExpiry(e.target.value)}
-        aria-label="Order expiry deadline"
-        className="mt-1.5 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-sm"
-      />
-      <p className={`mt-1 text-[11px] ${expiry ? "text-[var(--color-text-subtle)]" : "text-[var(--color-text-muted)]"}`}>
-        {expiry ? (
-          <>Hard deadline. If the relayer doesn&apos;t match this order by then, it expires and your funds stay in your vault.</>
-        ) : (
-          <><strong>Defaults to 1&nbsp;hour from now</strong> when left empty. Hard deadline — if the relayer doesn&apos;t match by then, the order expires and your funds stay in your vault.</>
-        )}
-      </p>
+    <div className="mt-3 flex items-baseline justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-[11px]">
+      <span className="font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+        Auto-settle by
+      </span>
+      <span className="font-mono text-[var(--color-text)]">
+        {absolute}
+        <span className="ml-1 text-[var(--color-text-subtle)]">
+          (in {relMin} min)
+        </span>
+      </span>
     </div>
   );
 }

@@ -22,7 +22,6 @@ import { formatTokenAmount, formatWhen } from "../lib/format";
 import { applyFeeBig } from "../lib/fee";
 import type { VaultNote } from "../lib/vault";
 import {
-  expiryToUnixSec,
   releaseAtToUnixSec,
   useTradeForm,
   type RecipientRow,
@@ -98,6 +97,9 @@ function estimateFill(price: string, size: string): string {
  *  (validateAuthorize) — so any larger sum would settle-revert with
  *  ClaimsCapExceeded after the prove burn. */
 const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
+
+const bigIntMin = (a: bigint, b: bigint): bigint => (a < b ? a : b);
+const bigIntMax = (a: bigint, b: bigint): bigint => (a > b ? a : b);
 
 function resolveClaims(
   rows: readonly RecipientRow[],
@@ -196,8 +198,6 @@ export function OrderModal({
     pair: activePair,
     recipients,
     activeTier,
-    expiry: expiryAtLocal,
-    maxFeeBps,
   } = useTradeForm();
 
   // Gross buy in token-base units, computed from the form's `side` /
@@ -373,10 +373,21 @@ export function OrderModal({
     // matcher will respect), keeping the cap as a back-stop. Either
     // way, sum(claims) ≤ buyAmount − fee (on-chain ClaimsCapExceeded
     // otherwise).
-    const projectedFeeBps = Math.min(
-      selectedRelayer?.fee ?? 0,
-      Number(maxFeeBps),
+    // Auto-derived fee cap. Was a user-facing slider in Advanced
+    // Settings (defaulted to 30 bps), removed in favour of a derived
+    // value: the relayer's currently-quoted fee + 10% headroom,
+    // clamped to MAX_RELAYER_FEE_BPS=500 (matches the on-chain cap
+    // in RelayerRegistry). Caps a hostile relayer that registers low
+    // and then bumps their on-chain fee between sign and settle,
+    // without making the operator manage a slider they almost always
+    // left at default.
+    const relayerFeeBps = selectedRelayer?.fee ?? 0;
+    const REGISTRY_MAX_FEE_BPS = 500;
+    const autoMaxFeeBps = Math.min(
+      Math.max(Math.ceil(relayerFeeBps * 1.1), relayerFeeBps + 1),
+      REGISTRY_MAX_FEE_BPS,
     );
+    const projectedFeeBps = Math.min(relayerFeeBps, autoMaxFeeBps);
     const { net: netReceive } = applyFeeBig(buyAmount, projectedFeeBps);
 
     // Resolve recipient distribution from the trade-form context.
@@ -413,12 +424,29 @@ export function OrderModal({
       // build. Falls back inside the helpers when the user left
       // the corresponding input empty.
       const nowSec = BigInt(Math.floor(Date.now() / 1000));
-      const expirySec = expiryToUnixSec(expiryAtLocal, nowSec);
 
       const claims: ClaimEntry[] = resolved.map((r, i) => ({
         ...r,
         releaseTime: releaseAtToUnixSec(recipients[i]!, nowSec),
       }));
+
+      // Auto-derive settle-by from the (now-resolved) per-recipient
+      // release times. No separate "Order must settle by" input — the
+      // operator picks claim times, settle deadline follows. Rule:
+      //   - earliest claim minus 5min buffer, but at most 1h from now
+      //     (long-horizon vesting orders shouldn't sit unmatched for
+      //     months)
+      //   - floor at now+5min so we never sign an already-expired order
+      // No claim times set → 1h from now (preserves the legacy default).
+      const claimSecs = claims.map((c) => c.releaseTime).filter((s) => s > nowSec);
+      const minClaim = claimSecs.length > 0
+        ? claimSecs.reduce((a, b) => (a < b ? a : b))
+        : null;
+      const oneHour = nowSec + 3600n;
+      const fiveMinFromNow = nowSec + 300n;
+      const expirySec = minClaim !== null
+        ? bigIntMax(fiveMinFromNow, bigIntMin(minClaim - 300n, oneHour))
+        : oneHour;
 
       const commitment = await computeCommitment(note.note);
       const { merkleProof, leafIndex } = await getMerkleProofWithFallback(
@@ -445,7 +473,7 @@ export function OrderModal({
         sellAmount,
         buyToken: buyToken.address,
         buyAmount,
-        maxFee: BigInt(maxFeeBps),
+        maxFee: BigInt(autoMaxFeeBps),
         expiry: expirySec,
         nonce,
         relayer: relayerAddress,
@@ -544,7 +572,7 @@ export function OrderModal({
     }
   }, [
     side, pair, price, size, account, note,
-    activePair, recipients, expiryAtLocal, maxFeeBps,
+    activePair, recipients,
     deriveEdDSA, addOrder, toast, commitmentTree,
     selectedRelayer, recipientIdentity,
   ]);
@@ -581,7 +609,10 @@ export function OrderModal({
             that doesn't apply here; this row is the actual amount
             deducted from buyAmount before recipient distribution. */}
         {(() => {
-          const bps = Math.min(selectedRelayer?.fee ?? 0, Number(maxFeeBps));
+          // Confirm-row uses the relayer's quoted fee directly —
+          // autoMaxFeeBps is the on-chain cap, not the displayed
+          // charge. Mirrors the projection on the order form.
+          const bps = selectedRelayer?.fee ?? 0;
           if (!confirmGrossBuy) {
             return <Row k="Relayer fee" v="—" />;
           }
