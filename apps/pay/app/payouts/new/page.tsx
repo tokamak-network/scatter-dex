@@ -1112,9 +1112,10 @@ function NewPayout() {
 
   const validation = useMemo(() => {
     const issues: string[] = [];
-    // Cap-exceeded comes first because it blocks the run regardless of
-    // per-row fixes — and slice(0, 5) below would otherwise hide it
-    // behind five ordinary validation errors.
+    // Shape-of-input checks (empty / cap-exceeded) come first because
+    // they block the run regardless of per-row fixes — and slice(0, 5)
+    // below would otherwise hide them behind five ordinary validation
+    // errors. The two are mutually exclusive (0 vs >MAX).
     if (rows.length === 0) {
       issues.push("Add at least one recipient.");
     }
