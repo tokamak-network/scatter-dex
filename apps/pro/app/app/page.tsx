@@ -294,6 +294,24 @@ export default function Workbench() {
                     className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
                   />
                 </Field>
+                {/* Anchors the "over/short by X" delta in
+                    RecipientsSection — without the receive total
+                    visible, that delta has no reference point. */}
+                {receiveTotalDisplay && (
+                  <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                      You receive
+                    </div>
+                    <div className="font-mono text-base font-semibold text-[var(--color-text)]">
+                      {receiveTotalDisplay} {receiveSymbol}
+                    </div>
+                    {side === "sell" && (
+                      <div className="text-[10px] text-[var(--color-text-subtle)]">
+                        = {size || "0"} {pair.base} × {price || "0"} {pair.quote}/{pair.base}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>

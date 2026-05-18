@@ -3,7 +3,22 @@
  *  numeric / time fields the same way. The bigint-only token
  *  amount helper is shared with operators via the SDK. */
 
-export { formatTokenAmount } from "@zkscatter/sdk/util";
+import { formatTokenAmount } from "@zkscatter/sdk/util";
+export { formatTokenAmount };
+
+/** Fallback to raw bigint + `(raw)` suffix keeps a misconfigured
+ *  deployment visibly debuggable instead of silently formatting zero. */
+export function formatClaimAmount(
+  amount: bigint,
+  tokenAddress: string,
+  tokens: readonly { address: string; decimals: number; symbol: string }[],
+): string {
+  const tok = tokens.find(
+    (t) => t.address.toLowerCase() === tokenAddress.toLowerCase(),
+  );
+  if (tok) return `${formatTokenAmount(amount, tok.decimals)} ${tok.symbol}`;
+  return `${amount.toString()} (raw)`;
+}
 
 /** Human-readable UTC timestamp (`Apr 26, 09:14 UTC`). Locale fixed
  *  to `en-US` so SSR and client agree. */

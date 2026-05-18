@@ -174,9 +174,24 @@ export function RecipientsSection({
       >
         <span>Allocated</span>
         <span className="font-mono">
-          {invalidRow !== null
-            ? `Recipient #${invalidRow} amount is invalid`
-            : `${sumStr}${deltaStr ? ` · ${deltaStr}` : ""}`}
+          {invalidRow !== null ? (
+            `Recipient #${invalidRow} amount is invalid`
+          ) : (
+            <>
+              {/* Include the target denominator (`/ <total receive>`)
+                  inline so the over/short delta has a visible anchor —
+                  otherwise users see "11,200 USDC · over by 6,995" and
+                  have to subtract to recover the budget. */}
+              {sumStr}
+              {receiveTotal && (
+                <span className="text-[var(--color-text-subtle)]">
+                  {" "}
+                  / {receiveTotal} {quoteSymbol}
+                </span>
+              )}
+              {deltaStr ? ` · ⚠ ${deltaStr}` : ""}
+            </>
+          )}
         </span>
       </div>
 

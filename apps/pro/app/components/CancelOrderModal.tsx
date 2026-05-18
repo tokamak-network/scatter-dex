@@ -33,6 +33,26 @@ interface Props {
   order: OrderRecord | null;
 }
 
+/** Returns the first reason the cancel flow cannot proceed, or null
+ *  when everything is wired up. Same checks were duplicated between
+ *  the in-modal disable guard and submit()'s runtime error path. */
+function cancelBlockReason(
+  order: OrderRecord,
+  notes: ReadonlyArray<{ id: string }>,
+  selectedRelayer: { address: string } | null,
+): string | null {
+  if (order.nonce === undefined || order.noteId === undefined) {
+    return "Order is missing the nonce / funding-note metadata required to cancel.";
+  }
+  if (!notes.some((n) => n.id === order.noteId)) {
+    return "The note that funded this order is no longer in your vault — cancel cannot proceed.";
+  }
+  if (!selectedRelayer) {
+    return "Pick an online relayer (top-right pill) before cancelling — the cancel proof binds the submitter.";
+  }
+  return null;
+}
+
 export function CancelOrderModal({ open, onClose, order }: Props) {
   const { markCancelled } = useOrders();
   const { notes } = useVault();
@@ -59,36 +79,15 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
 
   const submit = useCallback(async () => {
     if (!order) return;
-    if (order.nonce === undefined || order.noteId === undefined) {
-      setPhase({
-        kind: "error",
-        message:
-          "This order is missing the nonce / funding-note metadata required to cancel it.",
-      });
+    const reason = cancelBlockReason(order, notes, selectedRelayer);
+    if (reason) {
+      setPhase({ kind: "error", message: reason });
       return;
     }
-    const note = notes.find((n) => n.id === order.noteId);
-    if (!note) {
-      setPhase({
-        kind: "error",
-        message:
-          "The note that funded this order is no longer in the vault — cancel cannot proceed.",
-      });
-      return;
-    }
-    // Cancel proof signs `Poseidon(nonceNullifier, relayer)` so the
-    // cancel-tx submitter is bound. Refuse to prove without a real
-    // relayer — a ZeroAddress fallback would produce a 1–2 s desktop
-    // / 5–9 s mobile proof that can never be settled.
-    if (!selectedRelayer) {
-      setPhase({
-        kind: "error",
-        message:
-          "Choose an online relayer before cancelling — the cancel proof binds the submitter.",
-      });
-      return;
-    }
-    const relayerAddr = selectedRelayer.address;
+    // Non-null assertions justified by cancelBlockReason — all three
+    // checks above guarantee these when reason is null.
+    const note = notes.find((n) => n.id === order.noteId)!;
+    const relayerAddr = selectedRelayer!.address;
 
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
@@ -109,7 +108,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         note: note.note,
         leafIndex,
         merkleProof,
-        nonce: order.nonce,
+        nonce: order.nonce!,
         eddsaPrivateKey: eddsaKey.privateKey,
         relayer: relayerAddr,
       };
@@ -167,6 +166,10 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     phase.kind === "proving" ||
     phase.kind === "submitting";
 
+  // Disable the button + show the same reason inline BEFORE the user
+  // clicks and burns the 1–2 s prove.
+  const blockReason = cancelBlockReason(order, notes, selectedRelayer);
+
   return (
     <Modal open={open} onClose={close} title="Cancel order">
       <PreSignPreview
@@ -183,6 +186,12 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         footer="Generates a ZK cancel proof binding the order's nonce nullifier to the chosen relayer. Once the contract dispatch ships, this also rotates the escrow to a fresh commitment so the same balance can immediately be re-ordered. Funds stay in your vault either way."
       />
 
+      {blockReason && phase.kind !== "success" && (
+        <div className="mt-4 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
+          ⚠ {blockReason}
+        </div>
+      )}
+
       <PhaseStatus phase={phase} />
 
       <div className="mt-5 flex justify-end gap-2">
@@ -198,8 +207,11 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
             <Button
               variant="danger"
               onClick={submit}
-              disabled={busy || isDeriving}
-              title={isDeriving ? "Awaiting wallet signature…" : undefined}
+              disabled={busy || isDeriving || blockReason !== null}
+              title={
+                blockReason ??
+                (isDeriving ? "Awaiting wallet signature…" : undefined)
+              }
             >
               {busy
                 ? "Working…"

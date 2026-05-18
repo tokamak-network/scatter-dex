@@ -8,6 +8,8 @@ import { TestnetNotice } from "./TestnetNotice";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { claimProver } from "../lib/claimProver";
 import { abortableSleep, isAbortError } from "../lib/abort";
+import { formatClaimAmount } from "../lib/format";
+import { DEMO_NETWORK } from "../lib/network";
 
 type Phase =
   | { kind: "idle" }
@@ -133,7 +135,14 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
         <Row k="Price" v={order.price} />
         <Row k="Size" v={order.size} />
         {order.claim && (
-          <Row k="Receive" v={`${order.claim.amount.toString()} (raw units)`} />
+          <Row
+            k="Receive"
+            v={formatClaimAmount(
+              order.claim.amount,
+              order.claim.token,
+              DEMO_NETWORK.tokens,
+            )}
+          />
         )}
       </dl>
 
