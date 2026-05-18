@@ -394,7 +394,11 @@ if [ "$MOCK_MODE" = true ]; then
   # reach anvil at the Mac's 192.168.x.y address (default bind is
   # 127.0.0.1 only). adb-reverse to localhost works too, but a LAN bind is
   # the no-trick path users reach for first.
-  anvil --silent --hardfork prague --host 0.0.0.0 &
+  # `--accounts 11` covers test accounts #0–#10 (default is 10 = #0–#9).
+  # DeployLocal.s.sol's testers loop pre-funds USDC/USDT/TON/WETH to all
+  # 11; bumping anvil's prefund here keeps ETH balances consistent across
+  # the same set so account #10 isn't a footgun for testers.
+  anvil --silent --hardfork prague --host 0.0.0.0 --accounts 11 &
   last_pid=$!
   PIDS+=("$last_pid")
   if ! wait_for "$RPC_URL" "anvil" 10; then
@@ -738,6 +742,7 @@ NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
+NEXT_PUBLIC_ZK_X509_URL=${ZK_X509_URL:-http://localhost:3000}
 EOF
   case "$target_dir" in
     */apps/pay)
@@ -754,6 +759,7 @@ NEXT_PUBLIC_PAY_USDT=$USDT
 NEXT_PUBLIC_PAY_TON=$TON
 NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$INDEX_FROM
+NEXT_PUBLIC_PAY_ZK_X509_URL=${ZK_X509_URL:-http://localhost:3000}
 EOF
       ;;
   esac
