@@ -6,15 +6,22 @@ import type { WalletEntry } from "@zkscatter/sdk/storage";
 
 /** Multi-select picker over the address book. Used by both Pay's
  *  payout wizard and Pro's order form — that's why it lives in the
- *  shared package instead of either app's component tree. */
+ *  shared package instead of either app's component tree.
+ *
+ *  `getVerification` is optional so callers without an identity
+ *  source still work (legacy behaviour). When provided, unverified
+ *  rows are visibly tagged and unselectable — recipients who can't
+ *  claim shouldn't be queued up only to fail after the proof burn. */
 export function AddressBookPicker({
   entries,
   onCancel,
   onPick,
+  getVerification,
 }: {
   entries: WalletEntry[];
   onCancel: () => void;
   onPick: (picked: WalletEntry[]) => void;
+  getVerification?: (address: string) => "verified" | "unverified" | null;
 }) {
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -68,31 +75,57 @@ export function AddressBookPicker({
           </div>
         ) : (
           <ul className="space-y-1">
-            {filtered.map((e) => (
-              <li key={e.id}>
-                <label className="flex cursor-pointer items-center gap-3 rounded-md border border-transparent px-2 py-1.5 hover:border-[var(--color-border)]">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(e.id)}
-                    onChange={() => toggle(e.id)}
-                  />
-                  <div className="flex-1 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{e.label}</span>
-                    </div>
-                    <div className="font-mono text-xs text-[var(--color-text-muted)]">
-                      {e.address!.slice(0, 10)}…{e.address!.slice(-4)}
-                      {e.memo ? ` · ${e.memo}` : ""}
-                    </div>
-                    {e.email && (
-                      <div className="text-xs text-[var(--color-text-muted)]">
-                        {e.email}
+            {filtered.map((e) => {
+              const status = getVerification?.(e.address!) ?? null;
+              const isUnverified = status === "unverified";
+              return (
+                <li key={e.id}>
+                  <label
+                    className={`flex items-center gap-3 rounded-md border border-transparent px-2 py-1.5 ${
+                      isUnverified
+                        ? "cursor-not-allowed opacity-60"
+                        : "cursor-pointer hover:border-[var(--color-border)]"
+                    }`}
+                    title={
+                      isUnverified
+                        ? "Recipient hasn't completed zk-X509 verification — they can't claim."
+                        : undefined
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(e.id)}
+                      onChange={() => toggle(e.id)}
+                      disabled={isUnverified}
+                    />
+                    <div className="flex-1 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{e.label}</span>
+                        {isUnverified && (
+                          <span className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-warning)]">
+                            ⚠ Unverified
+                          </span>
+                        )}
+                        {status === "verified" && (
+                          <span className="inline-flex items-center rounded-full bg-[var(--color-success-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-success)]">
+                            ✓ Verified
+                          </span>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </label>
-              </li>
-            ))}
+                      <div className="font-mono text-xs text-[var(--color-text-muted)]">
+                        {e.address!.slice(0, 10)}…{e.address!.slice(-4)}
+                        {e.memo ? ` · ${e.memo}` : ""}
+                      </div>
+                      {e.email && (
+                        <div className="text-xs text-[var(--color-text-muted)]">
+                          {e.email}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
