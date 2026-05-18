@@ -4,14 +4,9 @@ import { useMemo } from "react";
 import { createVaultProvider } from "@zkscatter/sdk/react";
 import { createIndexedDbNoteAdapter } from "@zkscatter/sdk/notes";
 import { useActiveNetwork } from "./activeNetwork";
+import { newId } from "./newId";
 
 export type { VaultNote, VaultState } from "@zkscatter/sdk/react";
-
-function newId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-}
 
 // Pro switches networks at runtime — chainId comes from the active-
 // network context. The IDB DB is keyed per chain so notes from one

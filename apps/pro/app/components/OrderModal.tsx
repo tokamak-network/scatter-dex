@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZERO_ADDRESS } from "@zkscatter/sdk";
 import {
@@ -11,6 +12,8 @@ import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { useIdentityForAddresses, useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
+import { downloadOrderClaimsBundle } from "../lib/claimsBundle";
+import { useActiveNetwork } from "../lib/activeNetwork";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../lib/relayers";
 import { authorizeProver } from "../lib/authorizeProver";
@@ -190,6 +193,7 @@ export function OrderModal({
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const { selected: selectedRelayer } = useRelayers();
+  const { network: activeNetwork } = useActiveNetwork();
   const commitmentTree = useCommitmentTree();
   const toast = useToast();
   // Pull the active pair object + advanced settings from the
@@ -564,6 +568,20 @@ export function OrderModal({
           claimsRoot: toBytes32Hex(claimsRoot),
         },
       });
+      // Off-device backup: every claim secret the user will need
+      // to release this order is now persisted in IndexedDB locally,
+      // but a wiped browser profile would erase that copy entirely.
+      // Hand the user a JSON file with the same material so they
+      // have an off-device fallback. Failures here are non-fatal —
+      // the in-app claim flow keeps working from the IDB copy.
+      try {
+        downloadOrderClaimsBundle(order, {
+          relayerUrl: selectedRelayer?.url ?? null,
+          chainId: activeNetwork.chainId,
+        });
+      } catch (e) {
+        console.warn("[order] claims-bundle download failed", e);
+      }
       setPhase({ kind: "success", orderLabel: order.label });
       const action = side === "sell" ? "Sell" : "Buy";
       const description =
@@ -590,7 +608,7 @@ export function OrderModal({
     side, pair, price, size, account, note,
     activePair, recipients,
     deriveEdDSA, addOrder, toast, commitmentTree,
-    selectedRelayer, recipientIdentity,
+    selectedRelayer, recipientIdentity, activeNetwork,
   ]);
 
   const busy =
@@ -705,7 +723,7 @@ export function OrderModal({
         );
       })()}
 
-      <PhaseStatus phase={phase} />
+      <PhaseStatus phase={phase} onClose={close} />
 
       <div className="mt-5 flex justify-end gap-2">
         {phase.kind === "success" ? (
@@ -753,7 +771,7 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function PhaseStatus({ phase }: { phase: Phase }) {
+function PhaseStatus({ phase, onClose }: { phase: Phase; onClose: () => void }) {
   if (phase.kind === "idle") return null;
 
   if (phase.kind === "error") {
@@ -771,8 +789,25 @@ function PhaseStatus({ phase }: { phase: Phase }) {
           Order submitted
         </div>
         <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-          {phase.orderLabel} is now matching against the orderbook. Open
-          the Orders page to track it.
+          {phase.orderLabel} is now matching against the orderbook. Your
+          claim secrets were saved locally and a backup file was
+          downloaded — keep it somewhere safe.
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Link
+            href="/orders"
+            onClick={onClose}
+            className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90"
+          >
+            View my orders →
+          </Link>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+          >
+            Place another
+          </button>
         </div>
       </div>
     );
