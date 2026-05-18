@@ -264,27 +264,41 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   // unmounted provider.
   const promoteTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
-  // Hydrate from IDB on mount / chain change. Seed labelCounter from
-  // the largest `ord-N` we find so post-hydration adds don't clash
-  // with the persisted ones. Clears any in-flight timers + their
-  // scheduled-set bookkeeping so a promote scheduled against the
-  // previous chain's adapter can't write back to the new one.
+  // Hydrate from IDB on mount / chain change. Clears the previous
+  // chain's rows + in-flight timers synchronously so:
+  //   (a) the UI never paints the old chain's orders against the
+  //       new chain's identity,
+  //   (b) a promote scheduled against the previous chain's adapter
+  //       can't write back to the new one.
+  // The async `loadAll` resolves into a *functional* setOrders that
+  // dedupes by id against anything added during the hydration
+  // window (e.g. a fast user click), and labelCounter is computed
+  // monotonically over the merged set so labels can't collide.
   useEffect(() => {
     let cancelled = false;
     const timers = promoteTimers.current;
     for (const t of timers) clearTimeout(t);
     timers.clear();
     scheduledIds.current.clear();
+    setOrders([]);
+    labelCounter.current = 0;
     adapter.loadAll().then((loaded) => {
       if (cancelled) return;
-      const sorted = loaded.sort((a, b) => b.createdAt - a.createdAt);
-      setOrders(sorted);
-      let maxSeq = 0;
-      for (const o of loaded) {
-        const m = /^ord-(\d+)$/.exec(o.label);
-        if (m) maxSeq = Math.max(maxSeq, Number(m[1]));
-      }
-      labelCounter.current = maxSeq;
+      setOrders((pending) => {
+        const byId = new Map<string, OrderRecord>();
+        for (const o of loaded) byId.set(o.id, o);
+        for (const o of pending) byId.set(o.id, o);
+        const merged = Array.from(byId.values()).sort(
+          (a, b) => b.createdAt - a.createdAt,
+        );
+        let maxSeq = 0;
+        for (const o of merged) {
+          const m = /^ord-(\d+)$/.exec(o.label);
+          if (m) maxSeq = Math.max(maxSeq, Number(m[1]));
+        }
+        labelCounter.current = maxSeq;
+        return merged;
+      });
     });
     return () => {
       cancelled = true;
