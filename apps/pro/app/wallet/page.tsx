@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import {
   ERC20_ABI,
@@ -21,7 +21,19 @@ export default function WalletPage() {
   const { network: cfg } = useActiveNetwork();
   const { account, signer, readProvider } = useWallet();
   const mounted = useMounted();
-  const [rows, setRows] = useState<BalanceRow[]>(() => initialRows(cfg.tokens));
+  // Synthesize a WETH row alongside native ETH so the wallet shows
+  // both balances. Same on-chain address as ETH; the row reads via
+  // `balanceOf` (isNative=false). Matches the dual entry exposed in
+  // the deposit modal so wallet ↔ deposit numbers stay consistent.
+  const tokensWithWeth = useMemo(() => {
+    const eth = cfg.tokens.find((t) => t.isNative && t.address && t.address !== ZERO);
+    if (!eth) return cfg.tokens;
+    return [
+      ...cfg.tokens,
+      { ...eth, symbol: "WETH", name: "Wrapped Ether", isNative: false },
+    ];
+  }, [cfg.tokens]);
+  const [rows, setRows] = useState<BalanceRow[]>(() => initialRows(tokensWithWeth));
   const [sendingFor, setSendingFor] = useState<BalanceRow | null>(null);
   const [tick, setTick] = useState(0);
 
@@ -39,7 +51,7 @@ export default function WalletPage() {
     let cancelled = false;
     void (async () => {
       const next = await Promise.all(
-        cfg.tokens.map(async (token): Promise<BalanceRow> => {
+        tokensWithWeth.map(async (token): Promise<BalanceRow> => {
           try {
             if (token.isNative) {
               const raw = await provider.getBalance(account);
@@ -73,7 +85,7 @@ export default function WalletPage() {
     return () => {
       cancelled = true;
     };
-  }, [mounted, account, provider, cfg.tokens, tick]);
+  }, [mounted, account, provider, tokensWithWeth, tick]);
 
   if (!account) {
     return (

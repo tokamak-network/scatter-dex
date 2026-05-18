@@ -22,18 +22,35 @@ import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
 
 // Depositable tokens are the full LAUNCH_TOKENS lineup —
-// ETH / USDC / USDT / TON — every entry on the SDK's UI whitelist.
-// We show all of them so the user sees the supported set even when
-// a particular deploy hasn't wired one yet; the entry is marked
-// "(not deployed)" and the Deposit button stays disabled in that
-// case. Source of truth: `DEMO_NETWORK.tokens` after the env
-// overlay applies. Submit-time `dispatchDeposit` still guards
-// against ZERO_ADDRESS tokens as a defense in depth.
+// ETH / USDC / USDT / TON — every entry on the SDK's UI whitelist
+// plus a synthesised WETH twin pointing at the same on-chain address
+// as ETH. The two share a contract; the difference is the deposit
+// path:
+//   - ETH  (isNative=true)  → balance = wallet's native ETH;
+//     submit wraps ETH→WETH via `WETH.deposit{value}` first, then
+//     the standard ERC20 approve+CommitmentPool.deposit flow.
+//   - WETH (isNative=false) → balance = WETH `balanceOf`; submit
+//     is the direct ERC20 approve+deposit flow.
+// Each entry is marked "(not deployed)" and disables Deposit when
+// its address resolves to ZERO_ADDRESS on the active network.
 const ZERO = "0x0000000000000000000000000000000000000000";
-const DEPOSITABLE = DEMO_NETWORK.tokens;
 function isConfigured(addr: string): boolean {
   return addr.toLowerCase() !== ZERO;
 }
+const DEPOSITABLE = (() => {
+  const tokens = DEMO_NETWORK.tokens;
+  const eth = tokens.find((t) => t.isNative && isConfigured(t.address));
+  if (!eth) return tokens;
+  return [
+    ...tokens,
+    {
+      ...eth,
+      symbol: "WETH",
+      name: "Wrapped Ether",
+      isNative: false,
+    },
+  ];
+})();
 
 type Phase =
   | { kind: "idle" }
@@ -93,10 +110,11 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
 
   // Wallet balance of the selected token. `null` while a fetch is in
-  // flight or the wallet isn't connected; bigint once resolved. Refetches
-  // when the user flips tokens or reconnects. Pro shows "ETH" but the
-  // on-chain token is WETH (LAUNCH_TOKENS folds them), so balanceOf
-  // reads the WETH contract — matching what dispatchDeposit will pull.
+  // flight or the wallet isn't connected; bigint once resolved.
+  // Refetches when the user flips tokens or reconnects. Branches on
+  // `isNative`: ETH reads native balance via `provider.getBalance`,
+  // WETH/ERC20 reads the contract's `balanceOf` — matching the
+  // funds source the submit path will draw from.
   const [balance, setBalance] = useState<bigint | null>(null);
   const selectedToken = useMemo(
     () => DEPOSITABLE.find((t) => t.symbol === tokenSymbol),
@@ -119,12 +137,19 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
     let cancelled = false;
     void (async () => {
       try {
-        const erc20 = new Contract(
-          selectedToken.address,
-          ["function balanceOf(address) view returns (uint256)"],
-          signer,
-        );
-        const bal = (await erc20.balanceOf(account)) as bigint;
+        let bal: bigint;
+        if (selectedToken.isNative) {
+          const provider = signer.provider;
+          if (!provider) throw new Error("no provider");
+          bal = await provider.getBalance(account);
+        } else {
+          const erc20 = new Contract(
+            selectedToken.address,
+            ["function balanceOf(address) view returns (uint256)"],
+            signer,
+          );
+          bal = (await erc20.balanceOf(account)) as bigint;
+        }
         if (!cancelled) setBalance(bal);
       } catch {
         if (!cancelled) setBalance(null);
@@ -221,6 +246,22 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
       const commitment = proveResult.publicSignals[0]!;
 
       setPhase({ kind: "submitting" });
+      // ETH path wraps native → WETH first. The escrow contract
+      // (CommitmentPool) only handles ERC20, so the user's native ETH
+      // must be wrapped via `WETH.deposit{value}` before the standard
+      // approve+deposit. We don't pre-check WETH allowance — a fresh
+      // wrap leaves the user with `amountWei` WETH minus prior
+      // approvals; `ensureAllowance` inside dispatchDeposit handles it.
+      if (token.isNative && signer) {
+        const weth = new Contract(
+          token.address,
+          ["function deposit() payable"],
+          signer,
+        );
+        const wrapTx = await weth.deposit({ value: amountWei });
+        await wrapTx.wait();
+        if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      }
       // The prove result carries snarkjs's raw-shaped proof; the
       // dispatch layer expects the SDK's `DepositProofResult` shape
       // (commitment + Groth16Proof tuples). Reconstruct it from
