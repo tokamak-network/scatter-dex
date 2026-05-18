@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
- * E2E test: deposit ETH → wait for inclusion → withdraw → unwrap →
- * verify native ETH balance increased.
+ * E2E test: wrap 1 ETH → deposit → withdraw → unwrap →
+ * verify the deposit + withdraw round-trip + the unwrap restore the
+ * starting native balance to within gas tolerance (i.e. native ETH
+ * is roughly unchanged minus tx gas, WETH unchanged at zero delta).
  *
  * Run from repo root with the dev stack already up:
  *   node apps/pro/scripts/e2e-withdraw.mjs
@@ -21,14 +23,15 @@ import {
 } from "@zkscatter/sdk/zk";
 import { COMMITMENT_POOL_ABI } from "@zkscatter/sdk";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const RPC = "http://localhost:8545";
 const POOL = "0x95401dc811bb5740090279Ba06cfA8fcF6113778";
 const WETH = "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318";
 const ANVIL_0_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
-const ROOT = resolve(import.meta.dirname, "../../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const WASM = (c) => readFileSync(`${ROOT}/circuits/build/${c}_js/${c}.wasm`);
 const ZKEY = (c) => readFileSync(`${ROOT}/circuits/build/${c}_final.zkey`);
 
@@ -77,21 +80,14 @@ async function main() {
   tx = await weth.approve(POOL, amount);
   await tx.wait();
 
-  // ── 4. Build pre-deposit tree from on-chain CommitmentInserted events ──
-  console.log("\n=== 4. Hydrate pool tree from chain ===");
+  // ── 4. Deposit ────────────────────────────────────────────
+  // Re-fetch the canonical leaf set *after* the deposit confirms
+  // (instead of stitching a pre-fetched set + our own commitment)
+  // so any concurrent inserts on this anvil end up in the tree at
+  // their correct leafIndex; otherwise our local root won't match
+  // `isKnownRoot` for racing deposits.
+  console.log("\n=== 4. Generate deposit proof + call pool.deposit ===");
   const filter = pool.filters.CommitmentInserted();
-  const events = await pool.queryFilter(filter, 0, "latest");
-  const sorted = events
-    .map((e) => ({
-      leafIndex: Number(e.args.leafIndex),
-      commitment: BigInt(e.args.commitment),
-    }))
-    .sort((a, b) => a.leafIndex - b.leafIndex);
-  const leaves = sorted.map((e) => e.commitment);
-  console.log(`  ${leaves.length} commitments on-chain`);
-
-  // ── 5. Deposit ────────────────────────────────────────────
-  console.log("\n=== 5. Generate deposit proof + call pool.deposit ===");
   const depositAssets = { wasm: WASM("deposit"), zkey: ZKEY("deposit") };
   const depositProof = await generateDepositProof(note, depositAssets);
   const { a, b, c } = depositProof.proof;
@@ -99,18 +95,21 @@ async function main() {
   const depositReceipt = await tx.wait();
   console.log(`  deposit tx: ${tx.hash} (block ${depositReceipt.blockNumber})`);
 
-  // Read the leafIndex from the just-emitted event
-  const newEvents = await pool.queryFilter(filter, depositReceipt.blockNumber, depositReceipt.blockNumber);
-  const myEvent = newEvents.find(
-    (e) => BigInt(e.args.commitment) === commitment,
-  );
+  const allEvents = await pool.queryFilter(filter, 0, depositReceipt.blockNumber);
+  const sorted = allEvents
+    .map((e) => ({
+      leafIndex: Number(e.args.leafIndex),
+      commitment: BigInt(e.args.commitment),
+    }))
+    .sort((a, b) => a.leafIndex - b.leafIndex);
+  const myEvent = sorted.find((e) => e.commitment === commitment);
   if (!myEvent) throw new Error("CommitmentInserted not found for our commitment");
-  const myLeafIndex = Number(myEvent.args.leafIndex);
-  console.log(`  my leafIndex: ${myLeafIndex}`);
+  const myLeafIndex = myEvent.leafIndex;
+  console.log(`  my leafIndex: ${myLeafIndex} (${sorted.length} total leaves on-chain)`);
 
-  // ── 6. Build merkle proof from all on-chain leaves ───────
-  console.log("\n=== 6. Build merkle proof ===");
-  const allLeaves = [...leaves, commitment];
+  // ── 5. Build merkle proof from all on-chain leaves ───────
+  console.log("\n=== 5. Build merkle proof ===");
+  const allLeaves = sorted.map((e) => e.commitment);
   const built = await buildMerkleTree(allLeaves, 20);
   const path = getMerkleProof(built.layers, myLeafIndex);
   const merkleProof = {
@@ -125,7 +124,7 @@ async function main() {
   if (!knownRoot) throw new Error("root not known on-chain — tree drift");
 
   // ── 7. Withdraw proof ────────────────────────────────────
-  console.log("\n=== 7. Generate withdraw proof ===");
+  console.log("\n=== 6. Generate withdraw proof ===");
   const withdrawAssets = { wasm: WASM("withdraw"), zkey: ZKEY("withdraw") };
   const wp = await generateWithdrawProof(
     { note, merkleProof, withdrawAmount: amount, recipient: me },
@@ -135,7 +134,7 @@ async function main() {
   console.log(`  nullifierHash: 0x${wp.nullifierHash.toString(16)}`);
 
   // ── 8. Pool withdraw ─────────────────────────────────────
-  console.log("\n=== 8. Call pool.withdraw ===");
+  console.log("\n=== 7. Call pool.withdraw ===");
   tx = await pool.withdraw(
     wp.proof.a,
     wp.proof.b,
@@ -152,7 +151,7 @@ async function main() {
   console.log(`  withdraw tx: ${tx.hash} (block ${wReceipt.blockNumber})`);
 
   // ── 9. Unwrap WETH → native ──────────────────────────────
-  console.log("\n=== 9. Unwrap WETH → native ===");
+  console.log("\n=== 8. Unwrap WETH → native ===");
   tx = await weth.withdraw(amount);
   await tx.wait();
   console.log(`  unwrap tx: ${tx.hash}`);

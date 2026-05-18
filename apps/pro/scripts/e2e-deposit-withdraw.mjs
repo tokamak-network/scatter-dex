@@ -31,7 +31,8 @@ import {
 } from "@zkscatter/sdk/zk";
 import { COMMITMENT_POOL_ABI } from "@zkscatter/sdk";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const RPC = "http://localhost:8545";
 const POOL = "0x95401dc811bb5740090279Ba06cfA8fcF6113778";
@@ -40,7 +41,7 @@ const TOKENS = {
   USDC: { address: "0x610178dA211FEF7D417bC0e6FeD39F05609AD788", decimals: 6, label: "USDC" },
 };
 const ANVIL_0_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
-const ROOT = resolve(import.meta.dirname, "../../..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const WASM = (c) => readFileSync(`${ROOT}/circuits/build/${c}_js/${c}.wasm`);
 const ZKEY = (c) => readFileSync(`${ROOT}/circuits/build/${c}_final.zkey`);
 
@@ -86,33 +87,31 @@ async function main() {
   console.log("\n[1] approve");
   await (await erc20.approve(POOL, amount)).wait();
 
-  // 3. Hydrate pre-deposit tree
-  console.log("[2] hydrate tree");
+  // 3. Deposit (no pre-fetch — re-query the full leaf set after the
+  // deposit confirms so any concurrent inserts on this anvil end up
+  // in the tree at their correct leafIndex; otherwise our local
+  // root won't match `isKnownRoot` for racing deposits).
+  console.log("[2] deposit");
   const filter = pool.filters.CommitmentInserted();
-  const events = await pool.queryFilter(filter, 0, "latest");
-  const sorted = events
+  const dp = await generateDepositProof(note, { wasm: WASM("deposit"), zkey: ZKEY("deposit") });
+  const { a: da, b: db, c: dc } = dp.proof;
+  const depTx = await pool.deposit(da, db, dc, dp.commitment, TOKEN.address, amount);
+  const depReceipt = await depTx.wait();
+  const allEvents = await pool.queryFilter(filter, 0, depReceipt.blockNumber);
+  const sorted = allEvents
     .map((e) => ({
       leafIndex: Number(e.args.leafIndex),
       commitment: BigInt(e.args.commitment),
     }))
     .sort((a, b) => a.leafIndex - b.leafIndex);
-  const preLeaves = sorted.map((e) => e.commitment);
-
-  // 4. Deposit
-  console.log("[3] deposit");
-  const dp = await generateDepositProof(note, { wasm: WASM("deposit"), zkey: ZKEY("deposit") });
-  const { a: da, b: db, c: dc } = dp.proof;
-  const depTx = await pool.deposit(da, db, dc, dp.commitment, TOKEN.address, amount);
-  const depReceipt = await depTx.wait();
-  const myEvents = await pool.queryFilter(filter, depReceipt.blockNumber, depReceipt.blockNumber);
-  const myEvent = myEvents.find((e) => BigInt(e.args.commitment) === commitment);
+  const myEvent = sorted.find((e) => e.commitment === commitment);
   if (!myEvent) throw new Error("commitment not inserted");
-  const myLeafIndex = Number(myEvent.args.leafIndex);
+  const myLeafIndex = myEvent.leafIndex;
   console.log(`     block ${depReceipt.blockNumber}, leafIndex ${myLeafIndex}`);
 
-  // 5. Merkle proof
-  console.log("[4] build merkle proof");
-  const allLeaves = [...preLeaves, commitment];
+  // 4. Merkle proof from the canonical on-chain leaf set
+  console.log("[3] build merkle proof");
+  const allLeaves = sorted.map((e) => e.commitment);
   const built = await buildMerkleTree(allLeaves, 20);
   const path = getMerkleProof(built.layers, myLeafIndex);
   const merkleProof = {
@@ -123,15 +122,15 @@ async function main() {
   const knownRoot = await pool.isKnownRoot(merkleProof.root);
   if (!knownRoot) throw new Error("root not known on-chain (tree drift)");
 
-  // 6. Withdraw proof
-  console.log("[5] withdraw proof");
+  // 5. Withdraw proof
+  console.log("[4] withdraw proof");
   const wp = await generateWithdrawProof(
     { note, merkleProof, withdrawAmount: amount, recipient: me },
     { wasm: WASM("withdraw"), zkey: ZKEY("withdraw") },
   );
 
-  // 7. Pool withdraw
-  console.log("[6] pool.withdraw");
+  // 6. Pool withdraw
+  console.log("[5] pool.withdraw");
   const wTx = await pool.withdraw(
     wp.proof.a, wp.proof.b, wp.proof.c,
     wp.root, wp.nullifierHash, wp.newCommitment,
@@ -141,7 +140,7 @@ async function main() {
   const wReceipt = await wTx.wait();
   console.log(`     block ${wReceipt.blockNumber}, tx ${wTx.hash}`);
 
-  // 8. Final
+  // 7. Final
   const endBal = await erc20.balanceOf(me);
   const delta = endBal - startBal;
   console.log(`\nend   ${TOKEN.label}: ${fmt(endBal)}`);
