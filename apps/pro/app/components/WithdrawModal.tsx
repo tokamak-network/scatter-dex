@@ -2,10 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
+import type { WithdrawProofInput } from "@zkscatter/sdk/zk";
+import { computeCommitment } from "@zkscatter/sdk/zk";
 import { useVault, type VaultNote } from "../lib/vault";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { PreSignPreview } from "./PreSignPreview";
-import { abortableSleep, isAbortError } from "../lib/abort";
+import { isAbortError } from "../lib/abort";
+import { withdrawProver } from "../lib/withdrawProver";
+import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
+import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
+import { dispatchWithdraw } from "../lib/dispatch";
+import { DEMO_NETWORK } from "../lib/network";
 
 type DestKind = "self" | "custom";
 
@@ -26,8 +33,9 @@ interface Props {
 const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 
 export function WithdrawModal({ open, onClose, initialNote }: Props) {
-  const { account } = useWallet();
-  const { notes, remove } = useVault();
+  const { account, signer } = useWallet();
+  const { notes, remove, add: addNote } = useVault();
+  const commitmentTree = useCommitmentTree();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [noteId, setNoteId] = useState<string | null>(initialNote?.id ?? null);
@@ -84,20 +92,81 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
     try {
+      // Resolve the live merkle proof for this note's commitment so the
+      // withdraw circuit can prove inclusion. Falls back to the empty
+      // tree proof when the indexer hasn't seen the commitment yet
+      // (mirrors the cancel/order flows).
+      const commitment = await computeCommitment(note.note);
+      const { merkleProof } = await getMerkleProofWithFallback(
+        commitmentTree,
+        commitment,
+        () => buildEmptyTreeProof(note.note),
+      );
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+      const input: WithdrawProofInput = {
+        note: note.note,
+        merkleProof,
+        withdrawAmount: note.note.amount,
+        recipient: destAddr!,
+      };
+
       setPhase({ kind: "proving", message: "Generating ZK withdraw proof…" });
-      // Phase A: SDK migration replaces this with a real claim proof
-      // (the withdraw flow reuses the claim circuit).
-      await abortableSleep(900, ctrl.signal);
+      await withdrawProver.ready();
+      const proveResult = await withdrawProver.prove(
+        { circuitId: "withdraw", input: input as unknown as Record<string, unknown> },
+        {
+          signal: ctrl.signal,
+          onProgress: (m) => setPhase({ kind: "proving", message: m }),
+        },
+      );
+      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+      // Worker emits root/nullifierHash/newCommitment via `meta` —
+      // the pool call needs them as discrete uint256 args, not
+      // buried inside publicSignals. Structured-clone hands BigInts
+      // across the worker boundary natively, so no rehydration.
+      const meta = (proveResult as unknown as {
+        meta?: { root: bigint; nullifierHash: bigint; newCommitment: bigint };
+      }).meta;
+      if (!meta) throw new Error("withdraw worker returned no meta");
 
       setPhase({ kind: "submitting" });
-      await abortableSleep(500, ctrl.signal);
+      // Self-withdraws of WETH unwrap to native ETH automatically —
+      // user picked the "ETH" entry on deposit, they get ETH back on
+      // withdraw. Custom-address withdraws keep WETH because the
+      // unwrap call would release to msg.sender, not the recipient.
+      const wethAddr = DEMO_NETWORK.contracts.weth.toLowerCase();
+      const tokenAddrHex = "0x" + note.note.token.toString(16).padStart(40, "0");
+      const isWeth = tokenAddrHex.toLowerCase() === wethAddr;
+      const unwrapToNative = isWeth && destKind === "self";
 
-      await remove(note.id);
+      const dispatch = await dispatchWithdraw(signer, {
+        proof: proveResult.proof,
+        root: meta.root,
+        nullifierHash: meta.nullifierHash,
+        newCommitment: meta.newCommitment,
+        tokenAddress: tokenAddrHex,
+        amount: note.note.amount,
+        recipient: destAddr!,
+        unwrapToNative,
+      });
+
+      // Only remove the spent note AFTER the dispatch resolves. For
+      // simulated paths (no on-chain), keep the note — the commitment
+      // is still claimable later when on-chain wiring is available.
+      if (dispatch.kind === "onchain") {
+        await remove(note.id);
+      }
       setPhase({ kind: "success" });
+      const tokenLabel = unwrapToNative ? "ETH" : note.symbol;
       toast.push({
         kind: "success",
-        title: `Withdrew ${note.amount} ${note.symbol}`,
-        description: `Sent to ${shortAddr(destAddr)}.`,
+        title: `Withdrew ${note.amount} ${tokenLabel}`,
+        description:
+          dispatch.kind === "onchain"
+            ? `Sent to ${shortAddr(destAddr)}. Tx ${dispatch.txHash.slice(0, 10)}…`
+            : "Simulated — no on-chain transfer. Vault note preserved.",
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
@@ -107,7 +176,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [note, destValid, destKind, destAddr, remove, toast]);
+  }, [note, destValid, destKind, destAddr, signer, commitmentTree, addNote, remove, toast]);
 
   const busy = phase.kind === "proving" || phase.kind === "submitting";
 
