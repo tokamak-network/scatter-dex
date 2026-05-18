@@ -493,8 +493,13 @@ export default function Workbench() {
  *  Re-renders on a 60s tick so the relative copy doesn't freeze. */
 function AutoSettleIndicator() {
   const { recipients } = useTradeForm();
-  const [now, setNow] = useState(() => Date.now());
+  // SSR ↔ first-client-render must agree to avoid hydration mismatch.
+  // Initialise `now` to null and populate it from useEffect; the
+  // indicator renders a placeholder dash on the server until the
+  // client clock has ticked. Same pattern NoteSelect uses.
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
+    setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
@@ -502,7 +507,9 @@ function AutoSettleIndicator() {
     | { kind: "default"; expiryMs: number }
     | { kind: "from-claim"; expiryMs: number }
     | { kind: "too-tight"; earliestClaimMs: number }
+    | null
   >(() => {
+    if (now === null) return null;
     const claimMs = recipients
       .map((r) => (r.releaseAt ? Date.parse(r.releaseAt) : NaN))
       .filter((m): m is number => Number.isFinite(m));
@@ -518,11 +525,24 @@ function AutoSettleIndicator() {
     return { kind: "from-claim", expiryMs: minClaim - 5 * 60_000 };
   }, [recipients, now]);
 
+  if (derived === null) {
+    // SSR / pre-mount fallback — render a placeholder so the markup
+    // matches between server and client.
+    return (
+      <div className="mt-3 flex items-baseline justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-[11px]">
+        <span className="font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+          Auto-settle by
+        </span>
+        <span className="font-mono text-[var(--color-text-subtle)]">—</span>
+      </div>
+    );
+  }
+
   if (derived.kind === "too-tight") {
     return (
       <div className="mt-3 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-1.5 text-[11px] text-[var(--color-warning)]">
         ⚠ Earliest claim time is{" "}
-        {Math.max(0, Math.round((derived.earliestClaimMs - now) / 60_000))} min
+        {Math.max(0, Math.round((derived.earliestClaimMs - now!) / 60_000))} min
         away — too tight to settle before. Push claim time at least 6 min
         out.
       </div>
@@ -536,7 +556,7 @@ function AutoSettleIndicator() {
     hour: "2-digit",
     minute: "2-digit",
   });
-  const relMin = Math.max(1, Math.round((derived.expiryMs - now) / 60_000));
+  const relMin = Math.max(1, Math.round((derived.expiryMs - now!) / 60_000));
   return (
     <div className="mt-3 flex items-baseline justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-[11px]">
       <span className="font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">

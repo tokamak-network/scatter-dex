@@ -347,13 +347,18 @@ export function RecipientsEditor({
           per-row override stays editable below. */}
       {!readOnly && columns.includes("releaseAt") && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-1.5">
-          <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+          <label
+            htmlFor="recipients-bulk-claim-from"
+            className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]"
+          >
             Claim from (all)
           </label>
           <input
+            id="recipients-bulk-claim-from"
             type="datetime-local"
             value={bulkClaimFrom}
             onChange={(e) => setBulkClaimFrom(e.target.value)}
+            aria-label="Bulk claim-from datetime — applies to every recipient row when you click Apply to all"
             className="flex-1 rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-0.5 font-mono text-xs"
           />
           <Button
