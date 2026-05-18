@@ -13,7 +13,7 @@ import { PairSelector } from "../components/PairSelector";
 import { AdvancedSettings } from "../components/AdvancedSettings";
 import { RecipientsSection } from "../components/RecipientsSection";
 import { NoteSelect } from "../components/NoteSelect";
-import { RelayerPill } from "../components/RelayerPill";
+import { RelayerPicker } from "../components/RelayerPicker";
 import { DepositModal } from "../components/DepositModal";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { DEMO_NETWORK } from "../lib/network";
@@ -342,12 +342,16 @@ export default function Workbench() {
                     className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
                   />
                 </Field>
+                {/* Relayer picker BEFORE the receive breakdown —
+                    the relayer's fee bps determines the net receive
+                    (and the recipients budget). Operators who pick
+                    recipients first then discover a different fee
+                    have to redo the split. */}
+                <RelayerPicker />
                 {/* Trade amount → Relayer fee → You receive (net).
                     "You receive" must be the net post-fee value, not
                     the gross — recipients distribute net, and the
-                    on-chain check is `totalLocked + fee ≤ buyAmount`.
-                    Showing gross as "you receive" was a category
-                    error: it's the trade total. */}
+                    on-chain check is `totalLocked + fee ≤ buyAmount`. */}
                 {tradeTotalDisplay && (
                   <div className="space-y-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
                     <div className="flex items-baseline justify-between">
@@ -411,10 +415,6 @@ export default function Workbench() {
                 Launch event: 0% trading fee until Dec 31, 2026. Proof
                 generation runs ~1–2&nbsp;s on desktop, ~5–9&nbsp;s on
                 mobile. Post-launch fee schedule set by governance.
-              </div>
-              <div className="mt-4 flex items-center justify-between gap-3">
-                <span className="text-xs text-[var(--color-text-muted)]">Route via</span>
-                <RelayerPill />
               </div>
               <Button
                 onClick={() => setOrderOpen(true)}
