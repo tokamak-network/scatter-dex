@@ -18,7 +18,10 @@ import { DepositModal } from "../components/DepositModal";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { DEMO_NETWORK } from "../lib/network";
 import { useReferencePrice } from "../lib/useReferencePrice";
-import { formatUsd, parseLooseNumber } from "../lib/format";
+import { formatTokenAmount, formatUsd, parseLooseNumber } from "../lib/format";
+import { useRelayers } from "../lib/relayers";
+import { applyFeeBig } from "../lib/fee";
+import { parseUnits } from "../lib/parseUnits";
 
 const MOCK_ORDERBOOK = {
   asks: [
@@ -72,7 +75,7 @@ function projectOrderbook(
 }
 
 export default function Workbench() {
-  const { pair, side, setSide, price, setPrice, size, setSize } = useTradeForm();
+  const { pair, side, setSide, price, setPrice, size, setSize, maxFeeBps } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   // Orderbook starts hidden so the form gets the full middle width.
@@ -170,30 +173,75 @@ export default function Workbench() {
   const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
   const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
-  // Buy-side (receive) token metadata + projected total. Drives
-  // the `Split equally` button and the live "Allocated" feedback
-  // in `RecipientsSection`.
-  const { receiveSymbol, receiveDecimals, receiveTotalDisplay } = useMemo(() => {
+  // Buy-side (receive) token metadata + projected totals. Three
+  // numbers matter — they're three different things and the user
+  // routinely conflates them:
+  //   - tradeTotal (gross) = price × size — what the order books at
+  //   - relayerFee = tradeTotal × relayer.fee bps / 10_000
+  //   - netReceive = tradeTotal − relayerFee — what the user actually
+  //     gets to distribute to recipients (= the on-chain
+  //     `totalLocked` upper bound after fee deduction).
+  // RecipientsSection's "Allocated / total" must use netReceive as
+  // its denominator, otherwise sum(claims) > buyAmount − fee will
+  // pass UI validation only to revert at settle with ClaimsCapExceeded.
+  const { selected: selectedRelayer } = useRelayers();
+  // Clamp the relayer's quoted fee to the user-signed cap (maxFeeBps).
+  // Without this clamp the display fee would differ from what the
+  // submit path passes to `resolveClaims` — operators with a low
+  // maxFeeBps would see a budget larger than what the proof will
+  // actually permit. Mirrors the same `min` used in OrderModal.submit.
+  const effectiveFeeBps = Math.min(selectedRelayer?.fee ?? 0, maxFeeBps);
+  const {
+    receiveSymbol,
+    receiveDecimals,
+    tradeTotalDisplay,
+    relayerFeeDisplay,
+    netReceiveDisplay,
+  } = useMemo(() => {
+    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === pair.base);
+    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === pair.quote);
     const buySymbol = side === "sell" ? pair.quote : pair.base;
-    const tok = DEMO_NETWORK.tokens.find((t) => t.symbol === buySymbol);
-    const decimals = tok?.decimals ?? 18;
-    const priceNum = Number(price.replace(/,/g, ""));
-    const sizeNum = Number(size.replace(/,/g, ""));
-    let total = NaN;
-    if (Number.isFinite(priceNum) && Number.isFinite(sizeNum) && sizeNum > 0) {
-      // Sell side: size in base, price in quote/base → receive in quote.
-      // Buy side: size already in base (the receive side), no price multiply.
-      total = side === "sell" ? priceNum * sizeNum : sizeNum;
+    const buyTok = side === "sell" ? quoteTok : baseTok;
+    const decimals = buyTok?.decimals ?? 18;
+    const empty = {
+      receiveSymbol: buySymbol,
+      receiveDecimals: decimals,
+      tradeTotalDisplay: "",
+      relayerFeeDisplay: "",
+      netReceiveDisplay: "",
+    };
+    if (!baseTok || !quoteTok) return empty;
+    // BigInt math — Number drops precision above ~0.009 ETH at
+    // 18 decimals, and the result drives RecipientsSection's
+    // BigInt-based "Allocated" parity check. Float gross would let a
+    // visually-balanced split fail on-chain by sub-wei rounding.
+    let gross: bigint;
+    try {
+      const cleanPrice = price.replace(/,/g, "");
+      const cleanSize = size.replace(/,/g, "");
+      if (!cleanPrice || !cleanSize) return empty;
+      const priceWei = parseUnits(cleanPrice, quoteTok.decimals);
+      const sizeWei = parseUnits(cleanSize, baseTok.decimals);
+      if (sizeWei <= 0n) return empty;
+      // Sell side: size base × price quote/base → quote.
+      // Buy side: size IS already in base (= receive token), no
+      // price multiply for the receive total.
+      gross = side === "sell"
+        ? (priceWei * sizeWei) / 10n ** BigInt(baseTok.decimals)
+        : sizeWei;
+    } catch {
+      return empty;
     }
-    const display = Number.isFinite(total)
-      ? total.toLocaleString("en-US", { maximumFractionDigits: 4 })
-      : "";
+    const { fee, net } = applyFeeBig(gross, effectiveFeeBps);
     return {
       receiveSymbol: buySymbol,
       receiveDecimals: decimals,
-      receiveTotalDisplay: display,
+      tradeTotalDisplay: formatTokenAmount(gross, decimals),
+      relayerFeeDisplay:
+        effectiveFeeBps > 0 ? formatTokenAmount(fee, decimals) : "",
+      netReceiveDisplay: formatTokenAmount(net, decimals),
     };
-  }, [side, pair.base, pair.quote, price, size]);
+  }, [side, pair.base, pair.quote, price, size, effectiveFeeBps]);
 
   const fillFromRow = (row: RowData) => {
     setPrice(row.price);
@@ -294,26 +342,48 @@ export default function Workbench() {
                     className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
                   />
                 </Field>
-                {/* Relayer picker BEFORE the receive card and
-                    recipients — the relayer's fee bps determines the
-                    net receive (and therefore the recipients budget).
-                    Operators who pick recipients first then discover
-                    a different fee have to redo the split. */}
+                {/* Relayer picker BEFORE the receive breakdown —
+                    the relayer's fee bps determines the net receive
+                    (and the recipients budget). Operators who pick
+                    recipients first then discover a different fee
+                    have to redo the split. */}
                 <RelayerPicker />
-                {/* Anchors the "over/short by X" delta in
-                    RecipientsSection — without the receive total
-                    visible, that delta has no reference point. */}
-                {receiveTotalDisplay && (
-                  <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-                    <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-                      You receive
+                {/* Trade amount → Relayer fee → You receive (net).
+                    "You receive" must be the net post-fee value, not
+                    the gross — recipients distribute net, and the
+                    on-chain check is `totalLocked + fee ≤ buyAmount`. */}
+                {tradeTotalDisplay && (
+                  <div className="space-y-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
+                    <div className="flex items-baseline justify-between">
+                      <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                        Trade amount
+                      </span>
+                      <span className="font-mono text-xs text-[var(--color-text)]">
+                        {tradeTotalDisplay} {receiveSymbol}
+                      </span>
                     </div>
-                    <div className="font-mono text-base font-semibold text-[var(--color-text)]">
-                      {receiveTotalDisplay} {receiveSymbol}
+                    {relayerFeeDisplay && (
+                      <div className="flex items-baseline justify-between text-[var(--color-text-muted)]">
+                        <span className="text-[10px] uppercase tracking-wide">
+                          Relayer fee ({effectiveFeeBps} bps)
+                        </span>
+                        <span className="font-mono text-xs">
+                          − {relayerFeeDisplay} {receiveSymbol}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-baseline justify-between border-t border-[var(--color-border)] pt-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                        You receive
+                      </span>
+                      <span className="font-mono text-base font-semibold text-[var(--color-text)]">
+                        {netReceiveDisplay} {receiveSymbol}
+                      </span>
                     </div>
                     {side === "sell" && (
                       <div className="text-[10px] text-[var(--color-text-subtle)]">
                         = {size || "0"} {pair.base} × {price || "0"} {pair.quote}/{pair.base}
+                        {effectiveFeeBps > 0 ? ` − ${effectiveFeeBps} bps fee` : ""}
                       </div>
                     )}
                   </div>
@@ -326,7 +396,7 @@ export default function Workbench() {
             <>
               <RecipientsSection
                 quoteSymbol={receiveSymbol}
-                receiveTotal={receiveTotalDisplay}
+                receiveTotal={netReceiveDisplay}
                 receiveDecimals={receiveDecimals}
               />
 
