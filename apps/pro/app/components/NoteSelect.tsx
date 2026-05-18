@@ -90,10 +90,25 @@ export function NoteSelect({
       >
         {matching.map((n) => (
           <option key={n.id} value={n.id}>
-            {n.label} · {n.amount} {n.symbol}
+            {n.label} · {n.amount} {n.symbol} · {formatRelativeAge(n.createdAt)}
           </option>
         ))}
       </select>
     </Field>
   );
+}
+
+/** Coarse relative-time suffix for the funding-note picker so multiple
+ *  `lot-N` of the same token are visually distinguishable at a glance.
+ *  Granularity caps at days — anything more precise would shift inside
+ *  the dropdown between clicks. */
+function formatRelativeAge(createdAtMs: number): string {
+  const ageMs = Date.now() - createdAtMs;
+  if (ageMs < 60_000) return "just now";
+  const mins = Math.floor(ageMs / 60_000);
+  if (mins < 60) return `${mins}m old`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h old`;
+  const days = Math.floor(hours / 24);
+  return `${days}d old`;
 }

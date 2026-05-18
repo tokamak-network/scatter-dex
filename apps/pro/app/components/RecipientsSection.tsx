@@ -157,10 +157,15 @@ export function RecipientsSection({
       />
 
       <p className="text-[11px] text-[var(--color-text-subtle)]">
-        Up to {MAX_RECIPIENTS} recipients per order — routed through the{" "}
-        <span className="font-mono">tier-{activeTier.cap}</span> circuit.
-        Empty address = your own wallet. Empty release time = claim immediately
-        on settle.
+        Up to {MAX_RECIPIENTS} recipients per order
+        <span
+          className="ml-1 cursor-help underline decoration-dotted underline-offset-2"
+          title={`Each order routes through a fixed-size ZK circuit; this one supports up to ${activeTier.cap} claims (internally: tier-${activeTier.cap}).`}
+        >
+          (anonymity set {activeTier.cap})
+        </span>
+        . Empty address = your own wallet. Empty release time = claim
+        immediately on settle.
       </p>
 
       <div

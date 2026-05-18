@@ -432,12 +432,14 @@ function ExpiryField() {
         value={expiry}
         onChange={(e) => setExpiry(e.target.value)}
         aria-label="Order expiry deadline"
-        className="mt-1.5 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-sm"
+        className="mt-1.5 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-sm placeholder:text-[var(--color-text-subtle)]"
       />
-      <p className="mt-1 text-[11px] text-[var(--color-text-subtle)]">
-        Hard deadline. If the relayer doesn&apos;t match this order by then,
-        it expires and your funds stay in your vault. Empty = 1&nbsp;hour from
-        now.
+      <p className={`mt-1 text-[11px] ${expiry ? "text-[var(--color-text-subtle)]" : "text-[var(--color-text-muted)]"}`}>
+        {expiry ? (
+          <>Hard deadline. If the relayer doesn&apos;t match this order by then, it expires and your funds stay in your vault.</>
+        ) : (
+          <><strong>Defaults to 1&nbsp;hour from now</strong> when left empty. Hard deadline — if the relayer doesn&apos;t match by then, the order expires and your funds stay in your vault.</>
+        )}
       </p>
     </div>
   );
@@ -554,7 +556,17 @@ function FillEstimate({
         : refUsd - fillUsd
       : null;
   const savingsPct = savings !== null && refUsd && refUsd > 0 ? (savings / refUsd) * 100 : null;
-  const positive = savings !== null && savings > 0;
+  // Apply a 25 bps threshold before painting the success state — any
+  // smaller "savings" is within rounding / oracle-latency noise and
+  // flashing the green panel at +0.01% reads as a misleading win
+  // (especially on the sell side where price ticks routinely cross
+  // the threshold by less than the bid/ask spread).
+  const SAVINGS_THRESHOLD_PCT = 0.25;
+  const positive =
+    savings !== null &&
+    savings > 0 &&
+    savingsPct !== null &&
+    savingsPct >= SAVINGS_THRESHOLD_PCT;
 
   return (
     <div
