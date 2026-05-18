@@ -6,6 +6,7 @@ import type { ParsedRecipient } from "@zkscatter/recipients";
 import { MAX_RECIPIENTS, useTradeForm, type RecipientRow } from "../lib/tradeForm";
 import { useConfirm } from "../lib/useConfirm";
 import { useWalletBook } from "../lib/walletBook";
+import { useIdentityForAddresses } from "../lib/identity";
 import { parseUnits } from "../lib/parseUnits";
 import { formatTokenAmount } from "../lib/format";
 
@@ -40,6 +41,21 @@ export function RecipientsSection({
   } = useTradeForm();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const walletBook = useWalletBook();
+  // Probe each address-book entry through the shared IdentityGate
+  // cache so the picker can dim unverified ones (they can't claim).
+  const bookAddresses = useMemo(
+    () => walletBook.entries.map((e) => e.address ?? "").filter(Boolean),
+    [walletBook.entries],
+  );
+  const bookIdentity = useIdentityForAddresses(bookAddresses);
+  const getAddressVerification = useCallback(
+    (addr: string): "verified" | "unverified" | null => {
+      const v = bookIdentity.get(addr);
+      if (!v) return null;
+      return v.isVerified ? "verified" : "unverified";
+    },
+    [bookIdentity],
+  );
 
   // The editor talks in `ParsedRecipient`; `RecipientRow` extends
   // that, narrowing `name`/`releaseAt` to required strings. The
@@ -131,6 +147,7 @@ export function RecipientsSection({
         maxRows={MAX_RECIPIENTS}
         amountSymbol={quoteSymbol}
         addressBook={walletBook.entries}
+        getAddressVerification={getAddressVerification}
         sampleHref="/samples/recipients-sample.csv"
         storageKey="pro:recipients-editor-mode"
         helperActions={

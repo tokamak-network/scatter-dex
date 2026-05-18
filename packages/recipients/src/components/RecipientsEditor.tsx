@@ -59,6 +59,11 @@ export interface RecipientsEditorProps {
   /** Optional address-book entries. If omitted, the picker button
    *  is hidden — Pro and Pay both pass this when available. */
   addressBook?: readonly WalletEntry[];
+  /** Optional verification probe forwarded to the AddressBookPicker.
+   *  When provided, unverified entries are visibly tagged and
+   *  unselectable in the picker. Callers without an identity source
+   *  (older surfaces) simply omit it. */
+  getAddressVerification?: (address: string) => "verified" | "unverified" | null;
   /** URL to a downloadable sample file. Hidden if absent. */
   sampleHref?: string;
   /** Per-row warnings rendered under each row (Rows mode only). */
@@ -81,6 +86,7 @@ export function RecipientsEditor({
   maxRows,
   amountSymbol,
   addressBook,
+  getAddressVerification,
   sampleHref,
   rowWarnings,
   storageKey,
@@ -426,6 +432,7 @@ export function RecipientsEditor({
           entries={addressBook as WalletEntry[]}
           onCancel={() => setPickerOpen(false)}
           onPick={onPickFromBook}
+          getVerification={getAddressVerification}
         />
       )}
     </div>

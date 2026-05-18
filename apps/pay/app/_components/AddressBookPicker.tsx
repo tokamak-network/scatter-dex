@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Modal } from "@zkscatter/ui";
 import type { WalletEntry } from "@zkscatter/sdk/storage";
+import { useIdentityForAddresses } from "../_lib/identity";
 
 /** Multi-select picker over the address book. The wizard's
  *  Recipients step calls this; future surfaces (claim-link
@@ -27,6 +28,15 @@ export function AddressBookPicker({
     () => entries.filter((e) => !!e.address),
     [entries],
   );
+  // Probe each address through the shared IdentityGate cache. The
+  // wizard already validates this at submit; mirroring the check at
+  // pick time means an operator can't queue up an unverified recipient
+  // who will then be silently rejected after the proof burn.
+  const addressList = useMemo(
+    () => addressable.map((e) => e.address!),
+    [addressable],
+  );
+  const identity = useIdentityForAddresses(addressList);
   const filtered = useMemo(() => {
     if (!search.trim()) return addressable;
     const q = search.toLowerCase();
@@ -69,31 +79,60 @@ export function AddressBookPicker({
           </div>
         ) : (
           <ul className="space-y-1">
-            {filtered.map((e) => (
-              <li key={e.id}>
-                <label className="flex cursor-pointer items-center gap-3 rounded-md border border-transparent px-2 py-1.5 hover:border-[var(--color-border)]">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(e.id)}
-                    onChange={() => toggle(e.id)}
-                  />
-                  <div className="flex-1 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{e.label}</span>
-                    </div>
-                    <div className="font-mono text-xs text-[var(--color-text-muted)]">
-                      {e.address!.slice(0, 10)}…{e.address!.slice(-4)}
-                      {e.memo ? ` · ${e.memo}` : ""}
-                    </div>
-                    {e.email && (
-                      <div className="text-xs text-[var(--color-text-muted)]">
-                        {e.email}
+            {filtered.map((e) => {
+              // `null` = lookup pending; treat as enabled so a slow RPC
+              // doesn't lock out the whole list. Once it resolves and
+              // surfaces an unverified state, the row disables.
+              const v = identity.get(e.address!);
+              const isUnverified = v !== null && !v.isVerified;
+              return (
+                <li key={e.id}>
+                  <label
+                    className={`flex items-center gap-3 rounded-md border border-transparent px-2 py-1.5 ${
+                      isUnverified
+                        ? "cursor-not-allowed opacity-60"
+                        : "cursor-pointer hover:border-[var(--color-border)]"
+                    }`}
+                    title={
+                      isUnverified
+                        ? "Recipient hasn't completed zk-X509 verification — they can't claim."
+                        : undefined
+                    }
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(e.id)}
+                      onChange={() => toggle(e.id)}
+                      disabled={isUnverified}
+                    />
+                    <div className="flex-1 text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{e.label}</span>
+                        {isUnverified && (
+                          <span className="inline-flex items-center rounded-full bg-[var(--color-warning-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-warning)]">
+                            ⚠ Unverified
+                          </span>
+                        )}
+                        {v?.isVerified && (
+                          <span className="inline-flex items-center rounded-full bg-[var(--color-success-soft)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-success)]">
+                            ✓ Verified
+                          </span>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </label>
-              </li>
-            ))}
+                      <div className="font-mono text-xs text-[var(--color-text-muted)]">
+                        {e.address!.slice(0, 10)}…{e.address!.slice(-4)}
+                        {e.memo ? ` · ${e.memo}` : ""}
+                      </div>
+                      {e.email && (
+                        <div className="text-xs text-[var(--color-text-muted)]">
+                          {e.email}
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
