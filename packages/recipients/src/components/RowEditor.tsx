@@ -20,6 +20,11 @@ interface Props {
   onAdd(): void;
 }
 
+/** Rows mode: a single primary line per recipient with address + amount
+ *  inline (the two highest-leverage fields), and a compact second line
+ *  for optional metadata when its column is enabled. Originally each
+ *  field was its own stacked row which buried the amount three scrolls
+ *  down a 128-recipient list. */
 export function RowEditor({
   rows,
   rowKeys,
@@ -35,6 +40,7 @@ export function RowEditor({
   const showName = columns.includes("name");
   const showEmail = columns.includes("email");
   const showReleaseAt = columns.includes("releaseAt");
+  const hasMetaLine = showName || showEmail || showReleaseAt;
 
   return (
     <div className="space-y-1.5">
@@ -43,10 +49,14 @@ export function RowEditor({
         return (
           <div
             key={rowKeys[i] ?? i}
-            className="space-y-1.5 rounded-md border border-[var(--color-border)] bg-white p-2 text-xs"
+            className="rounded-md border border-[var(--color-border)] bg-white px-2 py-1.5 text-xs"
           >
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-1.5">
-              <span className="font-mono text-[var(--color-text-subtle)]">
+            {/* Primary line — address + amount on the same row so the
+                amount is always visible alongside the recipient. The
+                amount input has a fixed pixel width so it doesn't
+                shrink at narrow widths; the address takes the rest. */}
+            <div className="flex items-center gap-1.5">
+              <span className="w-6 shrink-0 font-mono text-[var(--color-text-subtle)]">
                 #{i + 1}
               </span>
               <input
@@ -56,40 +66,8 @@ export function RowEditor({
                 disabled={readOnly}
                 onChange={(e) => onUpdate(i, { address: e.target.value })}
                 aria-label={`Recipient ${i + 1} address`}
-                className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono text-[11px] disabled:opacity-60"
+                className="min-w-0 flex-1 rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono text-[11px] disabled:opacity-60"
               />
-              <button
-                type="button"
-                onClick={() => onRemove(i)}
-                disabled={readOnly || rows.length <= 1}
-                aria-label={`Remove recipient ${i + 1}`}
-                className="rounded p-0.5 text-[var(--color-text-subtle)] hover:text-[var(--color-danger)] disabled:opacity-30"
-              >
-                ×
-              </button>
-            </div>
-
-            {showName && (
-              <div className="grid grid-cols-[auto_1fr] items-center gap-1.5 pl-7">
-                <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-                  Name
-                </span>
-                <input
-                  type="text"
-                  placeholder="Optional label"
-                  value={r.name}
-                  disabled={readOnly}
-                  onChange={(e) => onUpdate(i, { name: e.target.value })}
-                  aria-label={`Recipient ${i + 1} name`}
-                  className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 disabled:opacity-60"
-                />
-              </div>
-            )}
-
-            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-1.5 pl-7">
-              <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-                Amount
-              </span>
               <input
                 type="text"
                 placeholder="0.0"
@@ -97,50 +75,76 @@ export function RowEditor({
                 disabled={readOnly}
                 onChange={(e) => onUpdate(i, { amount: e.target.value })}
                 aria-label={`Recipient ${i + 1} amount`}
-                className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono disabled:opacity-60"
+                className="w-28 shrink-0 rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono font-semibold disabled:opacity-60"
               />
               {amountSymbol && (
-                <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+                <span className="w-12 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
                   {amountSymbol}
                 </span>
               )}
+              <button
+                type="button"
+                onClick={() => onRemove(i)}
+                disabled={readOnly || rows.length <= 1}
+                aria-label={`Remove recipient ${i + 1}`}
+                className="shrink-0 rounded p-0.5 text-[var(--color-text-subtle)] hover:text-[var(--color-danger)] disabled:opacity-30"
+              >
+                ×
+              </button>
             </div>
 
-            {showEmail && (
-              <div className="grid grid-cols-[auto_1fr] items-center gap-1.5 pl-7">
-                <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-                  Email
-                </span>
-                <input
-                  type="email"
-                  placeholder="optional@example.com"
-                  value={r.email ?? ""}
-                  disabled={readOnly}
-                  onChange={(e) => onUpdate(i, { email: e.target.value })}
-                  aria-label={`Recipient ${i + 1} email`}
-                  className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 disabled:opacity-60"
-                />
-              </div>
-            )}
-
-            {showReleaseAt && (
-              <div className="grid grid-cols-[auto_1fr] items-center gap-1.5 pl-7">
-                <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-                  Claim from
-                </span>
-                <input
-                  type="datetime-local"
-                  value={r.releaseAt ?? ""}
-                  disabled={readOnly}
-                  onChange={(e) => onUpdate(i, { releaseAt: e.target.value })}
-                  aria-label={`Recipient ${i + 1} claim release time`}
-                  className="w-full rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 font-mono disabled:opacity-60"
-                />
+            {/* Compact metadata row — only renders when at least one
+                optional column is enabled. Inline fields, smaller
+                input height than the primary row to keep the visual
+                weight on the address+amount line. */}
+            {hasMetaLine && (
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-7 text-[10px]">
+                {showName && (
+                  <label className="flex min-w-0 flex-1 basis-32 items-center gap-1">
+                    <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">Name</span>
+                    <input
+                      type="text"
+                      placeholder="Optional"
+                      value={r.name}
+                      disabled={readOnly}
+                      onChange={(e) => onUpdate(i, { name: e.target.value })}
+                      aria-label={`Recipient ${i + 1} name`}
+                      className="min-w-0 flex-1 rounded border border-[var(--color-border-strong)] bg-white px-1 py-0.5 disabled:opacity-60"
+                    />
+                  </label>
+                )}
+                {showEmail && (
+                  <label className="flex min-w-0 flex-1 basis-44 items-center gap-1">
+                    <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">Email</span>
+                    <input
+                      type="email"
+                      placeholder="optional@example.com"
+                      value={r.email ?? ""}
+                      disabled={readOnly}
+                      onChange={(e) => onUpdate(i, { email: e.target.value })}
+                      aria-label={`Recipient ${i + 1} email`}
+                      className="min-w-0 flex-1 rounded border border-[var(--color-border-strong)] bg-white px-1 py-0.5 disabled:opacity-60"
+                    />
+                  </label>
+                )}
+                {showReleaseAt && (
+                  <label className="flex min-w-0 flex-1 basis-44 items-center gap-1">
+                    <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">Claim from</span>
+                    <input
+                      type="datetime-local"
+                      value={r.releaseAt ?? ""}
+                      disabled={readOnly}
+                      onChange={(e) => onUpdate(i, { releaseAt: e.target.value })}
+                      aria-label={`Recipient ${i + 1} claim release time`}
+                      className="min-w-0 flex-1 rounded border border-[var(--color-border-strong)] bg-white px-1 py-0.5 font-mono disabled:opacity-60"
+                    />
+                  </label>
+                )}
               </div>
             )}
 
             {warning && (
-              <p className="pl-7 text-[10px] text-[var(--color-danger)]">{warning}</p>
+              <p className="mt-1 pl-7 text-[10px] text-[var(--color-danger)]">{warning}</p>
             )}
           </div>
         );
