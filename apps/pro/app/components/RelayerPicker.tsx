@@ -37,7 +37,10 @@ export function RelayerPicker() {
   if (loading) {
     return <Banner tone="muted">Loading relayers…</Banner>;
   }
-  if (relayers.length === 0) {
+  // "0 online" is the true blocker — registry can have entries but
+  // every one offline. Previous check on `relayers.length === 0`
+  // missed that case (Copilot caught it on #765).
+  if (online.length === 0) {
     return (
       <Banner tone="warning">
         ⚠ No relayers online — your order can't be matched. Try again
@@ -50,19 +53,17 @@ export function RelayerPicker() {
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2">
       <div className="mb-1.5 flex items-center justify-between px-1">
         <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Route via {online.length === 1 ? "" : `(${online.length} online)`}
+          Route via{online.length > 1 ? ` (${online.length} online)` : ""}
         </span>
-        {online.length === 0 && relayers.length > 0 && (
-          <span className="text-[10px] text-[var(--color-warning)]">
-            none currently online
-          </span>
-        )}
       </div>
       <ul className="space-y-1">
         {relayers.map((r) => {
           const isSelected = selected?.address === r.address;
           const offline = !r.online;
-          const label = r.api?.name?.trim() || r.name?.trim() || shortAddr(r.address);
+          const name = r.api?.name?.trim() || r.name?.trim();
+          // Empty operator address shows as "(unknown wallet)" so the
+          // primary slot isn't visually empty for v1-migrated records.
+          const addressLabel = shortAddr(r.address) || "(unknown wallet)";
           return (
             <li key={r.address}>
               <button
@@ -79,10 +80,16 @@ export function RelayerPicker() {
                 }`}
               >
                 <StatusDot kind={r.online ? "online" : "muted"} />
-                <span className="flex-1 truncate font-medium">{label}</span>
-                <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">
-                  {shortAddr(r.address)}
+                {/* No-name case: address fills the primary slot
+                    instead of repeating in two adjacent columns. */}
+                <span className="flex-1 truncate font-medium">
+                  {name || addressLabel}
                 </span>
+                {name && (
+                  <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+                    {addressLabel}
+                  </span>
+                )}
                 <span className="font-mono text-[10px] font-semibold text-[var(--color-text)]">
                   {r.fee} bps
                 </span>
