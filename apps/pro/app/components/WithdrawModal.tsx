@@ -5,7 +5,10 @@ import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { useVault, type VaultNote } from "../lib/vault";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { PreSignPreview } from "./PreSignPreview";
-import { abortableSleep, isAbortError } from "../lib/abort";
+import { isAbortError } from "../lib/abort";
+import { useCommitmentTree } from "../lib/commitmentTree";
+import { submitWithdraw, type WithdrawPhase } from "../lib/realWithdraw";
+import { DEMO_NETWORK } from "../lib/network";
 
 type DestKind = "self" | "custom";
 
@@ -26,8 +29,9 @@ interface Props {
 const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 
 export function WithdrawModal({ open, onClose, initialNote }: Props) {
-  const { account } = useWallet();
+  const { account, signer } = useWallet();
   const { notes, remove } = useVault();
+  const tree = useCommitmentTree();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [noteId, setNoteId] = useState<string | null>(initialNote?.id ?? null);
@@ -81,23 +85,56 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       return;
     }
 
+    if (!signer) {
+      setPhase({
+        kind: "error",
+        message: "Connect a wallet to sign the withdraw tx.",
+      });
+      return;
+    }
+
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
+    const phaseSetter = (p: WithdrawPhase) => {
+      const message =
+        p === "preparing" ? "Preparing withdraw…"
+        : p === "proving" ? "Generating ZK withdraw proof…"
+        : p === "submitting" ? "Submitting on-chain…"
+        : p === "confirming" ? "Awaiting confirmation…"
+        : "Unwrapping WETH → ETH…";
+      const kind: "proving" | "submitting" =
+        p === "proving" ? "proving" : "submitting";
+      setPhase({ kind, message });
+    };
     try {
-      setPhase({ kind: "proving", message: "Generating ZK withdraw proof…" });
-      // Phase A: SDK migration replaces this with a real claim proof
-      // (the withdraw flow reuses the claim circuit).
-      await abortableSleep(900, ctrl.signal);
-
-      setPhase({ kind: "submitting" });
-      await abortableSleep(500, ctrl.signal);
-
-      await remove(note.id);
+      // Port from Pay's submitWithdraw — same merkle proof + prover
+      // + on-chain dispatch. The WETH-unwrap step is opt-in via
+      // `wethAddress`; only fires when the recipient is the signer.
+      const result = await submitWithdraw({
+        note,
+        recipient: destAddr!,
+        amountRaw: note.note.amount,
+        signer,
+        commitmentPoolAddress: DEMO_NETWORK.contracts.commitmentPool,
+        tree,
+        wethAddress: DEMO_NETWORK.contracts.weth,
+        onPhase: phaseSetter,
+      });
+      if (ctrl.signal.aborted) return;
+      // Spent note can't be re-spent — drop from local vault. If the
+      // remove fails (storage write permission etc), surface success
+      // anyway since the on-chain side is source of truth.
+      try {
+        await remove(note.id);
+      } catch (removeErr) {
+        console.warn("[withdraw] vault.remove failed", removeErr);
+      }
       setPhase({ kind: "success" });
+      const tokenLabel = result.unwrapped ? "ETH" : note.symbol;
       toast.push({
         kind: "success",
-        title: `Withdrew ${note.amount} ${note.symbol}`,
-        description: `Sent to ${shortAddr(destAddr)}.`,
+        title: `Withdrew ${note.amount} ${tokenLabel}`,
+        description: `Tx ${result.txHash.slice(0, 10)}…`,
       });
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
@@ -107,7 +144,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [note, destValid, destKind, destAddr, remove, toast]);
+  }, [note, destValid, destKind, destAddr, signer, tree, remove, toast]);
 
   const busy = phase.kind === "proving" || phase.kind === "submitting";
 
