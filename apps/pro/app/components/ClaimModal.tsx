@@ -9,7 +9,7 @@ import { useOrders, type OrderRecord } from "../lib/orders";
 import { claimProver } from "../lib/claimProver";
 import { abortableSleep, isAbortError } from "../lib/abort";
 import { formatClaimAmount } from "../lib/format";
-import { DEMO_NETWORK } from "../lib/network";
+import { useActiveNetwork } from "../lib/activeNetwork";
 
 type Phase =
   | { kind: "idle" }
@@ -28,6 +28,7 @@ interface ClaimModalProps {
 export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
   const { markClaimed } = useOrders();
+  const { network } = useActiveNetwork();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const abortCtrlRef = useRef<AbortController | null>(null);
@@ -140,7 +141,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
             v={formatClaimAmount(
               order.claim.amount,
               order.claim.token,
-              DEMO_NETWORK.tokens,
+              network.tokens,
             )}
           />
         )}

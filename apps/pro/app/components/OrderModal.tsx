@@ -532,6 +532,22 @@ export function OrderModal({
           defaults (self / immediate). */}
       {recipients.length > 0 && (() => {
         const receiveSymbol = side === "sell" ? activePair.quote : activePair.base;
+        // Normalize the row amount through parseUnits → formatTokenAmount
+        // so the confirm-step display matches what gets signed
+        // (e.g. "1,000.0" and "1000" both render as "1000"); fall
+        // back to a "—" placeholder when the row can't parse so a typo
+        // doesn't look like a valid amount at the most critical step.
+        const receiveToken = DEMO_NETWORK.tokens.find((t) => t.symbol === receiveSymbol);
+        const receiveDecimals = receiveToken?.decimals ?? 18;
+        const formatRowAmount = (raw: string): string => {
+          if (!raw.trim()) return "—";
+          try {
+            const wei = parseUnits(raw.replace(/,/g, ""), receiveDecimals);
+            return formatTokenAmount(wei, receiveDecimals);
+          } catch {
+            return "—";
+          }
+        };
         return (
           <section className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
             <div className="border-b border-[var(--color-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
@@ -540,8 +556,14 @@ export function OrderModal({
             <ol className="divide-y divide-[var(--color-border)] text-xs">
               {recipients.map((r, i) => {
                 const addr = r.address.trim();
+                // Use releaseAtToUnixSec (same helper the submit path
+                // uses) so the timestamp shown at confirm matches what
+                // gets committed in the claim, byte-for-byte. Empty
+                // releaseAt still surfaces as "immediate" — the submit
+                // path falls back to `nowSec`, which is semantically
+                // identical from the user's perspective.
                 const releaseLabel = r.releaseAt.trim()
-                  ? formatWhen(new Date(r.releaseAt).getTime())
+                  ? formatWhen(Number(releaseAtToUnixSec(r)) * 1000)
                   : "immediate";
                 // Address may be blank (self), so key on address+index
                 // — index alone is fragile if rows reorder.
@@ -560,7 +582,7 @@ export function OrderModal({
                       </span>
                     </span>
                     <span className="font-mono">
-                      {r.amount || "—"} {receiveSymbol}
+                      {formatRowAmount(r.amount)} {receiveSymbol}
                     </span>
                   </li>
                 );

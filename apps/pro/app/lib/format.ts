@@ -6,8 +6,9 @@
 import { formatTokenAmount } from "@zkscatter/sdk/util";
 export { formatTokenAmount };
 
-/** Fallback to raw bigint + `(raw)` suffix keeps a misconfigured
- *  deployment visibly debuggable instead of silently formatting zero. */
+/** Fallback to raw bigint + `(raw units)` suffix keeps a
+ *  misconfigured deployment visibly debuggable instead of silently
+ *  formatting zero. */
 export function formatClaimAmount(
   amount: bigint,
   tokenAddress: string,
@@ -17,7 +18,7 @@ export function formatClaimAmount(
     (t) => t.address.toLowerCase() === tokenAddress.toLowerCase(),
   );
   if (tok) return `${formatTokenAmount(amount, tok.decimals)} ${tok.symbol}`;
-  return `${amount.toString()} (raw)`;
+  return `${amount.toString()} (raw units)`;
 }
 
 /** Human-readable UTC timestamp (`Apr 26, 09:14 UTC`). Locale fixed
