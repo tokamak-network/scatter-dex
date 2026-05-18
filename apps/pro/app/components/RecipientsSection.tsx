@@ -158,11 +158,22 @@ export function RecipientsSection({
 
       <p className="text-[11px] text-[var(--color-text-subtle)]">
         Up to {MAX_RECIPIENTS} recipients per order
-        <span
-          className="ml-1 cursor-help underline decoration-dotted underline-offset-2"
-          title={`Each order routes through a fixed-size ZK circuit; this one supports up to ${activeTier.cap} claims (internally: tier-${activeTier.cap}).`}
-        >
-          (anonymity set {activeTier.cap})
+        <span className="group relative ml-1 inline-flex">
+          <span
+            tabIndex={0}
+            role="button"
+            aria-label={`Anonymity set ${activeTier.cap}. Each order routes through a fixed-size ZK circuit; this one supports up to ${activeTier.cap} claims (internally tier-${activeTier.cap}).`}
+            className="cursor-help underline decoration-dotted underline-offset-2 focus:outline-none focus:text-[var(--color-primary)]"
+          >
+            (anonymity set {activeTier.cap})
+          </span>
+          <span
+            role="tooltip"
+            className="pointer-events-none invisible absolute bottom-full left-0 z-10 mb-1 w-64 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-2.5 py-1.5 text-[10px] leading-snug text-[var(--color-text)] opacity-0 shadow-lg transition-opacity duration-100 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+          >
+            Each order routes through a fixed-size ZK circuit; this one
+            supports up to {activeTier.cap} claims (internally tier-{activeTier.cap}).
+          </span>
         </span>
         . Empty address = your own wallet. Empty release time = claim
         immediately on settle.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { VaultNote } from "../lib/vault";
 import { Button, Field } from "@zkscatter/ui";
 
@@ -51,6 +51,18 @@ export function NoteSelect({
     [notes, sellTokenKey],
   );
 
+  // `Date.now()` would be different between SSR and the first client
+  // paint → hydration mismatch. Defer the ticking reference time to
+  // `useEffect` and use `null` (= "no relative age yet") for the
+  // server render. A 60s tick keeps "just now" / "Xm old" from
+  // freezing while the form stays open without spinning the renderer.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Auto-reset the selection when it falls outside the filtered set
   // (token change, withdrawal, etc.). Effect — not in-render —
   // because the parent's setState during render warns under
@@ -90,7 +102,8 @@ export function NoteSelect({
       >
         {matching.map((n) => (
           <option key={n.id} value={n.id}>
-            {n.label} · {n.amount} {n.symbol} · {formatRelativeAge(n.createdAt)}
+            {n.label} · {n.amount} {n.symbol}
+            {now !== null ? ` · ${formatRelativeAge(n.createdAt, now)}` : ""}
           </option>
         ))}
       </select>
@@ -102,8 +115,8 @@ export function NoteSelect({
  *  `lot-N` of the same token are visually distinguishable at a glance.
  *  Granularity caps at days — anything more precise would shift inside
  *  the dropdown between clicks. */
-function formatRelativeAge(createdAtMs: number): string {
-  const ageMs = Date.now() - createdAtMs;
+function formatRelativeAge(createdAtMs: number, nowMs: number): string {
+  const ageMs = nowMs - createdAtMs;
   if (ageMs < 60_000) return "just now";
   const mins = Math.floor(ageMs / 60_000);
   if (mins < 60) return `${mins}m old`;
