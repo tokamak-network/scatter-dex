@@ -7,6 +7,7 @@ import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
 import { StatusBadge } from "../components/StatusBadge";
 import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
+import { WorkspaceBar } from "../components/WorkspaceBar";
 import { formatWhen } from "../lib/format";
 
 // "Expired" is a UI-derived bucket: `status === "matching"` AND the
@@ -92,6 +93,13 @@ export default function Orders() {
 
   return (
     <div className="space-y-6">
+      {/* `/orders` reads its rows from the active workspace folder
+          (`zkscatter-pro-order-*` files), so show the workspace
+          picker / current-folder pill at the top — same affordance
+          the workbench and address-book pages use, so the user can
+          tell *which* vault they're looking at. */}
+      <WorkspaceBar />
+
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">My orders</h1>
         <Link href="/app" className="text-sm text-[var(--color-primary)] hover:underline">
