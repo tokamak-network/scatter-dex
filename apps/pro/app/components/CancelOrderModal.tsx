@@ -88,12 +88,17 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     // Non-null assertions justified by cancelBlockReason — all three
     // checks above guarantee these when reason is null.
     const note = notes.find((n) => n.id === order.noteId)!;
-    // The contract binds `msg.sender` as `submitter` (pubSignals[4])
-    // and we sign EdDSA over Poseidon(oldNonceNullifier, submitter),
-    // so this MUST be the wallet that will broadcast the cancel tx.
-    // Using a third-party address here produces a proof the contract
-    // refuses and the EdDSA verification step inside the circuit
-    // would reject regardless.
+    // The contract pins `pubSignals[4] = uint160(msg.sender)` at
+    // verifyProof time (PrivateSettlement.cancelPrivate). If we
+    // generate a proof with a different `submitter` value the
+    // circuit still verifies (EdDSA only requires the signature to
+    // match Poseidon(oldNonceNullifier, submitter), and we *do*
+    // sign with that same value), but the on-chain check rejects
+    // with `InvalidProof` because the public input the contract
+    // computed (= msg.sender) won't match the one baked into the
+    // proof. Always pass the wallet address that will broadcast
+    // the cancel tx to keep the circuit's `submitter` and the
+    // contract's `msg.sender` in sync.
     const submitterAddress = await signer!.getAddress();
 
     const ctrl = new AbortController();
@@ -180,13 +185,23 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         } catch (addErr) {
           console.warn("[cancel] vault rotation: add(new) failed — rotated note not persisted, on-chain cancel is final", addErr);
         }
-        try {
-          await vaultRemove(note.id);
-        } catch (removeErr) {
-          console.error(
-            `[cancel] vault rotation: remove(old=${note.id}) failed — vault now shows both the rotated and the (on-chain-nullified) original. Manually remove note ${note.id} to fix.`,
-            { addedRotated, removeErr },
-          );
+        // Only drop the original note from the vault once we've
+        // *confirmed* the rotated note is persisted. If `vaultAdd`
+        // threw and we still removed the original, the user's
+        // balance vanishes from the UI even though it's spendable
+        // on-chain under the rotated commitment — a strictly worse
+        // outcome than the "double balance" the asymmetric
+        // logging warns about, since at least the latter is
+        // recoverable by manually re-importing the rotated note.
+        if (addedRotated) {
+          try {
+            await vaultRemove(note.id);
+          } catch (removeErr) {
+            console.error(
+              `[cancel] vault rotation: remove(old=${note.id}) failed — vault now shows both the rotated and the (on-chain-nullified) original. Manually remove note ${note.id} to fix.`,
+              { removeErr },
+            );
+          }
         }
       }
 
