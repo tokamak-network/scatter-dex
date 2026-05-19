@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { EmptyState } from "@zkscatter/ui";
 import { useVault, type VaultNote } from "../lib/vault";
 import { useOrders, type OrderRecord } from "../lib/orders";
+import { aggregateBySymbol, deriveNoteStatus, type NoteStatusInfo } from "../lib/noteStatus";
 import { WithdrawModal } from "./WithdrawModal";
 import { CancelOrderModal } from "./CancelOrderModal";
 import { ClaimModal } from "./ClaimModal";
@@ -47,19 +48,16 @@ export function MyPositionPanel({ onDeposit }: Props) {
   const [cancelOrder, setCancelOrder] = useState<OrderRecord | null>(null);
   const [claimOrder, setClaimOrder] = useState<OrderRecord | null>(null);
 
-  // Naive aggregation — the per-symbol amount string is whatever the
-  // user entered at deposit time. A real total in dollars lands when
-  // the price oracle hook ships; for now we surface the count of
-  // notes plus the per-symbol breakdown so the panel doesn't lie
-  // about a number it can't yet compute.
-  const symbolTotals = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const n of notes) {
-      const num = Number(n.amount.replace(/,/g, ""));
-      if (Number.isFinite(num)) m.set(n.symbol, (m.get(n.symbol) ?? 0) + num);
-    }
-    return Array.from(m.entries());
-  }, [notes]);
+  // Three-bucket aggregation per symbol: Available (spendable now),
+  // Locked (pinned by an open order — releaseable via Cancel),
+  // Pending (deposits awaiting reconciliation, or change residuals
+  // awaiting settle). Naive `Number` parsing is acceptable for the
+  // panel header; precise BigInt math runs on the spend / withdraw
+  // paths so a rounding wobble here can't drift real balances.
+  const symbolBuckets = useMemo(
+    () => aggregateBySymbol(notes, orders),
+    [notes, orders],
+  );
 
   return (
     <aside className="col-span-3 space-y-4">
@@ -68,14 +66,22 @@ export function MyPositionPanel({ onDeposit }: Props) {
         <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
           Escrow pool
         </div>
-        {symbolTotals.length === 0 ? (
+        {symbolBuckets.length === 0 ? (
           <div className="text-sm text-[var(--color-text-muted)]">No assets yet.</div>
         ) : (
-          <div className="space-y-0.5 font-mono text-sm">
-            {symbolTotals.map(([sym, total]) => (
-              <div key={sym} className="flex justify-between">
-                <span className="text-[var(--color-text-muted)]">{sym}</span>
-                <span className="font-semibold">{formatNum(total)}</span>
+          <div className="space-y-2 text-sm">
+            {symbolBuckets.map((b) => (
+              <div key={b.symbol}>
+                <div className="font-mono text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                  {b.symbol}
+                </div>
+                <BucketRow label="Available" value={b.available} tone="default" />
+                {b.locked > 0 && (
+                  <BucketRow label="Locked" value={b.locked} tone="locked" />
+                )}
+                {b.pending > 0 && (
+                  <BucketRow label="Pending" value={b.pending} tone="pending" />
+                )}
               </div>
             ))}
           </div>
@@ -161,25 +167,46 @@ export function MyPositionPanel({ onDeposit }: Props) {
           <EmptyState>Deposit to start.</EmptyState>
         ) : (
           <ul className="space-y-2">
-            {notes.map((n) => (
-              <li
-                key={n.id}
-                className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5"
-              >
-                <div className="flex items-baseline justify-between text-xs">
-                  <span className="text-[var(--color-text-muted)]">{n.label}</span>
-                  <button
-                    onClick={() => setWithdrawNote(n)}
-                    className="font-medium text-[var(--color-primary)] hover:underline"
-                  >
-                    Withdraw
-                  </button>
-                </div>
-                <div className="mt-0.5 font-mono text-sm font-semibold">
-                  {n.amount} {n.symbol}
-                </div>
-              </li>
-            ))}
+            {notes.map((n) => {
+              const info = deriveNoteStatus(n, orders);
+              return (
+                <li
+                  key={n.id}
+                  className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2.5"
+                >
+                  <div className="flex items-baseline justify-between gap-2 text-xs">
+                    <span className="text-[var(--color-text-muted)]">{n.label}</span>
+                    {/* Only Available notes can be withdrawn directly.
+                        Locked is releasable via the order's Cancel; Pending
+                        needs the chain to catch up. The button stays
+                        visible to anchor the row geometry, just disabled
+                        with a reason in `title`. */}
+                    <button
+                      onClick={() => info.status === "available" && setWithdrawNote(n)}
+                      disabled={info.status !== "available"}
+                      title={
+                        info.status === "locked"
+                          ? `Locked by ${info.lockedByOrder?.label ?? "an open order"}. Cancel it to release.`
+                          : info.status === "pending"
+                            ? info.pendingFromOrder
+                              ? `Pending change from ${info.pendingFromOrder.label}. Available after settle.`
+                              : "Awaiting on-chain confirmation."
+                            : undefined
+                      }
+                      className="font-medium text-[var(--color-primary)] hover:underline disabled:cursor-not-allowed disabled:text-[var(--color-text-subtle)] disabled:no-underline"
+                    >
+                      Withdraw
+                    </button>
+                  </div>
+                  <div className="mt-0.5 flex items-baseline justify-between gap-2">
+                    <span className="font-mono text-sm font-semibold">
+                      {n.amount} {n.symbol}
+                    </span>
+                    <NoteStatusBadge info={info} />
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Section>
@@ -218,4 +245,59 @@ function Section({ title, children }: { title?: string; children: React.ReactNod
 
 function formatNum(n: number): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
+}
+
+function BucketRow({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "default" | "locked" | "pending";
+}) {
+  const labelClass =
+    tone === "locked"
+      ? "text-[var(--color-warning)]"
+      : tone === "pending"
+        ? "text-[var(--color-text-subtle)]"
+        : "text-[var(--color-text-muted)]";
+  const valueClass =
+    tone === "default"
+      ? "font-semibold text-[var(--color-text)]"
+      : "font-medium text-[var(--color-text-muted)]";
+  return (
+    <div className="flex items-baseline justify-between font-mono text-xs">
+      <span className={labelClass}>{label}</span>
+      <span className={valueClass}>{formatNum(value)}</span>
+    </div>
+  );
+}
+
+function NoteStatusBadge({ info }: { info: NoteStatusInfo }) {
+  if (info.status === "available") return null;
+  if (info.status === "locked") {
+    return (
+      <span
+        className="rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-warning)]"
+        title="Funds an open order — cancel to release"
+      >
+        Locked · {info.lockedByOrder?.label ?? "open order"}
+      </span>
+    );
+  }
+  // pending
+  return (
+    <span
+      className="rounded border border-[var(--color-border)] bg-[var(--color-bg)] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]"
+      title={
+        info.pendingFromOrder
+          ? `Change from ${info.pendingFromOrder.label}. Becomes available after settle.`
+          : "Awaiting on-chain confirmation"
+      }
+    >
+      Pending
+      {info.pendingFromOrder ? ` · change from ${info.pendingFromOrder.label}` : ""}
+    </span>
+  );
 }

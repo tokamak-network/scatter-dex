@@ -13,6 +13,7 @@ function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
     status: "matching",
     nonce: 0xdeadbeefcafef00dn,
     noteId: "note-abc",
+    changeCommitment: 0xfeedfacecafebeefn,
     createdAt: 1747929600_000,
     claim: {
       secret: 0xc0ffee1234abcdef9876543210fedcban,
@@ -77,5 +78,13 @@ describe("orders serialize/deserialize", () => {
       const restored = deserialize(serialize(fixture({ status })));
       expect(restored.status).toBe(status);
     }
+  });
+
+  it("round-trips changeCommitment when present + omits cleanly when absent", () => {
+    const withChange = fixture({ changeCommitment: 0x123456789abcdefn });
+    expect(deserialize(serialize(withChange)).changeCommitment).toBe(0x123456789abcdefn);
+
+    const noChange = fixture({ changeCommitment: undefined });
+    expect(deserialize(serialize(noChange)).changeCommitment).toBeUndefined();
   });
 });

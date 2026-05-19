@@ -67,6 +67,13 @@ export interface OrderRecord {
   /** Vault note id that funded the order — needed by the cancel
    *  flow to look up the spending note and rotate it. */
   noteId?: string;
+  /** Commitment hash of the change (residual) note pre-saved at
+   *  order-submit time when `sellAmount < note.amount`. Lets
+   *  downstream surfaces — note-status panel, cancel cleanup —
+   *  find the matching vault row by commitment without
+   *  re-deriving from `note + newSalt`. Undefined when the order
+   *  spent the funding note in full (no residual). */
+  changeCommitment?: bigint;
   /** When the order was submitted (ms epoch). */
   createdAt: number;
 }
@@ -120,6 +127,7 @@ export interface WireOrder {
   };
   nonceHex?: string;
   noteId?: string;
+  changeCommitmentHex?: string;
   createdAt: number;
 }
 
@@ -145,6 +153,7 @@ export function serialize(o: OrderRecord): WireOrder {
       : undefined,
     nonceHex: o.nonce !== undefined ? bigintToHex(o.nonce) : undefined,
     noteId: o.noteId,
+    changeCommitmentHex: o.changeCommitment !== undefined ? bigintToHex(o.changeCommitment) : undefined,
     createdAt: o.createdAt,
   };
 }
@@ -171,6 +180,7 @@ export function deserialize(w: WireOrder): OrderRecord {
       : undefined,
     nonce: w.nonceHex !== undefined ? BigInt(w.nonceHex) : undefined,
     noteId: w.noteId,
+    changeCommitment: w.changeCommitmentHex !== undefined ? BigInt(w.changeCommitmentHex) : undefined,
     createdAt: w.createdAt,
   };
 }
