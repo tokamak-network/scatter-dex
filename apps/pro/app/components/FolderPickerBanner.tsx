@@ -27,9 +27,12 @@ export function FolderPickerBanner() {
   const pathname = usePathname();
 
   // Suppress on marketing / landing surfaces — see NO_BANNER_PATHS.
-  // The check runs before the folder-state gates so the banner
-  // never even mounts on those routes, avoiding a transient
-  // paint while restoreFolder resolves.
+  // Returning null here just skips the render output; the component
+  // itself still mounts (because the layout's `<FolderPickerBanner />`
+  // tag is unconditional) and the underlying `FolderProvider` is
+  // still where `restoreFolder` runs, regardless of whether this
+  // banner is visible. The only behavioural effect is "don't paint
+  // the strip on these paths".
   if (pathname && NO_BANNER_PATHS.has(pathname)) return null;
 
   // SSR / probe stages render nothing — flashing a banner for
