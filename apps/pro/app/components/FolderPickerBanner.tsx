@@ -1,6 +1,15 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useFolder } from "../lib/folder";
+
+/** Pages where a folder pick is *not* a prerequisite — the marketing
+ *  / overview surfaces. Showing the warning banner here is noise:
+ *  the user hasn't tried to do anything that needs a folder yet,
+ *  and the CTA buttons inside the page already route through the
+ *  workbench (which renders its own banner when a folder really is
+ *  missing). */
+const NO_BANNER_PATHS = new Set(["/"]);
 
 /** Non-blocking guide banner: when no notes folder is selected,
  *  render a single horizontal strip below the app header with a
@@ -15,6 +24,16 @@ import { useFolder } from "../lib/folder";
  *  the user tries to write. */
 export function FolderPickerBanner() {
   const folder = useFolder();
+  const pathname = usePathname();
+
+  // Suppress on marketing / landing surfaces — see NO_BANNER_PATHS.
+  // Returning null here just skips the render output; the component
+  // itself still mounts (because the layout's `<FolderPickerBanner />`
+  // tag is unconditional) and the underlying `FolderProvider` is
+  // still where `restoreFolder` runs, regardless of whether this
+  // banner is visible. The only behavioural effect is "don't paint
+  // the strip on these paths".
+  if (pathname && NO_BANNER_PATHS.has(pathname)) return null;
 
   // SSR / probe stages render nothing — flashing a banner for
   // one frame before restoreFolder resolves would look broken.
