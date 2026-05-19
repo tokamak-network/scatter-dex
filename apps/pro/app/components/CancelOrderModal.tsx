@@ -153,6 +153,15 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       // in which case rotation is unsafe and we leave the old note
       // alone — better a zombie than a lost balance.
       if (cancelProof.freshSalt !== 0n) {
+        // Split the add/remove try/catches so a partial failure
+        // (add succeeded but remove threw) is logged with both
+        // ids — the user is otherwise left with a "double balance"
+        // panel (rotated + original) and no way to tell which note
+        // is the live one. folderAdapter.remove now swallows
+        // removeFile errors internally so this path is unlikely,
+        // but keeping the asymmetric logging means we'd see it
+        // immediately if the contract ever changes.
+        let addedRotated = false;
         try {
           await vaultAdd({
             symbol: note.symbol,
@@ -160,9 +169,17 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
             note: { ...note.note, salt: cancelProof.freshSalt },
             commitment: cancelProof.newCommitment,
           });
+          addedRotated = true;
+        } catch (addErr) {
+          console.warn("[cancel] vault rotation: add(new) failed — rotated note not persisted, on-chain cancel is final", addErr);
+        }
+        try {
           await vaultRemove(note.id);
-        } catch (rotateErr) {
-          console.warn("[cancel] vault rotation failed", rotateErr);
+        } catch (removeErr) {
+          console.error(
+            `[cancel] vault rotation: remove(old=${note.id}) failed — vault now shows both the rotated and the (on-chain-nullified) original. Manually remove note ${note.id} to fix.`,
+            { addedRotated, removeErr },
+          );
         }
       }
 

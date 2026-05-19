@@ -51,10 +51,14 @@ export function RowEditor({
   const hasMetaLine = showName || showEmail || showReleaseAt;
 
   // Compute "rest" (total − sum of other rows) for `rowIndex` as a
-  // display string. Returns null when totals aren't wired up or the
-  // row would receive ≤0 (already over-allocated). Done in display
-  // units to round-trip cleanly through the same `parseUnits` the
-  // submit path uses.
+  // display string. Returns null only when totals aren't wired up
+  // (no target to compute against). When other rows already cover
+  // or exceed the total, returns "0" so the button stays visible —
+  // users asked for click-to-zero so they can clear a row without
+  // hunting for the keyboard, and a visible-but-zero affordance
+  // also tells them "the budget is fully allocated, reduce elsewhere
+  // before raising this row." Done in display units so it round-
+  // trips cleanly through the same `parseUnits` the submit path uses.
   const restFor = (rowIndex: number): string | null => {
     if (!totalAmount || amountDecimals === undefined) return null;
     const totalClean = totalAmount.replace(/,/g, "");
@@ -76,8 +80,8 @@ export function RowEditor({
         // Skip unparseable rows — Rest reflects validated input only.
       }
     }
-    if (othersWei >= totalWei) return null;
-    return formatDisplay(totalWei - othersWei, amountDecimals);
+    const remainder = othersWei >= totalWei ? 0n : totalWei - othersWei;
+    return formatDisplay(remainder, amountDecimals);
   };
 
   return (
@@ -116,10 +120,13 @@ export function RowEditor({
                 className="w-28 shrink-0 rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-1 text-right font-mono font-semibold disabled:opacity-60"
               />
               {(() => {
-                // Hide the button when totals aren't wired up or the
-                // row already covers (or exceeds) the remainder.
+                // Hide the button only when totals aren't wired up —
+                // when there's a target, keep Rest visible (even at
+                // 0) so the user can always click to fill / clear the
+                // row without hunting for the keyboard. A zero rest
+                // also doubles as a budget-full hint.
                 const rest = restFor(i);
-                if (!rest || readOnly) return null;
+                if (rest === null || readOnly) return null;
                 return (
                   <button
                     type="button"

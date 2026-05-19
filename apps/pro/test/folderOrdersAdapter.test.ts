@@ -172,6 +172,41 @@ describe("createFolderOrdersAdapter", () => {
     expect(out.map((o) => o.id)).toEqual(["good"]);
   });
 
+  it("refuses to overwrite when the file is a non-array JSON value", async () => {
+    const fs = fakeFs();
+    fs.files.set("zkscatter-pro-orders-31337.json", "null");
+    const a = createFolderOrdersAdapter(31337, fs);
+    expect(await a.loadAll()).toEqual([]);
+    await a.put(fixture({ id: "new" }));
+    expect(fs.files.get("zkscatter-pro-orders-31337.json")).toBe("null");
+    expect(fs.saveCalls).toBe(0);
+  });
+
+  it("refuses to overwrite when loadFile rejects (transient permission failure)", async () => {
+    let loadCalls = 0;
+    let saveCalls = 0;
+    let savedContent: string | null = null;
+    const fs = {
+      files: new Map<string, string>(),
+      saveCalls: 0,
+      loadCalls: 0,
+      loadFile: async () => {
+        loadCalls++;
+        throw new Error("transient permission denied");
+      },
+      saveFile: async (_name: string, content: string) => {
+        saveCalls++;
+        savedContent = content;
+      },
+    };
+    const a = createFolderOrdersAdapter(31337, fs);
+    expect(await a.loadAll()).toEqual([]);
+    await a.put(fixture({ id: "new" }));
+    expect(saveCalls).toBe(0);
+    expect(savedContent).toBeNull();
+    expect(loadCalls).toBe(1);
+  });
+
   it("refuses to overwrite a corrupt backing file (preserves recoverable data)", async () => {
     const fs = fakeFs();
     fs.files.set(

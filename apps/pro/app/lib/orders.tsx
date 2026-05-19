@@ -231,23 +231,45 @@ export function createFolderOrdersAdapter(
       try {
         content = await io.loadFile(filename);
       } catch (e) {
-        warn("folder loadAll: loadFile rejected", e);
+        // Any loadFile failure (transient permission revoke, file
+        // held open by the OS, etc.) means we don't know what's on
+        // disk. Marking corrupt prevents the next put() from
+        // overwriting whatever the file actually contained.
+        loadCorrupted = true;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[scatter pro orders] ${filename} loadFile rejected — refusing further writes to avoid overwriting recoverable data`,
+          e,
+        );
         return;
       }
       if (!content) return;
-      let wire: WireOrder[];
+      let parsed: unknown;
       try {
-        wire = JSON.parse(content) as WireOrder[];
+        parsed = JSON.parse(content);
       } catch (e) {
-        // Mark corrupt so puts don't trample the on-disk data.
         loadCorrupted = true;
         // eslint-disable-next-line no-console
         console.error(
           `[scatter pro orders] ${filename} is not valid JSON — refusing further writes to avoid overwriting recoverable data`,
           e,
+          { rawHead: content.slice(0, 200) },
         );
         return;
       }
+      if (!Array.isArray(parsed)) {
+        // JSON parsed but isn't the expected `WireOrder[]` shape
+        // (e.g. someone wrote `null` or a single object into the
+        // file). Same posture as a parse failure: don't overwrite.
+        loadCorrupted = true;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[scatter pro orders] ${filename} is not a JSON array — refusing further writes`,
+          { actualType: parsed === null ? "null" : typeof parsed },
+        );
+        return;
+      }
+      const wire = parsed as WireOrder[];
       for (const w of wire) {
         if (!w || typeof w.id !== "string") {
           warn(`skipping malformed order <no id>`);

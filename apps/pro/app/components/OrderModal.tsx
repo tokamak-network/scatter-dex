@@ -239,6 +239,46 @@ export function OrderModal({
     }
   }, [side, activePair.base, activePair.quote, price, size]);
 
+  // Funding-note commitment summary for the confirm dialog: the
+  // hash of the spent commitment + the residual amount the order
+  // will leave behind as a fresh change note. Both come for free
+  // from the in-scope `note` + size; the change *commitment* hash
+  // can't be shown without committing to a salt early (we mint it
+  // at submit time inside the prover input), so we surface the
+  // amount so the user knows a new note will appear in the vault.
+  const confirmCommitments = useMemo<
+    { spentHex: string; sellSymbol: string; sellDecimals: number; change: bigint } | null
+  >(() => {
+    if (!note) return null;
+    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
+    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    const sellTok = side === "sell" ? baseTok : quoteTok;
+    if (!baseTok || !quoteTok || !sellTok) return null;
+    let sellAmt = 0n;
+    try {
+      const cleanPrice = price.replace(/,/g, "");
+      const cleanSize = size.replace(/,/g, "");
+      if (cleanPrice && cleanSize) {
+        const priceUnits = parseUnits(cleanPrice, quoteTok.decimals);
+        const sizeUnits = parseUnits(cleanSize, baseTok.decimals);
+        sellAmt = side === "sell"
+          ? sizeUnits
+          : (priceUnits * sizeUnits) / 10n ** BigInt(baseTok.decimals);
+      }
+    } catch {
+      sellAmt = 0n;
+    }
+    const change = sellAmt > 0n && sellAmt < note.note.amount
+      ? note.note.amount - sellAmt
+      : 0n;
+    return {
+      spentHex: `0x${note.commitment.toString(16)}`,
+      sellSymbol: sellTok.symbol,
+      sellDecimals: sellTok.decimals,
+      change,
+    };
+  }, [note, side, activePair.base, activePair.quote, price, size]);
+
   // Probe each non-empty recipient against the IdentityRegistry so
   // we can short-circuit submit before paying the 1–2 s prove cost
   // when a recipient hasn't completed zk-X509 verification. Empty
@@ -605,6 +645,15 @@ export function OrderModal({
         // at spend time). Reads from publicSignals (not meta) so it
         // doesn't depend on the worker's optional meta channel.
         const newCommitmentIdx = AUTHORIZE_PUBLIC_SIGNAL_NAMES.indexOf("newCommitment");
+        if (newCommitmentIdx < 0) {
+          // Surface a rename / typo of the constant immediately
+          // instead of silently stranding every partial fill's
+          // remainder. Throwing keeps the failure scoped to this
+          // submit (caught by the outer try/catch as "Order failed").
+          throw new Error(
+            "[order] AUTHORIZE_PUBLIC_SIGNAL_NAMES does not list 'newCommitment' — change-note pre-save cannot resolve the commitment index",
+          );
+        }
         const newCommitment = proveResult.publicSignals[newCommitmentIdx];
         if (newCommitment !== undefined) {
           const changeNote = { ...note.note, salt: newSalt, amount: change };
@@ -714,6 +763,22 @@ export function OrderModal({
             : `0 ${confirmGrossBuy.symbol} (0 bps)`;
           return <Row k="Relayer fee" v={feeStr} />;
         })()}
+        {confirmCommitments && (
+          <>
+            <Row
+              k="Spending commitment"
+              v={`${confirmCommitments.spentHex.slice(0, 10)}…${confirmCommitments.spentHex.slice(-6)}`}
+            />
+            <Row
+              k="Change note"
+              v={
+                confirmCommitments.change > 0n
+                  ? `${formatTokenAmount(confirmCommitments.change, confirmCommitments.sellDecimals)} ${confirmCommitments.sellSymbol} → new commitment`
+                  : "none (full note spent)"
+              }
+            />
+          </>
+        )}
       </dl>
 
       {/* Surface every row at confirm so an N-recipient vesting
