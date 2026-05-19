@@ -9,6 +9,10 @@ import { isAbortError } from "../lib/abort";
 import { useCommitmentTree } from "../lib/commitmentTree";
 import { submitWithdraw, type WithdrawPhase } from "../lib/realWithdraw";
 import { useActiveNetwork } from "../lib/activeNetwork";
+import {
+  useIdentityForAddress,
+  type AddressVerification,
+} from "../lib/identity";
 
 type DestKind = "self" | "custom";
 
@@ -83,6 +87,20 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
 
   const destValid = destAddr !== null;
 
+  // CommitmentPool.withdraw reverts with `NotIdentityVerified()`
+  // (selector 0x1e808bfe) when the recipient isn't verified in the
+  // active IdentityGate. Probe the resolved destination so we can
+  // (1) show a status pill next to the address input and (2) disable
+  // the submit button until the address clears the gate — instead
+  // of letting the user pay the prove cost and see a raw revert.
+  const { status: destIdentity } = useIdentityForAddress(destAddr);
+  const destVerified =
+    destIdentity !== null &&
+    (destIdentity.state.kind === "verified" ||
+      destIdentity.state.kind === "expiring");
+  const destIdentityKnown = destIdentity !== null;
+  const destIdentityBlocking = destValid && destIdentityKnown && !destVerified;
+
   const submit = useCallback(async () => {
     if (!note) {
       setPhase({ kind: "error", message: "Pick a note to withdraw." });
@@ -103,6 +121,21 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       setPhase({
         kind: "error",
         message: "Connect a wallet to sign the withdraw tx.",
+      });
+      return;
+    }
+
+    // Belt-and-suspenders identity gate. The submit button is
+    // already disabled when the recipient isn't verified, but a
+    // race between the probe completing and the user clicking
+    // could still let an unverified recipient through. Re-check
+    // here so the user never pays the ZK prove cost just to hit
+    // `NotIdentityVerified()` on-chain.
+    if (destIdentityBlocking) {
+      setPhase({
+        kind: "error",
+        message:
+          "The destination address is not identity-verified. The recipient must complete identity verification before this withdraw can land on chain.",
       });
       return;
     }
@@ -236,6 +269,14 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
               className="mt-1 w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
             />
           )}
+          {destValid && (
+            <IdentityRow
+              address={destAddr!}
+              status={destIdentity}
+              verified={destVerified}
+              isSelf={destKind === "self"}
+            />
+          )}
         </fieldset>
       </fieldset>
 
@@ -283,7 +324,14 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
             </Button>
             <Button
               onClick={submit}
-              disabled={busy || !note || !destValid || (note && note.leafIndex < 0)}
+              disabled={
+                busy ||
+                !note ||
+                !destValid ||
+                (note && note.leafIndex < 0) ||
+                destIdentityBlocking ||
+                (destValid && !destIdentityKnown)
+              }
               title={
                 !note
                   ? "Pick a note to withdraw"
@@ -291,6 +339,10 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
                   ? "Waiting for the deposit's on-chain confirmation — usually one block"
                   : !destValid
                   ? "Pick a valid destination"
+                  : destValid && !destIdentityKnown
+                  ? "Checking the destination's identity verification…"
+                  : destIdentityBlocking
+                  ? "The destination address is not identity-verified — CommitmentPool.withdraw would revert"
                   : undefined
               }
             >
@@ -356,6 +408,66 @@ function PhaseStatus({ phase }: { phase: Phase }) {
     <div className="mt-4 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm">
       <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
       <span>{phase.message}</span>
+    </div>
+  );
+}
+
+/** Identity-verification row shown under the destination address.
+ *  Three states map directly to the disable / message logic above:
+ *   - `null` (probe in flight) → neutral "Checking…" hint, button
+ *     stays disabled so we never fire a tx against an
+ *     unverified-but-not-yet-known recipient.
+ *   - verified / expiring → green badge, button enables.
+ *   - unverified / expired / error → orange-warning badge + a
+ *     recovery hint pointing the user at `/identity`. Button stays
+ *     disabled — `CommitmentPool.withdraw` would revert with
+ *     `NotIdentityVerified()` (selector 0x1e808bfe). */
+function IdentityRow({
+  address,
+  status,
+  verified,
+  isSelf,
+}: {
+  address: string;
+  status: AddressVerification | null;
+  verified: boolean;
+  isSelf: boolean;
+}) {
+  if (status === null) {
+    return (
+      <div className="mt-1 rounded-md bg-[var(--color-bg)] px-3 py-1.5 text-[11px] text-[var(--color-text-muted)]">
+        <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-[var(--color-border-strong)] align-middle" />
+        <span className="ml-2">Checking identity verification for {shortAddr(address)}…</span>
+      </div>
+    );
+  }
+  if (verified) {
+    return (
+      <div className="mt-1 flex items-center justify-between gap-2 rounded-md bg-[var(--color-success-soft)] px-3 py-1.5 text-[11px] text-[var(--color-success)]">
+        <span>
+          ✓ Identity verified
+          {status.state.kind === "expiring" && " (expires soon)"}
+        </span>
+        <span className="font-mono text-[10px] opacity-70">{shortAddr(address)}</span>
+      </div>
+    );
+  }
+  // Unverified / expired / error — all surface as a single blocking
+  // warning. The recovery action differs depending on whether the
+  // user is withdrawing to themselves (they go verify at /identity)
+  // or to a counterparty (the counterparty has to verify, which
+  // the Pro operator can't do for them).
+  return (
+    <div className="mt-1 space-y-1 rounded-md bg-[var(--color-warning-soft)] px-3 py-2 text-[11px] text-[var(--color-warning)]">
+      <div className="flex items-center justify-between gap-2">
+        <span>⚠ Not identity-verified</span>
+        <span className="font-mono text-[10px] opacity-70">{shortAddr(address)}</span>
+      </div>
+      <div className="text-[var(--color-text-muted)]">
+        {isSelf
+          ? "Visit /identity to complete verification before withdrawing."
+          : "This recipient address must complete identity verification — the pool's withdraw reverts otherwise. Ask them to verify at the /identity page on their wallet."}
+      </div>
     </div>
   );
 }
