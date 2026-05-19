@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
@@ -9,26 +9,35 @@ import { StatusBadge } from "../components/StatusBadge";
 import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
 import { formatWhen } from "../lib/format";
 
-const SEED_ORDERS: OrderRecord[] = [
-  { id: "seed-1", label: "ord_8412", side: "sell", pair: "ETH/USDC", price: "4,205",  size: "2.0",  status: "claimable", createdAt: Date.parse("2026-04-26T09:14:00Z") },
-  { id: "seed-2", label: "ord_8401", side: "buy",  pair: "TON/USDT", price: "5.43",   size: "1200", status: "matching",  createdAt: Date.parse("2026-04-26T08:51:00Z") },
-  { id: "seed-3", label: "ord_8388", side: "sell", pair: "ETH/USDC", price: "4,198",  size: "1.5",  status: "claimed",   createdAt: Date.parse("2026-04-25T22:30:00Z") },
-  { id: "seed-4", label: "ord_8377", side: "buy",  pair: "TON/USDC", price: "5.42",   size: "1500", status: "cancelled", createdAt: Date.parse("2026-04-25T18:02:00Z") },
-];
-
-type StatusFilter = "all" | OrderStatus;
+// "Expired" is a UI-derived bucket: `status === "matching"` AND the
+// settle deadline already passed. Not a real OrderStatus on disk.
+type StatusFilter = "all" | OrderStatus | "expired";
 const FILTERS: Array<{ key: StatusFilter; label: string }> = [
   { key: "all", label: "All" },
   { key: "matching", label: "Matching" },
-  { key: "claimable", label: "Filled" },
+  { key: "expired", label: "Expired" },
+  { key: "claimable", label: "Ready to claim" },
   { key: "claimed", label: "Claimed" },
   { key: "cancelled", label: "Cancelled" },
 ];
 
+function isExpired(o: OrderRecord, nowMs: number): boolean {
+  if (o.status !== "matching") return false;
+  if (o.expiry === undefined) return false;
+  return Number(o.expiry) * 1000 <= nowMs;
+}
 
 export default function Orders() {
   const { orders } = useOrders();
-  const all = useMemo<OrderRecord[]>(() => [...orders, ...SEED_ORDERS], [orders]);
+  // Re-evaluate the Expired bucket every minute so an expiry
+  // crossing while the tab sits open shifts the order into the
+  // Expired filter without a refresh.
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  const all = orders;
   const realIds = useMemo(() => new Set(orders.map((o) => o.id)), [orders]);
   const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<OrderRecord | null>(null);
@@ -50,10 +59,17 @@ export default function Orders() {
   const drawerCanClaim =
     liveDrawerTarget?.status === "claimable" && !!liveDrawerTarget.claim;
 
-  const visible = useMemo(
-    () => (filter === "all" ? all : all.filter((o) => o.status === filter)),
-    [all, filter],
-  );
+  const visible = useMemo(() => {
+    if (filter === "all") return all;
+    if (filter === "expired") return all.filter((o) => isExpired(o, nowMs));
+    // The Matching filter excludes expired rows so the two buckets
+    // don't double-count — an expired-but-still-`matching`-on-disk
+    // order should only appear under Expired.
+    if (filter === "matching") {
+      return all.filter((o) => o.status === "matching" && !isExpired(o, nowMs));
+    }
+    return all.filter((o) => o.status === filter);
+  }, [all, filter, nowMs]);
 
   // Counts per filter so the segmented control can show "(N)" hints
   // — answers "how many open orders do I have" at a glance without
@@ -62,13 +78,17 @@ export default function Orders() {
     const c: Record<StatusFilter, number> = {
       all: all.length,
       matching: 0,
+      expired: 0,
       claimable: 0,
       claimed: 0,
       cancelled: 0,
     };
-    for (const o of all) c[o.status]++;
+    for (const o of all) {
+      if (o.status === "matching" && isExpired(o, nowMs)) c.expired++;
+      else c[o.status]++;
+    }
     return c;
-  }, [all]);
+  }, [all, nowMs]);
 
   return (
     <div className="space-y-6">
@@ -129,7 +149,15 @@ export default function Orders() {
                 <td className="px-5 py-3">{o.pair}</td>
                 <td className="px-5 py-3 text-right font-mono">{o.price}</td>
                 <td className="px-5 py-3 text-right font-mono">{o.size}</td>
-                <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
+                <td className="px-5 py-3">
+                  {isExpired(o, nowMs) ? (
+                    <span className="rounded-full border border-[var(--color-danger)] bg-[var(--color-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]">
+                      Expired
+                    </span>
+                  ) : (
+                    <StatusBadge status={o.status} />
+                  )}
+                </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
                 <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   {o.status === "matching" && realIds.has(o.id) && (
