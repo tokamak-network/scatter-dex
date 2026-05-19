@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { EmptyState } from "@zkscatter/ui";
 import { useVault, type VaultNote } from "../lib/vault";
@@ -12,6 +11,7 @@ import {
 } from "../lib/noteStatus";
 import { WithdrawModal } from "../components/WithdrawModal";
 import { DepositModal } from "../components/DepositModal";
+import { WorkspaceBar } from "../components/WorkspaceBar";
 import { formatNum, formatWhen } from "../lib/format";
 
 /** Full Escrow page — combines the workbench's pool summary,
@@ -49,21 +49,15 @@ export default function EscrowPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-baseline justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Escrow</h1>
-          <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Your escrowed balances, every note in the vault, and the
-            deposit / withdraw actions tied to them.
-          </p>
-        </div>
-        <Link
-          href="/app"
-          className="text-sm text-[var(--color-primary)] hover:underline"
-        >
-          ← Back to workbench
-        </Link>
+      <div>
+        <h1 className="text-2xl font-semibold">Escrow</h1>
+        <p className="mt-1 text-sm text-[var(--color-text-muted)]">
+          Your escrowed balances, every note in the vault, and the
+          deposit / withdraw actions tied to them.
+        </p>
       </div>
+
+      <WorkspaceBar />
 
       {/* Pool summary — per-symbol Available / Locked / Pending,
           mirrors the workbench's left-column block. */}

@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
 import { StatusBadge } from "../components/StatusBadge";
 import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
+import { WorkspaceBar } from "../components/WorkspaceBar";
 import { formatWhen } from "../lib/format";
 
 // "Expired" is a UI-derived bucket: `status === "matching"` AND the
@@ -92,12 +92,12 @@ export default function Orders() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Orders</h1>
-        <Link href="/app" className="text-sm text-[var(--color-primary)] hover:underline">
-          ← Back to workbench
-        </Link>
-      </div>
+      <h1 className="text-2xl font-semibold">My orders</h1>
+
+      {/* Title above, workspace context just under it — matches the
+          address-book / wallet pages so the layout stays uniform
+          across every folder-backed page. */}
+      <WorkspaceBar />
       <div className="flex flex-wrap gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-sm">
         {FILTERS.map((f) => (
           <button
@@ -125,7 +125,8 @@ export default function Orders() {
               <th className="px-5 py-3 text-right">Price</th>
               <th className="px-5 py-3 text-right">Size</th>
               <th className="px-5 py-3 text-left">Status</th>
-              <th className="px-5 py-3 text-left">When</th>
+              <th className="px-5 py-3 text-left">Submitted</th>
+              <th className="px-5 py-3 text-left">Settle by</th>
               <th className="px-5 py-3 text-right">Action</th>
             </tr>
           </thead>
@@ -159,6 +160,15 @@ export default function Orders() {
                   )}
                 </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
+                <td className="px-5 py-3 text-[var(--color-text-muted)]">
+                  {o.expiry !== undefined ? (
+                    <span className={isExpired(o, nowMs) ? "text-[var(--color-danger)]" : ""}>
+                      {formatWhen(Number(o.expiry) * 1000)}
+                    </span>
+                  ) : (
+                    <span className="text-[var(--color-text-subtle)]">—</span>
+                  )}
+                </td>
                 <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   {o.status === "matching" && realIds.has(o.id) && (
                     <button
