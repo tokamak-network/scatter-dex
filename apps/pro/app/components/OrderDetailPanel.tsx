@@ -125,20 +125,13 @@ export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
       )}
 
       {(onCancel || onClaim) && (
-        <footer className="flex flex-col items-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
-          <div className="flex items-center gap-2">
-            {onCancel && (
-              <Button variant="secondary" disabled>
-                Cancel coming soon
-              </Button>
-            )}
-            {onClaim && <Button onClick={onClaim}>Claim →</Button>}
-          </div>
+        <footer className="flex justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
           {onCancel && (
-            <p className="text-[10px] text-[var(--color-text-subtle)]">
-              Cancel flow is being reworked — recovery will land in a follow-up.
-            </p>
+            <Button variant="secondary" onClick={onCancel}>
+              Cancel order
+            </Button>
           )}
+          {onClaim && <Button onClick={onClaim}>Claim →</Button>}
         </footer>
       )}
     </section>

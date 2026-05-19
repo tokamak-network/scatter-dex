@@ -63,8 +63,13 @@ export interface CancelProofInput {
   /** The EdDSA private key (same key used to sign the order). */
   eddsaPrivateKey: Uint8Array;
 
-  /** Address of the relayer submitting the cancel tx. */
-  relayer: string;
+  /** Wallet that will submit the cancel tx — `msg.sender` of
+   *  `cancelPrivate`. The circuit's `submitter` public signal binds
+   *  this address (pubSignals[4] = uint160(msg.sender) on-chain) and
+   *  the EdDSA signature commits to it via
+   *  `Poseidon(oldNonceNullifier, submitter)`. Cancel is
+   *  permissionless on chain — pass the user's own wallet address. */
+  submitter: string;
 }
 
 export interface CancelProofResult {
@@ -145,10 +150,13 @@ export async function generateCancelProof(
   } while (newCommitment === 0n);
 
   // ── 4. Cancel message + EdDSA signature ──
-  // cancelMsg = Poseidon(oldNonceNullifier, relayer)
+  // cancelMsg = Poseidon(oldNonceNullifier, submitter)
   // Distinct from orderHash (Poseidon-9) so signatures are not cross-replayable.
-  const relayer = BigInt(input.relayer);
-  const cancelMsg = await poseidonHash([oldNonceNullifier, relayer]);
+  // `submitter` is msg.sender of cancelPrivate (the user's own wallet);
+  // binding it here means a leaked cancel proof can't be replayed by a
+  // different wallet.
+  const submitter = BigInt(input.submitter);
+  const cancelMsg = await poseidonHash([oldNonceNullifier, submitter]);
   const signingKey = Uint8Array.from(input.eddsaPrivateKey);
   let sig;
   try {
@@ -165,7 +173,7 @@ export async function generateCancelProof(
     oldNullifier: oldNullifier.toString(),
     oldNonceNullifier: oldNonceNullifier.toString(),
     newCommitment: newCommitment.toString(),
-    relayer: relayer.toString(),
+    submitter: submitter.toString(),
     // Private
     secret: input.note.ownerSecret.toString(),
     salt: input.note.salt.toString(),

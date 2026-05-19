@@ -408,7 +408,7 @@ export default function PrivateHistoryPage() {
         allLeaves,
         nonce: BigInt(nonce),
         eddsaPrivateKey: keyPair.privateKey,
-        relayer: account,
+        submitter: account,
       });
 
       setCancelStep("tx");

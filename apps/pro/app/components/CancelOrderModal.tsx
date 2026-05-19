@@ -11,7 +11,6 @@ import { Button, Modal, useToast } from "@zkscatter/ui";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
-import { useRelayers } from "../lib/relayers";
 import { cancelProver } from "../lib/cancelProver";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
@@ -35,12 +34,14 @@ interface Props {
 }
 
 /** Returns the first reason the cancel flow cannot proceed, or null
- *  when everything is wired up. Same checks were duplicated between
- *  the in-modal disable guard and submit()'s runtime error path. */
+ *  when everything is wired up. `cancelPrivate` is permissionless on
+ *  chain — the user submits directly from their own wallet — so the
+ *  guard is about local prerequisites (funding note + nonce + signer),
+ *  not about picking a relayer. */
 function cancelBlockReason(
   order: OrderRecord,
   notes: ReadonlyArray<{ id: string }>,
-  selectedRelayer: { address: string } | null,
+  hasSigner: boolean,
 ): string | null {
   if (order.nonce === undefined || order.noteId === undefined) {
     return "Order is missing the nonce / funding-note metadata required to cancel.";
@@ -48,8 +49,8 @@ function cancelBlockReason(
   if (!notes.some((n) => n.id === order.noteId)) {
     return "The note that funded this order is no longer in your vault — cancel cannot proceed.";
   }
-  if (!selectedRelayer) {
-    return "Pick an online relayer (top-right pill) before cancelling — the cancel proof binds the submitter.";
+  if (!hasSigner) {
+    return "Connect a wallet — the cancel proof binds your wallet address as the submitter.";
   }
   return null;
 }
@@ -59,7 +60,6 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
   const { notes, add: vaultAdd, remove: vaultRemove } = useVault();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const commitmentTree = useCommitmentTree();
-  const { selected: selectedRelayer } = useRelayers();
   const { signer } = useWallet();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -80,7 +80,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
 
   const submit = useCallback(async () => {
     if (!order) return;
-    const reason = cancelBlockReason(order, notes, selectedRelayer);
+    const reason = cancelBlockReason(order, notes, !!signer);
     if (reason) {
       setPhase({ kind: "error", message: reason });
       return;
@@ -88,7 +88,13 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     // Non-null assertions justified by cancelBlockReason — all three
     // checks above guarantee these when reason is null.
     const note = notes.find((n) => n.id === order.noteId)!;
-    const relayerAddr = selectedRelayer!.address;
+    // The contract binds `msg.sender` as `submitter` (pubSignals[4])
+    // and we sign EdDSA over Poseidon(oldNonceNullifier, submitter),
+    // so this MUST be the wallet that will broadcast the cancel tx.
+    // Using a third-party address here produces a proof the contract
+    // refuses and the EdDSA verification step inside the circuit
+    // would reject regardless.
+    const submitterAddress = await signer!.getAddress();
 
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
@@ -111,7 +117,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         merkleProof,
         nonce: order.nonce!,
         eddsaPrivateKey: eddsaKey.privateKey,
-        relayer: relayerAddr,
+        submitter: submitterAddress,
       };
 
       setPhase({ kind: "proving", message: "Generating ZK cancel proof…" });
@@ -217,7 +223,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [order, notes, selectedRelayer, signer, deriveEdDSA, markCancelled, toast, commitmentTree]);
+  }, [order, notes, signer, deriveEdDSA, markCancelled, toast, commitmentTree, vaultAdd, vaultRemove]);
 
   if (!order) return null;
 
@@ -228,7 +234,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
 
   // Disable the button + show the same reason inline BEFORE the user
   // clicks and burns the 1–2 s prove.
-  const blockReason = cancelBlockReason(order, notes, selectedRelayer);
+  const blockReason = cancelBlockReason(order, notes, !!signer);
 
   return (
     <Modal open={open} onClose={close} title="Cancel order" closeOnBackdrop={false}>
