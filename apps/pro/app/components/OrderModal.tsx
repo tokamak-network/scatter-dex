@@ -12,7 +12,7 @@ import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { useIdentityForAddresses, useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
-import { downloadOrderClaimsBundle } from "../lib/claimsBundle";
+import { downloadOrderClaimsBundle, persistOrderClaimsBundle } from "../lib/claimsBundle";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../lib/relayers";
@@ -23,14 +23,14 @@ import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitment
 import { buildClaimsTree, computeCommitment, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { formatTokenAmount, formatWhen } from "../lib/format";
 import { applyFeeBig } from "../lib/fee";
-import type { VaultNote } from "../lib/vault";
+import { useVault, type VaultNote } from "../lib/vault";
 import {
   releaseAtToUnixSec,
   useTradeForm,
   type RecipientRow,
 } from "../lib/tradeForm";
 import { DEMO_NETWORK } from "../lib/network";
-import { buildAuthorizeOrderBody, dispatchAuthorize } from "../lib/dispatch";
+import { AUTHORIZE_PUBLIC_SIGNAL_NAMES, buildAuthorizeOrderBody, dispatchAuthorize } from "../lib/dispatch";
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
@@ -190,6 +190,7 @@ export function OrderModal({
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addOrder } = useOrders();
+  const { add: vaultAdd } = useVault();
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const { selected: selectedRelayer } = useRelayers();
@@ -238,6 +239,46 @@ export function OrderModal({
     }
   }, [side, activePair.base, activePair.quote, price, size]);
 
+  // Funding-note commitment summary for the confirm dialog: the
+  // hash of the spent commitment + the residual amount the order
+  // will leave behind as a fresh change note. Both come for free
+  // from the in-scope `note` + size; the change *commitment* hash
+  // can't be shown without committing to a salt early (we mint it
+  // at submit time inside the prover input), so we surface the
+  // amount so the user knows a new note will appear in the vault.
+  const confirmCommitments = useMemo<
+    { spentHex: string; sellSymbol: string; sellDecimals: number; change: bigint } | null
+  >(() => {
+    if (!note) return null;
+    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
+    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    const sellTok = side === "sell" ? baseTok : quoteTok;
+    if (!baseTok || !quoteTok || !sellTok) return null;
+    let sellAmt = 0n;
+    try {
+      const cleanPrice = price.replace(/,/g, "");
+      const cleanSize = size.replace(/,/g, "");
+      if (cleanPrice && cleanSize) {
+        const priceUnits = parseUnits(cleanPrice, quoteTok.decimals);
+        const sizeUnits = parseUnits(cleanSize, baseTok.decimals);
+        sellAmt = side === "sell"
+          ? sizeUnits
+          : (priceUnits * sizeUnits) / 10n ** BigInt(baseTok.decimals);
+      }
+    } catch {
+      sellAmt = 0n;
+    }
+    const change = sellAmt > 0n && sellAmt < note.note.amount
+      ? note.note.amount - sellAmt
+      : 0n;
+    return {
+      spentHex: `0x${note.commitment.toString(16)}`,
+      sellSymbol: sellTok.symbol,
+      sellDecimals: sellTok.decimals,
+      change,
+    };
+  }, [note, side, activePair.base, activePair.quote, price, size]);
+
   // Probe each non-empty recipient against the IdentityRegistry so
   // we can short-circuit submit before paying the 1–2 s prove cost
   // when a recipient hasn't completed zk-X509 verification. Empty
@@ -262,6 +303,13 @@ export function OrderModal({
   useEffect(() => {
     if (open) setPhase({ kind: "idle" });
   }, [open]);
+
+  // Nudge the commitment tree to re-fetch on modal open so a fresh
+  // deposit whose `CommitmentInserted` event hadn't reached the
+  // long-poll yet is picked up before the user clicks submit.
+  useEffect(() => {
+    if (open) commitmentTree.refresh();
+  }, [open, commitmentTree]);
 
   const close = useCallback(() => {
     abortCtrlRef.current?.abort();
@@ -477,6 +525,15 @@ export function OrderModal({
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       const nonce = randomFieldElement();
+      // Pre-mint a salt for the residual (change) commitment so the
+      // post-prove `newCommitment` is deterministic and we can save
+      // the change note immediately with a matching commitment.
+      // Authorize circuit ignores newSalt when sellAmount === note.amount
+      // (fully spent — no change). Omitting it would force the prover
+      // to roll one internally and not surface it back, leaving the
+      // change UTXO unspendable.
+      const change = note.note.amount - sellAmount;
+      const newSalt = change > 0n ? randomFieldElement() : undefined;
 
       // Relayer address is bound into the proof (and the order hash),
       // so the user's pick has to be cached before prove. Falls back
@@ -499,6 +556,7 @@ export function OrderModal({
         relayer: relayerAddress,
         eddsaPrivateKey: eddsaKey.privateKey,
         claims,
+        newSalt,
       };
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
@@ -568,17 +626,66 @@ export function OrderModal({
           claimsRoot: toBytes32Hex(claimsRoot),
         },
       });
-      // Off-device backup: every claim secret the user will need
-      // to release this order is now persisted in IndexedDB locally,
-      // but a wiped browser profile would erase that copy entirely.
-      // Hand the user a JSON file with the same material so they
-      // have an off-device fallback. Failures here are non-fatal —
-      // the in-app claim flow keeps working from the IDB copy.
+      // Change-note pre-save: when the order spends less than the full
+      // funding note, the authorize circuit emits a residual commitment
+      // bound to `newSalt`. Persist that change note now (leafIndex=-1)
+      // so the remainder is recoverable post-settle — `useLeafIndexReconciler`
+      // fills the index once the chain's CommitmentInserted lands.
+      // Fire-and-forget: the order is already on the book, so a
+      // local-storage hiccup must not cancel the success path. If the
+      // order is later cancelled instead of settled, this change note
+      // is orphaned (its commitment never lands on chain) and the user
+      // can prune it manually — matching frontend's accepted trade-off.
+      if (newSalt !== undefined && change > 0n) {
+        // Look up the index by name (not hard-coded 4) so a future
+        // reorder of AUTHORIZE_PUBLIC_SIGNAL_NAMES doesn't silently
+        // store the wrong field as the change-note's commitment —
+        // which would make the residual unspendable (its commitment
+        // on disk wouldn't match what `computeCommitment` produces
+        // at spend time). Reads from publicSignals (not meta) so it
+        // doesn't depend on the worker's optional meta channel.
+        const newCommitmentIdx = AUTHORIZE_PUBLIC_SIGNAL_NAMES.indexOf("newCommitment");
+        if (newCommitmentIdx < 0) {
+          // Surface a rename / typo of the constant immediately
+          // instead of silently stranding every partial fill's
+          // remainder. Throwing keeps the failure scoped to this
+          // submit (caught by the outer try/catch as "Order failed").
+          throw new Error(
+            "[order] AUTHORIZE_PUBLIC_SIGNAL_NAMES does not list 'newCommitment' — change-note pre-save cannot resolve the commitment index",
+          );
+        }
+        const newCommitment = proveResult.publicSignals[newCommitmentIdx];
+        if (newCommitment !== undefined) {
+          const changeNote = { ...note.note, salt: newSalt, amount: change };
+          const changeAmountDisplay = formatTokenAmount(change, sellToken.decimals);
+          vaultAdd({
+            symbol: note.symbol,
+            amount: changeAmountDisplay,
+            note: changeNote,
+            commitment: newCommitment,
+          }).catch((err) => {
+            console.warn("[order] change-note pre-save failed", err);
+          });
+        }
+      }
+
+      // Claim-bundle persistence: every claim secret the user will
+      // need to release this order lands in two places —
+      //   1. scatter-pro-claims-{label}.json inside the active
+      //      notes folder (Pay's claimInbox / per-run pattern), so
+      //      a folder backup carries the secrets too;
+      //   2. a browser download for an off-folder copy.
+      // Both are fire-and-forget — a failure degrades to "no
+      // backup" but doesn't break the in-app claim flow, since
+      // the order record (with the same claim material) is already
+      // in the folder via OrdersProvider.
+      const bundleCtx = {
+        relayerUrl: selectedRelayer?.url ?? null,
+        chainId: activeNetwork.chainId,
+      };
+      void persistOrderClaimsBundle(order, bundleCtx);
       try {
-        downloadOrderClaimsBundle(order, {
-          relayerUrl: selectedRelayer?.url ?? null,
-          chainId: activeNetwork.chainId,
-        });
+        downloadOrderClaimsBundle(order, bundleCtx);
       } catch (e) {
         console.warn("[order] claims-bundle download failed", e);
       }
@@ -624,7 +731,7 @@ export function OrderModal({
   }
 
   return (
-    <Modal open={open} onClose={close} title="Confirm private order">
+    <Modal open={open} onClose={close} title="Confirm private order" closeOnBackdrop={false}>
       <TestnetNotice />
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
         <Row k="Pair" v={pair} />
@@ -656,6 +763,22 @@ export function OrderModal({
             : `0 ${confirmGrossBuy.symbol} (0 bps)`;
           return <Row k="Relayer fee" v={feeStr} />;
         })()}
+        {confirmCommitments && (
+          <>
+            <Row
+              k="Spending commitment"
+              v={`${confirmCommitments.spentHex.slice(0, 10)}…${confirmCommitments.spentHex.slice(-6)}`}
+            />
+            <Row
+              k="Change note"
+              v={
+                confirmCommitments.change > 0n
+                  ? `${formatTokenAmount(confirmCommitments.change, confirmCommitments.sellDecimals)} ${confirmCommitments.sellSymbol} → new commitment`
+                  : "none (full note spent)"
+              }
+            />
+          </>
+        )}
       </dl>
 
       {/* Surface every row at confirm so an N-recipient vesting
@@ -740,12 +863,20 @@ export function OrderModal({
             </Button>
             <Button
               onClick={submit}
-              disabled={busy || isDeriving || !account || !note}
+              disabled={
+                busy ||
+                isDeriving ||
+                !account ||
+                !note ||
+                (note && note.leafIndex < 0)
+              }
               title={
                 !account
                   ? "Connect a wallet first"
                   : !note
                   ? "Deposit to your vault first"
+                  : note.leafIndex < 0
+                  ? "Waiting for the deposit's on-chain confirmation — usually one block"
                   : undefined
               }
             >
@@ -753,6 +884,8 @@ export function OrderModal({
                 ? "Working…"
                 : isDeriving
                 ? "Awaiting signature…"
+                : note && note.leafIndex < 0
+                ? "Confirming deposit…"
                 : "Sign & submit"}
             </Button>
           </>

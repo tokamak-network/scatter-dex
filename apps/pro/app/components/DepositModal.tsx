@@ -324,7 +324,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
     phase.kind === "submitting";
 
   return (
-    <Modal open={open} onClose={close} title="Deposit to vault">
+    <Modal open={open} onClose={close} title="Deposit to vault" closeOnBackdrop={false}>
       <TestnetNotice />
       <fieldset disabled={busy} className="space-y-4">
         <Field label="Token">

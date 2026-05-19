@@ -1,4 +1,5 @@
 import { bigintToHex } from "@zkscatter/sdk/util";
+import { saveFile as sdkSaveFile } from "@zkscatter/sdk/storage";
 import type { OrderRecord } from "./orders";
 
 /** Local-time `YYYYMMDD-HHMMSS` slug for filenames so users sort
@@ -13,7 +14,7 @@ function timestampSlug(ms: number): string {
 }
 
 /** Build the JSON payload that backs the per-order claim file.
- *  Pulled out of `downloadOrderClaimsBundle` so tests + the
+ *  Pulled out of the download / persist helpers so tests and a
  *  future Orders-page "Re-download backup" action can share the
  *  exact same serializer. Bigints serialise as 0x-prefixed hex to
  *  round-trip cleanly through JSON.parse. */
@@ -57,12 +58,45 @@ export function buildClaimsBundleJson(
   );
 }
 
+/** Filename for the per-order claim file inside the user's notes
+ *  folder. Mirrors Pay's per-run pattern (`zkscatter-run-{id}.json`):
+ *  one file per order keeps the diff each save writes tiny and
+ *  side-steps the "two tabs racing on an aggregate file" problem
+ *  that the orders adapter has to handle with an in-memory mutex. */
+export function orderClaimsBundleFilename(order: OrderRecord): string {
+  return `scatter-pro-claims-${order.label}.json`;
+}
+
+/** Persist the per-order claim bundle into the user's notes folder
+ *  (`scatter-pro-claims-{label}.json`). Pro mounts behind
+ *  `<FolderGate>` so a folder is guaranteed to be selected by the
+ *  time this fires; the SDK's `saveFile` writes through the active
+ *  `FileSystemDirectoryHandle`. Failures are logged but never
+ *  thrown — they degrade to "no folder backup" while the IDB-side
+ *  order record stays intact. The `io` injection point lets the
+ *  unit test exercise the path without touching real FS handles. */
+export async function persistOrderClaimsBundle(
+  order: OrderRecord,
+  ctx: { relayerUrl: string | null; chainId: number },
+  io: {
+    saveFile: (name: string, content: string) => Promise<void>;
+  } = { saveFile: sdkSaveFile },
+): Promise<void> {
+  try {
+    const json = buildClaimsBundleJson(order, ctx);
+    await io.saveFile(orderClaimsBundleFilename(order), json);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn("[scatter pro claims] folder persist failed", e);
+  }
+}
+
 /** Trigger a browser download of the per-order claim bundle. The
  *  bundle carries every secret a user needs to release the order
  *  later, so we hand it to them as a JSON file the moment Sign &
- *  submit succeeds — IndexedDB persistence in OrdersProvider
- *  covers the device-local copy; this file is the off-device
- *  backup. Silent on non-DOM runtimes (SSR/test). */
+ *  submit succeeds. The folder copy (`persistOrderClaimsBundle`)
+ *  is the in-workspace primary; this download is the off-folder
+ *  off-device backup. Silent on non-DOM runtimes (SSR/test). */
 export function downloadOrderClaimsBundle(
   order: OrderRecord,
   ctx: { relayerUrl: string | null; chainId: number },

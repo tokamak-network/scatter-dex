@@ -21,6 +21,7 @@ import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
 import { FolderProvider } from "./lib/folder";
+import { FolderGate } from "./components/FolderGate";
 import { WalletBookProvider } from "./lib/walletBook";
 import { CommitmentTreeProvider } from "./lib/commitmentTree";
 import { ToastProvider } from "@zkscatter/ui";
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <WalletProvider network={DEMO_NETWORK}>
           <ActiveNetworkProvider>
             <FolderProvider>
+             <FolderGate>
              <WalletBookProvider>
               <IdentityStatusProvider>
                <IdentityGateAdminProvider>
@@ -97,6 +99,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                </IdentityGateAdminProvider>
               </IdentityStatusProvider>
              </WalletBookProvider>
+             </FolderGate>
             </FolderProvider>
           </ActiveNetworkProvider>
         </WalletProvider>

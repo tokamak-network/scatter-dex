@@ -9,7 +9,8 @@ import {
   useRef,
   useState,
 } from "react";
-import { bigintToHex, openIDB } from "@zkscatter/sdk/util";
+import { bigintToHex } from "@zkscatter/sdk/util";
+import { loadFile, saveFile } from "@zkscatter/sdk/storage";
 import { useActiveNetwork } from "./activeNetwork";
 import { newId } from "./newId";
 
@@ -38,9 +39,12 @@ export interface OrderClaim {
   claimsRoot?: string;
 }
 
-/** A submitted private limit order. Persisted per-chain in
- *  IndexedDB so orders survive refresh + browser restart; falls
- *  back to in-memory when IDB is unavailable (SSR, private mode). */
+/** A submitted private limit order. Persisted per-chain into an
+ *  aggregate JSON file in the user's notes folder
+ *  (`zkscatter-pro-orders-{chainId}.json`). Pro mounts behind
+ *  `<FolderGate>` so by the time OrdersProvider runs a folder is
+ *  guaranteed to be selected — there is no IndexedDB fallback,
+ *  the folder is the single source of truth. */
 export interface OrderRecord {
   /** Stable id used as the React key and IDB primary key. */
   id: string;
@@ -87,14 +91,12 @@ export function useOrders(): OrdersState {
   return ctx;
 }
 
-// ── IDB persistence ──────────────────────────────────────────
+// ── Folder persistence ──────────────────────────────────────────
 // Bigints (secret, amount, releaseTime, nonce) are hex-encoded on
-// the wire so the structured-clone serialiser doesn't have to
-// understand them. Keyed per chainId to match the vault adapter —
-// switching networks shows a different (correct) order list.
-
-const STORE = "orders";
-const VERSION = 1;
+// the wire so JSON serialisation round-trips cleanly. One aggregate
+// file per chain — orders are small + bounded (tens, occasionally
+// hundreds), so re-serialise-on-each-write beats Pay's per-file
+// runs model.
 
 /** Wire shape — exported only so the unit test can pin the
  *  on-disk schema and round-trip every field; do not depend on
@@ -173,69 +175,141 @@ export function deserialize(w: WireOrder): OrderRecord {
   };
 }
 
-let warnedOnce = false;
-function warnOnce(reason: string, err?: unknown): void {
-  if (warnedOnce) return;
-  warnedOnce = true;
-  // eslint-disable-next-line no-console
-  console.warn(`[scatter pro orders] ${reason} — falling back to in-memory`, err);
+/** Adapter-scoped one-warning-per-reason logger. Module-level
+ *  global was too coarse — once any single failure tripped it,
+ *  every later failure (including a different category like a JSON
+ *  parse error after a write timeout) was silently swallowed for
+ *  the page lifetime. Per-(instance × reason-key) lets genuinely
+ *  new failure modes still surface, while still de-duping bursts
+ *  of the same failure (e.g. one bad save retried). */
+function makeWarner(): (reason: string, err?: unknown) => void {
+  const seen = new Set<string>();
+  return (reason, err) => {
+    if (seen.has(reason)) return;
+    seen.add(reason);
+    // eslint-disable-next-line no-console
+    console.warn(`[scatter pro orders] ${reason}`, err);
+  };
 }
 
-interface OrdersAdapter {
+export interface OrdersAdapter {
   loadAll(): Promise<OrderRecord[]>;
   put(o: OrderRecord): Promise<void>;
 }
 
-function createOrdersAdapter(dbName: string): OrdersAdapter {
-  let dbPromise: Promise<IDBDatabase | null> | null = null;
-  function open(): Promise<IDBDatabase | null> {
-    if (dbPromise) return dbPromise;
-    dbPromise = openIDB({
-      dbName,
-      version: VERSION,
-      stores: [{ name: STORE, keyPath: "id" }],
-      onWarn: warnOnce,
-    });
-    return dbPromise;
+/** Folder-backed orders adapter. Persists every order as a single
+ *  aggregate JSON file `zkscatter-pro-orders-{chainId}.json` in the
+ *  active notes folder — same folder Pay's run records and the
+ *  shared address book live in, so the user has one place to back
+ *  up. In-memory map mirrors the file so a put → loadAll round-
+ *  trip doesn't hit disk twice.
+ *
+ *  IO injection (`io`) exists for tests; production callers omit
+ *  it and the helpers default to the SDK's folder primitives. */
+export function createFolderOrdersAdapter(
+  chainId: number,
+  io: {
+    loadFile: (name: string) => Promise<string | null>;
+    saveFile: (name: string, content: string) => Promise<void>;
+  } = { loadFile, saveFile },
+): OrdersAdapter {
+  const filename = `zkscatter-pro-orders-${chainId}.json`;
+  const warn = makeWarner();
+  const mem = new Map<string, OrderRecord>();
+  let loadedPromise: Promise<void> | null = null;
+  // True when the on-disk file existed but couldn't be parsed.
+  // `put()` refuses to flush in that state — otherwise the next
+  // write would replace the corrupt-but-recoverable file with
+  // {only the new order}, destroying every previously-persisted
+  // order beyond recovery.
+  let loadCorrupted = false;
+
+  function ensureLoaded(): Promise<void> {
+    if (loadedPromise) return loadedPromise;
+    loadedPromise = (async () => {
+      let content: string | null;
+      try {
+        content = await io.loadFile(filename);
+      } catch (e) {
+        // Any loadFile failure (transient permission revoke, file
+        // held open by the OS, etc.) means we don't know what's on
+        // disk. Marking corrupt prevents the next put() from
+        // overwriting whatever the file actually contained.
+        loadCorrupted = true;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[scatter pro orders] ${filename} loadFile rejected — refusing further writes to avoid overwriting recoverable data`,
+          e,
+        );
+        return;
+      }
+      if (!content) return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(content);
+      } catch (e) {
+        loadCorrupted = true;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[scatter pro orders] ${filename} is not valid JSON — refusing further writes to avoid overwriting recoverable data`,
+          e,
+          { rawHead: content.slice(0, 200) },
+        );
+        return;
+      }
+      if (!Array.isArray(parsed)) {
+        // JSON parsed but isn't the expected `WireOrder[]` shape
+        // (e.g. someone wrote `null` or a single object into the
+        // file). Same posture as a parse failure: don't overwrite.
+        loadCorrupted = true;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[scatter pro orders] ${filename} is not a JSON array — refusing further writes`,
+          { actualType: parsed === null ? "null" : typeof parsed },
+        );
+        return;
+      }
+      const wire = parsed as WireOrder[];
+      for (const w of wire) {
+        if (!w || typeof w.id !== "string") {
+          warn(`skipping malformed order <no id>`);
+          continue;
+        }
+        try {
+          mem.set(w.id, deserialize(w));
+        } catch (e) {
+          warn(`skipping malformed order ${w.id}`, e);
+        }
+      }
+    })();
+    return loadedPromise;
   }
+
+  async function flush(): Promise<void> {
+    if (loadCorrupted) return;
+    try {
+      const wire = Array.from(mem.values())
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map(serialize);
+      await io.saveFile(filename, JSON.stringify(wire, null, 2));
+    } catch (e) {
+      warn("folder put failed", e);
+    }
+  }
+
   return {
     async loadAll() {
-      const db = await open();
-      if (!db) return [];
-      return new Promise<OrderRecord[]>((resolve) => {
-        const tx = db.transaction(STORE, "readonly");
-        const req = tx.objectStore(STORE).getAll();
-        req.onsuccess = () => {
-          const wire = (req.result ?? []) as WireOrder[];
-          const out: OrderRecord[] = [];
-          for (const w of wire) {
-            try {
-              out.push(deserialize(w));
-            } catch (e) {
-              warnOnce(`skipping malformed order ${w.id ?? "<no id>"}`, e);
-            }
-          }
-          resolve(out);
-        };
-        req.onerror = () => {
-          warnOnce("loadAll tx errored", req.error);
-          resolve([]);
-        };
-      });
+      await ensureLoaded();
+      return Array.from(mem.values()).sort((a, b) => a.createdAt - b.createdAt);
     },
     async put(o) {
-      const db = await open();
-      if (!db) return;
-      await new Promise<void>((resolve) => {
-        const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).put(serialize(o));
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => {
-          warnOnce("put tx errored", tx.error);
-          resolve();
-        };
-        tx.onabort = () => resolve();
-      });
+      await ensureLoaded();
+      if (loadCorrupted) {
+        warn("refusing put: backing file is corrupt — repair or remove it");
+        return;
+      }
+      mem.set(o.id, o);
+      await flush();
     },
   };
 }
@@ -243,8 +317,12 @@ function createOrdersAdapter(dbName: string): OrdersAdapter {
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const { network } = useActiveNetwork();
   const chainId = network.chainId;
+  // OrdersProvider mounts inside <FolderGate>, so a folder is
+  // guaranteed by the time this runs. Adapter is folder-only — no
+  // IDB fallback. Switching chains creates a fresh adapter against
+  // the per-chain file in the same folder.
   const adapter = useMemo(
-    () => createOrdersAdapter(`zkscatter-pro-orders-${chainId}`),
+    () => createFolderOrdersAdapter(chainId),
     [chainId],
   );
 

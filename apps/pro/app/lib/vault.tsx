@@ -2,30 +2,34 @@
 
 import { useMemo } from "react";
 import { createVaultProvider } from "@zkscatter/sdk/react";
-import { createIndexedDbNoteAdapter } from "@zkscatter/sdk/notes";
+import {
+  createFolderNoteAdapter,
+  idForCommitment,
+  type NoteStorageAdapter,
+} from "@zkscatter/sdk/notes";
 import { useActiveNetwork } from "./activeNetwork";
-import { newId } from "./newId";
 
 export type { VaultNote, VaultState } from "@zkscatter/sdk/react";
 
-// Pro switches networks at runtime — chainId comes from the active-
-// network context. The IDB DB is keyed per chain so notes from one
-// network don't leak into another.
+// Pro is folder-only: VaultProvider mounts inside <FolderGate>, so
+// by the time this hook runs the user has a notes folder selected.
+// Every deposit / withdraw / change-note round-trips through that
+// folder — IndexedDB is intentionally not used as a fallback so the
+// folder is the single source of truth across Pro, Pay, and the
+// legacy app.
+//
+// Content-addressed `idForCommitment` keeps a deposit's id stable
+// across reloads — matches Pay so a folder shared between the two
+// surfaces the same notes by the same id.
 const { VaultProvider, useVault } = createVaultProvider({
   useChainId: () => useActiveNetwork().network.chainId,
-  useAdapter: (chainId) =>
-    useMemo(
-      () => createIndexedDbNoteAdapter({ dbName: `zkscatter-notes-${chainId}` }),
-      [chainId],
-    ),
-  // Random UUID — Pro's note storage is keyed on the in-memory id,
-  // not the commitment, so collisions across deposits are fine.
-  makeId: () => newId(),
-  // Belt-and-suspenders chainId filter: even though the adapter is
-  // already keyed per-chain via dbName, legacy v1 notes (pre-keying)
-  // may have lived in the unkeyed DB. Filter at hydrate so a note
-  // tagged with the wrong chainId can't re-enter the active vault.
-  // Notes without a `chainId` tag are grandfathered through.
+  useAdapter: (chainId): NoteStorageAdapter =>
+    useMemo(() => createFolderNoteAdapter({ chainId }), [chainId]),
+  makeId: ({ commitment }) => idForCommitment(commitment),
+  // Belt-and-suspenders chainId filter: notes from older versions
+  // (pre-keying) may still exist in the folder; filter at hydrate
+  // so a note tagged with the wrong chainId can't re-enter the
+  // active vault. Notes without a `chainId` tag are grandfathered.
   filterHydrated: (notes, chainId) =>
     notes.filter((n) => n.chainId === undefined || n.chainId === chainId),
 });

@@ -55,7 +55,7 @@ function cancelBlockReason(
 
 export function CancelOrderModal({ open, onClose, order }: Props) {
   const { markCancelled } = useOrders();
-  const { notes } = useVault();
+  const { notes, add: vaultAdd, remove: vaultRemove } = useVault();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const commitmentTree = useCommitmentTree();
   const { selected: selectedRelayer } = useRelayers();
@@ -140,6 +140,49 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       }
 
       markCancelled(order.id);
+
+      // Vault rotation: cancel emits a fresh commitment for the
+      // same balance (new salt). Persist the rotated note so the
+      // user can immediately re-order with it, and drop the old
+      // note since its nullifier is now on-chain. `leafIndex: -1`
+      // is filled in by `useLeafIndexReconciler` once the chain's
+      // `CommitmentInserted` event for the fresh commitment lands.
+      //
+      // Gated on `freshSalt !== 0n` because the worker may omit
+      // the meta channel in some paths (see assembleCancelProofResult),
+      // in which case rotation is unsafe and we leave the old note
+      // alone — better a zombie than a lost balance.
+      if (cancelProof.freshSalt !== 0n) {
+        // Split the add/remove try/catches so a partial failure
+        // (add succeeded but remove threw) is logged with both
+        // ids — the user is otherwise left with a "double balance"
+        // panel (rotated + original) and no way to tell which note
+        // is the live one. folderAdapter.remove now swallows
+        // removeFile errors internally so this path is unlikely,
+        // but keeping the asymmetric logging means we'd see it
+        // immediately if the contract ever changes.
+        let addedRotated = false;
+        try {
+          await vaultAdd({
+            symbol: note.symbol,
+            amount: note.amount,
+            note: { ...note.note, salt: cancelProof.freshSalt },
+            commitment: cancelProof.newCommitment,
+          });
+          addedRotated = true;
+        } catch (addErr) {
+          console.warn("[cancel] vault rotation: add(new) failed — rotated note not persisted, on-chain cancel is final", addErr);
+        }
+        try {
+          await vaultRemove(note.id);
+        } catch (removeErr) {
+          console.error(
+            `[cancel] vault rotation: remove(old=${note.id}) failed — vault now shows both the rotated and the (on-chain-nullified) original. Manually remove note ${note.id} to fix.`,
+            { addedRotated, removeErr },
+          );
+        }
+      }
+
       setPhase({ kind: "success" });
       toast.push({
         kind: "success",
@@ -171,7 +214,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
   const blockReason = cancelBlockReason(order, notes, selectedRelayer);
 
   return (
-    <Modal open={open} onClose={close} title="Cancel order">
+    <Modal open={open} onClose={close} title="Cancel order" closeOnBackdrop={false}>
       <PreSignPreview
         primary={[
           { label: "Order", value: order.label },
