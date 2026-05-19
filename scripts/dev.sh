@@ -428,10 +428,14 @@ if [ "$MOCK_MODE" = true ]; then
   fi
 
   RELAYER_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *RelayerRegistry( proxy)?:" | tail -1 | awk '{print $NF}')
-  WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
-  USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
-  USDT=$(echo "$DEPLOY_OUTPUT" | grep "^  USDT:" | awk '{print $NF}')
-  TON=$(echo "$DEPLOY_OUTPUT" | grep "^  TON:" | awk '{print $NF}')
+  # Space-tolerant `^ *` (matches the contract-address grep above)
+  # so forge log indentation drift can't silently zero these out.
+  # `tail -1` guards against a future deploy script printing the
+  # same label twice (e.g. a redeploy in the same run).
+  WETH=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *WETH:" | tail -1 | awk '{print $NF}')
+  USDC=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *USDC:" | tail -1 | awk '{print $NF}')
+  USDT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *USDT:" | tail -1 | awk '{print $NF}')
+  TON=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *TON:" | tail -1 | awk '{print $NF}')
   COMMITMENT_POOL=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *CommitmentPool( proxy)?:" | tail -1 | awk '{print $NF}')
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *PrivateSettlement( proxy)?:" | tail -1 | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *IdentityGate( proxy)?:" | tail -1 | awk '{print $NF}')
@@ -548,10 +552,14 @@ else
   # hardcoded WETH/USDC to "" and the apps booted with
   # NEXT_PUBLIC_WETH_ADDRESS empty — every token-aware modal
   # silently displayed nothing.
-  WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
-  USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
-  USDT=$(echo "$DEPLOY_OUTPUT" | grep "^  USDT:" | awk '{print $NF}')
-  TON=$(echo "$DEPLOY_OUTPUT" | grep "^  TON:" | awk '{print $NF}')
+  # Space-tolerant `^ *` (matches the contract-address grep above)
+  # so forge log indentation drift can't silently zero these out.
+  # `tail -1` guards against a future deploy script printing the
+  # same label twice (e.g. a redeploy in the same run).
+  WETH=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *WETH:" | tail -1 | awk '{print $NF}')
+  USDC=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *USDC:" | tail -1 | awk '{print $NF}')
+  USDT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *USDT:" | tail -1 | awk '{print $NF}')
+  TON=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *TON:" | tail -1 | awk '{print $NF}')
 fi
 
 echo "  RelayerRegistry:     $RELAYER_REGISTRY"

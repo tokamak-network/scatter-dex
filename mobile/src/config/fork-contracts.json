@@ -9,7 +9,7 @@
     "feeVault": "0x25C0a2F0A077F537Bd11897F04946794c2f6f1Ef",
     "batchExecutor": "",
     "tokens": [
-      { "address": "0xF342E904702b1D021F03f519D6D9614916b03f37", "symbol": "USDC", "decimals": 18 }
+      { "address": "0xF342E904702b1D021F03f519D6D9614916b03f37", "symbol": "USDC", "decimals": 6 }
     ],
     "relayerUrl": "http://localhost:3002",
     "sharedOrderbookUrl": "http://localhost:4000"

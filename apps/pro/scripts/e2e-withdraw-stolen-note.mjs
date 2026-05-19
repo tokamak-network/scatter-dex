@@ -80,6 +80,15 @@ async function main() {
     .map((e) => ({ leafIndex: Number(e.args.leafIndex), commitment: BigInt(e.args.commitment) }))
     .sort((a, b) => a.leafIndex - b.leafIndex);
   const myEvent = events.find((e) => e.commitment === commitment);
+  if (!myEvent) {
+    // Defensive: a provider query window issue or a racing
+    // CommitmentInserted that lands after our queryFilter snapshot
+    // would otherwise surface as a misleading "cannot read
+    // properties of undefined".
+    throw new Error(
+      `Alice's deposit commitment 0x${commitment.toString(16)} not found in pool's CommitmentInserted event log — RPC sync gap?`,
+    );
+  }
   const myLeafIndex = myEvent.leafIndex;
   console.log(`     leafIndex ${myLeafIndex}`);
 

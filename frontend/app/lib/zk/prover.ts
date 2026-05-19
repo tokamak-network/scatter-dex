@@ -65,6 +65,16 @@ export async function generateWithdrawProof(
   const nullifierHash = await computeNullifier(note);
   const tokenHash = await computeTokenHash("0x" + note.token.toString(16).padStart(40, "0"));
 
+  // Reject obviously-wrong inputs up front: `deriveEdDSAKey` always
+  // emits 32 bytes. An empty/short buffer means the caller forgot to
+  // unlock the trading key — surface a clear error instead of letting
+  // circomlibjs throw an opaque "invalid prv key" later.
+  if (input.eddsaPrivateKey.length !== 32) {
+    throw new Error(
+      `generateWithdrawProof: eddsaPrivateKey must be 32 bytes, got ${input.eddsaPrivateKey.length}`,
+    );
+  }
+
   // EdDSA gate: sign Poseidon(nullifierHash, recipient). The
   // circuit reconstructs the same hash and verifies the signature
   // inside `EdDSAPoseidonVerifier`. The withdrawer must hold the
