@@ -12,6 +12,7 @@ import {
 } from "../lib/noteStatus";
 import { WithdrawModal } from "../components/WithdrawModal";
 import { DepositModal } from "../components/DepositModal";
+import { formatNum, formatWhen } from "../lib/format";
 
 /** Full Escrow page — combines the workbench's pool summary,
  *  notes list and deposit / withdraw actions into one place.
@@ -29,8 +30,11 @@ export default function EscrowPage() {
     [notes, orders],
   );
 
-  // Same status map pattern MyPositionPanel uses: one O(orders)
-  // pass per (notes × orders) change, O(1) per row at render.
+  // Build a `noteId → NoteStatusInfo` lookup once per (notes,
+  // orders) change so the row render below is O(1) instead of
+  // re-scanning `orders` for every row. Gated on `ordersLoaded` so
+  // pre-hydration we don't paint stale "available" pills against
+  // notes that are actually locked by a yet-to-load order.
   const statusMap = useMemo(() => {
     if (!ordersLoaded) return new Map<string, NoteStatusInfo>();
     const m = new Map<string, NoteStatusInfo>();
@@ -160,13 +164,16 @@ export default function EscrowPage() {
                     <td className="px-4 py-2 text-right font-mono text-xs text-[var(--color-text-muted)]">
                       {n.leafIndex >= 0 ? `#${n.leafIndex}` : "pending"}
                     </td>
-                    <td className="px-4 py-2 text-right text-xs text-[var(--color-text-muted)]">
-                      {new Date(n.createdAt).toLocaleString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
+                    <td
+                      className="px-4 py-2 text-right text-xs text-[var(--color-text-muted)]"
+                      // Server pre-renders in the build machine's timezone;
+                      // the client re-renders in the viewer's local tz. The
+                      // first paint difference is harmless (same instant,
+                      // different label) so we suppress the warning here
+                      // rather than blocking SSR on a mounted gate.
+                      suppressHydrationWarning
+                    >
+                      {formatWhen(n.createdAt)}
                     </td>
                     <td className="px-4 py-2 text-right">
                       <StatusPill info={info} />
@@ -204,10 +211,6 @@ export default function EscrowPage() {
   );
 }
 
-function formatNum(n: number): string {
-  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
-}
-
 function StatusPill({ info }: { info: NoteStatusInfo }) {
   if (info.status === "available") {
     return (
@@ -220,7 +223,7 @@ function StatusPill({ info }: { info: NoteStatusInfo }) {
     return (
       <span
         className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]"
-        title={`Funds ${info.lockedByOrder?.label ?? "an open order"}`}
+        title={`Locked by ${info.lockedByOrder?.label ?? "an open order"} — cancel that order to release the funds`}
       >
         Locked · {info.lockedByOrder?.label ?? "open"}
       </span>

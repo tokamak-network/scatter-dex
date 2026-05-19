@@ -550,7 +550,9 @@ export default function Workbench() {
             )}
           </div>
           <div className="mt-4 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
-            {(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders · click a row to fill
+            {ob.configured
+              ? `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders · click a row to fill`
+              : "Orderbook backend not configured for this network."}
           </div>
         </aside>
         )}

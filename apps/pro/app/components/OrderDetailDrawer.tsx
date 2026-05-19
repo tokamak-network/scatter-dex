@@ -211,17 +211,20 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
         </div>
 
         {(onCancel || onClaim) && (
-          <footer className="sticky bottom-0 flex justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+          <footer className="sticky bottom-0 flex flex-col items-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-4">
+            <div className="flex items-center gap-2">
+              {onCancel && (
+                <Button variant="secondary" disabled>
+                  Cancel coming soon
+                </Button>
+              )}
+              {onClaim && <Button onClick={onClaim}>Claim →</Button>}
+            </div>
             {onCancel && (
-              <Button
-                variant="secondary"
-                disabled
-                title="Cancel flow is being reworked — coming soon"
-              >
-                Cancel coming soon
-              </Button>
+              <p className="text-[10px] text-[var(--color-text-subtle)]">
+                Cancel flow is being reworked — recovery will land in a follow-up.
+              </p>
             )}
-            {onClaim && <Button onClick={onClaim}>Claim →</Button>}
           </footer>
         )}
       </aside>

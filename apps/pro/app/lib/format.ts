@@ -28,7 +28,17 @@ export function formatClaimAmount(
  *  the panel show times that looked like "in the past" to
  *  anyone east of GMT — the order *was* in the future once you
  *  did the offset math, but the UX failed the "no mental
- *  arithmetic" bar. */
+ *  arithmetic" bar.
+ *
+ *  **SSR / hydration note.** This formatter is non-deterministic
+ *  across pre-render → hydrate: the server runs in the build
+ *  machine's timezone, the client in the viewer's. Both produce
+ *  the same *instant*, just different surface text. Render call
+ *  sites should either (a) put the output inside a node carrying
+ *  `suppressHydrationWarning`, or (b) gate the formatting on a
+ *  mounted state so the server emits a placeholder. The dollar
+ *  cost is real but tiny (a brief flicker on first paint), the
+ *  benefit is users seeing their own clock. */
 export function formatWhen(ts: number): string {
   const d = new Date(ts);
   const base = d.toLocaleString("en-US", {
@@ -51,6 +61,14 @@ export function formatWhen(ts: number): string {
     /* runtime without formatToParts — leave tz empty */
   }
   return tz ? `${base} ${tz}` : base;
+}
+
+/** Plain en-US number with up to 4 fractional digits and thousands
+ *  grouping (`1,234.5678`). Used by the Escrow pool summary cards
+ *  in both the workbench and the /notes page — the helper lives
+ *  here so the two views can't drift on rounding. */
+export function formatNum(n: number): string {
+  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
 /** Pad a hex bigint string to 64 chars (32 bytes) with the `0x`

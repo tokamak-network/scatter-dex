@@ -6,6 +6,7 @@ import { EmptyState } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { aggregateBySymbol } from "../lib/noteStatus";
+import { formatNum } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
 
 /** Workbench left column — order-centric:
@@ -43,8 +44,16 @@ export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Pro
   // Re-evaluates every minute so an expiry crossing while the tab
   // sits open shifts the order from Open → Expired without a
   // refresh.
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  //
+  // `nowMs` starts at 0 on first render (server + client agree) and
+  // jumps to `Date.now()` only after mount. Without this gate, a
+  // server pre-render in the build machine's timezone could
+  // classify an order as Expired while the viewer's clock disagrees
+  // — and React would flag the hydration mismatch. After mount the
+  // interval keeps it fresh.
+  const [nowMs, setNowMs] = useState<number>(0);
   useEffect(() => {
+    setNowMs(Date.now());
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
@@ -278,10 +287,6 @@ function Section({
       {children}
     </div>
   );
-}
-
-function formatNum(n: number): string {
-  return n.toLocaleString("en-US", { maximumFractionDigits: 4 });
 }
 
 function SymbolBucketBlock({
