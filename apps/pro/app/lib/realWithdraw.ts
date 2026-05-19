@@ -28,6 +28,14 @@ export interface SubmitWithdrawArgs {
   signer: ethers.Signer;
   commitmentPoolAddress: string;
   tree: CommitmentTreeState;
+  /** EdDSA private key matching the note's `pubKeyAx/Ay`. The
+   *  withdraw circuit now requires a signature over
+   *  `Poseidon(nullifierHash, recipient)`, so spending a note
+   *  needs the original wallet's signing capability (the key
+   *  derives from a wallet `personal_sign` via `deriveEdDSAKey`).
+   *  Required since the EdDSA gate landed; passing an empty
+   *  buffer fails proof generation. */
+  eddsaPrivateKey: Uint8Array;
   /** WETH contract address — when set + recipient equals the signer,
    *  the helper follows up with `WETH.withdraw(amount)` to release
    *  native ETH to the caller. Skipped when the token isn't WETH or
@@ -72,6 +80,7 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     signer,
     commitmentPoolAddress,
     tree,
+    eddsaPrivateKey,
     wethAddress,
     onPhase,
     signal,
@@ -163,6 +172,7 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
       merkleProof,
       withdrawAmount: amountRaw,
       recipient,
+      eddsaPrivateKey,
     },
     {
       wasm: "/zk/withdraw.wasm",

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWallet, shortAddr } from "@zkscatter/sdk/react";
+import { useEdDSAKey, useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { useVault, type VaultNote } from "../lib/vault";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { PreSignPreview } from "./PreSignPreview";
@@ -39,6 +39,7 @@ const ADDR_RE = /^0x[a-fA-F0-9]{40}$/;
 
 export function WithdrawModal({ open, onClose, initialNote }: Props) {
   const { account, signer } = useWallet();
+  const { derive: deriveEdDSA } = useEdDSAKey();
   const { notes, remove } = useVault();
   const tree = useCommitmentTree();
   // Pull pool + WETH addresses from the active-network context so a
@@ -153,6 +154,15 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       setPhase({ kind: "busy", message });
     };
     try {
+      // The withdraw circuit now requires an EdDSA signature over
+      // Poseidon(nullifierHash, recipient), so derive (or unlock)
+      // the wallet-bound key first. `deriveEdDSAKey` is cached
+      // across modals/pages, so the user only sees the
+      // `personal_sign` prompt once per session.
+      phaseSetter("preparing");
+      const eddsaKey = await deriveEdDSA();
+      if (ctrl.signal.aborted) return;
+
       // Port from Pay's submitWithdraw — same merkle proof + prover
       // + on-chain dispatch. The WETH-unwrap step is opt-in via
       // `wethAddress`; only fires when the recipient is the signer.
@@ -163,6 +173,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
         signer,
         commitmentPoolAddress: cfg.contracts.commitmentPool,
         tree,
+        eddsaPrivateKey: eddsaKey.privateKey,
         wethAddress: cfg.contracts.weth,
         signal: ctrl.signal,
         onPhase: phaseSetter,
@@ -221,7 +232,19 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [note, destValid, destKind, destAddr, signer, tree, cfg, remove, toast]);
+  }, [
+    note,
+    destValid,
+    destKind,
+    destAddr,
+    signer,
+    deriveEdDSA,
+    tree,
+    cfg,
+    remove,
+    toast,
+    destIdentityBlocking,
+  ]);
 
   const busy = phase.kind === "busy";
 

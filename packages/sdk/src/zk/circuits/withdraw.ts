@@ -7,6 +7,8 @@ import {
   poseidonHash,
   randomFieldElement,
 } from "../commitment";
+import { signEdDSA } from "../eddsa";
+import { wipeBytes } from "../secureWipe";
 import { TAG_COMMITMENT_V2 } from "../tags";
 import { formatGroth16Proof, type SnarkjsRawProof } from "../proofFormat";
 import type { Groth16Proof } from "../types";
@@ -24,6 +26,14 @@ export interface WithdrawProofInput {
   /** Relayer address paid out of the withdraw amount. Pass
    *  `0x000…000` for self-pay (no relayer). */
   relayer?: string;
+  /** EdDSA private key bound into `note`'s commitment via
+   *  `pubKeyAx/Ay`. Required since the EdDSA gate was added to
+   *  the withdraw circuit — copying the note file alone is not
+   *  sufficient to spend; the original wallet's signing capability
+   *  must be present to sign `Poseidon(nullifierHash, recipient)`.
+   *  Caller-owned; the prover wipes its own working copy after
+   *  signing. */
+  eddsaPrivateKey: Uint8Array;
 }
 
 export interface WithdrawProofResult {
@@ -81,6 +91,20 @@ export async function generateWithdrawProof(
     computeNullifier(note),
   ]);
 
+  // EdDSA gate: sign Poseidon(nullifierHash, recipient). The
+  // circuit's `withdrawMsg` reconstructs the exact same Poseidon
+  // hash and feeds it into `EdDSAPoseidonVerifier`, so any drift
+  // here surfaces as InvalidProof immediately.
+  const withdrawMsg = await poseidonHash([nullifierHash, BigInt(recipient)]);
+  const signingKey = Uint8Array.from(input.eddsaPrivateKey);
+  let sig;
+  try {
+    sig = await signEdDSA(signingKey, withdrawMsg);
+  } finally {
+    // Wipe the local copy only — caller's buffer is theirs to manage.
+    wipeBytes(signingKey);
+  }
+
   // Change UTXO. Full-amount withdraw → newCommitment=0, newSalt=0.
   // Partial → mint a fresh salt + commitment so the residue stays
   // spendable. Same Poseidon shape the circuit reconstructs
@@ -135,6 +159,9 @@ export async function generateWithdrawProof(
     pathIndices: merkleProof.pathIndices.map((i: number) => i.toString()),
     pubKeyAx: note.pubKeyAx.toString(),
     pubKeyAy: note.pubKeyAy.toString(),
+    sigS: sig.S.toString(),
+    sigR8x: sig.R8x.toString(),
+    sigR8y: sig.R8y.toString(),
   };
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(

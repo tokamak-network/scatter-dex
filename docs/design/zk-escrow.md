@@ -704,7 +704,7 @@ Phase 1: Stealth address for claims                [완료]
     └── 스텔스 주소로 수신자 숨김
 
 Phase 2: ZK Escrow                                  [구현 완료]
-    ├── circuits/withdraw.circom (6,164 constraints)
+    ├── circuits/withdraw.circom (~10,794 constraints — incl. EdDSA gate added 2026-05-19)
     ├── contracts/src/zk/CommitmentPool.sol (18/18 테스트 통과)
     ├── contracts/src/zk/IncrementalMerkleTree.sol (Poseidon, depth 20)
     ├── contracts/src/zk/WithdrawVerifier.sol (Groth16)
