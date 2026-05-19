@@ -348,7 +348,14 @@ export function createFolderOrdersAdapter(
   accountKey: AccountKey,
   io: OrdersAdapterIO = DEFAULT_IO,
 ): OrdersAdapter {
-  const prefix = `zkscatter-pro-order-${chainId}-${accountKey}-`;
+  // Lowercase defensively. Callers (OrdersProvider) already do
+  // this, but the adapter is exported and EIP-55-checksummed
+  // addresses are easy to forward verbatim. A mixed-case key on
+  // write + a lowercased key on read would produce two disjoint
+  // filename namespaces and silently isolate the user's own
+  // orders from themselves.
+  const normalizedAccount = accountKey.toLowerCase();
+  const prefix = `zkscatter-pro-order-${chainId}-${normalizedAccount}-`;
   const fileFor = (orderId: string): string => `${prefix}${orderId}.json`;
   const warn = makeWarner();
   // Per-order in-memory mirror, keyed by order id. Populated on
@@ -370,9 +377,12 @@ export function createFolderOrdersAdapter(
       }
       // Parallelise the per-file read; tens-to-hundreds of small
       // JSON blobs would otherwise serialise into a noticeable
-      // hydration delay. A single broken file is logged and
-      // skipped — neighbours stay readable.
-      await Promise.all(
+      // hydration delay. Each inner task swallows its own errors
+      // (read / parse / deserialize), but use `allSettled` as a
+      // belt-and-suspenders guard in case a future inner branch
+      // forgets to wrap and lets a rejection escape — without it,
+      // one unhandled throw would abort every sibling parse.
+      await Promise.allSettled(
         entries.map(async (entry) => {
           let content: string;
           try {

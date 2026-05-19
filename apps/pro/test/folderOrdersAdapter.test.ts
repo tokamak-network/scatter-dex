@@ -138,6 +138,24 @@ describe("createFolderOrdersAdapter", () => {
     expect((await sepolia.loadAll()).map((o) => o.id)).toEqual(["s"]);
   });
 
+  it("lowercases the accountKey defensively so a checksummed address still finds its files", async () => {
+    const fs = fakeFs();
+    const checksummed = "0xAaAaaAaaaAAAAaaaaAaAAaAaAaaaAAAAAAaaAaaa";
+    const written = createFolderOrdersAdapter(31337, checksummed, fs);
+    await written.put(fixture({ id: "x" }));
+
+    // File on disk uses the lowercased key.
+    expect(Array.from(fs.files.keys())).toEqual([
+      `zkscatter-pro-order-31337-${checksummed.toLowerCase()}-x.json`,
+    ]);
+
+    // A reader using the lowercased form sees the same row — i.e.
+    // the adapter doesn't accidentally fork its own namespace if
+    // one caller forgot to normalise.
+    const lower = createFolderOrdersAdapter(31337, checksummed.toLowerCase(), fs);
+    expect((await lower.loadAll()).map((o) => o.id)).toEqual(["x"]);
+  });
+
   it("isolates orders by accountKey — a sibling account's files are invisible", async () => {
     const fs = fakeFs();
     const me = createFolderOrdersAdapter(31337, ACCT, fs);
