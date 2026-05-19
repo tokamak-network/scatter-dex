@@ -10,8 +10,11 @@ import { formatClaimAmount, formatField, formatWhen } from "../lib/format";
 
 interface Props {
   order: OrderRecord;
-  /** "Back to placing orders" / "New order" — restores the form
-   *  view in the parent's center column. */
+  /** Dismiss handler — interpretation depends on where the panel
+   *  lives. In the workbench center column this returns to the
+   *  order form; in the `/orders` drawer it closes the drawer.
+   *  The button label is parametrised via `closeLabel` so the
+   *  affordance matches each surface. */
   onClose: () => void;
   /** Optional — only rendered when the parent decided the user
    *  has the right (e.g. order in `matching` and submitted in this
@@ -20,6 +23,10 @@ interface Props {
   /** Optional — only rendered for `claimable` orders carrying a
    *  claim payload. Triggers the parent's ClaimModal. */
   onClaim?: () => void;
+  /** Label for the header close button (default `"+ New order"`).
+   *  Drawer hosts pass `"Close"` so the button reads naturally
+   *  in that context. */
+  closeLabel?: string;
 }
 
 /** Inline detail panel for the workbench center column. Replaces
@@ -27,7 +34,13 @@ interface Props {
  *  Same body content the OrderDetailDrawer (slide-over) renders
  *  on the /orders page — see refactor: both reuse Section/Row
  *  from this module. */
-export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
+export function OrderDetailPanel({
+  order,
+  onClose,
+  onCancel,
+  onClaim,
+  closeLabel = "+ New order",
+}: Props) {
   const { network } = useActiveNetwork();
   const { notes } = useVault();
   // Hide ZK-internal fields (nonce, secrets, raw IDs, claims root,
@@ -62,9 +75,9 @@ export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
             type="button"
             onClick={onClose}
             className="rounded-md border border-[var(--color-border-strong)] px-3 py-1 text-xs font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
-            title="Return to the order form"
+            title={closeLabel === "+ New order" ? "Return to the order form" : closeLabel}
           >
-            + New order
+            {closeLabel}
           </button>
         </div>
       </header>
@@ -122,6 +135,15 @@ export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
         <div className="mx-5 mb-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2 font-mono text-[10px] text-[var(--color-text-subtle)]">
           claims root · <span className="break-all">{order.claims[0].claimsRoot}</span>
         </div>
+      )}
+
+      {/* Full raw-field dump, matching the old OrderDetailDrawer
+          layout. Rendered only when "Show technical" is on so the
+          default panel stays business-friendly. Useful for
+          debugging, hex-level audit, and copy-pasting exact
+          values into external tooling. */}
+      {showTechnical && (
+        <RawFieldsSection order={order} tokens={network.tokens} notes={notes} />
       )}
 
       {(onCancel || onClaim) && (
@@ -524,7 +546,7 @@ function RecipientsTable({
         ? { label: "Ready", tone: "success" as const }
         : { label: "Pending settle", tone: "muted" as const };
   return (
-    <div className="mx-5 mb-5 overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+    <div className="mx-5 mb-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
       <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-4 py-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
           Recipients ({list.length})
@@ -535,6 +557,13 @@ function RecipientsTable({
           </span>
         )}
       </div>
+      {/* `overflow-x-auto` on the wrapping div lets the recipients
+          table scroll horizontally when the parent surface is
+          narrower than the technical-mode column set (address +
+          token + amount + leaf + secret + claims root). Without
+          this the cells would push the surrounding panel
+          horizontally on the /orders drawer. */}
+      <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead className="bg-[var(--color-surface)] text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
           <tr>
@@ -586,6 +615,7 @@ function RecipientsTable({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -629,6 +659,189 @@ function AddressCell({ value }: { value: string }) {
         {copied ? "✓" : "⧉"}
       </button>
     </span>
+  );
+}
+
+/** Raw hex-level field dump. Rendered at the bottom of the panel
+ *  only when `showTechnical` is on so the default view stays
+ *  business-friendly. Useful for debugging / hex-audit / copy-paste
+ *  into external tooling (verifier scripts, on-chain explorers).
+ *  Mirrors the field set the legacy `OrderDetailDrawer` exposed
+ *  before the panel-as-drawer-body refactor. */
+function RawFieldsSection({
+  order,
+  tokens,
+  notes,
+}: {
+  order: OrderRecord;
+  tokens: readonly { address: string; decimals: number; symbol: string }[];
+  notes: ReadonlyArray<{ id: string; label: string; amount: string; symbol: string; leafIndex: number }>;
+}) {
+  const fundingNote = order.noteId ? notes.find((n) => n.id === order.noteId) ?? null : null;
+  const changeId = order.changeCommitment !== undefined ? `c-${order.changeCommitment.toString(16)}` : null;
+  const changeNote = changeId ? notes.find((n) => n.id === changeId) ?? null : null;
+  return (
+    <div className="mx-5 mb-5 space-y-4 text-xs">
+      <RawSection title="Order">
+        <RawRow k="ID" v={order.id} mono />
+        <RawRow k="Side" v={order.side === "sell" ? "Sell" : "Buy"} />
+        <RawRow k="Pair" v={order.pair} />
+        <RawRow k="Price" v={order.price} mono />
+        <RawRow k="Size" v={order.size} mono />
+        <RawRow k="Submitted" v={formatWhen(order.createdAt)} />
+        {order.nonce !== undefined && (
+          <RawRow k="Nonce" v={formatField(order.nonce)} mono truncate />
+        )}
+        {order.expiry !== undefined && (
+          <RawRow k="Settle deadline" v={formatWhen(Number(order.expiry) * 1000)} />
+        )}
+        {order.noteId && (
+          <RawRow
+            k="Funding note"
+            v={fundingNote ? `${fundingNote.label} · ${fundingNote.amount} ${fundingNote.symbol}` : order.noteId}
+            mono={!fundingNote}
+            truncate={!fundingNote}
+          />
+        )}
+      </RawSection>
+
+      {order.changeCommitment !== undefined && (
+        <RawSection title="Change residual">
+          <RawRow
+            k="Commitment"
+            v={formatField(order.changeCommitment)}
+            mono
+            truncate
+          />
+          {changeNote ? (
+            <>
+              <RawRow k="Amount" v={`${changeNote.amount} ${changeNote.symbol}`} mono />
+              <RawRow
+                k="On-chain"
+                v={changeNote.leafIndex < 0 ? "Pending settle" : `Leaf ${changeNote.leafIndex}`}
+              />
+            </>
+          ) : (
+            <RawRow k="Vault" v="No matching change note in this vault." />
+          )}
+        </RawSection>
+      )}
+
+      {order.relayer && (
+        <RawSection title="Relayer">
+          {order.relayer.name && <RawRow k="Name" v={order.relayer.name} />}
+          <RawRow k="Address" v={order.relayer.address} mono truncate />
+          {order.relayer.url && <RawRow k="URL" v={order.relayer.url} mono truncate />}
+          <RawRow k="Quoted fee" v={`${order.relayer.feeBps} bps`} mono />
+          <RawRow k="Signed cap" v={`${order.relayer.maxFeeBps} bps`} mono />
+        </RawSection>
+      )}
+
+      {order.claims && order.claims.length > 0 && (
+        <RawSection title={`Claim payload (${order.claims.length})`}>
+          {order.claims.map((c, idx) => (
+            <div
+              key={`${c.leafIndex}-${c.recipient}`}
+              className="space-y-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2"
+            >
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Recipient #{idx + 1}
+              </div>
+              <RawRow k="Address" v={c.recipient} mono truncate />
+              <RawRow k="Token" v={c.token} mono truncate />
+              <RawRow k="Amount" v={formatClaimAmount(c.amount, c.token, tokens)} mono />
+              <RawRow k="Release time" v={formatWhen(Number(c.releaseTime) * 1000)} />
+              <RawRow k="Leaf index" v={c.leafIndex.toString()} mono />
+              <RawRowSecret k="Secret" value={c.secret} />
+              {c.claimsRoot && <RawRow k="Claims root" v={c.claimsRoot} mono truncate />}
+            </div>
+          ))}
+        </RawSection>
+      )}
+
+      <RawSection title="Lifecycle">
+        <RawRow k="Status" v={order.status} />
+        <RawRow k="Created" v={formatWhen(order.createdAt)} />
+        <p className="text-[10px] text-[var(--color-text-subtle)]">
+          Status transitions are driven by on-chain events
+          (PrivateClaim → claimable / claimed, cancelPrivate →
+          cancelled). The watcher updates this panel live; no
+          refresh needed.
+        </p>
+      </RawSection>
+    </div>
+  );
+}
+
+function RawSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+        {title}
+      </h3>
+      <dl className="space-y-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
+        {children}
+      </dl>
+    </section>
+  );
+}
+
+function RawRow({
+  k,
+  v,
+  mono,
+  truncate,
+}: {
+  k: string;
+  v: string;
+  mono?: boolean;
+  truncate?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-[max-content_1fr] items-baseline gap-3">
+      <dt className="text-[10px] text-[var(--color-text-muted)]">{k}</dt>
+      <dd
+        className={[
+          "min-w-0 text-right text-[11px]",
+          mono ? "font-mono" : "",
+          truncate ? "truncate" : "break-all",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        title={v}
+      >
+        {v}
+      </dd>
+    </div>
+  );
+}
+
+function RawRowSecret({ k, value }: { k: string; value: bigint }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <div className="grid grid-cols-[max-content_1fr] items-baseline gap-3">
+      <dt className="text-[10px] text-[var(--color-text-muted)]">{k}</dt>
+      <dd className="min-w-0 text-right text-[11px]">
+        {revealed ? (
+          <span
+            className="break-all font-mono text-[var(--color-warning)]"
+            title="Click again to hide"
+            onClick={() => setRevealed(false)}
+            role="button"
+          >
+            {formatField(value)}
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setRevealed(true)}
+            className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]"
+          >
+            Click to reveal
+          </button>
+        )}
+      </dd>
+    </div>
   );
 }
 
