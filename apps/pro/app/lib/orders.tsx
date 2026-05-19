@@ -10,7 +10,10 @@ import {
   useState,
 } from "react";
 import { bigintToHex, openIDB } from "@zkscatter/sdk/util";
+import { loadFile, saveFile } from "@zkscatter/sdk/storage";
+import { useWallet } from "@zkscatter/sdk/react";
 import { useActiveNetwork } from "./activeNetwork";
+import { useFolder } from "./folder";
 import { newId } from "./newId";
 
 export type OrderStatus = "matching" | "claimable" | "claimed" | "cancelled";
@@ -38,9 +41,12 @@ export interface OrderClaim {
   claimsRoot?: string;
 }
 
-/** A submitted private limit order. Persisted per-chain in
- *  IndexedDB so orders survive refresh + browser restart; falls
- *  back to in-memory when IDB is unavailable (SSR, private mode). */
+/** A submitted private limit order. Persisted per-chain via the
+ *  same hybrid pattern Pay's vault uses: an aggregate JSON file in
+ *  the user's notes folder when one is selected, otherwise a
+ *  per-chain + per-account IndexedDB store. Falls through to
+ *  in-memory only when both backends are unavailable (SSR, locked
+ *  private mode). */
 export interface OrderRecord {
   /** Stable id used as the React key and IDB primary key. */
   id: string;
@@ -181,12 +187,12 @@ function warnOnce(reason: string, err?: unknown): void {
   console.warn(`[scatter pro orders] ${reason} — falling back to in-memory`, err);
 }
 
-interface OrdersAdapter {
+export interface OrdersAdapter {
   loadAll(): Promise<OrderRecord[]>;
   put(o: OrderRecord): Promise<void>;
 }
 
-function createOrdersAdapter(dbName: string): OrdersAdapter {
+export function createIdbOrdersAdapter(dbName: string): OrdersAdapter {
   let dbPromise: Promise<IDBDatabase | null> | null = null;
   function open(): Promise<IDBDatabase | null> {
     if (dbPromise) return dbPromise;
@@ -240,12 +246,97 @@ function createOrdersAdapter(dbName: string): OrdersAdapter {
   };
 }
 
+/** Folder-backed orders adapter. Persists every order as a single
+ *  aggregate JSON file `zkscatter-pro-orders-{chainId}.json` in the
+ *  active notes folder — same folder Pay's run records and the
+ *  shared address book live in, so a user who picks a folder gets
+ *  one place to back up. Orders are small + bounded (typically
+ *  tens, occasionally hundreds), so a re-serialize-on-each-write
+ *  beats the per-order-file overhead Pay's runs need (each run is
+ *  large and updated independently). In-memory map mirrors the
+ *  file so a put → loadAll round-trip doesn't hit disk twice.
+ *
+ *  IO injection (`io`) exists for tests; production callers omit
+ *  it and the helpers default to the SDK's folder primitives. */
+export function createFolderOrdersAdapter(
+  chainId: number,
+  io: {
+    loadFile: (name: string) => Promise<string | null>;
+    saveFile: (name: string, content: string) => Promise<void>;
+  } = { loadFile, saveFile },
+): OrdersAdapter {
+  const filename = `zkscatter-pro-orders-${chainId}.json`;
+  const mem = new Map<string, OrderRecord>();
+  let loadedPromise: Promise<void> | null = null;
+
+  function ensureLoaded(): Promise<void> {
+    if (loadedPromise) return loadedPromise;
+    loadedPromise = (async () => {
+      try {
+        const content = await io.loadFile(filename);
+        if (!content) return;
+        const wire = JSON.parse(content) as WireOrder[];
+        for (const w of wire) {
+          if (!w || typeof w.id !== "string") {
+            warnOnce(`skipping malformed order <no id>`);
+            continue;
+          }
+          try {
+            mem.set(w.id, deserialize(w));
+          } catch (e) {
+            warnOnce(`skipping malformed order ${w.id}`, e);
+          }
+        }
+      } catch (e) {
+        warnOnce("folder loadAll failed", e);
+      }
+    })();
+    return loadedPromise;
+  }
+
+  async function flush(): Promise<void> {
+    try {
+      const wire = Array.from(mem.values())
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map(serialize);
+      await io.saveFile(filename, JSON.stringify(wire, null, 2));
+    } catch (e) {
+      warnOnce("folder put failed", e);
+    }
+  }
+
+  return {
+    async loadAll() {
+      await ensureLoaded();
+      return Array.from(mem.values()).sort((a, b) => a.createdAt - b.createdAt);
+    },
+    async put(o) {
+      await ensureLoaded();
+      mem.set(o.id, o);
+      await flush();
+    },
+  };
+}
+
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const { network } = useActiveNetwork();
   const chainId = network.chainId;
+  // Mirrors Pay's vault adapter selection: prefer the folder backend
+  // whenever the user has picked one (so orders survive a browser
+  // data wipe and live next to the shared address book), else fall
+  // back to per-chain + per-account IndexedDB so two wallets sharing
+  // the same browser don't read each other's orders.
+  const { account } = useWallet();
+  const { ready: folderReady } = useFolder();
+  const accountKey = account?.toLowerCase() ?? "anon";
   const adapter = useMemo(
-    () => createOrdersAdapter(`zkscatter-pro-orders-${chainId}`),
-    [chainId],
+    () =>
+      folderReady
+        ? createFolderOrdersAdapter(chainId)
+        : createIdbOrdersAdapter(
+            `zkscatter-pro-orders-${chainId}-${accountKey}`,
+          ),
+    [folderReady, chainId, accountKey],
   );
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);

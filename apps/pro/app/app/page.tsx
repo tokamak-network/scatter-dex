@@ -16,8 +16,7 @@ import { RelayerPicker } from "../components/RelayerPicker";
 import { DepositModal } from "../components/DepositModal";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { DEMO_NETWORK } from "../lib/network";
-import { useReferencePrice } from "../lib/useReferencePrice";
-import { formatTokenAmount, formatUsd, parseLooseNumber } from "../lib/format";
+import { formatTokenAmount } from "../lib/format";
 import { useRelayers } from "../lib/relayers";
 import { applyFeeBig } from "../lib/fee";
 import { parseUnits } from "../lib/parseUnits";
@@ -425,13 +424,6 @@ export default function Workbench() {
 
               <AutoSettleIndicator />
 
-              <FillEstimate
-                side={side}
-                price={price}
-                size={size}
-                baseSymbol={pair.base}
-                quoteSymbol={pair.quote}
-              />
               <Button
                 onClick={() => setOrderOpen(true)}
                 block
@@ -680,111 +672,3 @@ function OrderbookStatus({
   return <span className="text-[var(--color-success)]">Live</span>;
 }
 
-/** Renders the order's estimated fill alongside a CoinGecko spot
- *  reference for the base token. Slippage saved is signed for the
- *  side: a sell that goes off above spot is "saved" (you sold for
- *  more); a buy that fills below spot is "saved" (you paid less).
- *  Falls back to a neutral box when reference unavailable so the
- *  workbench doesn't claim numbers it can't back. */
-const USD_QUOTES = new Set(["USDC", "USDT", "DAI"]);
-
-function FillEstimate({
-  side,
-  price,
-  size,
-  baseSymbol,
-  quoteSymbol,
-}: {
-  side: "sell" | "buy";
-  price: string;
-  size: string;
-  baseSymbol: string;
-  quoteSymbol: string;
-}) {
-  const ref = useReferencePrice(baseSymbol);
-  const priceNum = parseLooseNumber(price);
-  const sizeNum = parseLooseNumber(size);
-
-  // The fill display assumes the quote token is USD-equivalent.
-  // For a USD-pegged stable (USDC/USDT/DAI) `price * size` IS a
-  // USD value and can be compared against the spot. For ETH/BTC
-  // and similar non-USD quotes, `price * size` is in BTC units and
-  // the comparison would be silently wrong — fall through to the
-  // "not in feed" line instead.
-  const isQuoteUsd = USD_QUOTES.has(quoteSymbol.toUpperCase());
-  const fillUsd =
-    isQuoteUsd && Number.isFinite(priceNum) && Number.isFinite(sizeNum)
-      ? priceNum * sizeNum
-      : null;
-  const refUsd =
-    !ref.loading && !ref.error && ref.usd !== null && Number.isFinite(sizeNum)
-      ? ref.usd * sizeNum
-      : null;
-
-  // savings sign convention: positive when the user comes out ahead
-  // of spot. Sell: fill > spot is good. Buy: fill < spot is good.
-  // Require refUsd > 0 (not just non-null) so a zero-size order
-  // doesn't divide by zero in the percentage line.
-  const savings =
-    fillUsd !== null && refUsd !== null && refUsd > 0
-      ? side === "sell"
-        ? fillUsd - refUsd
-        : refUsd - fillUsd
-      : null;
-  const savingsPct = savings !== null && refUsd && refUsd > 0 ? (savings / refUsd) * 100 : null;
-  // Two separate signals: `savingsSign` ("did we come out ahead at
-  // all?") drives the Better/Worse text label, while `materiallyBetter`
-  // ("did we beat oracle / spread noise?") gates the success panel
-  // colour. Without separating them, a +0.10% savings rendered the
-  // neutral panel ("Worse than spot") while displaying "+0.10%" — a
-  // contradiction Copilot flagged on #762.
-  const SAVINGS_THRESHOLD_PCT = 0.25;
-  const savingsSign = savings !== null && savings > 0;
-  const materiallyBetter =
-    savingsSign &&
-    savingsPct !== null &&
-    savingsPct >= SAVINGS_THRESHOLD_PCT;
-
-  return (
-    <div
-      className={`mt-4 rounded-md border p-3 text-xs ${
-        materiallyBetter
-          ? "border-[var(--color-success-soft)] bg-[var(--color-success-soft)]"
-          : "border-[var(--color-border)] bg-[var(--color-bg)]"
-      }`}
-    >
-      <div className="flex justify-between">
-        <span>Estimated fill</span>
-        <span className="font-mono">{formatUsd(fillUsd)}</span>
-      </div>
-      <div className="flex justify-between">
-        <span>vs spot ({baseSymbol})</span>
-        <span className="font-mono">{ref.loading ? "…" : formatUsd(refUsd)}</span>
-      </div>
-      {savings !== null && refUsd !== null ? (
-        <div
-          className={`mt-1 flex justify-between font-medium ${
-            materiallyBetter ? "text-[var(--color-success)]" : "text-[var(--color-text-muted)]"
-          }`}
-        >
-          <span>{savingsSign ? "Better than spot" : "Worse than spot"}</span>
-          <span>
-            {savings >= 0 ? "+" : "−"}
-            {Math.abs(savingsPct ?? 0).toFixed(2)}% ({savings >= 0 ? "+" : "−"}
-            {formatUsd(Math.abs(savings))})
-          </span>
-        </div>
-      ) : (
-        <div className="mt-1 text-[10px] text-[var(--color-text-subtle)]">
-          {!isQuoteUsd
-            ? `${quoteSymbol} quote not in USD — spot comparison disabled.`
-            : ref.loading
-              ? "Fetching spot price…"
-              : ref.error
-                ? "Spot price unavailable — proceed at your stated price."
-                : `Spot reference for ${baseSymbol} not in feed.`}
-        </div>
-      )}
-    </div>
-  );
-}
