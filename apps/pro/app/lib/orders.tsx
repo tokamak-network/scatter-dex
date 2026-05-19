@@ -175,12 +175,21 @@ export function deserialize(w: WireOrder): OrderRecord {
   };
 }
 
-let warnedOnce = false;
-function warnOnce(reason: string, err?: unknown): void {
-  if (warnedOnce) return;
-  warnedOnce = true;
-  // eslint-disable-next-line no-console
-  console.warn(`[scatter pro orders] ${reason} — falling back to in-memory`, err);
+/** Adapter-scoped one-warning-per-reason logger. Module-level
+ *  global was too coarse — once any single failure tripped it,
+ *  every later failure (including a different category like a JSON
+ *  parse error after a write timeout) was silently swallowed for
+ *  the page lifetime. Per-(instance × reason-key) lets genuinely
+ *  new failure modes still surface, while still de-duping bursts
+ *  of the same failure (e.g. one bad save retried). */
+function makeWarner(): (reason: string, err?: unknown) => void {
+  const seen = new Set<string>();
+  return (reason, err) => {
+    if (seen.has(reason)) return;
+    seen.add(reason);
+    // eslint-disable-next-line no-console
+    console.warn(`[scatter pro orders] ${reason}`, err);
+  };
 }
 
 export interface OrdersAdapter {
@@ -205,42 +214,64 @@ export function createFolderOrdersAdapter(
   } = { loadFile, saveFile },
 ): OrdersAdapter {
   const filename = `zkscatter-pro-orders-${chainId}.json`;
+  const warn = makeWarner();
   const mem = new Map<string, OrderRecord>();
   let loadedPromise: Promise<void> | null = null;
+  // True when the on-disk file existed but couldn't be parsed.
+  // `put()` refuses to flush in that state — otherwise the next
+  // write would replace the corrupt-but-recoverable file with
+  // {only the new order}, destroying every previously-persisted
+  // order beyond recovery.
+  let loadCorrupted = false;
 
   function ensureLoaded(): Promise<void> {
     if (loadedPromise) return loadedPromise;
     loadedPromise = (async () => {
+      let content: string | null;
       try {
-        const content = await io.loadFile(filename);
-        if (!content) return;
-        const wire = JSON.parse(content) as WireOrder[];
-        for (const w of wire) {
-          if (!w || typeof w.id !== "string") {
-            warnOnce(`skipping malformed order <no id>`);
-            continue;
-          }
-          try {
-            mem.set(w.id, deserialize(w));
-          } catch (e) {
-            warnOnce(`skipping malformed order ${w.id}`, e);
-          }
-        }
+        content = await io.loadFile(filename);
       } catch (e) {
-        warnOnce("folder loadAll failed", e);
+        warn("folder loadAll: loadFile rejected", e);
+        return;
+      }
+      if (!content) return;
+      let wire: WireOrder[];
+      try {
+        wire = JSON.parse(content) as WireOrder[];
+      } catch (e) {
+        // Mark corrupt so puts don't trample the on-disk data.
+        loadCorrupted = true;
+        // eslint-disable-next-line no-console
+        console.error(
+          `[scatter pro orders] ${filename} is not valid JSON — refusing further writes to avoid overwriting recoverable data`,
+          e,
+        );
+        return;
+      }
+      for (const w of wire) {
+        if (!w || typeof w.id !== "string") {
+          warn(`skipping malformed order <no id>`);
+          continue;
+        }
+        try {
+          mem.set(w.id, deserialize(w));
+        } catch (e) {
+          warn(`skipping malformed order ${w.id}`, e);
+        }
       }
     })();
     return loadedPromise;
   }
 
   async function flush(): Promise<void> {
+    if (loadCorrupted) return;
     try {
       const wire = Array.from(mem.values())
         .sort((a, b) => a.createdAt - b.createdAt)
         .map(serialize);
       await io.saveFile(filename, JSON.stringify(wire, null, 2));
     } catch (e) {
-      warnOnce("folder put failed", e);
+      warn("folder put failed", e);
     }
   }
 
@@ -251,6 +282,10 @@ export function createFolderOrdersAdapter(
     },
     async put(o) {
       await ensureLoaded();
+      if (loadCorrupted) {
+        warn("refusing put: backing file is corrupt — repair or remove it");
+        return;
+      }
       mem.set(o.id, o);
       await flush();
     },

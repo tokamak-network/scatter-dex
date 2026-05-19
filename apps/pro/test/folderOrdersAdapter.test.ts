@@ -172,6 +172,24 @@ describe("createFolderOrdersAdapter", () => {
     expect(out.map((o) => o.id)).toEqual(["good"]);
   });
 
+  it("refuses to overwrite a corrupt backing file (preserves recoverable data)", async () => {
+    const fs = fakeFs();
+    fs.files.set(
+      "zkscatter-pro-orders-31337.json",
+      "{ this is not valid JSON",
+    );
+    const a = createFolderOrdersAdapter(31337, fs);
+    // load returns empty (corrupt) but the file content stays untouched
+    expect(await a.loadAll()).toEqual([]);
+    await a.put(fixture({ id: "new" }));
+    // critical invariant: the original corrupt file is still there,
+    // not replaced with a single-order aggregate
+    expect(fs.files.get("zkscatter-pro-orders-31337.json")).toBe(
+      "{ this is not valid JSON",
+    );
+    expect(fs.saveCalls).toBe(0);
+  });
+
   it("does not throw when loadFile / saveFile reject (logs only)", async () => {
     const fs: FakeFs = {
       files: new Map(),
