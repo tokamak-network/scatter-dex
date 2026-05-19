@@ -15,7 +15,7 @@ export interface SerializedCancelInput {
   allLeaves?: bigint[];
   merkleProof?: SerializedMerkleProof;
   nonce: bigint;
-  relayer: string;
+  submitter: string;
   eddsaPrivateKey: Uint8Array;
 }
 
@@ -28,7 +28,7 @@ export function serializeCancelInput(input: CancelProofInput): SerializedCancelI
     allLeaves: input.allLeaves,
     merkleProof: input.merkleProof,
     nonce: input.nonce,
-    relayer: input.relayer,
+    submitter: input.submitter,
     // Defensive copy — see file header.
     eddsaPrivateKey: new Uint8Array(input.eddsaPrivateKey),
   };

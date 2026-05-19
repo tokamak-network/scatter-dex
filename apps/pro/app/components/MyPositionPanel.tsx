@@ -164,9 +164,8 @@ export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Pro
             ))}
           </ul>
           <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-            Settle deadline passed without an on-chain match. The
-            cancel flow is being reworked — recovery will land in a
-            follow-up.
+            Settle deadline passed without an on-chain match. Cancel
+            from the detail panel to release the funding note.
           </p>
         </Section>
       )}

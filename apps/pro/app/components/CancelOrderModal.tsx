@@ -11,7 +11,6 @@ import { Button, Modal, useToast } from "@zkscatter/ui";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { useVault } from "../lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
-import { useRelayers } from "../lib/relayers";
 import { cancelProver } from "../lib/cancelProver";
 import { buildEmptyTreeProof } from "../lib/emptyTreeProof";
 import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitmentTree";
@@ -35,12 +34,14 @@ interface Props {
 }
 
 /** Returns the first reason the cancel flow cannot proceed, or null
- *  when everything is wired up. Same checks were duplicated between
- *  the in-modal disable guard and submit()'s runtime error path. */
+ *  when everything is wired up. `cancelPrivate` is permissionless on
+ *  chain — the user submits directly from their own wallet — so the
+ *  guard is about local prerequisites (funding note + nonce + signer),
+ *  not about picking a relayer. */
 function cancelBlockReason(
   order: OrderRecord,
   notes: ReadonlyArray<{ id: string }>,
-  selectedRelayer: { address: string } | null,
+  hasSigner: boolean,
 ): string | null {
   if (order.nonce === undefined || order.noteId === undefined) {
     return "Order is missing the nonce / funding-note metadata required to cancel.";
@@ -48,8 +49,8 @@ function cancelBlockReason(
   if (!notes.some((n) => n.id === order.noteId)) {
     return "The note that funded this order is no longer in your vault — cancel cannot proceed.";
   }
-  if (!selectedRelayer) {
-    return "Pick an online relayer (top-right pill) before cancelling — the cancel proof binds the submitter.";
+  if (!hasSigner) {
+    return "Connect a wallet — the cancel proof binds your wallet address as the submitter.";
   }
   return null;
 }
@@ -59,7 +60,6 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
   const { notes, add: vaultAdd, remove: vaultRemove } = useVault();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const commitmentTree = useCommitmentTree();
-  const { selected: selectedRelayer } = useRelayers();
   const { signer } = useWallet();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -80,7 +80,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
 
   const submit = useCallback(async () => {
     if (!order) return;
-    const reason = cancelBlockReason(order, notes, selectedRelayer);
+    const reason = cancelBlockReason(order, notes, !!signer);
     if (reason) {
       setPhase({ kind: "error", message: reason });
       return;
@@ -88,7 +88,18 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     // Non-null assertions justified by cancelBlockReason — all three
     // checks above guarantee these when reason is null.
     const note = notes.find((n) => n.id === order.noteId)!;
-    const relayerAddr = selectedRelayer!.address;
+    // The contract pins `pubSignals[4] = uint160(msg.sender)` at
+    // verifyProof time (PrivateSettlement.cancelPrivate). If we
+    // generate a proof with a different `submitter` value the
+    // circuit still verifies (EdDSA only requires the signature to
+    // match Poseidon(oldNonceNullifier, submitter), and we *do*
+    // sign with that same value), but the on-chain check rejects
+    // with `InvalidProof` because the public input the contract
+    // computed (= msg.sender) won't match the one baked into the
+    // proof. Always pass the wallet address that will broadcast
+    // the cancel tx to keep the circuit's `submitter` and the
+    // contract's `msg.sender` in sync.
+    const submitterAddress = await signer!.getAddress();
 
     const ctrl = new AbortController();
     abortCtrlRef.current = ctrl;
@@ -111,7 +122,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         merkleProof,
         nonce: order.nonce!,
         eddsaPrivateKey: eddsaKey.privateKey,
-        relayer: relayerAddr,
+        submitter: submitterAddress,
       };
 
       setPhase({ kind: "proving", message: "Generating ZK cancel proof…" });
@@ -174,13 +185,23 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         } catch (addErr) {
           console.warn("[cancel] vault rotation: add(new) failed — rotated note not persisted, on-chain cancel is final", addErr);
         }
-        try {
-          await vaultRemove(note.id);
-        } catch (removeErr) {
-          console.error(
-            `[cancel] vault rotation: remove(old=${note.id}) failed — vault now shows both the rotated and the (on-chain-nullified) original. Manually remove note ${note.id} to fix.`,
-            { addedRotated, removeErr },
-          );
+        // Only drop the original note from the vault once we've
+        // *confirmed* the rotated note is persisted. If `vaultAdd`
+        // threw and we still removed the original, the user's
+        // balance vanishes from the UI even though it's spendable
+        // on-chain under the rotated commitment — a strictly worse
+        // outcome than the "double balance" the asymmetric
+        // logging warns about, since at least the latter is
+        // recoverable by manually re-importing the rotated note.
+        if (addedRotated) {
+          try {
+            await vaultRemove(note.id);
+          } catch (removeErr) {
+            console.error(
+              `[cancel] vault rotation: remove(old=${note.id}) failed — vault now shows both the rotated and the (on-chain-nullified) original. Manually remove note ${note.id} to fix.`,
+              { removeErr },
+            );
+          }
         }
       }
 
@@ -217,7 +238,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
     } finally {
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
-  }, [order, notes, selectedRelayer, signer, deriveEdDSA, markCancelled, toast, commitmentTree]);
+  }, [order, notes, signer, deriveEdDSA, markCancelled, toast, commitmentTree, vaultAdd, vaultRemove]);
 
   if (!order) return null;
 
@@ -228,7 +249,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
 
   // Disable the button + show the same reason inline BEFORE the user
   // clicks and burns the 1–2 s prove.
-  const blockReason = cancelBlockReason(order, notes, selectedRelayer);
+  const blockReason = cancelBlockReason(order, notes, !!signer);
 
   return (
     <Modal open={open} onClose={close} title="Cancel order" closeOnBackdrop={false}>
