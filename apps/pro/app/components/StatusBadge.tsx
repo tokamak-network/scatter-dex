@@ -9,7 +9,7 @@ const META: Record<OrderStatus, { label: string; cls: string; step: number }> = 
     step: 1,
   },
   claimable: {
-    label: "Filled",
+    label: "Ready to claim",
     cls: "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]",
     step: 2,
   },

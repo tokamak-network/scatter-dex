@@ -13,7 +13,7 @@ import { useActiveNetwork } from "./activeNetwork";
  *  and flips an order's status to `claimed` when its per-row
  *  nullifier matches. The hook walks `useOrders().orders` and
  *  builds the watch list from rows that carry a real
- *  `claim.claimsRoot` (seeded demo orders without it are skipped).
+ *  `claim.claimsRoot` (older orders without it are skipped).
  *
  *  Settlements are not yet wired in Pro (orders complete via a
  *  demo timer), so the reconciler is a no-op until a real settle

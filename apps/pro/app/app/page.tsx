@@ -29,19 +29,6 @@ import { parseUnits } from "../lib/parseUnits";
 import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
 import { deriveAutoSettle } from "../lib/autoSettle";
 
-const MOCK_ORDERBOOK = {
-  asks: [
-    { price: "4,225.10", size: "1.2" },
-    { price: "4,218.50", size: "0.8" },
-    { price: "4,210.00", size: "2.5" },
-  ],
-  bids: [
-    { price: "4,198.20", size: "1.4" },
-    { price: "4,190.00", size: "3.1" },
-    { price: "4,182.00", size: "0.9" },
-  ],
-};
-
 interface RowData {
   price: string;
   size: string;
@@ -211,8 +198,7 @@ export default function Workbench() {
     () => (ob.orders ? projectOrderbook(ob.orders, baseAddress) : null),
     [ob.orders, baseAddress],
   );
-  const isMock = !ob.configured;
-  const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : MOCK_ORDERBOOK;
+  const display = ob.configured ? (projected ?? { asks: [], bids: [] }) : { asks: [], bids: [] };
   const asksReversed = useMemo(() => display.asks.slice().reverse(), [display.asks]);
 
   // Buy-side (receive) token metadata + projected totals. Three
@@ -555,7 +541,7 @@ export default function Workbench() {
                   <Row key={`a-${i}-${o.price}`} side="ask" price={o.price} size={o.size} onClick={() => fillFromRow(o)} />
                 ))}
                 <div className="my-1 rounded bg-[var(--color-bg)] py-1 text-center text-xs text-[var(--color-text-muted)]">
-                  {isMock ? "mid 4,204.10" : "—"}
+                  —
                 </div>
                 {display.bids.map((o, i) => (
                   <Row key={`b-${i}-${o.price}`} side="bid" price={o.price} size={o.size} onClick={() => fillFromRow(o)} />
@@ -564,9 +550,9 @@ export default function Workbench() {
             )}
           </div>
           <div className="mt-4 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
-            {isMock
-              ? "Click a row to fill the form · Depth: $1.2M (mock)"
-              : `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders · click a row to fill`}
+            {ob.configured
+              ? `${(projected?.asks.length ?? 0) + (projected?.bids.length ?? 0)} live orders · click a row to fill`
+              : "Orderbook backend not configured for this network."}
           </div>
         </aside>
         )}
@@ -754,9 +740,9 @@ function OrderbookStatus({
     return (
       <span
         className="text-[var(--color-warning)]"
-        title="DEMO_NETWORK has no shared orderbook URL — using mock data"
+        title="No shared orderbook URL configured for this network"
       >
-        Mock
+        Not configured
       </span>
     );
   }
