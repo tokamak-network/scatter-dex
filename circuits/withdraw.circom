@@ -213,13 +213,14 @@ template Withdraw(levels) {
     // ════════════════════════════════════════
     //  8. RELAYER BINDING
     //
-    //  `recipient` is already squared inside §7 (it feeds the EdDSA
-    //  message Poseidon), so the optimizer can't drop it. `relayer`
-    //  is still a public input but doesn't participate in any
-    //  constraint inside the EdDSA path, so keep the squaring idiom
-    //  used by authorize.circom / settle.circom to defend against a
-    //  future optimizer change that would treat unused public signals
-    //  as dead.
+    //  `recipient` is already constrained inside §7 — it feeds the
+    //  EdDSA message Poseidon as `withdrawMsg.inputs[1]`, so it
+    //  participates in real arithmetic constraints and the
+    //  optimizer can't drop it. `relayer` is still a public input
+    //  but doesn't participate in any constraint inside the EdDSA
+    //  path, so keep the squaring idiom used by authorize.circom /
+    //  settle.circom to defend against a future optimizer change
+    //  that would treat unused public signals as dead.
     // ════════════════════════════════════════
     signal relayerSq;
     relayerSq <== relayer * relayer;

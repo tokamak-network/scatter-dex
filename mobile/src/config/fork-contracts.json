@@ -1,15 +1,15 @@
 {
   "31337": {
     "rpcUrl": "http://localhost:8545",
-    "weth": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
-    "commitmentPool": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
-    "privateSettlement": "0x9A9f2CCfdE556A7E9Ff0848998Aa4a0CFD8863AE",
-    "identityGate": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
-    "relayerRegistry": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
-    "feeVault": "0x4A679253410272dd5232B3Ff7cF5dbB88f295319",
-    "batchExecutor": "0x67d269191c92Caf3cD7723F116c85e6E9bf55933",
+    "weth": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+    "commitmentPool": "0x04C89607413713Ec9775E14b954286519d836FEf",
+    "privateSettlement": "0x21dF544947ba3E8b3c32561399E88B52Dc8b2823",
+    "identityGate": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+    "relayerRegistry": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+    "feeVault": "0xC9a43158891282A2B1475592D5719c001986Aaec",
+    "batchExecutor": "0xAA292E8611aDF267e563f334Ee42320aC96D0463",
     "tokens": [
-      { "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6", "symbol": "USDC", "decimals": 18 }
+      { "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788", "symbol": "USDC", "decimals": 18 }
     ],
     "relayerUrl": "http://localhost:3002",
     "sharedOrderbookUrl": "http://localhost:4000"
