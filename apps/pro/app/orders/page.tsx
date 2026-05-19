@@ -93,19 +93,17 @@ export default function Orders() {
 
   return (
     <div className="space-y-6">
-      {/* `/orders` reads its rows from the active workspace folder
-          (`zkscatter-pro-order-*` files), so show the workspace
-          picker / current-folder pill at the top — same affordance
-          the workbench and address-book pages use, so the user can
-          tell *which* vault they're looking at. */}
-      <WorkspaceBar />
-
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">My orders</h1>
         <Link href="/app" className="text-sm text-[var(--color-primary)] hover:underline">
           ← Back to workbench
         </Link>
       </div>
+
+      {/* Title above, workspace context just under it — matches the
+          address-book / wallet pages so the layout stays uniform
+          across every folder-backed page. */}
+      <WorkspaceBar />
       <div className="flex flex-wrap gap-1 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-1 text-sm">
         {FILTERS.map((f) => (
           <button

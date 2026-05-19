@@ -50,12 +50,6 @@ export default function EscrowPage() {
 
   return (
     <div className="space-y-6">
-      {/* /notes is purely a folder view — every row is a
-          per-account note file. Surface the active workspace so
-          the user can tell which vault they're inspecting (and
-          swap folders without going back to the workbench). */}
-      <WorkspaceBar />
-
       <div className="flex items-baseline justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Escrow</h1>
@@ -71,6 +65,8 @@ export default function EscrowPage() {
           ← Back to workbench
         </Link>
       </div>
+
+      <WorkspaceBar />
 
       {/* Pool summary — per-symbol Available / Locked / Pending,
           mirrors the workbench's left-column block. */}
