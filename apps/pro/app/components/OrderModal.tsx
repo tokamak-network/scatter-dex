@@ -649,6 +649,7 @@ export function OrderModal({
         expiry: expirySec,
         relayer: selectedRelayer
           ? {
+              name: selectedRelayer.name,
               address: selectedRelayer.address,
               url: selectedRelayer.url,
               feeBps: relayerFeeBps,

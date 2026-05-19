@@ -77,6 +77,8 @@ export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
         tokens={network.tokens}
       />
 
+      <RelayerAndExpiryStrip order={order} showTechnical={showTechnical} />
+
       <LifecycleTimeline status={order.status} createdAt={order.createdAt} />
 
       {order.changeCommitment !== undefined &&
@@ -133,6 +135,74 @@ export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
         </footer>
       )}
     </section>
+  );
+}
+
+/** Relayer name + fee + settle-deadline strip. Tucked between
+ *  the Hero card and the Lifecycle timeline so the user can
+ *  audit "who's going to settle this and by when" without
+ *  hunting through the technical-fields dump. */
+function RelayerAndExpiryStrip({
+  order,
+  showTechnical,
+}: {
+  order: OrderRecord;
+  showTechnical: boolean;
+}) {
+  const r = order.relayer;
+  const expiryMs =
+    order.expiry !== undefined ? Number(order.expiry) * 1000 : null;
+  const expired = expiryMs !== null && expiryMs < Date.now();
+  return (
+    <div className="mx-5 mt-3 grid grid-cols-2 gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2 text-[11px]">
+      <div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Relayer
+        </div>
+        {r ? (
+          <>
+            <div className="mt-0.5 font-medium text-[var(--color-text)]">
+              {r.name || "(unnamed)"}
+            </div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              {r.feeBps} bps quoted · {r.maxFeeBps} bps cap
+            </div>
+            {showTechnical && (
+              <div className="mt-0.5 font-mono text-[10px] text-[var(--color-text-subtle)]">
+                {r.address}
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="mt-0.5 text-[var(--color-text-muted)]">
+            (none — simulated dispatch)
+          </div>
+        )}
+      </div>
+      <div className="text-right">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Settle deadline
+        </div>
+        {expiryMs !== null ? (
+          <>
+            <div
+              className={`mt-0.5 font-medium ${
+                expired ? "text-[var(--color-danger)]" : "text-[var(--color-text)]"
+              }`}
+            >
+              {formatWhen(expiryMs)}
+            </div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              {expired
+                ? "Expired — order is unservable; cancel to recover funding"
+                : "Order must settle on-chain before this time"}
+            </div>
+          </>
+        ) : (
+          <div className="mt-0.5 text-[var(--color-text-muted)]">—</div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -484,11 +554,8 @@ function RecipientsTable({
               className="border-t border-[var(--color-border)]"
             >
               <td className="px-4 py-2 font-mono">{i + 1}</td>
-              <td
-                className="px-4 py-2 font-mono"
-                title={c.recipient}
-              >
-                {shortenAddr(c.recipient)}
+              <td className="px-4 py-2">
+                <AddressCell value={c.recipient} />
               </td>
               <td className="px-4 py-2 text-right font-mono">
                 {formatClaimAmount(c.amount, c.token, tokens)}
@@ -526,6 +593,43 @@ function RecipientsTable({
 function shortenAddr(a: string): string {
   if (!a || a.length < 12) return a;
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
+}
+
+/** Address with click-to-expand + click-to-copy. Defaults to the
+ *  short form so the recipients row stays compact; click toggles
+ *  to the full hex, and a small icon copies to clipboard. */
+function AddressCell({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // ignored — older browsers / missing perm
+    }
+  };
+  return (
+    <span className="inline-flex items-center gap-1 font-mono">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        title={expanded ? "Collapse" : "Show full address"}
+        className="hover:underline"
+      >
+        {expanded ? value : shortenAddr(value)}
+      </button>
+      <button
+        type="button"
+        onClick={copy}
+        title="Copy address"
+        className="rounded border border-[var(--color-border)] px-1 text-[10px] text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+      >
+        {copied ? "✓" : "⧉"}
+      </button>
+    </span>
+  );
 }
 
 function SecretCell({ value }: { value: bigint }) {

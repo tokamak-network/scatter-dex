@@ -95,6 +95,10 @@ export interface OrderRecord {
    *  re-resolving from the registry (which may move) and so the
    *  user can audit fee transparency after the fact. */
   relayer?: {
+    /** Registry-display name (e.g. "Tokamak Relayer"). Optional
+     *  because the simulated path with no selected relayer can't
+     *  carry one. */
+    name?: string;
     address: string;
     /** Display URL when the user picked a configured relayer; the
      *  zero-address simulated path leaves this undefined. */
@@ -172,6 +176,7 @@ export interface WireOrder {
   changeCommitmentHex?: string;
   expiryHex?: string;
   relayer?: {
+    name?: string;
     address: string;
     url?: string;
     feeBps: number;
