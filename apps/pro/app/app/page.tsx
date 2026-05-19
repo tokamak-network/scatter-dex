@@ -322,8 +322,6 @@ export default function Workbench() {
 
   return (
     <div className="space-y-6">
-      <WorkspaceBar />
-
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold">Workbench</h1>
@@ -342,6 +340,8 @@ export default function Workbench() {
           </Link>
         </div>
       </div>
+
+      <WorkspaceBar />
 
       <div className="grid grid-cols-12 gap-4">
         <MyPositionPanel
