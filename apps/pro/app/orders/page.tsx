@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
@@ -93,12 +92,7 @@ export default function Orders() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">My orders</h1>
-        <Link href="/app" className="text-sm text-[var(--color-primary)] hover:underline">
-          ← Back to workbench
-        </Link>
-      </div>
+      <h1 className="text-2xl font-semibold">My orders</h1>
 
       {/* Title above, workspace context just under it — matches the
           address-book / wallet pages so the layout stays uniform

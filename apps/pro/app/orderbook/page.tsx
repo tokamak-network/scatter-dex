@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { EmptyState } from "@zkscatter/ui";
@@ -103,15 +102,7 @@ export default function SharedOrderbookPage() {
   if (!configured) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">Shared order book</h1>
-          <Link
-            href="/orders"
-            className="text-sm text-[var(--color-primary)] hover:underline"
-          >
-            ← My orders
-          </Link>
-        </div>
+        <h1 className="text-2xl font-semibold">Shared order book</h1>
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
           <EmptyState>
             Shared orderbook backend is not configured for this network. Set{" "}
@@ -133,19 +124,11 @@ export default function SharedOrderbookPage() {
             and copy the price/size into the workbench to match.
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {lastUpdated && (
-            <span className="font-mono text-[11px] text-[var(--color-text-subtle)]">
-              updated {lastUpdated.toLocaleTimeString("en-US", { hour12: false })}
-            </span>
-          )}
-          <Link
-            href="/orders"
-            className="text-sm text-[var(--color-primary)] hover:underline"
-          >
-            ← My orders
-          </Link>
-        </div>
+        {lastUpdated && (
+          <span className="font-mono text-[11px] text-[var(--color-text-subtle)]">
+            updated {lastUpdated.toLocaleTimeString("en-US", { hour12: false })}
+          </span>
+        )}
       </div>
 
       {error && (
