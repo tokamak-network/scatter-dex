@@ -125,7 +125,8 @@ export default function Orders() {
               <th className="px-5 py-3 text-right">Price</th>
               <th className="px-5 py-3 text-right">Size</th>
               <th className="px-5 py-3 text-left">Status</th>
-              <th className="px-5 py-3 text-left">When</th>
+              <th className="px-5 py-3 text-left">Submitted</th>
+              <th className="px-5 py-3 text-left">Settle by</th>
               <th className="px-5 py-3 text-right">Action</th>
             </tr>
           </thead>
@@ -159,6 +160,15 @@ export default function Orders() {
                   )}
                 </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>
+                <td className="px-5 py-3 text-[var(--color-text-muted)]">
+                  {o.expiry !== undefined ? (
+                    <span className={isExpired(o, nowMs) ? "text-[var(--color-danger)]" : ""}>
+                      {formatWhen(Number(o.expiry) * 1000)}
+                    </span>
+                  ) : (
+                    <span className="text-[var(--color-text-subtle)]">—</span>
+                  )}
+                </td>
                 <td className="px-5 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                   {o.status === "matching" && realIds.has(o.id) && (
                     <button
