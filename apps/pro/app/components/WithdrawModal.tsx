@@ -57,6 +57,10 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     setNoteId(initialNote?.id ?? notes[0]?.id ?? null);
     setDestKind("self");
     setCustomAddr("");
+    // Nudge the commitment tree so a deposit whose
+    // `CommitmentInserted` event hadn't reached the long-poll yet
+    // is picked up before the user clicks Withdraw.
+    tree.refresh();
     // notes intentionally omitted — see comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialNote]);
@@ -172,7 +176,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
   const busy = phase.kind === "busy";
 
   return (
-    <Modal open={open} onClose={close} title="Withdraw from vault">
+    <Modal open={open} onClose={close} title="Withdraw from vault" closeOnBackdrop={false}>
       <fieldset disabled={busy} className="space-y-4">
         <Field label="Note">
           <select
@@ -262,16 +266,22 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
             </Button>
             <Button
               onClick={submit}
-              disabled={busy || !note || !destValid}
+              disabled={busy || !note || !destValid || (note && note.leafIndex < 0)}
               title={
                 !note
                   ? "Pick a note to withdraw"
+                  : note.leafIndex < 0
+                  ? "Waiting for the deposit's on-chain confirmation — usually one block"
                   : !destValid
                   ? "Pick a valid destination"
                   : undefined
               }
             >
-              {busy ? "Working…" : "Withdraw"}
+              {busy
+                ? "Working…"
+                : note && note.leafIndex < 0
+                ? "Confirming deposit…"
+                : "Withdraw"}
             </Button>
           </>
         )}

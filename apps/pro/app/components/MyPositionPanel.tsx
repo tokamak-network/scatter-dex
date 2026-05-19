@@ -13,7 +13,7 @@ import { StatusBadge, StatusProgress } from "./StatusBadge";
  *  four-section "what does my money look like right now" view that a
  *  Pro trader actually scans on every page load:
  *
- *    1. Total private balance — single dollar number + Deposit CTA
+ *    1. Total escrow-pool balance — single dollar number + Deposit CTA
  *    2. Open orders — matching, with per-row Cancel
  *    3. Ready to claim — claimable, with Claim CTA
  *    4. Notes — raw note list, with per-row Withdraw
@@ -66,7 +66,7 @@ export function MyPositionPanel({ onDeposit }: Props) {
       {/* Total */}
       <Section>
         <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Private balance
+          Escrow pool
         </div>
         {symbolTotals.length === 0 ? (
           <div className="text-sm text-[var(--color-text-muted)]">No assets yet.</div>

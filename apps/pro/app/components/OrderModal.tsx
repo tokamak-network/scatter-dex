@@ -23,7 +23,7 @@ import { useCommitmentTree, getMerkleProofWithFallback } from "../lib/commitment
 import { buildClaimsTree, computeCommitment, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { formatTokenAmount, formatWhen } from "../lib/format";
 import { applyFeeBig } from "../lib/fee";
-import type { VaultNote } from "../lib/vault";
+import { useVault, type VaultNote } from "../lib/vault";
 import {
   releaseAtToUnixSec,
   useTradeForm,
@@ -190,6 +190,7 @@ export function OrderModal({
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addOrder } = useOrders();
+  const { add: vaultAdd } = useVault();
   const { account } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const { selected: selectedRelayer } = useRelayers();
@@ -262,6 +263,13 @@ export function OrderModal({
   useEffect(() => {
     if (open) setPhase({ kind: "idle" });
   }, [open]);
+
+  // Nudge the commitment tree to re-fetch on modal open so a fresh
+  // deposit whose `CommitmentInserted` event hadn't reached the
+  // long-poll yet is picked up before the user clicks submit.
+  useEffect(() => {
+    if (open) commitmentTree.refresh();
+  }, [open, commitmentTree]);
 
   const close = useCallback(() => {
     abortCtrlRef.current?.abort();
@@ -477,6 +485,15 @@ export function OrderModal({
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
 
       const nonce = randomFieldElement();
+      // Pre-mint a salt for the residual (change) commitment so the
+      // post-prove `newCommitment` is deterministic and we can save
+      // the change note immediately with a matching commitment.
+      // Authorize circuit ignores newSalt when sellAmount === note.amount
+      // (fully spent — no change). Omitting it would force the prover
+      // to roll one internally and not surface it back, leaving the
+      // change UTXO unspendable.
+      const change = note.note.amount - sellAmount;
+      const newSalt = change > 0n ? randomFieldElement() : undefined;
 
       // Relayer address is bound into the proof (and the order hash),
       // so the user's pick has to be cached before prove. Falls back
@@ -499,6 +516,7 @@ export function OrderModal({
         relayer: relayerAddress,
         eddsaPrivateKey: eddsaKey.privateKey,
         claims,
+        newSalt,
       };
 
       setPhase({ kind: "proving", message: "Generating ZK proof…" });
@@ -568,6 +586,35 @@ export function OrderModal({
           claimsRoot: toBytes32Hex(claimsRoot),
         },
       });
+      // Change-note pre-save: when the order spends less than the full
+      // funding note, the authorize circuit emits a residual commitment
+      // bound to `newSalt`. Persist that change note now (leafIndex=-1)
+      // so the remainder is recoverable post-settle — `useLeafIndexReconciler`
+      // fills the index once the chain's CommitmentInserted lands.
+      // Fire-and-forget: the order is already on the book, so a
+      // local-storage hiccup must not cancel the success path. If the
+      // order is later cancelled instead of settled, this change note
+      // is orphaned (its commitment never lands on chain) and the user
+      // can prune it manually — matching frontend's accepted trade-off.
+      if (newSalt !== undefined && change > 0n) {
+        // Index 4 in AUTHORIZE_PUBLIC_SIGNAL_NAMES (apps/pro/app/lib/dispatch.ts).
+        // Reading from publicSignals (not meta) avoids depending on
+        // the worker's optional meta channel being populated.
+        const newCommitment = proveResult.publicSignals[4];
+        if (newCommitment !== undefined) {
+          const changeNote = { ...note.note, salt: newSalt, amount: change };
+          const changeAmountDisplay = formatTokenAmount(change, sellToken.decimals);
+          vaultAdd({
+            symbol: note.symbol,
+            amount: changeAmountDisplay,
+            note: changeNote,
+            commitment: newCommitment,
+          }).catch((err) => {
+            console.warn("[order] change-note pre-save failed", err);
+          });
+        }
+      }
+
       // Claim-bundle persistence: every claim secret the user will
       // need to release this order lands in two places —
       //   1. scatter-pro-claims-{label}.json inside the active
@@ -630,7 +677,7 @@ export function OrderModal({
   }
 
   return (
-    <Modal open={open} onClose={close} title="Confirm private order">
+    <Modal open={open} onClose={close} title="Confirm private order" closeOnBackdrop={false}>
       <TestnetNotice />
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
         <Row k="Pair" v={pair} />
@@ -746,12 +793,20 @@ export function OrderModal({
             </Button>
             <Button
               onClick={submit}
-              disabled={busy || isDeriving || !account || !note}
+              disabled={
+                busy ||
+                isDeriving ||
+                !account ||
+                !note ||
+                (note && note.leafIndex < 0)
+              }
               title={
                 !account
                   ? "Connect a wallet first"
                   : !note
                   ? "Deposit to your vault first"
+                  : note.leafIndex < 0
+                  ? "Waiting for the deposit's on-chain confirmation — usually one block"
                   : undefined
               }
             >
@@ -759,6 +814,8 @@ export function OrderModal({
                 ? "Working…"
                 : isDeriving
                 ? "Awaiting signature…"
+                : note && note.leafIndex < 0
+                ? "Confirming deposit…"
                 : "Sign & submit"}
             </Button>
           </>

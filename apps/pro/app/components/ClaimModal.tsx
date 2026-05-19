@@ -127,7 +127,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     phase.kind === "submitting";
 
   return (
-    <Modal open={open} onClose={close} title="Claim proceeds">
+    <Modal open={open} onClose={close} title="Claim proceeds" closeOnBackdrop={false}>
       <TestnetNotice />
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
         <Row k="Order" v={order.label} />

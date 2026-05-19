@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   useClaimReconciler,
   type ClaimWatchKey,
 } from "@zkscatter/sdk/react";
 import { useOrders } from "./orders";
+import { useVault } from "./vault";
 import { useActiveNetwork } from "./activeNetwork";
 
 /** Watches `PrivateClaim` events on the active settlement contract
@@ -20,8 +21,30 @@ import { useActiveNetwork } from "./activeNetwork";
  *  data-source change later, not a new code path. */
 export function ClaimReconciler() {
   const { orders, markClaimed } = useOrders();
+  const { remove: vaultRemove } = useVault();
   const { network } = useActiveNetwork();
   const settlementAddress = network.contracts.privateSettlement;
+
+  // When an order settles, the funding note's nullifier lands
+  // on-chain alongside the PrivateClaim event — the note is now
+  // unspendable. Drop it from the local vault so the panel
+  // reflects the on-chain truth instead of carrying a zombie that
+  // looks spendable but reverts at proof time. We look up the
+  // order again (fresh closure) instead of capturing it in the
+  // ClaimWatchKey so the noteId is still available when this
+  // fires asynchronously after orders mutate.
+  const onClaimed = useCallback(
+    (orderId: string) => {
+      markClaimed(orderId);
+      const order = orders.find((o) => o.id === orderId);
+      if (order?.noteId) {
+        vaultRemove(order.noteId).catch((err) => {
+          console.warn(`[claimReconciler] vault.remove(${order.noteId}) failed`, err);
+        });
+      }
+    },
+    [orders, markClaimed, vaultRemove],
+  );
 
   // `ordersKey` is a content hash that gates the SDK hook's
   // Poseidon rebuild. Includes only the fields that actually
@@ -59,7 +82,7 @@ export function ClaimReconciler() {
     settlementAddress,
     watchKeys,
     label: "pro-claimReconciler",
-    onClaimed: (orderId) => markClaimed(orderId),
+    onClaimed,
   });
 
   return null;

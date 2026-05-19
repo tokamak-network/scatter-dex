@@ -36,6 +36,13 @@ interface ModalProps {
   /** Tailwind max-width class for the dialog. Defaults to a
    *  comfortable medium that fits a typical confirmation flow. */
   maxWidthCls?: string;
+  /** When false, clicking the dim backdrop around the dialog
+   *  does *not* fire `onClose`. The X button + Escape key still
+   *  do. Default true (legacy behaviour). Flip to false for any
+   *  modal that wraps a multi-step form so a stray click near
+   *  the dialog edge — the backdrop's `p-4` padding catches
+   *  these — doesn't discard the user's in-progress input. */
+  closeOnBackdrop?: boolean;
 }
 
 /** Shared modal chrome — backdrop, escape-to-close, initial focus,
@@ -56,6 +63,7 @@ export function Modal({
   title,
   children,
   maxWidthCls = "max-w-md",
+  closeOnBackdrop = true,
 }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   // Per-instance id so two modals mounted simultaneously (e.g. Order
@@ -113,6 +121,7 @@ export function Modal({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       onClick={(e) => {
+        if (!closeOnBackdrop) return;
         // Only close on backdrop click, not bubble-up from inner clicks.
         if (e.target === e.currentTarget) close();
       }}

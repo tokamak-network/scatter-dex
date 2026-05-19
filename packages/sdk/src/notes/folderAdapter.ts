@@ -162,7 +162,24 @@ export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStora
       const stale = filenamesById.get(note.id);
       filenamesById.set(note.id, [filename]);
       if (stale && stale.length > 0) {
-        await Promise.all(stale.map((f) => removeFile(f)));
+        // Cleanup of the prior generation is best-effort: the new
+        // file is already on disk + carries authoritative state, so
+        // a `removeEntry` failure (file held open by the OS,
+        // permission downgraded, NoModificationAllowedError) must
+        // not throw past the caller. Otherwise upstream consumers
+        // like `vaultProvider.setLeafIndex` reject and the in-memory
+        // note never sees the resolved `leafIndex`, leaving the
+        // user unable to spend a deposit that's actually settled
+        // on-chain. `loadAll`'s dedup-by-commitment handles the
+        // resulting duplicate gracefully.
+        await Promise.all(
+          stale.map((f) =>
+            removeFile(f).catch((err) => {
+              // eslint-disable-next-line no-console
+              console.warn(`[folderAdapter] failed to remove stale note file ${f}`, err);
+            }),
+          ),
+        );
       }
     },
 
@@ -170,7 +187,22 @@ export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStora
       if (!hasFolder()) return;
       const cached = filenamesById.get(id);
       if (cached) {
-        await Promise.all(cached.map((filename) => removeFile(filename)));
+        // removeFile is best-effort: a `NoModificationAllowedError`
+        // (file held open by the OS, cloud-sync indexer, an editor,
+        // …) must not surface as a thrown error, otherwise the
+        // upstream `vault.remove(id)` rejects mid-await and the
+        // React-state filter never runs — the spent note stays in
+        // the panel and blocks the next withdraw. `loadAll` dedupes
+        // by commitment so a stale file left behind doesn't
+        // double-count.
+        await Promise.all(
+          cached.map((filename) =>
+            removeFile(filename).catch((err) => {
+              // eslint-disable-next-line no-console
+              console.warn(`[folderAdapter] failed to remove ${filename}`, err);
+            }),
+          ),
+        );
         filenamesById.delete(id);
         return;
       }

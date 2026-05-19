@@ -11,6 +11,20 @@ import { useFolder } from "../lib/folder";
  *  supported screen otherwise. */
 export function FolderGate({ children }: { children: ReactNode }) {
   const folder = useFolder();
+  // TEMP DEBUG: log every FolderGate render's branch + folder state
+  // to diagnose spurious child unmounts (deposit modal closing,
+  // vault state resetting, etc.). Remove once root-caused.
+  // eslint-disable-next-line no-console
+  console.log("[FolderGate]", {
+    available: folder.available,
+    restoring: folder.restoring,
+    ready: folder.ready,
+    branch: folder.available === null ? "loading"
+      : !folder.available ? "unsupported"
+      : folder.restoring ? "restoring"
+      : !folder.ready ? "pick"
+      : "children",
+  });
 
   // Initial post-mount probe still in flight — render nothing
   // rather than flashing the "unsupported" or "pick a folder"

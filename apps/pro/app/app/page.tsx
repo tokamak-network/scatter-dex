@@ -99,7 +99,6 @@ export default function Workbench() {
     string | undefined
   >(undefined);
   const { notes } = useVault();
-  const ob = useSharedOrderbook(pair.display);
 
   // Resolve the base-token address on this network for the
   // ask/bid classifier. Falls back to the placeholder so the
@@ -108,6 +107,19 @@ export default function Workbench() {
     const t = DEMO_NETWORK.tokens.find((x) => x.symbol === pair.base);
     return t?.address ?? "0x0000000000000000000000000000000000000001";
   }, [pair.base]);
+
+  // Orderbook keys pairs as the sorted-lowercase address tuple
+  // `0xtokena-0xtokenb` (see packages/types pairKey). Sending the
+  // display name (`ETH/USDC`) returns a 400 from the shared service.
+  const pairKey = useMemo(() => {
+    const base = DEMO_NETWORK.tokens.find((x) => x.symbol === pair.base)?.address;
+    const quote = DEMO_NETWORK.tokens.find((x) => x.symbol === pair.quote)?.address;
+    if (!base || !quote) return null;
+    const a = base.toLowerCase();
+    const b = quote.toLowerCase();
+    return a < b ? `${a}-${b}` : `${b}-${a}`;
+  }, [pair.base, pair.quote]);
+  const ob = useSharedOrderbook(pairKey);
 
   // Sell-side token address — drives the funding-note filter. Sell
   // side means "sell `pair.base`" (sellToken = base); buy side flips

@@ -20,8 +20,9 @@ interface OrderbookState {
 
 /** Fetch shared-orderbook orders for a trading pair. Re-fetches
  *  every `pollMs` (default 10 s). Returns `null` orders when the
- *  service isn't configured for this network. */
-export function useSharedOrderbook(pair: string, pollMs = 10_000): OrderbookState {
+ *  service isn't configured for this network or `pair` is null
+ *  (no resolvable token tuple yet). */
+export function useSharedOrderbook(pair: string | null, pollMs = 10_000): OrderbookState {
   const [orders, setOrders] = useState<SharedOrder[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +30,7 @@ export function useSharedOrderbook(pair: string, pollMs = 10_000): OrderbookStat
   const configured = !!url;
 
   useEffect(() => {
-    if (!configured || !url) {
+    if (!configured || !url || !pair) {
       setLoading(false);
       setOrders(null);
       setError(null);
