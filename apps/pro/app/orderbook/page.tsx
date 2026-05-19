@@ -50,32 +50,41 @@ export default function SharedOrderbookPage() {
   const resolveToken = (addr: string) => tokenByAddr[addr.toLowerCase()];
 
   // Poll the shared backend so the page stays current without a
-  // manual refresh. The interval also doubles as the
-  // permission-revoke / backend-down recovery path — every tick
-  // re-tries.
+  // manual refresh. Use a *self-rescheduling* `setTimeout` chain
+  // instead of `setInterval` so a slow backend response (>POLL_MS)
+  // can't stack overlapping fetches — the next tick is only
+  // scheduled after the previous one settles. The chain also
+  // doubles as the permission-revoke / backend-down recovery
+  // path: every tick retries.
   useEffect(() => {
     if (!configured || !url) return;
     const client = new SharedOrderbookClient(url);
+    let stopped = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
 
-    const fetchOnce = async () => {
+    const poll = async () => {
+      if (stopped) return;
       setLoading(true);
       try {
         const list = await client.getOrders();
-        if (cancelledRef.current) return;
+        if (stopped || cancelledRef.current) return;
         setOrders(list);
         setError(null);
         setLastUpdated(new Date());
       } catch (e) {
-        if (cancelledRef.current) return;
+        if (stopped || cancelledRef.current) return;
         setError(e instanceof Error ? e.message : "Failed to fetch orders");
       } finally {
-        if (!cancelledRef.current) setLoading(false);
+        if (!stopped && !cancelledRef.current) setLoading(false);
       }
+      if (!stopped) timerId = setTimeout(poll, POLL_MS);
     };
 
-    fetchOnce();
-    const id = setInterval(fetchOnce, POLL_MS);
-    return () => clearInterval(id);
+    void poll();
+    return () => {
+      stopped = true;
+      if (timerId !== null) clearTimeout(timerId);
+    };
   }, [configured, url]);
 
   // Build the pair-filter dropdown options from the actual order
@@ -120,8 +129,11 @@ export default function SharedOrderbookPage() {
         <div>
           <h1 className="text-2xl font-semibold">Shared order book</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Every live order published across relayers. Click a pair filter to narrow,
-            and copy the price/size into the workbench to match.
+            Up to 500 live orders published across relayers (the
+            page fetches the backend's default page; deeper
+            pagination is a follow-up). Click a pair filter to
+            narrow, and copy the price/size into the workbench to
+            match.
           </p>
         </div>
         {lastUpdated && (
@@ -192,8 +204,19 @@ export default function SharedOrderbookPage() {
                 const buyTok = resolveToken(o.buyToken);
                 const sellSym = sellTok?.symbol ?? shortAddr(o.sellToken);
                 const buySym = buyTok?.symbol ?? shortAddr(o.buyToken);
-                const sell = parseFloat(ethers.formatUnits(o.sellAmount, sellTok?.decimals ?? 18));
-                const buy = parseFloat(ethers.formatUnits(o.buyAmount, buyTok?.decimals ?? 18));
+                // Raw amounts come back as decimal strings out of
+                // `formatUnits` (which itself does bigint math — no
+                // precision loss between the chain-side `BigInt` and
+                // this string). Use `Number(...)` for the display
+                // price ratio because the ratio is inherently real
+                // and is rendered with `maximumFractionDigits: 6`
+                // anyway — `parseFloat` is fine here but `Number` is
+                // stricter (rejects "1.5abc") so the row will
+                // surface a NaN price instead of silently rounding.
+                const sellStr = ethers.formatUnits(o.sellAmount, sellTok?.decimals ?? 18);
+                const buyStr = ethers.formatUnits(o.buyAmount, buyTok?.decimals ?? 18);
+                const sell = Number(sellStr);
+                const buy = Number(buyStr);
                 // Quote/base ratio in the order's natural direction.
                 // Workbench prefills will need to flip this for a
                 // taker counterorder.
