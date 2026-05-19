@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   createFolderOrdersAdapter,
   type OrderRecord,
+  type OrdersAdapterIO,
 } from "../app/lib/orders";
 
 function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
@@ -32,50 +33,69 @@ function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
   };
 }
 
-interface FakeFs {
+interface FakeFs extends OrdersAdapterIO {
   files: Map<string, string>;
-  loadFile: (name: string) => Promise<string | null>;
-  saveFile: (name: string, content: string) => Promise<void>;
-  saveCalls: number;
+  listCalls: number;
   loadCalls: number;
+  saveCalls: number;
+  removeCalls: number;
 }
 
 function fakeFs(): FakeFs {
   const files = new Map<string, string>();
   const fs: FakeFs = {
     files,
-    saveCalls: 0,
+    listCalls: 0,
     loadCalls: 0,
-    loadFile: async (name: string) => {
+    saveCalls: 0,
+    removeCalls: 0,
+    listFiles: async (matches) => {
+      fs.listCalls++;
+      return Array.from(files.entries())
+        .filter(([name]) => matches(name))
+        .map(([name, content]) => ({
+          filename: name,
+          read: async () => content,
+        }));
+    },
+    loadFile: async (name) => {
       fs.loadCalls++;
       return files.get(name) ?? null;
     },
-    saveFile: async (name: string, content: string) => {
+    saveFile: async (name, content) => {
       fs.saveCalls++;
       files.set(name, content);
+    },
+    removeFile: async (name) => {
+      fs.removeCalls++;
+      files.delete(name);
     },
   };
   return fs;
 }
 
+const ACCT = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const OTHER = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
 describe("createFolderOrdersAdapter", () => {
-  it("writes the aggregate file under the per-chain name", async () => {
+  it("writes one file per order under the (chain, account, id) name", async () => {
     const fs = fakeFs();
-    const a = createFolderOrdersAdapter(31337, fs);
-    await a.put(fixture());
-    expect(Array.from(fs.files.keys())).toEqual([
-      "zkscatter-pro-orders-31337.json",
+    const a = createFolderOrdersAdapter(31337, ACCT, fs);
+    await a.put(fixture({ id: "alpha" }));
+    await a.put(fixture({ id: "beta", label: "ord-4" }));
+    expect(Array.from(fs.files.keys()).sort()).toEqual([
+      `zkscatter-pro-order-31337-${ACCT}-alpha.json`,
+      `zkscatter-pro-order-31337-${ACCT}-beta.json`,
     ]);
   });
 
   it("round-trips a fully populated order through JSON without precision loss", async () => {
     const fs = fakeFs();
-    const writer = createFolderOrdersAdapter(31337, fs);
+    const writer = createFolderOrdersAdapter(31337, ACCT, fs);
     const order = fixture();
     await writer.put(order);
 
-    // Fresh adapter reads from the same backing file.
-    const reader = createFolderOrdersAdapter(31337, fs);
+    const reader = createFolderOrdersAdapter(31337, ACCT, fs);
     const loaded = await reader.loadAll();
     expect(loaded).toEqual([order]);
     expect(loaded[0]!.claim!.secret).toBe(order.claim!.secret);
@@ -83,164 +103,172 @@ describe("createFolderOrdersAdapter", () => {
     expect(loaded[0]!.nonce).toBe(order.nonce);
   });
 
-  it("upserts on put (same id replaces the existing row)", async () => {
+  it("put with an existing id replaces just that file (no rewrite of siblings)", async () => {
     const fs = fakeFs();
-    const a = createFolderOrdersAdapter(31337, fs);
-    await a.put(fixture({ status: "matching" }));
-    await a.put(fixture({ status: "claimed" }));
-    const reloaded = await createFolderOrdersAdapter(31337, fs).loadAll();
-    expect(reloaded).toHaveLength(1);
-    expect(reloaded[0]!.status).toBe("claimed");
+    const a = createFolderOrdersAdapter(31337, ACCT, fs);
+    await a.put(fixture({ id: "alpha", status: "matching" }));
+    await a.put(fixture({ id: "beta", status: "matching" }));
+    fs.saveCalls = 0;
+    await a.put(fixture({ id: "alpha", status: "claimed" }));
+    expect(fs.saveCalls).toBe(1);
+
+    const reloaded = await createFolderOrdersAdapter(31337, ACCT, fs).loadAll();
+    const byId = new Map(reloaded.map((o) => [o.id, o]));
+    expect(byId.get("alpha")!.status).toBe("claimed");
+    expect(byId.get("beta")!.status).toBe("matching");
   });
 
-  it("preserves multiple orders and returns them sorted by createdAt asc", async () => {
+  it("loadAll returns orders sorted by createdAt asc", async () => {
     const fs = fakeFs();
-    const a = createFolderOrdersAdapter(31337, fs);
-    await a.put(fixture({ id: "a", label: "ord-2", createdAt: 2000 }));
-    await a.put(fixture({ id: "b", label: "ord-1", createdAt: 1000 }));
-    await a.put(fixture({ id: "c", label: "ord-3", createdAt: 3000 }));
-    const out = await createFolderOrdersAdapter(31337, fs).loadAll();
+    const a = createFolderOrdersAdapter(31337, ACCT, fs);
+    await a.put(fixture({ id: "a", createdAt: 2000 }));
+    await a.put(fixture({ id: "b", createdAt: 1000 }));
+    await a.put(fixture({ id: "c", createdAt: 3000 }));
+    const out = await createFolderOrdersAdapter(31337, ACCT, fs).loadAll();
     expect(out.map((o) => o.id)).toEqual(["b", "a", "c"]);
   });
 
-  it("isolates orders by chainId (different file per chain)", async () => {
+  it("isolates orders by chainId (different filename prefix)", async () => {
     const fs = fakeFs();
-    const main = createFolderOrdersAdapter(1, fs);
-    const sepolia = createFolderOrdersAdapter(11155111, fs);
-    await main.put(fixture({ id: "m", label: "ord-1" }));
-    await sepolia.put(fixture({ id: "s", label: "ord-1" }));
+    const main = createFolderOrdersAdapter(1, ACCT, fs);
+    const sepolia = createFolderOrdersAdapter(11155111, ACCT, fs);
+    await main.put(fixture({ id: "m" }));
+    await sepolia.put(fixture({ id: "s" }));
     expect((await main.loadAll()).map((o) => o.id)).toEqual(["m"]);
     expect((await sepolia.loadAll()).map((o) => o.id)).toEqual(["s"]);
   });
 
-  it("loadAll only hits the disk once per adapter instance (in-memory cache)", async () => {
+  it("lowercases the accountKey defensively so a checksummed address still finds its files", async () => {
     const fs = fakeFs();
-    fs.files.set(
-      "zkscatter-pro-orders-31337.json",
-      JSON.stringify([
-        {
-          id: "x",
-          label: "ord-1",
-          side: "sell",
-          pair: "ETH/USDC",
-          price: "1",
-          size: "1",
-          status: "matching",
-          createdAt: 1,
-        },
-      ]),
-    );
-    const a = createFolderOrdersAdapter(31337, fs);
-    await a.loadAll();
-    await a.loadAll();
-    await a.loadAll();
-    expect(fs.loadCalls).toBe(1);
+    const checksummed = "0xAaAaaAaaaAAAAaaaaAaAAaAaAaaaAAAAAAaaAaaa";
+    const written = createFolderOrdersAdapter(31337, checksummed, fs);
+    await written.put(fixture({ id: "x" }));
+
+    // File on disk uses the lowercased key.
+    expect(Array.from(fs.files.keys())).toEqual([
+      `zkscatter-pro-order-31337-${checksummed.toLowerCase()}-x.json`,
+    ]);
+
+    // A reader using the lowercased form sees the same row — i.e.
+    // the adapter doesn't accidentally fork its own namespace if
+    // one caller forgot to normalise.
+    const lower = createFolderOrdersAdapter(31337, checksummed.toLowerCase(), fs);
+    expect((await lower.loadAll()).map((o) => o.id)).toEqual(["x"]);
   });
 
-  it("returns an empty list when the file is missing", async () => {
+  it("isolates orders by accountKey — a sibling account's files are invisible", async () => {
     const fs = fakeFs();
-    const out = await createFolderOrdersAdapter(31337, fs).loadAll();
+    const me = createFolderOrdersAdapter(31337, ACCT, fs);
+    const them = createFolderOrdersAdapter(31337, OTHER, fs);
+    await me.put(fixture({ id: "mine" }));
+    await them.put(fixture({ id: "theirs" }));
+    // Both files coexist in the folder, but each adapter only sees
+    // its own — closes the cross-account privacy leak the
+    // chain-only-keyed aggregate had.
+    expect((await me.loadAll()).map((o) => o.id)).toEqual(["mine"]);
+    expect((await them.loadAll()).map((o) => o.id)).toEqual(["theirs"]);
+  });
+
+  it("loadAll only walks the directory once per adapter instance", async () => {
+    const fs = fakeFs();
+    fs.files.set(
+      `zkscatter-pro-order-31337-${ACCT}-x.json`,
+      JSON.stringify({
+        id: "x",
+        label: "ord-1",
+        side: "sell",
+        pair: "ETH/USDC",
+        price: "1",
+        size: "1",
+        status: "matching",
+        createdAt: 1,
+      }),
+    );
+    const a = createFolderOrdersAdapter(31337, ACCT, fs);
+    await a.loadAll();
+    await a.loadAll();
+    await a.loadAll();
+    expect(fs.listCalls).toBe(1);
+  });
+
+  it("returns an empty list when no matching files exist", async () => {
+    const fs = fakeFs();
+    const out = await createFolderOrdersAdapter(31337, ACCT, fs).loadAll();
     expect(out).toEqual([]);
   });
 
-  it("skips a malformed row without throwing, keeps the valid ones", async () => {
+  it("skips a corrupt single file and keeps the rest", async () => {
     const fs = fakeFs();
     fs.files.set(
-      "zkscatter-pro-orders-31337.json",
-      JSON.stringify([
-        {
-          id: "good",
-          label: "ord-1",
-          side: "sell",
-          pair: "ETH/USDC",
-          price: "1",
-          size: "1",
-          status: "matching",
-          createdAt: 1,
-        },
-        // missing required `id`
-        {
-          label: "ord-2",
-          side: "buy",
-          pair: "ETH/USDC",
-          price: "2",
-          size: "1",
-          status: "matching",
-          createdAt: 2,
-        },
-      ]),
+      `zkscatter-pro-order-31337-${ACCT}-good.json`,
+      JSON.stringify({
+        id: "good",
+        label: "ord-1",
+        side: "sell",
+        pair: "ETH/USDC",
+        price: "1",
+        size: "1",
+        status: "matching",
+        createdAt: 1,
+      }),
     );
-    const out = await createFolderOrdersAdapter(31337, fs).loadAll();
+    fs.files.set(
+      `zkscatter-pro-order-31337-${ACCT}-bad.json`,
+      "{ not valid JSON",
+    );
+    fs.files.set(
+      `zkscatter-pro-order-31337-${ACCT}-noid.json`,
+      JSON.stringify({ label: "missing id", createdAt: 2 }),
+    );
+    const out = await createFolderOrdersAdapter(31337, ACCT, fs).loadAll();
     expect(out.map((o) => o.id)).toEqual(["good"]);
   });
 
-  it("refuses to overwrite when the file is a non-array JSON value", async () => {
+  it("a write to a sibling order does not touch the corrupt neighbour's file", async () => {
     const fs = fakeFs();
-    fs.files.set("zkscatter-pro-orders-31337.json", "null");
-    const a = createFolderOrdersAdapter(31337, fs);
+    const bad = `zkscatter-pro-order-31337-${ACCT}-bad.json`;
+    fs.files.set(bad, "{ corrupt");
+    const a = createFolderOrdersAdapter(31337, ACCT, fs);
     expect(await a.loadAll()).toEqual([]);
     await a.put(fixture({ id: "new" }));
-    expect(fs.files.get("zkscatter-pro-orders-31337.json")).toBe("null");
-    expect(fs.saveCalls).toBe(0);
+    // Per-file model: the corrupt file is untouched, the new one
+    // lands cleanly alongside it.
+    expect(fs.files.get(bad)).toBe("{ corrupt");
+    expect(fs.files.get(`zkscatter-pro-order-31337-${ACCT}-new.json`)).toBeDefined();
   });
 
-  it("refuses to overwrite when loadFile rejects (transient permission failure)", async () => {
-    let loadCalls = 0;
-    let saveCalls = 0;
-    let savedContent: string | null = null;
-    const fs = {
-      files: new Map<string, string>(),
-      saveCalls: 0,
-      loadCalls: 0,
-      loadFile: async () => {
-        loadCalls++;
-        throw new Error("transient permission denied");
-      },
-      saveFile: async (_name: string, content: string) => {
-        saveCalls++;
-        savedContent = content;
-      },
-    };
-    const a = createFolderOrdersAdapter(31337, fs);
-    expect(await a.loadAll()).toEqual([]);
-    await a.put(fixture({ id: "new" }));
-    expect(saveCalls).toBe(0);
-    expect(savedContent).toBeNull();
-    expect(loadCalls).toBe(1);
-  });
-
-  it("refuses to overwrite a corrupt backing file (preserves recoverable data)", async () => {
+  it("remove deletes the per-order file and is idempotent", async () => {
     const fs = fakeFs();
-    fs.files.set(
-      "zkscatter-pro-orders-31337.json",
-      "{ this is not valid JSON",
-    );
-    const a = createFolderOrdersAdapter(31337, fs);
-    // load returns empty (corrupt) but the file content stays untouched
-    expect(await a.loadAll()).toEqual([]);
-    await a.put(fixture({ id: "new" }));
-    // critical invariant: the original corrupt file is still there,
-    // not replaced with a single-order aggregate
-    expect(fs.files.get("zkscatter-pro-orders-31337.json")).toBe(
-      "{ this is not valid JSON",
-    );
-    expect(fs.saveCalls).toBe(0);
+    const a = createFolderOrdersAdapter(31337, ACCT, fs);
+    await a.put(fixture({ id: "doomed" }));
+    expect(fs.files.has(`zkscatter-pro-order-31337-${ACCT}-doomed.json`)).toBe(true);
+
+    await a.remove("doomed");
+    expect(fs.files.has(`zkscatter-pro-order-31337-${ACCT}-doomed.json`)).toBe(false);
+
+    // Idempotent: removing a missing id doesn't throw and doesn't
+    // generate a second removeFile call's failure path.
+    await expect(a.remove("doomed")).resolves.toBeUndefined();
+
+    expect((await a.loadAll()).map((o) => o.id)).toEqual([]);
   });
 
-  it("does not throw when loadFile / saveFile reject (logs only)", async () => {
-    const fs: FakeFs = {
-      files: new Map(),
-      saveCalls: 0,
-      loadCalls: 0,
-      loadFile: async () => {
-        throw new Error("boom-load");
+  it("does not throw when listFiles / saveFile / removeFile reject (logs only)", async () => {
+    const fs: OrdersAdapterIO = {
+      listFiles: async () => {
+        throw new Error("boom-list");
       },
+      loadFile: async () => null,
       saveFile: async () => {
         throw new Error("boom-save");
       },
+      removeFile: async () => {
+        throw new Error("boom-remove");
+      },
     };
-    const a = createFolderOrdersAdapter(31337, fs);
+    const a = createFolderOrdersAdapter(31337, ACCT, fs);
     await expect(a.loadAll()).resolves.toEqual([]);
     await expect(a.put(fixture())).resolves.toBeUndefined();
+    await expect(a.remove("anything")).resolves.toBeUndefined();
   });
 });

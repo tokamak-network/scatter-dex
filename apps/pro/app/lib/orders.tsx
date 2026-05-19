@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { bigintToHex } from "@zkscatter/sdk/util";
-import { loadFile, saveFile } from "@zkscatter/sdk/storage";
+import { listFiles, loadFile, removeFile, saveFile } from "@zkscatter/sdk/storage";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useActiveNetwork } from "./activeNetwork";
 import { useFolder } from "./folder";
@@ -132,6 +132,11 @@ interface OrdersState {
   /** Mark an order as cancelled. Only valid for `matching` orders;
    *  no-op when the order is already filled / claimed / cancelled. */
   markCancelled(id: string): void;
+  /** Delete the local record entirely. Used to clear orders whose
+   *  on-chain lifecycle ended outside the app (e.g. a long-expired
+   *  matching order that the user wants out of the UI) — does NOT
+   *  touch any chain state, just drops the persisted row + file. */
+  remove(id: string): Promise<void>;
 }
 
 const OrdersCtx = createContext<OrdersState | null>(null);
@@ -283,106 +288,134 @@ function makeWarner(): (reason: string, err?: unknown) => void {
 export interface OrdersAdapter {
   loadAll(): Promise<OrderRecord[]>;
   put(o: OrderRecord): Promise<void>;
+  /** Delete the persisted order file by id. Idempotent — a missing
+   *  id is a no-op. Used by cleanup flows (clear an expired order
+   *  whose cancel never landed) and by the post-cancel rotation
+   *  hook when the on-chain nullifier burns the record. */
+  remove(id: string): Promise<void>;
 }
 
-/** Folder-backed orders adapter. Persists every order as a single
- *  aggregate JSON file `zkscatter-pro-orders-{chainId}.json` in the
- *  active notes folder — same folder Pay's run records and the
- *  shared address book live in, so the user has one place to back
- *  up. In-memory map mirrors the file so a put → loadAll round-
- *  trip doesn't hit disk twice.
+/** Identifier injected into every per-order filename so the same
+ *  folder can host orders from multiple wallets without leaking
+ *  one user's trade graph into another's UI. Lowercased on the
+ *  caller side; we pass through verbatim. */
+type AccountKey = string;
+
+interface FolderEntry {
+  filename: string;
+  read(): Promise<string>;
+}
+
+/** IO surface for the per-order adapter. Defaults bind to the SDK
+ *  folder primitives; tests inject an in-memory fake that mirrors
+ *  the same four operations. */
+export interface OrdersAdapterIO {
+  listFiles(matches: (filename: string) => boolean): Promise<FolderEntry[]>;
+  loadFile(name: string): Promise<string | null>;
+  saveFile(name: string, content: string): Promise<void>;
+  removeFile(name: string): Promise<void>;
+}
+
+const DEFAULT_IO: OrdersAdapterIO = { listFiles, loadFile, saveFile, removeFile };
+
+/** Pro orders are persisted **one file per order** in the user's
+ *  notes folder, mirroring Pay's `zkscatter-run-<id>.json` pattern.
+ *  Each file is `zkscatter-pro-order-{chainId}-{accountKey}-{id}.json`
+ *  and holds a single `WireOrder` JSON object.
  *
- *  IO injection (`io`) exists for tests; production callers omit
- *  it and the helpers default to the SDK's folder primitives. */
+ *  ## Why per-file
+ *  - **Privacy isolation.** The previous single-aggregate file
+ *    keyed only on chainId leaked every order to anyone using the
+ *    same folder under a different wallet account. Per-(chain,
+ *    account) prefixing closes that.
+ *  - **Per-order delete.** Cancel rotation, expiry cleanup, and
+ *    manual user-driven cleanup can now drop a single file
+ *    instead of editing JSON inside a shared aggregate.
+ *  - **No write amplification.** A status flip on one order writes
+ *    its own file instead of re-serialising every other order.
+ *  - **Corruption is local.** A bad file is skipped at load time
+ *    and the rest of the orders survive. The old aggregate model
+ *    had to refuse all writes on a parse error to avoid clobbering
+ *    the rest.
+ *
+ *  ## Identity
+ *  `accountKey` should be the lowercased 0x-prefixed wallet
+ *  address that submitted these orders. An empty / "anon" string
+ *  is allowed pre-wallet-connect; rows persisted under that key
+ *  stay parked until the same anonymous session continues. */
 export function createFolderOrdersAdapter(
   chainId: number,
-  io: {
-    loadFile: (name: string) => Promise<string | null>;
-    saveFile: (name: string, content: string) => Promise<void>;
-  } = { loadFile, saveFile },
+  accountKey: AccountKey,
+  io: OrdersAdapterIO = DEFAULT_IO,
 ): OrdersAdapter {
-  const filename = `zkscatter-pro-orders-${chainId}.json`;
+  // Lowercase defensively. Callers (OrdersProvider) already do
+  // this, but the adapter is exported and EIP-55-checksummed
+  // addresses are easy to forward verbatim. A mixed-case key on
+  // write + a lowercased key on read would produce two disjoint
+  // filename namespaces and silently isolate the user's own
+  // orders from themselves.
+  const normalizedAccount = accountKey.toLowerCase();
+  const prefix = `zkscatter-pro-order-${chainId}-${normalizedAccount}-`;
+  const fileFor = (orderId: string): string => `${prefix}${orderId}.json`;
   const warn = makeWarner();
+  // Per-order in-memory mirror, keyed by order id. Populated on
+  // first `loadAll`, kept warm across subsequent `put` / `remove`
+  // calls so the adapter doesn't re-walk the directory on each
+  // mutation. Tests rely on the cache hit count to verify this.
   const mem = new Map<string, OrderRecord>();
   let loadedPromise: Promise<void> | null = null;
-  // True when the on-disk file existed but couldn't be parsed.
-  // `put()` refuses to flush in that state — otherwise the next
-  // write would replace the corrupt-but-recoverable file with
-  // {only the new order}, destroying every previously-persisted
-  // order beyond recovery.
-  let loadCorrupted = false;
 
   function ensureLoaded(): Promise<void> {
     if (loadedPromise) return loadedPromise;
     loadedPromise = (async () => {
-      let content: string | null;
+      let entries: FolderEntry[];
       try {
-        content = await io.loadFile(filename);
+        entries = await io.listFiles((name) => name.startsWith(prefix) && name.endsWith(".json"));
       } catch (e) {
-        // Any loadFile failure (transient permission revoke, file
-        // held open by the OS, etc.) means we don't know what's on
-        // disk. Marking corrupt prevents the next put() from
-        // overwriting whatever the file actually contained.
-        loadCorrupted = true;
-        // eslint-disable-next-line no-console
-        console.error(
-          `[scatter pro orders] ${filename} loadFile rejected — refusing further writes to avoid overwriting recoverable data`,
-          e,
-        );
+        warn("listFiles failed — starting with empty in-memory state", e);
         return;
       }
-      if (!content) return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(content);
-      } catch (e) {
-        loadCorrupted = true;
-        // eslint-disable-next-line no-console
-        console.error(
-          `[scatter pro orders] ${filename} is not valid JSON — refusing further writes to avoid overwriting recoverable data`,
-          e,
-          { rawHead: content.slice(0, 200) },
-        );
-        return;
-      }
-      if (!Array.isArray(parsed)) {
-        // JSON parsed but isn't the expected `WireOrder[]` shape
-        // (e.g. someone wrote `null` or a single object into the
-        // file). Same posture as a parse failure: don't overwrite.
-        loadCorrupted = true;
-        // eslint-disable-next-line no-console
-        console.error(
-          `[scatter pro orders] ${filename} is not a JSON array — refusing further writes`,
-          { actualType: parsed === null ? "null" : typeof parsed },
-        );
-        return;
-      }
-      const wire = parsed as WireOrder[];
-      for (const w of wire) {
-        if (!w || typeof w.id !== "string") {
-          warn(`skipping malformed order <no id>`);
-          continue;
-        }
-        try {
-          mem.set(w.id, deserialize(w));
-        } catch (e) {
-          warn(`skipping malformed order ${w.id}`, e);
-        }
-      }
+      // Parallelise the per-file read; tens-to-hundreds of small
+      // JSON blobs would otherwise serialise into a noticeable
+      // hydration delay. Each inner task swallows its own errors
+      // (read / parse / deserialize), but use `allSettled` as a
+      // belt-and-suspenders guard in case a future inner branch
+      // forgets to wrap and lets a rejection escape — without it,
+      // one unhandled throw would abort every sibling parse.
+      await Promise.allSettled(
+        entries.map(async (entry) => {
+          let content: string;
+          try {
+            content = await entry.read();
+          } catch (e) {
+            warn(`read failed for ${entry.filename} — skipping`, e);
+            return;
+          }
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(content);
+          } catch (e) {
+            warn(`invalid JSON in ${entry.filename} — skipping`, e);
+            return;
+          }
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            warn(`${entry.filename} is not a JSON object — skipping`);
+            return;
+          }
+          const w = parsed as WireOrder;
+          if (typeof w.id !== "string") {
+            warn(`${entry.filename} missing id field — skipping`);
+            return;
+          }
+          try {
+            mem.set(w.id, deserialize(w));
+          } catch (e) {
+            warn(`deserialize failed for ${entry.filename}`, e);
+          }
+        }),
+      );
     })();
     return loadedPromise;
-  }
-
-  async function flush(): Promise<void> {
-    if (loadCorrupted) return;
-    try {
-      const wire = Array.from(mem.values())
-        .sort((a, b) => a.createdAt - b.createdAt)
-        .map(serialize);
-      await io.saveFile(filename, JSON.stringify(wire, null, 2));
-    } catch (e) {
-      warn("folder put failed", e);
-    }
   }
 
   return {
@@ -392,12 +425,21 @@ export function createFolderOrdersAdapter(
     },
     async put(o) {
       await ensureLoaded();
-      if (loadCorrupted) {
-        warn("refusing put: backing file is corrupt — repair or remove it");
-        return;
-      }
       mem.set(o.id, o);
-      await flush();
+      try {
+        await io.saveFile(fileFor(o.id), JSON.stringify(serialize(o), null, 2));
+      } catch (e) {
+        warn(`saveFile failed for order ${o.id}`, e);
+      }
+    },
+    async remove(id) {
+      await ensureLoaded();
+      mem.delete(id);
+      try {
+        await io.removeFile(fileFor(id));
+      } catch (e) {
+        warn(`removeFile failed for order ${id}`, e);
+      }
     },
   };
 }
@@ -414,8 +456,15 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const { currentId } = useFolder();
   const { account } = useWallet();
   const accountKey = account?.toLowerCase() ?? "anon";
+  // The folder adapter is keyed by (chainId, accountKey) — the
+  // wallet that owns these orders. Different wallets sharing the
+  // same folder write into disjoint filename namespaces, so
+  // switching accounts in MetaMask never leaks one user's trade
+  // graph (recipients, amounts, claim secrets) to another.
+  // `currentId` is in the dep array so a folder swap also forces a
+  // fresh adapter instance.
   const adapter = useMemo(
-    () => createFolderOrdersAdapter(chainId),
+    () => createFolderOrdersAdapter(chainId, accountKey),
     [chainId, currentId, accountKey],
   );
 
@@ -543,9 +592,22 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     [adapter],
   );
 
+  const remove = useCallback(
+    async (id: string) => {
+      // Drop in-memory state first so the UI reacts immediately.
+      // If the disk-side removeFile fails we log inside the adapter
+      // but don't surface a rejection — the local row is gone
+      // either way, and stale ghosts on disk are picked up by the
+      // next loadAll and reconciled.
+      setOrders((prev) => prev.filter((o) => o.id !== id));
+      await adapter.remove(id);
+    },
+    [adapter],
+  );
+
   const value = useMemo<OrdersState>(
-    () => ({ orders, loaded, add, markClaimed, markCancelled }),
-    [orders, loaded, add, markClaimed, markCancelled],
+    () => ({ orders, loaded, add, markClaimed, markCancelled, remove }),
+    [orders, loaded, add, markClaimed, markCancelled, remove],
   );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;
