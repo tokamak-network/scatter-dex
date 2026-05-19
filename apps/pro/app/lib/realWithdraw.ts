@@ -28,6 +28,14 @@ export interface SubmitWithdrawArgs {
   signer: ethers.Signer;
   commitmentPoolAddress: string;
   tree: CommitmentTreeState;
+  /** EdDSA private key matching the note's `pubKeyAx/Ay`. The
+   *  withdraw circuit now requires a signature over
+   *  `Poseidon(nullifierHash, recipient)`, so spending a note
+   *  needs the original wallet's signing capability (the key
+   *  derives from a wallet `personal_sign` via `deriveEdDSAKey`).
+   *  Required since the EdDSA gate landed; passing an empty
+   *  buffer fails proof generation. */
+  eddsaPrivateKey: Uint8Array;
   /** WETH contract address — when set + recipient equals the signer,
    *  the helper follows up with `WETH.withdraw(amount)` to release
    *  native ETH to the caller. Skipped when the token isn't WETH or
@@ -72,6 +80,7 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     signer,
     commitmentPoolAddress,
     tree,
+    eddsaPrivateKey,
     wethAddress,
     onPhase,
     signal,
@@ -157,12 +166,38 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
   // off-by-one in token bigint width surfaces as a thrown error
   // instead of a silently-wrong lowercase address.
   const tokenAddrHex = ethers.getAddress(ethers.toBeHex(note.note.token, 20));
+
+  // Routing decision for ETH (WETH) notes:
+  //   * Self-withdraw → pool sends WETH straight to signer + auto-
+  //     unwrap inside the same tx wallet (recipient == msg.sender).
+  //   * Custom recipient → pool can only deliver tokens (WETH).
+  //     `WETH.withdraw(amount)` releases native ETH to msg.sender,
+  //     so a recipient ≠ signer would otherwise leave the recipient
+  //     holding WETH instead of the ETH the user thought they were
+  //     sending. Reroute: prove a self-withdraw, unwrap on the
+  //     signer side, then forward native ETH to the chosen
+  //     recipient via a plain value transfer. Costs ~2× the gas of
+  //     the direct path but matches the user's mental model
+  //     (deposit ETH → recipient receives ETH).
+  const signerAddr = await signer.getAddress();
+  const isEthNote =
+    !!wethAddress && tokenAddrHex.toLowerCase() === wethAddress.toLowerCase();
+  const customRecipient = signerAddr.toLowerCase() !== recipient.toLowerCase();
+  const reroute = isEthNote && customRecipient;
+  // `proofRecipient` is what the circuit + verifier bind. Pool
+  // sends WETH to this address. For the reroute case we point it
+  // at the signer so the signer can take possession and unwrap.
+  // `finalRecipient` is the address the user actually meant to
+  // receive funds — only differs from `proofRecipient` on reroute.
+  const proofRecipient = reroute ? signerAddr : recipient;
+
   const proofResult = await generateWithdrawProof(
     {
       note: note.note,
       merkleProof,
       withdrawAmount: amountRaw,
-      recipient,
+      recipient: proofRecipient,
+      eddsaPrivateKey,
     },
     {
       wasm: "/zk/withdraw.wasm",
@@ -186,7 +221,7 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     proofResult.newCommitment,
     tokenAddrHex,
     amountRaw,
-    recipient,
+    proofRecipient,
     ethers.ZeroAddress,
   )) as ethers.ContractTransactionResponse;
 
@@ -196,8 +231,9 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
     throw new Error(`pool.withdraw tx failed: ${tx.hash}`);
   }
 
-  // WETH unwrap is opt-in via wethAddress + recipient must equal the
-  // signer (WETH.withdraw releases to msg.sender). Wrapped in
+  // WETH unwrap: fires whenever the note is an ETH/WETH note and
+  // the pool deposited WETH at the signer (either because the user
+  // chose self-withdraw or because we rerouted above). Wrapped in
   // try/catch so a unwrap failure doesn't block the caller from
   // removing the spent note — the pool tx already settled
   // authoritatively, and the user now holds WETH instead of native
@@ -206,32 +242,42 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
   // commitment is already burnt on-chain.
   let unwrapped = false;
   let unwrapError: unknown = null;
-  if (
-    wethAddress &&
-    tokenAddrHex.toLowerCase() === wethAddress.toLowerCase()
-  ) {
-    const signerAddr = await signer.getAddress();
-    if (signerAddr.toLowerCase() === recipient.toLowerCase()) {
-      onPhase?.("unwrapping");
-      try {
-        const weth = new ethers.Contract(
-          wethAddress,
-          ["function withdraw(uint256) external"],
-          signer,
-        );
-        const unwrapTx = (await weth.withdraw(amountRaw)) as ethers.ContractTransactionResponse;
-        const unwrapReceipt = await unwrapTx.wait();
-        if (!unwrapReceipt || unwrapReceipt.status !== 1) {
-          throw new Error(`WETH.withdraw unwrap failed: ${unwrapTx.hash}`);
-        }
-        unwrapped = true;
-      } catch (err) {
-        // Preserve the raw error for diagnostics; the caller decides
-        // whether to surface this to the user. The withdraw itself
-        // succeeded — funds are in the user's wallet as WETH.
-        unwrapError = err;
-        console.warn("[withdraw] WETH unwrap failed (funds held as WETH)", err);
+  if (isEthNote) {
+    onPhase?.("unwrapping");
+    try {
+      const weth = new ethers.Contract(
+        wethAddress!,
+        ["function withdraw(uint256) external"],
+        signer,
+      );
+      const unwrapTx = (await weth.withdraw(amountRaw)) as ethers.ContractTransactionResponse;
+      const unwrapReceipt = await unwrapTx.wait();
+      if (!unwrapReceipt || unwrapReceipt.status !== 1) {
+        throw new Error(`WETH.withdraw unwrap failed: ${unwrapTx.hash}`);
       }
+      unwrapped = true;
+
+      // Reroute leg: forward the unwrapped native ETH to the
+      // recipient the user originally typed in. Same try/catch
+      // scope as the unwrap so a forward failure surfaces alongside
+      // it (the user still holds the funds on their own wallet).
+      if (reroute) {
+        const forwardTx = await signer.sendTransaction({
+          to: recipient,
+          value: amountRaw,
+        });
+        const forwardReceipt = await forwardTx.wait();
+        if (!forwardReceipt || forwardReceipt.status !== 1) {
+          throw new Error(`ETH forward transfer failed: ${forwardTx.hash}`);
+        }
+      }
+    } catch (err) {
+      // Preserve the raw error for diagnostics; the caller decides
+      // whether to surface this to the user. The withdraw itself
+      // succeeded — funds are in the user's wallet as WETH (and
+      // possibly half-unwrapped if the forward step is what failed).
+      unwrapError = err;
+      console.warn("[withdraw] WETH unwrap / forward failed", err);
     }
   }
 

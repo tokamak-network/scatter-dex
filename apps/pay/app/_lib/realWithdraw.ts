@@ -36,6 +36,11 @@ export interface SubmitWithdrawArgs {
   signer: ethers.Signer;
   commitmentPoolAddress: string;
   tree: CommitmentTreeState;
+  /** EdDSA private key bound into the note's commitment via
+   *  `pubKeyAx/Ay`. The withdraw circuit gained an EdDSA gate so
+   *  spending a note now requires the original wallet's signing
+   *  capability — the note file alone is no longer enough. */
+  eddsaPrivateKey: Uint8Array;
   onPhase?: (phase: WithdrawPhase) => void;
 }
 
@@ -56,7 +61,7 @@ export interface SubmitWithdrawResult {
  *  burden is one tx, so deferring relayer integration keeps the
  *  surface small. */
 export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWithdrawResult> {
-  const { note, recipient, amountRaw, signer, commitmentPoolAddress, tree, onPhase } = args;
+  const { note, recipient, amountRaw, signer, commitmentPoolAddress, tree, eddsaPrivateKey, onPhase } = args;
   if (note.leafIndex < 0) {
     throw new Error("Note hasn't reconciled on-chain yet — wait one block then retry.");
   }
@@ -157,6 +162,7 @@ export async function submitWithdraw(args: SubmitWithdrawArgs): Promise<SubmitWi
       merkleProof,
       withdrawAmount: amountRaw,
       recipient,
+      eddsaPrivateKey,
     },
     {
       // snarkjs accepts URLs; the assets are mirrored into

@@ -27,7 +27,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RPC = "http://localhost:8545";
-const POOL = "0x95401dc811bb5740090279Ba06cfA8fcF6113778";
+const POOL = "0x04C89607413713Ec9775E14b954286519d836FEf";
 const WETH = "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318";
 const ANVIL_0_PK = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 
@@ -127,7 +127,13 @@ async function main() {
   console.log("\n=== 6. Generate withdraw proof ===");
   const withdrawAssets = { wasm: WASM("withdraw"), zkey: ZKEY("withdraw") };
   const wp = await generateWithdrawProof(
-    { note, merkleProof, withdrawAmount: amount, recipient: me },
+    {
+      note,
+      merkleProof,
+      withdrawAmount: amount,
+      recipient: me,
+      eddsaPrivateKey: keyPair.privateKey,
+    },
     withdrawAssets,
   );
   console.log(`  root match: ${wp.root === merkleProof.root}`);

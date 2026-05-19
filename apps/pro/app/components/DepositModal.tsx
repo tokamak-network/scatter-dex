@@ -12,6 +12,7 @@ import { useWallet } from "@zkscatter/sdk/react";
 import { useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useVault } from "../lib/vault";
+import { useCommitmentTree } from "../lib/commitmentTree";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
@@ -57,7 +58,7 @@ type Phase =
   | { kind: "preparing" }
   | { kind: "proving"; message?: string }
   | { kind: "submitting" }
-  | { kind: "success"; commitment: bigint }
+  | { kind: "success"; commitment: bigint; txHash: string | null }
   | { kind: "error"; message: string };
 
 interface DepositModalProps {
@@ -76,6 +77,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addNote } = useVault();
+  const commitmentTree = useCommitmentTree();
   const { account, signer } = useWallet();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
@@ -286,7 +288,15 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
         note,
         commitment,
       });
-      setPhase({ kind: "success", commitment });
+      // Nudge the commitment tree off its ethers polling cadence
+      // (~4 s default) so a user clicking "Place order" immediately
+      // after this modal closes doesn't hit a "commitment not yet
+      // in the on-chain tree" race. `refresh()` does a direct
+      // `queryFilter` against the pool — bypasses the polling
+      // window without disturbing the live subscription.
+      commitmentTree.refresh();
+      const depositTxHash = dispatch.kind === "onchain" ? dispatch.txHash : null;
+      setPhase({ kind: "success", commitment, txHash: depositTxHash });
       const description =
         dispatch.kind === "onchain"
           ? `On-chain tx ${dispatch.txHash.slice(0, 10)}… · note added to your private vault.`
@@ -307,7 +317,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
     } finally {
       setAbortCtrl(null);
     }
-  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast]);
+  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast, commitmentTree]);
 
   if (!open) return null;
 
@@ -470,11 +480,11 @@ function PhaseStatus({ phase }: { phase: Phase }) {
 
   if (phase.kind === "success") {
     return (
-      <div className="mt-4 rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-2 text-sm">
+      <div className="mt-4 space-y-2 rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-2 text-sm">
         <div className="font-semibold text-[var(--color-success)]">
           Deposit complete
         </div>
-        <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+        <div className="text-xs text-[var(--color-text-muted)]">
           Commitment{" "}
           <span className="font-mono">
             {toBytes32Hex(phase.commitment).slice(0, 12)}…
@@ -482,6 +492,7 @@ function PhaseStatus({ phase }: { phase: Phase }) {
           </span>{" "}
           added to your vault.
         </div>
+        {phase.txHash && <TxHashRow label="Tx" hash={phase.txHash} />}
       </div>
     );
   }
@@ -497,6 +508,40 @@ function PhaseStatus({ phase }: { phase: Phase }) {
     <div className="mt-4 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm">
       <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
       <span>{label}</span>
+    </div>
+  );
+}
+
+/** Click-to-copy tx hash row. Reused by deposit + withdraw success
+ *  banners so the same "[Tx] 0xabcd…1234 [Copy]" pattern appears
+ *  on both surfaces. */
+function TxHashRow({ label, hash }: { label: string; hash: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(hash);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access denied (rare in modern browsers under
+      // https / file:); fall back to leaving the user to select +
+      // copy the visible text manually.
+    }
+  };
+  return (
+    <div className="flex items-center gap-2 rounded bg-white/40 px-2 py-1 text-[11px]">
+      <span className="text-[var(--color-text-muted)]">{label}</span>
+      <span className="flex-1 truncate font-mono text-[var(--color-text)]" title={hash}>
+        {hash}
+      </span>
+      <button
+        type="button"
+        onClick={onCopy}
+        className="rounded border border-[var(--color-border)] px-2 py-0.5 text-[10px] font-medium hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+        title="Copy to clipboard"
+      >
+        {copied ? "✓ Copied" : "⧉ Copy"}
+      </button>
     </div>
   );
 }

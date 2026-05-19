@@ -103,13 +103,23 @@ contract DeployLocal is Script {
 
         // 6. Register zk-relayer (anvil Account #1)
         // WARNING: Anvil default key — NEVER use in production
-        uint256 zkRelayerKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
-        vm.stopBroadcast();
-        vm.startBroadcast(zkRelayerKey);
-        relayerRegistry.register("http://localhost:3002", "Relayer-A", 30, 0);
-        console.log("Account #1 registered as zk-relayer");
-        vm.stopBroadcast();
-        vm.startBroadcast(deployerKey);
+        // SKIP_RELAYER_REGISTER=1 bypasses this — useful in
+        // integration mode where Account #1 isn't yet identity-
+        // verified in zk-X509's IdentityRegistry. After the deployer
+        // seeds proofs for the anvil testers via zk-X509's evm CLI,
+        // re-run register manually with the same arguments.
+        bool skipRelayerRegister = vm.envOr("SKIP_RELAYER_REGISTER", false);
+        if (!skipRelayerRegister) {
+            uint256 zkRelayerKey = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+            vm.stopBroadcast();
+            vm.startBroadcast(zkRelayerKey);
+            relayerRegistry.register("http://localhost:3002", "Relayer-A", 30, 0);
+            console.log("Account #1 registered as zk-relayer");
+            vm.stopBroadcast();
+            vm.startBroadcast(deployerKey);
+        } else {
+            console.log("SKIP_RELAYER_REGISTER=1: relayer registration skipped");
+        }
 
         // ── ZK Private Settlement ────────────────────────────────
 

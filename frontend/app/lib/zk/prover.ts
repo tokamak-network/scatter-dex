@@ -10,8 +10,11 @@ import {
   computeTokenHash,
   buildMerkleTree,
   getMerkleProof,
+  poseidonHash,
   randomFieldElement,
 } from "./commitment";
+import { signEdDSA } from "./eddsa";
+import { wipeBytes } from "./secure-wipe";
 import { CIRCUIT_ASSETS } from "./constants";
 import { timeProve } from "./prove-timer";
 import { withCachedAssets } from "./zkey-cache";
@@ -24,6 +27,11 @@ export interface WithdrawProofInput {
   withdrawAmount: bigint;
   recipient: string; // address
   relayer?: string; // address, default 0x0
+  /** EdDSA private key bound into the note's commitment via
+   *  `pubKeyAx/Ay`. The withdraw circuit now requires a signature
+   *  over `Poseidon(nullifierHash, recipient)` — the note file
+   *  alone is no longer sufficient. */
+  eddsaPrivateKey: Uint8Array;
 }
 
 export interface WithdrawProofResult {
@@ -56,6 +64,30 @@ export async function generateWithdrawProof(
   const commitment = await computeCommitment(note);
   const nullifierHash = await computeNullifier(note);
   const tokenHash = await computeTokenHash("0x" + note.token.toString(16).padStart(40, "0"));
+
+  // Reject obviously-wrong inputs up front: `deriveEdDSAKey` always
+  // emits 32 bytes. An empty/short buffer means the caller forgot to
+  // unlock the trading key — surface a clear error instead of letting
+  // circomlibjs throw an opaque "invalid prv key" later.
+  if (input.eddsaPrivateKey.length !== 32) {
+    throw new Error(
+      `generateWithdrawProof: eddsaPrivateKey must be 32 bytes, got ${input.eddsaPrivateKey.length}`,
+    );
+  }
+
+  // EdDSA gate: sign Poseidon(nullifierHash, recipient). The
+  // circuit reconstructs the same hash and verifies the signature
+  // inside `EdDSAPoseidonVerifier`. The withdrawer must hold the
+  // wallet's EdDSA key (derived from `personal_sign`) — a stolen
+  // note file alone can't produce this signature.
+  const withdrawMsg = await poseidonHash([nullifierHash, BigInt(recipient)]);
+  const signingKey = Uint8Array.from(input.eddsaPrivateKey);
+  let sig;
+  try {
+    sig = await signEdDSA(signingKey, withdrawMsg);
+  } finally {
+    wipeBytes(signingKey);
+  }
 
   // Build Merkle tree and get proof
   const { root, layers } = await buildMerkleTree(allLeaves, treeDepth);
@@ -108,6 +140,9 @@ export async function generateWithdrawProof(
     // Ax, Ay)` internally and checks merkle membership against it.
     pubKeyAx: note.pubKeyAx.toString(),
     pubKeyAy: note.pubKeyAy.toString(),
+    sigS: sig.S.toString(),
+    sigR8x: sig.R8x.toString(),
+    sigR8y: sig.R8y.toString(),
   };
 
   // Generate proof

@@ -69,7 +69,42 @@ v2 는 `pubKeyBind = P_3(pubKeyAx, pubKeyAy, nullifier)` — 거래마다 nullif
 
 BabyJub 의 identity point `(0, 1)` 및 6개의 order ≤ 8 점은 서명 위조 가능. 예치 시점에서 `8·P ≠ identity` 를 assert 해 대차수(prime-order) 부분군 원소만 허용.
 
-### 2.10 Bit-width 안전성
+### 2.10 Withdraw EdDSA 게이트 (2026-05-19)
+
+**공격**: 노트 파일(`zkscatter-note-*.json` 또는 동등한 외부 백업)이
+유출되었다고 가정. preimage `(ownerSecret, salt, pubKeyAx, pubKeyAy)`
+이 공격자 손에 들어옴.
+
+**v1 취약성 (이번 게이트 이전)**: 위 preimage 만으로 `withdraw.circom`
+증명이 만들어졌다. 회로는 Merkle 멤버십 + nullifier + token + recipient
+바인딩만 검사했고, **EdDSA 서명 검증이 없었다** → 공격자가 임의
+`recipient` 로 자금을 빼낼 수 있었다. authorize/cancel/settle 회로는
+이미 EdDSA 게이트가 있었으나 withdraw 만 빠져 있었던 일관성 구멍.
+
+**v2 방어 (이번 PR)**: withdraw 회로가 `Poseidon(nullifierHash,
+recipient)` 에 대한 EdDSA 서명을 추가로 요구한다. 서명용 pubKey 는
+commitment 안에 이미 박혀 있는 `pubKeyAx/Ay` 이며, 매칭 개인키는
+`keccak256(wallet.signMessage(DEFAULT_DERIVE_MESSAGE))` 로
+**예치자 지갑에서만** 파생된다 (`packages/sdk/src/zk/eddsa.ts`).
+→ 노트 파일만 복사한 공격자는 서명 키가 없어 회로를 통과할 수 없다.
+
+**비용**: ~4,600 추가 constraints (총 ~10,800), 프루빙 시간 ~1.5s →
+~2.0s desktop 측정 기준. EdDSAPoseidonVerifier 의 기존 cancel/settle
+사용과 동일한 패턴.
+
+**메시지 바인딩 선택**: `Poseidon-2(nullifierHash, recipient)`.
+- `nullifierHash` 포함 → 다른 노트의 sig 를 재사용 불가
+- `recipient` 포함 → leaked proof 를 다른 주소로 리디렉트 불가
+- authorize 의 `orderHash` (Poseidon-9), cancel 의 `cancelMsg`
+  (Poseidon-2(nonceNullifier, submitter)) 와 다른 input 셋 → 회로 간
+  서명 재생 불가.
+
+**남는 한계**: 노트 파일 **분실** 시 자금 회복은 여전히 불가능 (지갑이
+있더라도 `ownerSecret/salt` 가 임의값이라 재구성 불가). 결정적 노트
+파생 (`HKDF(walletSig, "owner", index)`) 은 commitment v3 마이그레이션
+필요로 별도 작업 트랙. 클라이언트 측 자동 암호화 백업이 단기 mitigation.
+
+### 2.11 Bit-width 안전성
 
 sellAmount × buyAmount 와 같은 곱은 BN254 필드(254-bit) 내부에서 수행. 각 오퍼랜드를 **126-bit** 로 제한하면 결과가 252-bit ≤ 필드 크기 → 래핑(wrap) 공격 차단.
 

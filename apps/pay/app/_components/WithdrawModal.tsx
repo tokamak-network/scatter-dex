@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { formatTokenLabel } from "@zkscatter/sdk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useEdDSAKey, useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { useVault } from "../_lib/vault";
 import { useCommitmentTree } from "../_lib/commitmentTree";
@@ -65,6 +65,7 @@ export function WithdrawModal({
   onClose: () => void;
 }) {
   const { account, signer } = useWallet();
+  const { derive: deriveEdDSA } = useEdDSAKey();
   const vault = useVault();
   const tree = useCommitmentTree();
   const cfg = getNetworkConfig();
@@ -103,6 +104,11 @@ export function WithdrawModal({
     }
     setError(null);
     try {
+      // Withdraw circuit now gates on an EdDSA signature over
+      // Poseidon(nullifierHash, recipient) — derive (or unlock)
+      // the wallet-bound key before kicking off the prover.
+      setPhase("preparing");
+      const eddsaKey = await deriveEdDSA();
       const result = await submitWithdraw({
         note,
         recipient,
@@ -110,6 +116,7 @@ export function WithdrawModal({
         signer,
         commitmentPoolAddress: cfg.contracts.commitmentPool,
         tree,
+        eddsaPrivateKey: eddsaKey.privateKey,
         onPhase: setPhase,
       });
       // Spent note no longer spendable — drop from local vault.

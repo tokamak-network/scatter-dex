@@ -43,6 +43,10 @@ const stubDemoTree = { mode: "demo" } as unknown as CommitmentTreeState;
 
 const POOL = "0x95401dc811bb5740090279Ba06cfA8fcF6113778";
 const SELF = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266";
+// Submit guards run before any EdDSA signing happens, so the
+// content of this key never matters for these tests — only its
+// presence satisfies the required-field TS check.
+const STUB_EDDSA_KEY = new Uint8Array(32);
 
 describe("submitWithdraw guards", () => {
   it("throws when note has not reconciled on-chain (leafIndex < 0)", async () => {
@@ -54,6 +58,7 @@ describe("submitWithdraw guards", () => {
         signer: stubSigner,
         commitmentPoolAddress: POOL,
         tree: stubLiveTree,
+        eddsaPrivateKey: STUB_EDDSA_KEY,
       }),
     ).rejects.toThrow(/hasn't reconciled/i);
   });
@@ -67,6 +72,7 @@ describe("submitWithdraw guards", () => {
         signer: stubSigner,
         commitmentPoolAddress: POOL,
         tree: stubLiveTree,
+        eddsaPrivateKey: STUB_EDDSA_KEY,
       }),
     ).rejects.toThrow(/must be > 0/);
   });
@@ -80,6 +86,7 @@ describe("submitWithdraw guards", () => {
         signer: stubSigner,
         commitmentPoolAddress: POOL,
         tree: stubLiveTree,
+        eddsaPrivateKey: STUB_EDDSA_KEY,
       }),
     ).rejects.toThrow(/exceeds the note balance/);
   });
@@ -93,6 +100,7 @@ describe("submitWithdraw guards", () => {
         signer: stubSigner,
         commitmentPoolAddress: POOL,
         tree: stubLiveTree,
+        eddsaPrivateKey: STUB_EDDSA_KEY,
       }),
     ).rejects.toThrow(/Partial withdraws aren't supported/);
   });
@@ -106,6 +114,7 @@ describe("submitWithdraw guards", () => {
         signer: stubSigner,
         commitmentPoolAddress: POOL,
         tree: stubLiveTree,
+        eddsaPrivateKey: STUB_EDDSA_KEY,
       }),
     ).rejects.toThrow(/Recipient must be a valid/);
   });
@@ -119,6 +128,7 @@ describe("submitWithdraw guards", () => {
         signer: stubSigner,
         commitmentPoolAddress: POOL,
         tree: stubLiveTree,
+        eddsaPrivateKey: STUB_EDDSA_KEY,
       }),
     ).rejects.toThrow(/Recipient must be a valid/);
   });
@@ -132,6 +142,7 @@ describe("submitWithdraw guards", () => {
         signer: stubSigner,
         commitmentPoolAddress: POOL,
         tree: stubDemoTree,
+        eddsaPrivateKey: STUB_EDDSA_KEY,
       }),
     ).rejects.toThrow(/demo \/ unconnected pool/);
   });

@@ -1,6 +1,7 @@
 pragma circom 2.0.0;
 
 include "./node_modules/circomlib/circuits/poseidon.circom";
+include "./node_modules/circomlib/circuits/eddsaposeidon.circom";
 include "./node_modules/circomlib/circuits/comparators.circom";
 include "./node_modules/circomlib/circuits/bitify.circom";
 include "./node_modules/circomlib/circuits/mux1.circom";
@@ -77,6 +78,18 @@ template Withdraw(levels) {
     // here without paying the BabyCheck cost again.
     signal input pubKeyAx;
     signal input pubKeyAy;
+
+    // EdDSA signature over the withdraw message (see §7 below).
+    // Together with the commitment-bound `pubKeyAx/Ay` above, this
+    // gates withdraw on possession of the wallet's EdDSA private key
+    // — copying the note file alone is no longer sufficient to drain
+    // the funds; an attacker also has to be able to produce a valid
+    // BabyJub signature, which requires the original wallet's
+    // ECDSA-signing capability (the EdDSA key is `keccak256` of a
+    // wallet signature; see `deriveEdDSAKey` in the SDK).
+    signal input sigS;
+    signal input sigR8x;
+    signal input sigR8y;
 
     // ════════════════════════════════════════
     //  1. COMPUTE COMMITMENT  (v2 — binds pubkey, see issue #128)
@@ -158,25 +171,57 @@ template Withdraw(levels) {
     newCommitment === expectedCommitment;
 
     // ════════════════════════════════════════
-    //  7. BIND RECIPIENT / RELAYER INTO THE PROOF
+    //  7. EdDSA SIGNATURE VERIFICATION
+    //     The withdraw message is Poseidon(nullifierHash, recipient).
+    //     This proves:
+    //       - The withdrawer holds the EdDSA key bound in the commitment
+    //         (via `pubKeyAx/Ay`, which are committed-to in §1's
+    //         commitment hash).
+    //       - The withdraw destination is intentional: a leaked proof
+    //         can't be replayed by another wallet to redirect funds —
+    //         the signature commits to (nullifier, recipient), and
+    //         flipping recipient would require a fresh signature
+    //         (= a fresh EdDSA key in the right pubkey lineage).
     //
-    //  [M6] `recipient` and `relayer` are public inputs and are therefore
-    //  already bound to the proof at the verification-key level — circom
-    //  2.x preserves declared public signals regardless of whether they
-    //  appear in any constraint inside the template. The squaring lines
-    //  below are kept as belt-and-braces:
-    //    - they silence the compiler's "signal is not constrained" warning
-    //    - they remain a defence against any future optimizer change that
-    //      would treat unused public signals as dead
-    //    - they make the constraint visible at audit time so a reader
-    //      doesn't have to know the implicit verification-key behaviour
+    //     This is the core gate that distinguishes the "note file is
+    //     a bearer instrument" model (pre-#778, no gate) from the
+    //     "withdraw requires the original wallet's signing key" model
+    //     (this PR). The note file alone — `ownerSecret`, `salt`,
+    //     `pubKeyAx/Ay` — is no longer enough; an attacker who copies
+    //     it still cannot sign with the matching EdDSA private key
+    //     because that key is derived from the wallet's own ECDSA
+    //     signing capability via `deriveEdDSAKey` and never leaves
+    //     the wallet's signing context.
     //
-    //  The choice of `x * x` is the simplest constraint that touches the
-    //  signal without leaking any structural information.
-    //  See: https://docs.circom.io/circom-language/signals/#unused-signals
+    //     The message tag (Poseidon-2 over (nullifier, recipient)) is
+    //     distinct from authorize/cancel/settle's signed payloads so
+    //     a signature from one circuit cannot be replayed to another.
     // ════════════════════════════════════════
-    signal recipientSq;
-    recipientSq <== recipient * recipient;
+    component withdrawMsg = Poseidon(2);
+    withdrawMsg.inputs[0] <== nullifierHash;
+    withdrawMsg.inputs[1] <== recipient;
+
+    component sigVerify = EdDSAPoseidonVerifier();
+    sigVerify.enabled <== 1;
+    sigVerify.Ax <== pubKeyAx;
+    sigVerify.Ay <== pubKeyAy;
+    sigVerify.S <== sigS;
+    sigVerify.R8x <== sigR8x;
+    sigVerify.R8y <== sigR8y;
+    sigVerify.M <== withdrawMsg.out;
+
+    // ════════════════════════════════════════
+    //  8. RELAYER BINDING
+    //
+    //  `recipient` is already constrained inside §7 — it feeds the
+    //  EdDSA message Poseidon as `withdrawMsg.inputs[1]`, so it
+    //  participates in real arithmetic constraints and the
+    //  optimizer can't drop it. `relayer` is still a public input
+    //  but doesn't participate in any constraint inside the EdDSA
+    //  path, so keep the squaring idiom used by authorize.circom /
+    //  settle.circom to defend against a future optimizer change
+    //  that would treat unused public signals as dead.
+    // ════════════════════════════════════════
     signal relayerSq;
     relayerSq <== relayer * relayer;
 }

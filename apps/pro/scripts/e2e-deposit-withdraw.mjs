@@ -35,7 +35,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RPC = "http://localhost:8545";
-const POOL = "0x95401dc811bb5740090279Ba06cfA8fcF6113778";
+const POOL = "0x04C89607413713Ec9775E14b954286519d836FEf";
 const TOKENS = {
   WETH: { address: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318", decimals: 18, label: "WETH" },
   USDC: { address: "0x610178dA211FEF7D417bC0e6FeD39F05609AD788", decimals: 6, label: "USDC" },
@@ -78,7 +78,8 @@ async function main() {
     throw new Error(`insufficient ${TOKEN.label} (have ${fmt(startBal)}, need ${fmt(amount)})`);
   }
 
-  // 1. eddsa + note
+  // 1. eddsa + note — `keyPair.privateKey` now also feeds the
+  // withdraw prover so the circuit's EdDSA gate is satisfied.
   const { keyPair } = await deriveEdDSAKey(signer);
   const note = generateNote(TOKEN.address, amount, keyPair.publicKey);
   const commitment = await computeCommitment(note);
@@ -125,7 +126,13 @@ async function main() {
   // 5. Withdraw proof
   console.log("[4] withdraw proof");
   const wp = await generateWithdrawProof(
-    { note, merkleProof, withdrawAmount: amount, recipient: me },
+    {
+      note,
+      merkleProof,
+      withdrawAmount: amount,
+      recipient: me,
+      eddsaPrivateKey: keyPair.privateKey,
+    },
     { wasm: WASM("withdraw"), zkey: ZKEY("withdraw") },
   );
 
