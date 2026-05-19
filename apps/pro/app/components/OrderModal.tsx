@@ -12,7 +12,7 @@ import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { useIdentityForAddresses, useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
-import { downloadOrderClaimsBundle } from "../lib/claimsBundle";
+import { downloadOrderClaimsBundle, persistOrderClaimsBundle } from "../lib/claimsBundle";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../lib/relayers";
@@ -568,17 +568,23 @@ export function OrderModal({
           claimsRoot: toBytes32Hex(claimsRoot),
         },
       });
-      // Off-device backup: every claim secret the user will need
-      // to release this order is now persisted in IndexedDB locally,
-      // but a wiped browser profile would erase that copy entirely.
-      // Hand the user a JSON file with the same material so they
-      // have an off-device fallback. Failures here are non-fatal —
-      // the in-app claim flow keeps working from the IDB copy.
+      // Claim-bundle persistence: every claim secret the user will
+      // need to release this order lands in two places —
+      //   1. scatter-pro-claims-{label}.json inside the active
+      //      notes folder (Pay's claimInbox / per-run pattern), so
+      //      a folder backup carries the secrets too;
+      //   2. a browser download for an off-folder copy.
+      // Both are fire-and-forget — a failure degrades to "no
+      // backup" but doesn't break the in-app claim flow, since
+      // the order record (with the same claim material) is already
+      // in the folder via OrdersProvider.
+      const bundleCtx = {
+        relayerUrl: selectedRelayer?.url ?? null,
+        chainId: activeNetwork.chainId,
+      };
+      void persistOrderClaimsBundle(order, bundleCtx);
       try {
-        downloadOrderClaimsBundle(order, {
-          relayerUrl: selectedRelayer?.url ?? null,
-          chainId: activeNetwork.chainId,
-        });
+        downloadOrderClaimsBundle(order, bundleCtx);
       } catch (e) {
         console.warn("[order] claims-bundle download failed", e);
       }

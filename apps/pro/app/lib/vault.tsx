@@ -1,48 +1,35 @@
 "use client";
 
 import { useMemo } from "react";
-import { createVaultProvider, useWallet } from "@zkscatter/sdk/react";
+import { createVaultProvider } from "@zkscatter/sdk/react";
 import {
   createFolderNoteAdapter,
-  createIndexedDbNoteAdapter,
   idForCommitment,
   type NoteStorageAdapter,
 } from "@zkscatter/sdk/notes";
 import { useActiveNetwork } from "./activeNetwork";
-import { useFolder } from "./folder";
 
 export type { VaultNote, VaultState } from "@zkscatter/sdk/react";
 
-// Pro mirrors Pay's hybrid storage model: prefer the folder backend
-// whenever the user has picked one (so deposits land in the same
-// notes folder frontend / Pay use and survive a browser data wipe),
-// fall back to per-chain + per-account IndexedDB otherwise so two
-// wallets sharing the same browser don't read each other's notes.
+// Pro is folder-only: VaultProvider mounts inside <FolderGate>, so
+// by the time this hook runs the user has a notes folder selected.
+// Every deposit / withdraw / change-note round-trips through that
+// folder — IndexedDB is intentionally not used as a fallback so the
+// folder is the single source of truth across Pro, Pay, and the
+// legacy app.
+//
 // Content-addressed `idForCommitment` keeps a deposit's id stable
-// across folder and IDB sources — a note added in-memory has the
-// same id it reads back as after a folder reload.
+// across reloads — matches Pay so a folder shared between the two
+// surfaces the same notes by the same id.
 const { VaultProvider, useVault } = createVaultProvider({
   useChainId: () => useActiveNetwork().network.chainId,
-  useAdapter: (chainId): NoteStorageAdapter => {
-    const { account } = useWallet();
-    const accountKey = account?.toLowerCase() ?? "anon";
-    const { ready: folderReady } = useFolder();
-    return useMemo(
-      () =>
-        folderReady
-          ? createFolderNoteAdapter({ chainId })
-          : createIndexedDbNoteAdapter({
-              dbName: `zkscatter-pro-notes-${chainId}-${accountKey}`,
-            }),
-      [folderReady, chainId, accountKey],
-    );
-  },
+  useAdapter: (chainId): NoteStorageAdapter =>
+    useMemo(() => createFolderNoteAdapter({ chainId }), [chainId]),
   makeId: ({ commitment }) => idForCommitment(commitment),
-  // Belt-and-suspenders chainId filter: even though both adapters
-  // are already keyed per-chain, legacy notes (pre-keying) may have
-  // lived in the unkeyed DB. Filter at hydrate so a note tagged
-  // with the wrong chainId can't re-enter the active vault.
-  // Notes without a `chainId` tag are grandfathered through.
+  // Belt-and-suspenders chainId filter: notes from older versions
+  // (pre-keying) may still exist in the folder; filter at hydrate
+  // so a note tagged with the wrong chainId can't re-enter the
+  // active vault. Notes without a `chainId` tag are grandfathered.
   filterHydrated: (notes, chainId) =>
     notes.filter((n) => n.chainId === undefined || n.chainId === chainId),
 });

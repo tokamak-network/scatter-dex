@@ -9,11 +9,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { bigintToHex, openIDB } from "@zkscatter/sdk/util";
+import { bigintToHex } from "@zkscatter/sdk/util";
 import { loadFile, saveFile } from "@zkscatter/sdk/storage";
-import { useWallet } from "@zkscatter/sdk/react";
 import { useActiveNetwork } from "./activeNetwork";
-import { useFolder } from "./folder";
 import { newId } from "./newId";
 
 export type OrderStatus = "matching" | "claimable" | "claimed" | "cancelled";
@@ -41,12 +39,12 @@ export interface OrderClaim {
   claimsRoot?: string;
 }
 
-/** A submitted private limit order. Persisted per-chain via the
- *  same hybrid pattern Pay's vault uses: an aggregate JSON file in
- *  the user's notes folder when one is selected, otherwise a
- *  per-chain + per-account IndexedDB store. Falls through to
- *  in-memory only when both backends are unavailable (SSR, locked
- *  private mode). */
+/** A submitted private limit order. Persisted per-chain into an
+ *  aggregate JSON file in the user's notes folder
+ *  (`zkscatter-pro-orders-{chainId}.json`). Pro mounts behind
+ *  `<FolderGate>` so by the time OrdersProvider runs a folder is
+ *  guaranteed to be selected — there is no IndexedDB fallback,
+ *  the folder is the single source of truth. */
 export interface OrderRecord {
   /** Stable id used as the React key and IDB primary key. */
   id: string;
@@ -93,14 +91,12 @@ export function useOrders(): OrdersState {
   return ctx;
 }
 
-// ── IDB persistence ──────────────────────────────────────────
+// ── Folder persistence ──────────────────────────────────────────
 // Bigints (secret, amount, releaseTime, nonce) are hex-encoded on
-// the wire so the structured-clone serialiser doesn't have to
-// understand them. Keyed per chainId to match the vault adapter —
-// switching networks shows a different (correct) order list.
-
-const STORE = "orders";
-const VERSION = 1;
+// the wire so JSON serialisation round-trips cleanly. One aggregate
+// file per chain — orders are small + bounded (tens, occasionally
+// hundreds), so re-serialise-on-each-write beats Pay's per-file
+// runs model.
 
 /** Wire shape — exported only so the unit test can pin the
  *  on-disk schema and round-trip every field; do not depend on
@@ -192,69 +188,12 @@ export interface OrdersAdapter {
   put(o: OrderRecord): Promise<void>;
 }
 
-export function createIdbOrdersAdapter(dbName: string): OrdersAdapter {
-  let dbPromise: Promise<IDBDatabase | null> | null = null;
-  function open(): Promise<IDBDatabase | null> {
-    if (dbPromise) return dbPromise;
-    dbPromise = openIDB({
-      dbName,
-      version: VERSION,
-      stores: [{ name: STORE, keyPath: "id" }],
-      onWarn: warnOnce,
-    });
-    return dbPromise;
-  }
-  return {
-    async loadAll() {
-      const db = await open();
-      if (!db) return [];
-      return new Promise<OrderRecord[]>((resolve) => {
-        const tx = db.transaction(STORE, "readonly");
-        const req = tx.objectStore(STORE).getAll();
-        req.onsuccess = () => {
-          const wire = (req.result ?? []) as WireOrder[];
-          const out: OrderRecord[] = [];
-          for (const w of wire) {
-            try {
-              out.push(deserialize(w));
-            } catch (e) {
-              warnOnce(`skipping malformed order ${w.id ?? "<no id>"}`, e);
-            }
-          }
-          resolve(out);
-        };
-        req.onerror = () => {
-          warnOnce("loadAll tx errored", req.error);
-          resolve([]);
-        };
-      });
-    },
-    async put(o) {
-      const db = await open();
-      if (!db) return;
-      await new Promise<void>((resolve) => {
-        const tx = db.transaction(STORE, "readwrite");
-        tx.objectStore(STORE).put(serialize(o));
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => {
-          warnOnce("put tx errored", tx.error);
-          resolve();
-        };
-        tx.onabort = () => resolve();
-      });
-    },
-  };
-}
-
 /** Folder-backed orders adapter. Persists every order as a single
  *  aggregate JSON file `zkscatter-pro-orders-{chainId}.json` in the
  *  active notes folder — same folder Pay's run records and the
- *  shared address book live in, so a user who picks a folder gets
- *  one place to back up. Orders are small + bounded (typically
- *  tens, occasionally hundreds), so a re-serialize-on-each-write
- *  beats the per-order-file overhead Pay's runs need (each run is
- *  large and updated independently). In-memory map mirrors the
- *  file so a put → loadAll round-trip doesn't hit disk twice.
+ *  shared address book live in, so the user has one place to back
+ *  up. In-memory map mirrors the file so a put → loadAll round-
+ *  trip doesn't hit disk twice.
  *
  *  IO injection (`io`) exists for tests; production callers omit
  *  it and the helpers default to the SDK's folder primitives. */
@@ -321,22 +260,13 @@ export function createFolderOrdersAdapter(
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const { network } = useActiveNetwork();
   const chainId = network.chainId;
-  // Mirrors Pay's vault adapter selection: prefer the folder backend
-  // whenever the user has picked one (so orders survive a browser
-  // data wipe and live next to the shared address book), else fall
-  // back to per-chain + per-account IndexedDB so two wallets sharing
-  // the same browser don't read each other's orders.
-  const { account } = useWallet();
-  const { ready: folderReady } = useFolder();
-  const accountKey = account?.toLowerCase() ?? "anon";
+  // OrdersProvider mounts inside <FolderGate>, so a folder is
+  // guaranteed by the time this runs. Adapter is folder-only — no
+  // IDB fallback. Switching chains creates a fresh adapter against
+  // the per-chain file in the same folder.
   const adapter = useMemo(
-    () =>
-      folderReady
-        ? createFolderOrdersAdapter(chainId)
-        : createIdbOrdersAdapter(
-            `zkscatter-pro-orders-${chainId}-${accountKey}`,
-          ),
-    [folderReady, chainId, accountKey],
+    () => createFolderOrdersAdapter(chainId),
+    [chainId],
   );
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);

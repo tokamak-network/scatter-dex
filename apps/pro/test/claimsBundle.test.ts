@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { buildClaimsBundleJson } from "../app/lib/claimsBundle";
+import {
+  buildClaimsBundleJson,
+  orderClaimsBundleFilename,
+  persistOrderClaimsBundle,
+} from "../app/lib/claimsBundle";
 import type { OrderRecord } from "../app/lib/orders";
 
 function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
@@ -95,5 +99,64 @@ describe("buildClaimsBundleJson", () => {
     expect(() =>
       buildClaimsBundleJson(order, { relayerUrl: null, chainId: 1 }),
     ).toThrow(/no claim material/i);
+  });
+});
+
+describe("orderClaimsBundleFilename", () => {
+  it("uses the order's label so two orders in the same folder don't collide", () => {
+    expect(orderClaimsBundleFilename(fixture({ label: "ord-7" }))).toBe(
+      "scatter-pro-claims-ord-7.json",
+    );
+    expect(orderClaimsBundleFilename(fixture({ label: "ord-128" }))).toBe(
+      "scatter-pro-claims-ord-128.json",
+    );
+  });
+});
+
+describe("persistOrderClaimsBundle", () => {
+  it("writes the bundle to the folder under the per-order filename", async () => {
+    const calls: Array<{ name: string; content: string }> = [];
+    await persistOrderClaimsBundle(
+      fixture(),
+      { relayerUrl: null, chainId: 31337 },
+      {
+        saveFile: async (name, content) => {
+          calls.push({ name, content });
+        },
+      },
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.name).toBe("scatter-pro-claims-ord-7.json");
+    const parsed = JSON.parse(calls[0]!.content);
+    expect(parsed.kind).toBe("scatter-pro-claims-bundle");
+    expect(parsed.chainId).toBe(31337);
+  });
+
+  it("does not throw when saveFile rejects (logs only)", async () => {
+    await expect(
+      persistOrderClaimsBundle(
+        fixture(),
+        { relayerUrl: null, chainId: 31337 },
+        {
+          saveFile: async () => {
+            throw new Error("boom");
+          },
+        },
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  it("does not write when the order carries no claim material (seeded demo rows)", async () => {
+    let calls = 0;
+    await persistOrderClaimsBundle(
+      fixture({ claim: undefined }),
+      { relayerUrl: null, chainId: 1 },
+      {
+        saveFile: async () => {
+          calls++;
+        },
+      },
+    );
+    expect(calls).toBe(0);
   });
 });
