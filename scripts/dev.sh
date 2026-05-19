@@ -542,9 +542,16 @@ else
     exit 1
   fi
 
-  # No test tokens in integration mode
-  WETH=""
-  USDC=""
+  # Extract test tokens — DeployLocal.s.sol still mints them in
+  # integration mode so the wizard's whitelist (LAUNCH_TOKENS)
+  # has matching addresses to point at. Previously this branch
+  # hardcoded WETH/USDC to "" and the apps booted with
+  # NEXT_PUBLIC_WETH_ADDRESS empty — every token-aware modal
+  # silently displayed nothing.
+  WETH=$(echo "$DEPLOY_OUTPUT" | grep "^  WETH:" | awk '{print $NF}')
+  USDC=$(echo "$DEPLOY_OUTPUT" | grep "^  USDC:" | awk '{print $NF}')
+  USDT=$(echo "$DEPLOY_OUTPUT" | grep "^  USDT:" | awk '{print $NF}')
+  TON=$(echo "$DEPLOY_OUTPUT" | grep "^  TON:" | awk '{print $NF}')
 fi
 
 echo "  RelayerRegistry:     $RELAYER_REGISTRY"
