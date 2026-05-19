@@ -1,13 +1,14 @@
 "use client";
 
 import { useMemo } from "react";
-import { createVaultProvider } from "@zkscatter/sdk/react";
+import { createVaultProvider, useWallet } from "@zkscatter/sdk/react";
 import {
   createFolderNoteAdapter,
   idForCommitment,
   type NoteStorageAdapter,
 } from "@zkscatter/sdk/notes";
 import { useActiveNetwork } from "./activeNetwork";
+import { useFolder } from "./folder";
 
 export type { VaultNote, VaultState } from "@zkscatter/sdk/react";
 
@@ -23,8 +24,23 @@ export type { VaultNote, VaultState } from "@zkscatter/sdk/react";
 // surfaces the same notes by the same id.
 const { VaultProvider, useVault } = createVaultProvider({
   useChainId: () => useActiveNetwork().network.chainId,
-  useAdapter: (chainId): NoteStorageAdapter =>
-    useMemo(() => createFolderNoteAdapter({ chainId }), [chainId]),
+  useAdapter: (chainId): NoteStorageAdapter => {
+    // Mirrors Pay's `[chainId, accountKey]` keying with a Pro
+    // addition: `currentId` covers folder pick + folder switch.
+    // Without it the pre-pick adapter stays cached and the
+    // provider's hydration effect never re-fires after the user
+    // picks a folder mid-session. A fresh adapter instance on
+    // any of the three changes lets vaultProvider treat it as a
+    // generation bump → loadAll re-runs against the new
+    // (folder × chain × account).
+    const { currentId } = useFolder();
+    const { account } = useWallet();
+    const accountKey = account?.toLowerCase() ?? "anon";
+    return useMemo(
+      () => createFolderNoteAdapter({ chainId }),
+      [chainId, currentId, accountKey],
+    );
+  },
   makeId: ({ commitment }) => idForCommitment(commitment),
   // Belt-and-suspenders chainId filter: notes from older versions
   // (pre-keying) may still exist in the folder; filter at hydrate

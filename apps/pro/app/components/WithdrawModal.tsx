@@ -165,6 +165,23 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       }
     } catch (e) {
       if (isAbortError(e, ctrl.signal)) return;
+      // realWithdraw throws this code when the pre-flight
+      // `nullifiers(...)` lookup returns true — the note's
+      // commitment was already spent on chain (settled by a
+      // relayer, withdrawn from another device, etc.). The local
+      // copy is now stale; drop it from the vault so the panel
+      // reflects the on-chain truth instead of asking the user to
+      // reload manually.
+      const code = (e as { code?: string } | undefined)?.code;
+      if (code === "ALREADY_WITHDRAWN" && note) {
+        remove(note.id).catch((removeErr) =>
+          console.warn("[withdraw] stale-note cleanup failed", removeErr),
+        );
+        const msg = "This commitment was already withdrawn on-chain — the stale note has been dropped from your vault.";
+        setPhase({ kind: "error", message: msg });
+        toast.push({ kind: "info", title: "Note already spent", description: msg });
+        return;
+      }
       const msg = e instanceof Error ? e.message : "Withdraw failed.";
       setPhase({ kind: "error", message: msg });
       toast.push({ kind: "error", title: "Withdraw failed", description: msg });

@@ -90,7 +90,7 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
         aria-labelledby={titleId}
         onClick={(e) => e.stopPropagation()}
         style={animStyle}
-        className={`absolute right-0 top-0 flex h-full w-full max-w-md flex-col overflow-y-auto bg-[var(--color-surface)] shadow-xl transition-transform ${
+        className={`absolute right-0 top-0 flex h-full w-full max-w-xl flex-col overflow-y-auto bg-[var(--color-surface)] shadow-xl transition-transform ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -128,21 +128,47 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
               <Row k="Nonce" v={formatField(displayed.nonce)} mono truncate />
             )}
             {displayed.noteId && (() => {
-              // Render the vault's human label ("lot-3") when the note
-              // still exists, otherwise fall back to the internal id —
-              // a withdrawn/missing note shouldn't make the drawer
-              // render blank.
               const note = notes.find((n) => n.id === displayed.noteId);
               return (
                 <Row
                   k="Funding note"
-                  v={note ? note.label : displayed.noteId}
+                  v={note ? `${note.label} · ${note.amount} ${note.symbol}` : displayed.noteId}
                   mono={!note}
                   truncate={!note}
                 />
               );
             })()}
           </Section>
+
+          {displayed.changeCommitment !== undefined && (() => {
+            const changeId = `c-${displayed.changeCommitment.toString(16)}`;
+            const changeNote = notes.find((n) => n.id === changeId);
+            return (
+              <Section title="Change residual">
+                <Row
+                  k="Commitment"
+                  v={formatField(displayed.changeCommitment)}
+                  mono
+                  truncate
+                />
+                {changeNote ? (
+                  <>
+                    <Row
+                      k="Amount"
+                      v={`${changeNote.amount} ${changeNote.symbol}`}
+                      mono
+                    />
+                    <Row
+                      k="On-chain"
+                      v={changeNote.leafIndex < 0 ? "Pending settle" : `Leaf ${changeNote.leafIndex}`}
+                    />
+                  </>
+                ) : (
+                  <Row k="Vault" v="No matching change note in this vault." />
+                )}
+              </Section>
+            );
+          })()}
 
           {displayed.claim && (
             <Section title="Claim payload">
@@ -159,6 +185,9 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
               />
               <Row k="Leaf index" v={displayed.claim.leafIndex.toString()} mono />
               <Row k="Secret" v={formatField(displayed.claim.secret)} mono secret />
+              {displayed.claim.claimsRoot && (
+                <Row k="Claims root" v={displayed.claim.claimsRoot} mono truncate />
+              )}
             </Section>
           )}
 
@@ -168,6 +197,17 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
               order was placed before claim material was persisted.
             </p>
           )}
+
+          <Section title="Lifecycle">
+            <Row k="Status" v={displayed.status} />
+            <Row k="Created" v={formatWhen(displayed.createdAt)} />
+            <p className="mt-2 text-[11px] text-[var(--color-text-subtle)]">
+              Status transitions are driven by on-chain events
+              (PrivateClaim → claimable / claimed, cancelPrivate →
+              cancelled). The watcher updates this drawer live; no
+              refresh needed.
+            </p>
+          </Section>
         </div>
 
         {(onCancel || onClaim) && (

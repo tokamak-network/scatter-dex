@@ -10,10 +10,14 @@ import type { VaultNote } from "./vault";
  *  - `locked`:    on-chain reconciled and funds an open order
  *    (status `matching` or `claimable`). Spending it elsewhere
  *    would race the relayer; the panel needs to show it as
- *    earmarked so the user doesn't double-commit. Releasable by
- *    cancelling the order (the cancel circuit rotates the
- *    commitment so the same balance is immediately re-available
- *    under a fresh salt).
+ *    earmarked so the user doesn't double-commit. Release paths
+ *    depend on the pinning order's status: `matching` orders are
+ *    cancellable (cancel circuit rotates the commitment so the
+ *    same balance is immediately re-available under a fresh
+ *    salt); `claimable` orders are already past cancel — the
+ *    lock clears once the recipient(s) claim and the funding
+ *    note's nullifier hits chain (ClaimReconciler then removes
+ *    the note locally).
  *  - `pending`:   leafIndex < 0 — either a freshly-deposited note
  *    whose `CommitmentInserted` event hasn't been reconciled into
  *    the in-memory tree yet, or a change note pre-saved at
@@ -44,9 +48,14 @@ const OPEN_STATUSES: ReadonlySet<OrderRecord["status"]> = new Set([
   "claimable",
 ]);
 
-/** Pure classifier — no React, no side effects. The panel calls
- *  this once per note per render; cost is one Map lookup over the
- *  full orders list, dominated by the surrounding render anyway. */
+/** Pure classifier — no React, no side effects. Linear scan over
+ *  `orders` per call. Per-note callers that loop over a large
+ *  vault should build a single status map (one O(orders) pass to
+ *  bucket open-orders by `noteId` / `changeCommitment`, then O(1)
+ *  per note); the panel does this through `aggregateBySymbol`
+ *  and a precomputed `Map<noteId, NoteStatusInfo>` in
+ *  MyPositionPanel. Calling this directly is fine for one-off
+ *  lookups (cancel modal, etc.). */
 export function deriveNoteStatus(
   note: VaultNote,
   orders: readonly OrderRecord[],

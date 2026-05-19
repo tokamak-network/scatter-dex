@@ -183,8 +183,9 @@ export function RecipientsSection({
             supports up to {activeTier.cap} claims (internally tier-{activeTier.cap}).
           </span>
         </span>
-        . Empty address = your own wallet. Empty release time = claim
-        immediately on settle.
+        . Empty address = your own wallet. A claim time is required —
+        set it on each row, or use "Claim from (all)" to apply one
+        deadline to every recipient.
       </p>
 
       <div

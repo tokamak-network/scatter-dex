@@ -21,7 +21,7 @@ import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
 import { FolderProvider } from "./lib/folder";
-import { FolderGate } from "./components/FolderGate";
+import { FolderPickerBanner } from "./components/FolderPickerBanner";
 import { WalletBookProvider } from "./lib/walletBook";
 import { CommitmentTreeProvider } from "./lib/commitmentTree";
 import { ToastProvider } from "@zkscatter/ui";
@@ -42,7 +42,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <WalletProvider network={DEMO_NETWORK}>
           <ActiveNetworkProvider>
             <FolderProvider>
-             <FolderGate>
              <WalletBookProvider>
               <IdentityStatusProvider>
                <IdentityGateAdminProvider>
@@ -81,6 +80,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                               }
                             />
                             <WrongChainBanner />
+                            <FolderPickerBanner />
                             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
                             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
                               <div>Scatter Pro · Powered by zkScatter · Tokamak Network</div>
@@ -99,7 +99,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                </IdentityGateAdminProvider>
               </IdentityStatusProvider>
              </WalletBookProvider>
-             </FolderGate>
             </FolderProvider>
           </ActiveNetworkProvider>
         </WalletProvider>

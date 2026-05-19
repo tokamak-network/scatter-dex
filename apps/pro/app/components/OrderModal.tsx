@@ -594,11 +594,6 @@ export function OrderModal({
       // can later run the claim flow without re-deriving from chain
       // events. Phase 5 swaps to reading this from a settled
       // on-chain event.
-      // First claim's material is what apps/pro stores on the
-      // OrderRecord — sufficient to drive the single-recipient claim
-      // flow that today's UI exercises. Multi-claim history surfaces
-      // when a per-recipient drawer / inbox lands.
-      const firstClaim = claims[0]!;
       // Pre-compute the claims-tree root the same way the authorize
       // circuit will when the order eventually settles on-chain.
       // Stored on the order record so the claim reconciler can match
@@ -630,6 +625,20 @@ export function OrderModal({
         resolvedChangeCommitment = proveResult.publicSignals[newCommitmentIdx];
       }
 
+      const claimsRootHex = toBytes32Hex(claimsRoot);
+      // Persist EVERY recipient's claim material — not just the
+      // first row. The order detail panel renders this list as a
+      // recipients table; storing only `firstClaim` (the previous
+      // behaviour) silently hid the other rows.
+      const orderClaims = claims.map((c, idx) => ({
+        secret: c.secret,
+        recipient: c.recipient,
+        token: c.token,
+        amount: c.amount,
+        releaseTime: c.releaseTime,
+        leafIndex: idx,
+        claimsRoot: claimsRootHex,
+      }));
       const order = addOrder({
         nonce,
         noteId: note.id,
@@ -637,15 +646,21 @@ export function OrderModal({
         pair,
         price,
         size,
-        claim: {
-          secret: firstClaim.secret,
-          recipient: firstClaim.recipient,
-          token: firstClaim.token,
-          amount: firstClaim.amount,
-          releaseTime: firstClaim.releaseTime,
-          leafIndex: 0,
-          claimsRoot: toBytes32Hex(claimsRoot),
-        },
+        expiry: expirySec,
+        relayer: selectedRelayer
+          ? {
+              address: selectedRelayer.address,
+              url: selectedRelayer.url,
+              feeBps: relayerFeeBps,
+              maxFeeBps: autoMaxFeeBps,
+            }
+          : undefined,
+        // `claim` (singular) is the first row, kept for backward
+        // compatibility with readers that haven't moved to the
+        // plural yet (e.g. ClaimReconciler watches the first
+        // claim's nullifier).
+        claim: orderClaims[0],
+        claims: orderClaims,
         changeCommitment: resolvedChangeCommitment,
       });
       // Pre-save the change note. Fire-and-forget — the order is
