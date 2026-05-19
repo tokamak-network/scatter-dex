@@ -119,6 +119,19 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
     (note.note.pubKeyAx !== cachedEdDSAKey.publicKey[0] ||
       note.note.pubKeyAy !== cachedEdDSAKey.publicKey[1]);
 
+  // Single source of truth for "is this note ETH (i.e. backed by
+  // WETH on chain)". Compares the note's token field against the
+  // active network's configured WETH address — same predicate
+  // `realWithdraw` uses to decide whether to run the unwrap +
+  // forward legs. Symbol-string comparison (`note.symbol === "ETH"`)
+  // would drift if the deposit modal ever spelled it differently
+  // ("Ether", "WETH"), and the lib's address check would silently
+  // diverge.
+  const isEthNote =
+    !!note &&
+    !!cfg.contracts.weth &&
+    note.note.token === BigInt(cfg.contracts.weth);
+
   const submit = useCallback(async () => {
     if (!note) {
       setPhase({ kind: "error", message: "Pick a note to withdraw." });
@@ -238,11 +251,29 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
       if (result.unwrapError) {
         const reason =
           result.unwrapError instanceof Error ? result.unwrapError.message : "unknown";
-        toast.push({
-          kind: "info",
-          title: `Withdrew ${note.amount} WETH (unwrap to ETH failed)`,
-          description: `Funds are in your wallet as WETH. Unwrap manually: ${reason}`,
-        });
+        // Two distinct partial-failure modes:
+        //   - `unwrapped=false` → WETH.withdraw never landed; signer
+        //     holds WETH. Manual `WETH.withdraw(amount)` recovers.
+        //   - `unwrapped=true` → unwrap succeeded but the reroute's
+        //     forward leg threw (recipient contract reverted on
+        //     receive(), insufficient gas, etc.). Signer now holds
+        //     native ETH that was supposed to reach the chosen
+        //     recipient. Manual `sendTransaction` recovers.
+        // Distinguishing here prevents the toast from saying "you
+        // hold WETH" when the user actually holds native ETH.
+        if (result.unwrapped) {
+          toast.push({
+            kind: "info",
+            title: `Withdrew ${note.amount} ETH (forward to recipient failed)`,
+            description: `Funds are in your wallet as native ETH. Send manually to ${shortAddr(destAddr!)}: ${reason}`,
+          });
+        } else {
+          toast.push({
+            kind: "info",
+            title: `Withdrew ${note.amount} WETH (unwrap to ETH failed)`,
+            description: `Funds are in your wallet as WETH. Unwrap manually: ${reason}`,
+          });
+        }
       } else {
         const tokenLabel = result.unwrapped ? "ETH" : note.symbol;
         toast.push({
@@ -392,7 +423,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
             {
               label: "Network gas",
               value:
-                destKind !== "self" && note?.symbol === "ETH"
+                destKind !== "self" && isEthNote
                   ? "≈ $1.3 (3 txs)"
                   : "≈ $0.42",
               muted: true,
@@ -408,8 +439,8 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
           footer={
             destKind === "self"
               ? "Withdrawing to your connected wallet links the funds to your public balance."
-              : note?.symbol === "ETH"
-                ? "Two extra txs run after the pool withdraw: the signer unwraps WETH → native ETH, then forwards the ETH to your recipient. The forwarding leg links your signer wallet to the recipient on chain — use a fresh recipient address if you need unlinkability."
+              : isEthNote
+                ? "Two extra txs run after the pool withdraw: the signer unwraps WETH → native ETH, then forwards the ETH to your recipient. Privacy notes: (1) the forward tx links your signer wallet to the recipient on chain, and (2) the forward value matches the pool withdraw amount exactly — both vectors deanonymize, so use a fresh recipient address for full unlinkability. Send only to EOAs — a contract recipient with a reverting receive() will leave the unwrapped ETH stuck in your signer wallet (toast tells you how to recover manually)."
                 : "Unlinkability of a custom address depends on whether it has been used elsewhere — a fresh address keeps the funds private; a reused address inherits its existing linkage."
           }
         />

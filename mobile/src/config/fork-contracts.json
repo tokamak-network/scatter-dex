@@ -1,15 +1,15 @@
 {
   "31337": {
     "rpcUrl": "http://localhost:8545",
-    "weth": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
-    "commitmentPool": "0x04C89607413713Ec9775E14b954286519d836FEf",
-    "privateSettlement": "0x21dF544947ba3E8b3c32561399E88B52Dc8b2823",
-    "identityGate": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
-    "relayerRegistry": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
-    "feeVault": "0xC9a43158891282A2B1475592D5719c001986Aaec",
-    "batchExecutor": "0xAA292E8611aDF267e563f334Ee42320aC96D0463",
+    "weth": "0x2F54D1563963fC04770E85AF819c89Dc807f6a06",
+    "commitmentPool": "0x3a622DB2db50f463dF562Dc5F341545A64C580fc",
+    "privateSettlement": "0x7A28cf37763279F774916b85b5ef8b64AB421f79",
+    "identityGate": "0xA21DDc1f17dF41589BC6A5209292AED2dF61Cc94",
+    "relayerRegistry": "0x158d291D8b47F056751cfF47d1eEcd19FDF9B6f8",
+    "feeVault": "0x25C0a2F0A077F537Bd11897F04946794c2f6f1Ef",
+    "batchExecutor": "",
     "tokens": [
-      { "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788", "symbol": "USDC", "decimals": 18 }
+      { "address": "0xF342E904702b1D021F03f519D6D9614916b03f37", "symbol": "USDC", "decimals": 18 }
     ],
     "relayerUrl": "http://localhost:3002",
     "sharedOrderbookUrl": "http://localhost:4000"
