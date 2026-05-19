@@ -93,7 +93,7 @@ export default function Orders() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Orders</h1>
+        <h1 className="text-2xl font-semibold">My orders</h1>
         <Link href="/app" className="text-sm text-[var(--color-primary)] hover:underline">
           ← Back to workbench
         </Link>

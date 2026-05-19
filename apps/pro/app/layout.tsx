@@ -7,6 +7,7 @@ import { AppShellHeader } from "@zkscatter/ui";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
 import { IdentityPill } from "./components/IdentityPill";
 import { IdentityMenu } from "./components/IdentityMenu";
+import { OrdersMenu } from "./components/OrdersMenu";
 import {
   IdentityBatchProvider,
   IdentityGateAdminProvider,
@@ -73,7 +74,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                 <>
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
-                                  <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
+                                  <OrdersMenu />
                                   <Link href="/notes" className="hover:text-[var(--color-text)]">Escrow</Link>
                                   <Link href="/address-book" className="hover:text-[var(--color-text)]">Address book</Link>
                                   <IdentityMenu />
