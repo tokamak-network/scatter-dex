@@ -594,11 +594,6 @@ export function OrderModal({
       // can later run the claim flow without re-deriving from chain
       // events. Phase 5 swaps to reading this from a settled
       // on-chain event.
-      // First claim's material is what apps/pro stores on the
-      // OrderRecord — sufficient to drive the single-recipient claim
-      // flow that today's UI exercises. Multi-claim history surfaces
-      // when a per-recipient drawer / inbox lands.
-      const firstClaim = claims[0]!;
       // Pre-compute the claims-tree root the same way the authorize
       // circuit will when the order eventually settles on-chain.
       // Stored on the order record so the claim reconciler can match
@@ -609,6 +604,41 @@ export function OrderModal({
       // this the order would still post to addOrder + the success
       // toast would fire after the user explicitly aborted.
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+      // Resolve the residual (change) commitment up front so it
+      // lands on both the OrderRecord (for cancel-time cleanup) and
+      // the pre-saved vault note (so the panel can match them by
+      // commitment without re-deriving). Reads from publicSignals
+      // (not meta) so it doesn't depend on the worker's optional
+      // meta channel, and looks up the index by name instead of
+      // hard-coding 4 — a future reorder of
+      // AUTHORIZE_PUBLIC_SIGNAL_NAMES would otherwise silently
+      // store the wrong field as the change commitment, leaving
+      // the residual unspendable.
+      let resolvedChangeCommitment: bigint | undefined;
+      if (newSalt !== undefined && change > 0n) {
+        const newCommitmentIdx = AUTHORIZE_PUBLIC_SIGNAL_NAMES.indexOf("newCommitment");
+        if (newCommitmentIdx < 0) {
+          throw new Error(
+            "[order] AUTHORIZE_PUBLIC_SIGNAL_NAMES does not list 'newCommitment' — change-note pre-save cannot resolve the commitment index",
+          );
+        }
+        resolvedChangeCommitment = proveResult.publicSignals[newCommitmentIdx];
+      }
+
+      const claimsRootHex = toBytes32Hex(claimsRoot);
+      // Persist EVERY recipient's claim material — not just the
+      // first row. The order detail panel renders this list as a
+      // recipients table; storing only `firstClaim` (the previous
+      // behaviour) silently hid the other rows.
+      const orderClaims = claims.map((c, idx) => ({
+        secret: c.secret,
+        recipient: c.recipient,
+        token: c.token,
+        amount: c.amount,
+        releaseTime: c.releaseTime,
+        leafIndex: idx,
+        claimsRoot: claimsRootHex,
+      }));
       const order = addOrder({
         nonce,
         noteId: note.id,
@@ -616,57 +646,41 @@ export function OrderModal({
         pair,
         price,
         size,
-        claim: {
-          secret: firstClaim.secret,
-          recipient: firstClaim.recipient,
-          token: firstClaim.token,
-          amount: firstClaim.amount,
-          releaseTime: firstClaim.releaseTime,
-          leafIndex: 0,
-          claimsRoot: toBytes32Hex(claimsRoot),
-        },
+        expiry: expirySec,
+        relayer: selectedRelayer
+          ? {
+              name: selectedRelayer.name,
+              address: selectedRelayer.address,
+              url: selectedRelayer.url,
+              feeBps: relayerFeeBps,
+              maxFeeBps: autoMaxFeeBps,
+            }
+          : undefined,
+        // `claim` (singular) is the first row, kept for backward
+        // compatibility with readers that haven't moved to the
+        // plural yet (e.g. ClaimReconciler watches the first
+        // claim's nullifier).
+        claim: orderClaims[0],
+        claims: orderClaims,
+        changeCommitment: resolvedChangeCommitment,
       });
-      // Change-note pre-save: when the order spends less than the full
-      // funding note, the authorize circuit emits a residual commitment
-      // bound to `newSalt`. Persist that change note now (leafIndex=-1)
-      // so the remainder is recoverable post-settle — `useLeafIndexReconciler`
-      // fills the index once the chain's CommitmentInserted lands.
-      // Fire-and-forget: the order is already on the book, so a
-      // local-storage hiccup must not cancel the success path. If the
-      // order is later cancelled instead of settled, this change note
-      // is orphaned (its commitment never lands on chain) and the user
-      // can prune it manually — matching frontend's accepted trade-off.
-      if (newSalt !== undefined && change > 0n) {
-        // Look up the index by name (not hard-coded 4) so a future
-        // reorder of AUTHORIZE_PUBLIC_SIGNAL_NAMES doesn't silently
-        // store the wrong field as the change-note's commitment —
-        // which would make the residual unspendable (its commitment
-        // on disk wouldn't match what `computeCommitment` produces
-        // at spend time). Reads from publicSignals (not meta) so it
-        // doesn't depend on the worker's optional meta channel.
-        const newCommitmentIdx = AUTHORIZE_PUBLIC_SIGNAL_NAMES.indexOf("newCommitment");
-        if (newCommitmentIdx < 0) {
-          // Surface a rename / typo of the constant immediately
-          // instead of silently stranding every partial fill's
-          // remainder. Throwing keeps the failure scoped to this
-          // submit (caught by the outer try/catch as "Order failed").
-          throw new Error(
-            "[order] AUTHORIZE_PUBLIC_SIGNAL_NAMES does not list 'newCommitment' — change-note pre-save cannot resolve the commitment index",
-          );
-        }
-        const newCommitment = proveResult.publicSignals[newCommitmentIdx];
-        if (newCommitment !== undefined) {
-          const changeNote = { ...note.note, salt: newSalt, amount: change };
-          const changeAmountDisplay = formatTokenAmount(change, sellToken.decimals);
-          vaultAdd({
-            symbol: note.symbol,
-            amount: changeAmountDisplay,
-            note: changeNote,
-            commitment: newCommitment,
-          }).catch((err) => {
-            console.warn("[order] change-note pre-save failed", err);
-          });
-        }
+      // Pre-save the change note. Fire-and-forget — the order is
+      // already on the book, so a local-storage hiccup must not
+      // cancel the success path. If the order is cancelled instead
+      // of settled, CancelOrderModal looks up this commitment on
+      // OrderRecord and removes the orphan so the vault doesn't
+      // accumulate stranded change notes.
+      if (newSalt !== undefined && change > 0n && resolvedChangeCommitment !== undefined) {
+        const changeNote = { ...note.note, salt: newSalt, amount: change };
+        const changeAmountDisplay = formatTokenAmount(change, sellToken.decimals);
+        vaultAdd({
+          symbol: note.symbol,
+          amount: changeAmountDisplay,
+          note: changeNote,
+          commitment: resolvedChangeCommitment,
+        }).catch((err) => {
+          console.warn("[order] change-note pre-save failed", err);
+        });
       }
 
       // Claim-bundle persistence: every claim secret the user will

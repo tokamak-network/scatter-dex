@@ -11,7 +11,9 @@ import {
 } from "react";
 import { bigintToHex } from "@zkscatter/sdk/util";
 import { loadFile, saveFile } from "@zkscatter/sdk/storage";
+import { useWallet } from "@zkscatter/sdk/react";
 import { useActiveNetwork } from "./activeNetwork";
+import { useFolder } from "./folder";
 import { newId } from "./newId";
 
 export type OrderStatus = "matching" | "claimable" | "claimed" | "cancelled";
@@ -55,9 +57,17 @@ export interface OrderRecord {
   price: string;
   size: string;
   status: OrderStatus;
-  /** Material the user needs to claim once the order settles.
-   *  Optional because seeded demo rows don't carry it. */
+  /** First recipient's claim material — kept for backward
+   *  compatibility with orders persisted before `claims` (the full
+   *  list) landed. New writes set both fields; readers should
+   *  prefer `claims` and fall back to wrapping `claim` in an
+   *  array when only the singular is present. */
   claim?: OrderClaim;
+  /** Full per-recipient claim list. Each entry carries its own
+   *  `leafIndex` into the order's claims tree so a per-row claim
+   *  flow can target the right recipient without re-deriving from
+   *  the recipients form. */
+  claims?: OrderClaim[];
   /** Authorize-circuit nonce used at order-submit time. Required
    *  later for the cancel proof (the cancel circuit publishes
    *  `nonceNullifier(secret, nonce)` to kill *this* order
@@ -67,12 +77,52 @@ export interface OrderRecord {
   /** Vault note id that funded the order — needed by the cancel
    *  flow to look up the spending note and rotate it. */
   noteId?: string;
+  /** Commitment hash of the change (residual) note pre-saved at
+   *  order-submit time when `sellAmount < note.amount`. Lets
+   *  downstream surfaces — note-status panel, cancel cleanup —
+   *  find the matching vault row by commitment without
+   *  re-deriving from `note + newSalt`. Undefined when the order
+   *  spent the funding note in full (no residual). */
+  changeCommitment?: bigint;
+  /** Settle deadline (unix-seconds) bound into the authorize proof's
+   *  `expiry` input. The on-chain `block.timestamp ≤ expiry` check
+   *  fails after this point — the order is then unservable and the
+   *  user should cancel to recover the funding note. Set at submit
+   *  to `min(earliestClaim − 5 min, now + 1 h)`. */
+  expiry?: bigint;
+  /** Relayer the order is bound to. Captured at submit so the
+   *  detail panel can show "who's going to settle this" without
+   *  re-resolving from the registry (which may move) and so the
+   *  user can audit fee transparency after the fact. */
+  relayer?: {
+    /** Registry-display name (e.g. "Tokamak Relayer"). Optional
+     *  because the simulated path with no selected relayer can't
+     *  carry one. */
+    name?: string;
+    address: string;
+    /** Display URL when the user picked a configured relayer; the
+     *  zero-address simulated path leaves this undefined. */
+    url?: string;
+    /** Quoted bps at signing — what the relayer charges in the
+     *  common case. */
+    feeBps: number;
+    /** On-chain `maxFee` cap (bps) the user actually signed —
+     *  authorize circuit enforces `relayerFeeBps ≤ maxFee`. */
+    maxFeeBps: number;
+  };
   /** When the order was submitted (ms epoch). */
   createdAt: number;
 }
 
 interface OrdersState {
   orders: OrderRecord[];
+  /** False until the first hydrate from the folder adapter
+   *  resolves. Note-status callers must wait on this — otherwise
+   *  a vault that hydrates *before* the orders file does sees an
+   *  empty `orders` and flags locked notes as Available for the
+   *  duration of the race, briefly enabling Withdraw on a note
+   *  that's actually funding an open order. */
+  loaded: boolean;
   add(
     o: Omit<OrderRecord, "id" | "label" | "createdAt" | "status">,
   ): OrderRecord;
@@ -101,6 +151,16 @@ export function useOrders(): OrdersState {
 /** Wire shape — exported only so the unit test can pin the
  *  on-disk schema and round-trip every field; do not depend on
  *  the WireOrder shape from app code. */
+interface WireClaim {
+  secretHex: string;
+  recipient: string;
+  token: string;
+  amountHex: string;
+  releaseTimeHex: string;
+  leafIndex: number;
+  claimsRoot?: string;
+}
+
 export interface WireOrder {
   id: string;
   label: string;
@@ -109,18 +169,44 @@ export interface WireOrder {
   price: string;
   size: string;
   status: OrderStatus;
-  claim?: {
-    secretHex: string;
-    recipient: string;
-    token: string;
-    amountHex: string;
-    releaseTimeHex: string;
-    leafIndex: number;
-    claimsRoot?: string;
-  };
+  claim?: WireClaim;
+  claims?: WireClaim[];
   nonceHex?: string;
   noteId?: string;
+  changeCommitmentHex?: string;
+  expiryHex?: string;
+  relayer?: {
+    name?: string;
+    address: string;
+    url?: string;
+    feeBps: number;
+    maxFeeBps: number;
+  };
   createdAt: number;
+}
+
+function serializeClaim(c: OrderClaim): WireClaim {
+  return {
+    secretHex: bigintToHex(c.secret),
+    recipient: c.recipient,
+    token: c.token,
+    amountHex: bigintToHex(c.amount),
+    releaseTimeHex: bigintToHex(c.releaseTime),
+    leafIndex: c.leafIndex,
+    claimsRoot: c.claimsRoot,
+  };
+}
+
+function deserializeClaim(w: WireClaim): OrderClaim {
+  return {
+    secret: BigInt(w.secretHex),
+    recipient: w.recipient,
+    token: w.token,
+    amount: BigInt(w.amountHex),
+    releaseTime: BigInt(w.releaseTimeHex),
+    leafIndex: w.leafIndex,
+    claimsRoot: w.claimsRoot,
+  };
 }
 
 export function serialize(o: OrderRecord): WireOrder {
@@ -132,24 +218,31 @@ export function serialize(o: OrderRecord): WireOrder {
     price: o.price,
     size: o.size,
     status: o.status,
-    claim: o.claim
-      ? {
-          secretHex: bigintToHex(o.claim.secret),
-          recipient: o.claim.recipient,
-          token: o.claim.token,
-          amountHex: bigintToHex(o.claim.amount),
-          releaseTimeHex: bigintToHex(o.claim.releaseTime),
-          leafIndex: o.claim.leafIndex,
-          claimsRoot: o.claim.claimsRoot,
-        }
-      : undefined,
+    // Always write both: `claim` for back-compat with readers that
+    // haven't been updated to the plural; `claims` for the full
+    // recipient list new readers should prefer.
+    claim: o.claim ? serializeClaim(o.claim) : undefined,
+    claims: o.claims ? o.claims.map(serializeClaim) : undefined,
     nonceHex: o.nonce !== undefined ? bigintToHex(o.nonce) : undefined,
     noteId: o.noteId,
+    changeCommitmentHex: o.changeCommitment !== undefined ? bigintToHex(o.changeCommitment) : undefined,
+    expiryHex: o.expiry !== undefined ? bigintToHex(o.expiry) : undefined,
+    relayer: o.relayer,
     createdAt: o.createdAt,
   };
 }
 
 export function deserialize(w: WireOrder): OrderRecord {
+  // Prefer `claims` (plural) — that's the full recipient list.
+  // Fall back to wrapping `claim` in a singleton array for orders
+  // persisted before the plural landed, so the panel can render
+  // them through the same code path. `claim` (singular) stays
+  // populated for the same back-compat reason on the read side.
+  const claimsList = w.claims && w.claims.length > 0
+    ? w.claims.map(deserializeClaim)
+    : w.claim
+      ? [deserializeClaim(w.claim)]
+      : undefined;
   return {
     id: w.id,
     label: w.label,
@@ -158,19 +251,13 @@ export function deserialize(w: WireOrder): OrderRecord {
     price: w.price,
     size: w.size,
     status: w.status,
-    claim: w.claim
-      ? {
-          secret: BigInt(w.claim.secretHex),
-          recipient: w.claim.recipient,
-          token: w.claim.token,
-          amount: BigInt(w.claim.amountHex),
-          releaseTime: BigInt(w.claim.releaseTimeHex),
-          leafIndex: w.claim.leafIndex,
-          claimsRoot: w.claim.claimsRoot,
-        }
-      : undefined,
+    claim: w.claim ? deserializeClaim(w.claim) : claimsList?.[0],
+    claims: claimsList,
     nonce: w.nonceHex !== undefined ? BigInt(w.nonceHex) : undefined,
     noteId: w.noteId,
+    changeCommitment: w.changeCommitmentHex !== undefined ? BigInt(w.changeCommitmentHex) : undefined,
+    expiry: w.expiryHex !== undefined ? BigInt(w.expiryHex) : undefined,
+    relayer: w.relayer,
     createdAt: w.createdAt,
   };
 }
@@ -317,16 +404,22 @@ export function createFolderOrdersAdapter(
 export function OrdersProvider({ children }: { children: React.ReactNode }) {
   const { network } = useActiveNetwork();
   const chainId = network.chainId;
-  // OrdersProvider mounts inside <FolderGate>, so a folder is
-  // guaranteed by the time this runs. Adapter is folder-only — no
-  // IDB fallback. Switching chains creates a fresh adapter against
-  // the per-chain file in the same folder.
+  // Folder-only adapter, but re-create it when the workspace
+  // identity changes — `currentId` covers folder pick + folder
+  // switch, `accountKey` mirrors Pay's per-account keying so the
+  // hydration effect re-fires on wallet swap. Without these the
+  // pre-pick adapter would stay cached and orders would never load
+  // after the user picks a folder mid-session.
+  const { currentId } = useFolder();
+  const { account } = useWallet();
+  const accountKey = account?.toLowerCase() ?? "anon";
   const adapter = useMemo(
     () => createFolderOrdersAdapter(chainId),
-    [chainId],
+    [chainId, currentId, accountKey],
   );
 
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [loaded, setLoaded] = useState(false);
   // Latest committed `orders` for use inside event-driven callbacks
   // (markClaimed / markCancelled / promote). Read here keeps the
   // side-effect (`adapter.put`) outside the setState updater, which
@@ -359,6 +452,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     timers.clear();
     scheduledIds.current.clear();
     setOrders([]);
+    setLoaded(false);
     labelCounter.current = 0;
     adapter.loadAll().then((loaded) => {
       if (cancelled) return;
@@ -377,6 +471,7 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
         labelCounter.current = maxSeq;
         return merged;
       });
+      setLoaded(true);
     });
     return () => {
       cancelled = true;
@@ -391,37 +486,19 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  // Track which order ids already have a pending promotion timer so
-  // we don't double-schedule on every `orders` change (the array
-  // identity changes on any add / mark*, which would otherwise leak
-  // a new timer per matching row per state transition).
+  // Scheduled-id set kept for the hydrate effect's `.clear()`
+  // bookkeeping (chain-switch cleanup). No timer schedules anything
+  // here — the order lifecycle is driven exclusively by chain
+  // events:
+  //   - `claimable` is set when ClaimReconciler observes the
+  //     matching `PrivateClaim` event;
+  //   - `cancelled` is set when CancelOrderModal's on-chain cancel
+  //     resolves.
+  // The earlier 8-second auto-promote was scaffolding for the
+  // pre-settle demo and made every submitted order falsely appear
+  // as "Ready to claim" even when nothing had settled, which the
+  // user (correctly) flagged as a misleading lifecycle. Removed.
   const scheduledIds = useRef<Set<string>>(new Set());
-
-  // Demo lifecycle: matching → claimable 8 s after createdAt.
-  // Schedules a one-shot timer per matching order we haven't
-  // scheduled yet. Persists the transition through the adapter.
-  useEffect(() => {
-    const timers = promoteTimers.current;
-    const scheduled = scheduledIds.current;
-    for (const o of orders) {
-      if (o.status !== "matching") continue;
-      if (scheduled.has(o.id)) continue;
-      const elapsed = Date.now() - o.createdAt;
-      const remaining = Math.max(0, 8_000 - elapsed);
-      const id = o.id;
-      const handle = setTimeout(() => {
-        timers.delete(handle);
-        scheduled.delete(id);
-        const target = ordersRef.current.find((x) => x.id === id);
-        if (!target || target.status !== "matching") return;
-        const promoted: OrderRecord = { ...target, status: "claimable" };
-        adapter.put(promoted);
-        setOrders((prev) => prev.map((x) => (x.id === id ? promoted : x)));
-      }, remaining);
-      timers.add(handle);
-      scheduled.add(id);
-    }
-  }, [orders, adapter]);
 
   const add = useCallback(
     (o: Omit<OrderRecord, "id" | "label" | "createdAt" | "status">) => {
@@ -466,8 +543,8 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<OrdersState>(
-    () => ({ orders, add, markClaimed, markCancelled }),
-    [orders, add, markClaimed, markCancelled],
+    () => ({ orders, loaded, add, markClaimed, markCancelled }),
+    [orders, loaded, add, markClaimed, markCancelled],
   );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;

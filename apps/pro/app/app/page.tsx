@@ -5,10 +5,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { Button, EmptyState, Field } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
+import { useOrders } from "../lib/orders";
+import { deriveNoteStatus } from "../lib/noteStatus";
 import { useSharedOrderbook } from "../lib/orderbook";
 import { useTradeForm } from "../lib/tradeForm";
 import { OrderModal } from "../components/OrderModal";
+import { OrderDetailPanel } from "../components/OrderDetailPanel";
+import { CancelOrderModal } from "../components/CancelOrderModal";
+import { ClaimModal } from "../components/ClaimModal";
 import { MyPositionPanel } from "../components/MyPositionPanel";
+import type { OrderRecord } from "../lib/orders";
 import { PairSelector } from "../components/PairSelector";
 import { RecipientsSection } from "../components/RecipientsSection";
 import { NoteSelect } from "../components/NoteSelect";
@@ -21,6 +27,7 @@ import { useRelayers } from "../lib/relayers";
 import { applyFeeBig } from "../lib/fee";
 import { parseUnits } from "../lib/parseUnits";
 import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
+import { deriveAutoSettle } from "../lib/autoSettle";
 
 const MOCK_ORDERBOOK = {
   asks: [
@@ -76,7 +83,7 @@ function projectOrderbook(
 export default function Workbench() {
   const {
     pair, side, setSide, price, setPrice, size, setSize,
-    recipients, resetRecipients, setBulkClaimFrom,
+    recipients, resetRecipients, bulkClaimFrom, setBulkClaimFrom,
   } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
@@ -84,6 +91,18 @@ export default function Workbench() {
   // The book is a reference panel, not a primary CTA — most users
   // pasted prices in from elsewhere; expose it behind a toggle.
   const [orderbookOpen, setOrderbookOpen] = useState(false);
+  // Center-column context: when an order is selected from the
+  // left panel, the order-placement form swaps for `<OrderDetailPanel>`.
+  // null = trade form (default). `+ New order` in the left panel
+  // clears the selection. Form state lives in TradeFormProvider so
+  // it survives the swap.
+  const [selectedOrder, setSelectedOrder] = useState<OrderRecord | null>(null);
+  // Lifted here so OrderDetailPanel + MyPositionPanel can both
+  // trigger the same modal without race-y duplicates (the modals
+  // mutate vault / orders state and two instances would step on
+  // each other).
+  const [cancelOrder, setCancelOrder] = useState<OrderRecord | null>(null);
+  const [claimOrder, setClaimOrder] = useState<OrderRecord | null>(null);
   // DepositModal lives at the page level so both entry points hit
   // the same instance — the left-panel "+ Deposit" button and the
   // inline empty-state CTA inside `NoteSelect`. Two modal instances
@@ -99,6 +118,15 @@ export default function Workbench() {
     string | undefined
   >(undefined);
   const { notes } = useVault();
+  const { orders } = useOrders();
+  // Funding picker only surfaces notes that are spendable right now:
+  // locked (pinned by an open order) and pending (leafIndex < 0 or
+  // change residual awaiting settle) are filtered out so the user
+  // can't pick a note the prover would reject.
+  const fundableNotes = useMemo(
+    () => notes.filter((n) => deriveNoteStatus(n, orders).status === "available"),
+    [notes, orders],
+  );
 
   // Resolve the base-token address on this network for the
   // ask/bid classifier. Falls back to the placeholder so the
@@ -262,6 +290,17 @@ export default function Workbench() {
     setSize(row.size);
   };
 
+  // Workbench-level clock so the submit gate can refuse `too-tight`
+  // claim configurations without depending on AutoSettleIndicator
+  // re-rendering. Same null-then-tick pattern AutoSettleIndicator
+  // uses to keep SSR / first-paint deterministic.
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   // Lifted out of the render body so the parity check runs once per
   // input change instead of on every Workbench re-render. Reason text
   // doubles as the inline hint below the CTA (native `title` doesn't
@@ -272,15 +311,28 @@ export default function Workbench() {
       netReceiveDisplay,
       receiveDecimals,
     );
+    // Claim time is now required. Block submit when:
+    //  - no claim time set anywhere (bulk or per-row), OR
+    //  - the earliest configured claim time is < 6 min from now
+    //    (relayer can't match + settle in time → unservable).
+    const autoSettle = nowMs === null
+      ? null
+      : deriveAutoSettle(recipients, bulkClaimFrom, nowMs);
+    const noClaimTime = autoSettle?.kind === "default";
+    const tooTight = autoSettle?.kind === "too-tight";
     const reason = invalidRow !== null
       ? `Recipient #${invalidRow} amount is invalid`
       : noTarget
         ? "Enter size and price first"
         : !balanced
           ? "Recipient allocation must match the projected receive total"
-          : null;
-    return { canSubmit: balanced, reason };
-  }, [recipients, netReceiveDisplay, receiveDecimals]);
+          : noClaimTime
+            ? "Set a claim time — recipients need a release deadline before the order can be signed"
+            : tooTight
+              ? "Earliest claim time is too close (or in the past) — push it at least 6 min out"
+              : null;
+    return { canSubmit: balanced && !noClaimTime && !tooTight, reason };
+  }, [recipients, netReceiveDisplay, receiveDecimals, bulkClaimFrom, nowMs]);
 
   return (
     <div className="space-y-6">
@@ -307,6 +359,8 @@ export default function Workbench() {
 
       <div className="grid grid-cols-12 gap-4">
         <MyPositionPanel
+          selectedOrder={selectedOrder}
+          onSelectOrder={setSelectedOrder}
           onDeposit={() => {
             // Generic "+ Deposit" — no token preference; modal keeps
             // its historical ETH default.
@@ -315,8 +369,28 @@ export default function Workbench() {
           }}
         />
 
-        {/* Order form — takes the orderbook's slot when it's hidden so
-            the wizard-style fields below have room to breathe. */}
+        {/* Center column. Default = order form. When the user
+            picks an order from MyPositionPanel, swap to a full-
+            width detail panel — form state lives in
+            TradeFormProvider so it survives the swap. */}
+        {selectedOrder ? (
+          <div className={orderbookOpen ? "col-span-5" : "col-span-9"}>
+            <OrderDetailPanel
+              order={selectedOrder}
+              onClose={() => setSelectedOrder(null)}
+              onCancel={
+                selectedOrder.status === "matching"
+                  ? () => setCancelOrder(selectedOrder)
+                  : undefined
+              }
+              onClaim={
+                selectedOrder.status === "claimable"
+                  ? () => setClaimOrder(selectedOrder)
+                  : undefined
+              }
+            />
+          </div>
+        ) : (
         <section
           className={`${orderbookOpen ? "col-span-5" : "col-span-9"} rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5`}
         >
@@ -343,7 +417,7 @@ export default function Workbench() {
             <NoteSelect
               sellTokenAddress={sellTokenAddress}
               sellTokenSymbol={side === "sell" ? pair.base : pair.quote}
-              notes={notes}
+              notes={fundableNotes}
               selectedId={selectedNote?.id ?? null}
               onSelect={setSelectedNoteId}
               onDeposit={(symbol) => {
@@ -457,6 +531,7 @@ export default function Workbench() {
             </>
           )}
         </section>
+        )}
 
         {/* Orderbook — collapsible. Hidden by default so the form has
             the full middle width; toggled from the header. */}
@@ -523,6 +598,16 @@ export default function Workbench() {
         onClose={() => setDepositOpen(false)}
         initialTokenSymbol={depositInitialToken}
       />
+      <CancelOrderModal
+        open={!!cancelOrder}
+        onClose={() => setCancelOrder(null)}
+        order={cancelOrder}
+      />
+      <ClaimModal
+        open={!!claimOrder}
+        onClose={() => setClaimOrder(null)}
+        order={claimOrder}
+      />
     </div>
   );
 }
@@ -547,36 +632,10 @@ function AutoSettleIndicator() {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
-  const derived = useMemo<
-    | { kind: "default"; expiryMs: number }
-    | { kind: "from-claim"; expiryMs: number }
-    | { kind: "too-tight"; earliestClaimMs: number }
-    | null
-  >(() => {
-    if (now === null) return null;
-    // Effective per-row claim: explicit row value, else bulk
-    // "Claim from (all)" (typing it without clicking Apply to all
-    // still counts — otherwise the auto-settle default `now + 1h`
-    // could land *after* the user's intended claim time).
-    const bulkMs = bulkClaimFrom ? Date.parse(bulkClaimFrom) : NaN;
-    const claimMs = recipients
-      .map((r) => {
-        const own = r.releaseAt ? Date.parse(r.releaseAt) : NaN;
-        if (Number.isFinite(own)) return own;
-        return Number.isFinite(bulkMs) ? bulkMs : NaN;
-      })
-      .filter((m): m is number => Number.isFinite(m));
-    if (claimMs.length === 0) {
-      return { kind: "default", expiryMs: now + 3_600_000 };
-    }
-    const minClaim = Math.min(...claimMs);
-    // Need at least 5 min between settle and claim (relayer latency
-    // + block confirmation). Plus 1 min headroom from now to settle.
-    if (minClaim - now < 6 * 60_000) {
-      return { kind: "too-tight", earliestClaimMs: minClaim };
-    }
-    return { kind: "from-claim", expiryMs: minClaim - 5 * 60_000 };
-  }, [recipients, now, bulkClaimFrom]);
+  const derived = useMemo(
+    () => (now === null ? null : deriveAutoSettle(recipients, bulkClaimFrom, now)),
+    [recipients, now, bulkClaimFrom],
+  );
 
   if (derived === null) {
     // SSR / pre-mount fallback — render a placeholder so the markup
@@ -592,12 +651,27 @@ function AutoSettleIndicator() {
   }
 
   if (derived.kind === "too-tight") {
+    const deltaMin = Math.round((derived.earliestClaimMs - now!) / 60_000);
+    const inPast = deltaMin < 0;
+    const claimWhen = new Date(derived.earliestClaimMs).toLocaleString("en-US", {
+      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    });
     return (
       <div className="mt-3 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-1.5 text-[11px] text-[var(--color-warning)]">
-        ⚠ Earliest claim time is{" "}
-        {Math.max(0, Math.round((derived.earliestClaimMs - now!) / 60_000))} min
-        away — too tight to settle before. Push claim time at least 6 min
-        out.
+        {inPast ? (
+          <>
+            ⚠ Earliest claim time ({claimWhen}) is{" "}
+            {Math.abs(deltaMin)} min in the past. Pick a future time
+            — the relayer still needs ~5 min to match + settle.
+          </>
+        ) : (
+          <>
+            ⚠ Claim time is only {deltaMin} min away ({claimWhen}) —
+            the relayer needs ~5 min to match + settle on-chain
+            before recipients can claim. Push it at least 6 minutes
+            from now.
+          </>
+        )}
       </div>
     );
   }
@@ -610,17 +684,32 @@ function AutoSettleIndicator() {
     minute: "2-digit",
   });
   const relMin = Math.max(1, Math.round((derived.expiryMs - now!) / 60_000));
+  // Default branch = no claim time set anywhere. Sign & submit is
+  // gated on a claim time being present (see submitGate), so this
+  // is a guidance row, not a settle estimate.
+  if (derived.kind === "default") {
+    return (
+      <div className="mt-3 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-1.5 text-[11px] text-[var(--color-warning)]">
+        ⚠ Pick a claim time above. Recipients need a release
+        deadline before the order can be signed — set "Claim from
+        (all)" in the recipients section, or per-row dates for a
+        vesting schedule.
+      </div>
+    );
+  }
   return (
-    <div className="mt-3 flex items-baseline justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-[11px]">
-      <span className="font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-        Auto-settle by
-      </span>
-      <span className="font-mono text-[var(--color-text)]">
-        {absolute}
-        <span className="ml-1 text-[var(--color-text-subtle)]">
-          (in {relMin} min{derived.kind === "from-claim" ? ", 5 min before claim" : ""})
+    <div className="mt-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-1.5 text-[11px]">
+      <div className="flex items-baseline justify-between">
+        <span className="font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+          Auto-settle by
         </span>
-      </span>
+        <span className="font-mono text-[var(--color-text)]">
+          {absolute}
+          <span className="ml-1 text-[var(--color-text-subtle)]">
+            (in {relMin} min, 5 min before claim)
+          </span>
+        </span>
+      </div>
     </div>
   );
 }

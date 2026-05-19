@@ -6,6 +6,15 @@ import {
 } from "../app/lib/orders";
 
 function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
+  const claim = {
+    secret: 0xc0ffee1234abcdefn,
+    recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    token: "0x8a791620dd6260079bf849dc5567adc3f2fdc318",
+    amount: (10n ** 18n) * 4205n,
+    releaseTime: 1747930000n,
+    leafIndex: 0,
+    claimsRoot: "0x0000000000000000000000000000000000000000000000000000000000000abc",
+  };
   return {
     id: "ord-id-1",
     label: "ord-3",
@@ -17,15 +26,8 @@ function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
     nonce: 0xdeadbeefn,
     noteId: "note-abc",
     createdAt: 1747929600_000,
-    claim: {
-      secret: 0xc0ffee1234abcdefn,
-      recipient: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-      token: "0x8a791620dd6260079bf849dc5567adc3f2fdc318",
-      amount: (10n ** 18n) * 4205n,
-      releaseTime: 1747930000n,
-      leafIndex: 0,
-      claimsRoot: "0x0000000000000000000000000000000000000000000000000000000000000abc",
-    },
+    claim,
+    claims: [claim],
     ...overrides,
   };
 }

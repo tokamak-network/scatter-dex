@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
+import { idForCommitment } from "@zkscatter/sdk/notes";
 import {
   assembleCancelProofResult,
   type CancelProofInput,
@@ -181,6 +182,22 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
             { addedRotated, removeErr },
           );
         }
+      }
+
+      // Change-note orphan cleanup: when the order was submitted
+      // with a partial fill we pre-saved a change note to the
+      // vault. Cancellation kills the order before settle, so the
+      // change commitment never lands on chain and the note stays
+      // in `pending` forever. Remove it by id (content-addressed
+      // via `idForCommitment`) so the panel doesn't accumulate
+      // stranded entries. Fire-and-forget — a failure here just
+      // leaves the orphan visible; vault.remove already swallows
+      // folder-adapter cleanup errors so this is unlikely to throw.
+      if (order.changeCommitment !== undefined) {
+        const changeId = idForCommitment(order.changeCommitment);
+        vaultRemove(changeId).catch((err) => {
+          console.warn(`[cancel] change-note orphan cleanup (id=${changeId}) failed`, err);
+        });
       }
 
       setPhase({ kind: "success" });
