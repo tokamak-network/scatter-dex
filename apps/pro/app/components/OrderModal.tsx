@@ -30,7 +30,7 @@ import {
   type RecipientRow,
 } from "../lib/tradeForm";
 import { DEMO_NETWORK } from "../lib/network";
-import { buildAuthorizeOrderBody, dispatchAuthorize } from "../lib/dispatch";
+import { AUTHORIZE_PUBLIC_SIGNAL_NAMES, buildAuthorizeOrderBody, dispatchAuthorize } from "../lib/dispatch";
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
@@ -597,10 +597,15 @@ export function OrderModal({
       // is orphaned (its commitment never lands on chain) and the user
       // can prune it manually — matching frontend's accepted trade-off.
       if (newSalt !== undefined && change > 0n) {
-        // Index 4 in AUTHORIZE_PUBLIC_SIGNAL_NAMES (apps/pro/app/lib/dispatch.ts).
-        // Reading from publicSignals (not meta) avoids depending on
-        // the worker's optional meta channel being populated.
-        const newCommitment = proveResult.publicSignals[4];
+        // Look up the index by name (not hard-coded 4) so a future
+        // reorder of AUTHORIZE_PUBLIC_SIGNAL_NAMES doesn't silently
+        // store the wrong field as the change-note's commitment —
+        // which would make the residual unspendable (its commitment
+        // on disk wouldn't match what `computeCommitment` produces
+        // at spend time). Reads from publicSignals (not meta) so it
+        // doesn't depend on the worker's optional meta channel.
+        const newCommitmentIdx = AUTHORIZE_PUBLIC_SIGNAL_NAMES.indexOf("newCommitment");
+        const newCommitment = proveResult.publicSignals[newCommitmentIdx];
         if (newCommitment !== undefined) {
           const changeNote = { ...note.note, salt: newSalt, amount: change };
           const changeAmountDisplay = formatTokenAmount(change, sellToken.decimals);

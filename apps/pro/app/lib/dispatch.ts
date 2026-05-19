@@ -125,7 +125,7 @@ export async function dispatchDeposit(
  *  and the circuit silently corrupts every body the relayer rejects.
  *  Update both — and re-run the local end-to-end test — when adding
  *  or reordering signals. */
-const AUTHORIZE_PUBLIC_SIGNAL_NAMES = [
+export const AUTHORIZE_PUBLIC_SIGNAL_NAMES = [
   "pubKeyBind",
   "commitmentRoot",
   "nullifier",
