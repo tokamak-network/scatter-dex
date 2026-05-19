@@ -40,8 +40,6 @@ export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Pro
   //                 via Cancel; NOT eligible for "Ready to claim"
   //                 because no settle ever happened
   //   * claimable — status driven by an on-chain PrivateClaim event
-  //                 (the demo auto-promote that used to flip orders
-  //                 to claimable 8 s after submit is gone)
   // Re-evaluates every minute so an expiry crossing while the tab
   // sits open shifts the order from Open → Expired without a
   // refresh.
@@ -157,8 +155,9 @@ export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Pro
             ))}
           </ul>
           <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-            Settle deadline passed without an on-chain match. Cancel
-            from the detail panel to release the funding note.
+            Settle deadline passed without an on-chain match. The
+            cancel flow is being reworked — recovery will land in a
+            follow-up.
           </p>
         </Section>
       )}

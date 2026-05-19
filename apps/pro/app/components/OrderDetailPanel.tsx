@@ -113,8 +113,8 @@ export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
         />
       ) : (
         <p className="mx-5 mb-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-xs text-[var(--color-text-muted)]">
-          No claim payload — this is a seeded demo row, or the
-          order was placed before claim material was persisted.
+          No claim payload — this order was placed before claim
+          material was persisted on the record.
         </p>
       )}
 
@@ -125,10 +125,14 @@ export function OrderDetailPanel({ order, onClose, onCancel, onClaim }: Props) {
       )}
 
       {(onCancel || onClaim) && (
-        <footer className="flex justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
+        <footer className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
           {onCancel && (
-            <Button variant="secondary" onClick={onCancel}>
-              Cancel order
+            <Button
+              variant="secondary"
+              disabled
+              title="Cancel flow is being reworked — coming soon"
+            >
+              Cancel coming soon
             </Button>
           )}
           {onClaim && <Button onClick={onClaim}>Claim →</Button>}

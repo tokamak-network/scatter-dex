@@ -21,19 +21,36 @@ export function formatClaimAmount(
   return `${amount.toString()} (raw units)`;
 }
 
-/** Human-readable UTC timestamp (`Apr 26, 09:14 UTC`). Locale fixed
- *  to `en-US` so SSR and client agree. */
+/** Human-readable timestamp in the viewer's local timezone
+ *  (`Apr 26, 06:14 PM KST`). Locale fixed to `en-US` so the
+ *  month/day formatting stays predictable; the timezone
+ *  follows the user. Previously hard-coded to UTC, which made
+ *  the panel show times that looked like "in the past" to
+ *  anyone east of GMT — the order *was* in the future once you
+ *  did the offset math, but the UX failed the "no mental
+ *  arithmetic" bar. */
 export function formatWhen(ts: number): string {
   const d = new Date(ts);
-  return (
-    d.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "UTC",
-    }) + " UTC"
-  );
+  const base = d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  // Append the locale's short timezone name (KST, EDT, …) when
+  // the runtime exposes one. Older browsers without the
+  // formatToParts → timeZoneName piece silently get the bare
+  // time, which is still local — no false-UTC suffix.
+  let tz = "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZoneName: "short",
+    }).formatToParts(d);
+    tz = parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+  } catch {
+    /* runtime without formatToParts — leave tz empty */
+  }
+  return tz ? `${base} ${tz}` : base;
 }
 
 /** Pad a hex bigint string to 64 chars (32 bytes) with the `0x`

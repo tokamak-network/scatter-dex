@@ -36,8 +36,8 @@ export interface OrderClaim {
   /** Bytes32 hex of the claims-tree root the order was settled
    *  under. The reconciler uses this together with `secret` and
    *  `leafIndex` to compute the per-row nullifier and match against
-   *  on-chain `PrivateClaim` events. Optional because seeded demo
-   *  rows don't carry it. */
+   *  on-chain `PrivateClaim` events. Optional because legacy
+   *  rows from earlier app versions may not carry it. */
   claimsRoot?: string;
 }
 
@@ -71,7 +71,8 @@ export interface OrderRecord {
   /** Authorize-circuit nonce used at order-submit time. Required
    *  later for the cancel proof (the cancel circuit publishes
    *  `nonceNullifier(secret, nonce)` to kill *this* order
-   *  specifically). Optional because seeded demo rows don't carry
+   *  specifically). Optional because legacy rows from earlier app
+   *  versions may not carry
    *  it. */
   nonce?: bigint;
   /** Vault note id that funded the order — needed by the cancel

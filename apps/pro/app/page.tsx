@@ -33,9 +33,6 @@ export default function Landing() {
             See order history
           </Link>
         </div>
-        <p className="mt-4 text-xs text-[var(--color-text-subtle)]">
-          Demo runs on mock data. No wallet connection needed to walk through.
-        </p>
       </section>
 
       {/* Quick proof bar */}
@@ -171,8 +168,8 @@ export default function Landing() {
       <section className="rounded-2xl border border-[var(--color-border)] bg-gradient-to-br from-[var(--color-primary-soft)] to-[var(--color-surface)] p-10 text-center">
         <h2 className="text-2xl font-semibold">Ready to see it in motion?</h2>
         <p className="mx-auto mt-2 max-w-xl text-sm text-[var(--color-text-muted)]">
-          The workbench loads with a sample vault and live mock orderbook —
-          place a fake order to see the full flow before connecting any wallet.
+          Pick a workspace folder, deposit into the escrow pool, and
+          place a private limit order in under a minute.
         </p>
         <div className="mt-6 flex justify-center gap-3">
           <Link href="/app" className="rounded-lg bg-[var(--color-primary)] px-6 py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]">
