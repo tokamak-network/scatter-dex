@@ -20,6 +20,7 @@ import { WriteResult } from "../components/WriteResult";
 import { DEMO_NETWORK } from "../lib/network";
 import { useOperator, type OperatorState } from "../lib/useOperator";
 import { useRegistryWrite } from "../lib/useRegistryWrite";
+import { parseEth } from "../lib/validation";
 import type { WritePhase } from "../lib/useChainWrite";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
@@ -252,29 +253,6 @@ function BondPanel({ operator }: { operator: OperatorState }) {
       </p>
     </section>
   );
-}
-
-/** Parse a decimal-ETH string into 18-decimal base units, returning
- *  null on bad input (so the caller can decide whether to halt or
- *  fall through). Stays out of `useChainWrite` because it's only
- *  used here.
- *
- *  Behaviour aligned with `ethers.parseEther` for the inputs we
- *  accept: a leading-decimal form like `.5` is treated as `0.5`,
- *  and more than 18 fractional digits is rejected (rather than
- *  silently truncated) so the parser doesn't disagree with the
- *  SDK helper that runs at submit time. */
-function parseEth(input: string): bigint | null {
-  if (!/^[0-9]*\.?[0-9]+$/.test(input)) return null;
-  const [rawWhole, frac = ""] = input.split(".");
-  if (frac.length > 18) return null;
-  const whole = rawWhole === "" ? "0" : rawWhole;
-  const fracPadded = frac.padEnd(18, "0");
-  try {
-    return BigInt(whole) * 10n ** 18n + BigInt(fracPadded || "0");
-  } catch {
-    return null;
-  }
 }
 
 function ExitPanel({ operator }: { operator: OperatorState }) {
