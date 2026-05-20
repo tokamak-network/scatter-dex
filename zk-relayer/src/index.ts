@@ -155,6 +155,13 @@ async function main() {
         });
       });
     });
+    // Live listener can be attached now (the bridge callback above
+    // is already registered, so any event seen between here and
+    // `start()` will queue against the live sharedClient correctly
+    // once it connects). The backfill below runs AFTER `start()`
+    // because `cancelOrder` requires the shared-OB handshake to be
+    // complete — otherwise the bridge fires before the client is
+    // authenticated and the cancel-by-orphan is silently dropped.
     authSubmitter.startCancelEventListener();
 
     // Phase 2.5a: wire the settlement push hook. Both the cross-relayer
@@ -177,6 +184,18 @@ async function main() {
     try {
       await sharedClient.start();
       sharedOBLog.info("Connected", { url: config.sharedOrderbookUrl });
+      // Backfill historical PrivateCancel events now that the
+      // sharedClient handshake is complete — a fresh relayer (or one
+      // that was down across a user cancel) otherwise leaves the
+      // shared orderbook with orphan listings forever. Match the same
+      // `INDEX_FROM_BLOCK` env the commitments indexer consumes
+      // (private-submitter.ts) so we don't re-process the entire
+      // chain on every boot.
+      const indexFromBlockRaw = process.env.INDEX_FROM_BLOCK;
+      const indexFromBlock = Number.isFinite(Number(indexFromBlockRaw))
+        ? Math.max(0, Math.floor(Number(indexFromBlockRaw)))
+        : 0;
+      await authSubmitter.indexCancels(indexFromBlock);
     } catch (err) {
       sharedOBLog.warn("Failed to connect", { err: err instanceof Error ? err.message : "unknown" });
     }
