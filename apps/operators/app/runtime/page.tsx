@@ -13,6 +13,8 @@ import {
 import { AdminConnectBar } from "../components/AdminConnectBar";
 import { formatRelative } from "../lib/format";
 import { Panel, ErrorLine, useAdmin, formatEth, shortHex } from "../lib/adminUi";
+import { parseFeeBps } from "../lib/validation";
+import { MAX_RELAYER_FEE_BPS } from "@zkscatter/sdk/relayer";
 
 type AuthState = AdminAuth | null;
 
@@ -221,16 +223,12 @@ function FeeSection({
   }, [data]);
 
   const onSave = async () => {
-    const trimmed = draft.trim();
-    if (trimmed.length === 0) {
-      setError("Enter a fee in bps before saving.");
+    const parsed = parseFeeBps(draft, MAX_RELAYER_FEE_BPS);
+    if (!parsed.ok) {
+      setError(parsed.reason);
       return;
     }
-    const n = Number(trimmed);
-    if (!Number.isInteger(n) || n < 0 || n > 10_000) {
-      setError("feeBps must be an integer between 0 and 10000.");
-      return;
-    }
+    const n = parsed.value;
     setSaving(true);
     setError(null);
     setOk(null);
@@ -255,7 +253,7 @@ function FeeSection({
         <input
           type="number"
           min={0}
-          max={10_000}
+          max={MAX_RELAYER_FEE_BPS}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           className="w-32 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
