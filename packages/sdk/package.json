@@ -2,6 +2,9 @@
   "name": "@zkscatter/sdk",
   "version": "0.0.1",
   "private": true,
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "description": "Typed TypeScript client for the zkScatter core (contracts + ZK + relayer + shared orderbook).",
   "type": "module",
   "sideEffects": false,

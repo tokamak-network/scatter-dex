@@ -26,7 +26,7 @@ describe("shortTxHash", () => {
     );
   });
 
-  it("returns input verbatim when at the boundary of new len rule (18 chars)", () => {
+  it("truncates when at the boundary of new len rule (18 chars)", () => {
     // 18 chars with 10/6 defaults → output is also 17 chars (10 + … + 6),
     // strictly shorter, so truncation should fire.
     const eighteen = "0x" + "a".repeat(16);
