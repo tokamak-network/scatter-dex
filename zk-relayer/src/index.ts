@@ -133,6 +133,30 @@ async function main() {
       remoteOrderbook!.remove(orderId);
     });
 
+    // Bridge on-chain `PrivateCancel` events into the shared orderbook.
+    // The user submits cancelPrivate() directly on-chain (the relayer
+    // does NOT submit cancel because there's no fee incentive), so
+    // without this bridge a self-cancelled listing stays visible in
+    // the shared OB on every OTHER relayer indefinitely — only the
+    // origin relayer's local UI sees the row disappear via its own
+    // local DB cleanup. We pick `escrowNullifier` because that's
+    // exactly the value `nullifierToOfferHandle` consumed at publish
+    // time, so the canonical `offerHandle` round-trips and the
+    // shared-OB DELETE matches the published row. `cancelOrder` is
+    // best-effort (fire-and-forget on network failure) — the on-chain
+    // event is the authoritative cancel signal, the shared-OB update
+    // is just a discovery convenience.
+    authSubmitter.onCancel((escrowNullifier) => {
+      const offerHandle = nullifierToOfferHandle(BigInt(escrowNullifier).toString());
+      sharedClient!.cancelOrder(offerHandle).catch((err) => {
+        sharedOBLog.warn("Failed to propagate cancel to shared OB", {
+          offerHandle,
+          err: err instanceof Error ? err.message : "unknown",
+        });
+      });
+    });
+    authSubmitter.startCancelEventListener();
+
     // Phase 2.5a: wire the settlement push hook. Both the cross-relayer
     // matcher and the same-relayer settle path go through
     // `authSubmitter.submitAuthSettle`, so a single hook here covers both.
