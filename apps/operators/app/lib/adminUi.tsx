@@ -84,6 +84,12 @@ export function useAdmin<T>(
   return { data, error, loading };
 }
 
+// Hoisted so `formatEth` doesn't re-evaluate the BigInt exponentiations
+// on every call — this util formats every row in the dashboard /
+// runtime / cross-relayer tables.
+const WEI_PER_ETH = 10n ** 18n;
+const WEI_PER_TICK = 10n ** 14n; // 1 ETH / 10_000 — the 4-digit precision step.
+
 /** Truncate a wei-string to four fractional ether digits.
  *  `"1000000000000000000" → "1.0000"`. Negative balances are
  *  formatted with the sign moved to the front (`"-0.5000"`); this
@@ -96,8 +102,8 @@ export function formatEth(weiStr: string): string {
     const wei = BigInt(weiStr);
     const negative = wei < 0n;
     const abs = negative ? -wei : wei;
-    const whole = abs / 10n ** 18n;
-    const frac = (abs % 10n ** 18n) / 10n ** 14n;
+    const whole = abs / WEI_PER_ETH;
+    const frac = (abs % WEI_PER_ETH) / WEI_PER_TICK;
     return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(4, "0")}`;
   } catch {
     return weiStr;
