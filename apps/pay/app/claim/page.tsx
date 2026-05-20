@@ -53,7 +53,10 @@ function parseHashToClaim(hash: string | null): ParsedClaim | null {
   // part of the payload — leaking it through would break `atob` with
   // a confusing "malformed base64url" instead of just claiming the
   // intended package.
-  const firstSegment = hash.replace(/^#/, "").split("#")[0] ?? "";
+  // `String.prototype.split` always returns at least one element
+  // (the empty string for an empty source), so the `[0]` access is
+  // total — no fallback needed.
+  const firstSegment = hash.replace(/^#/, "").split("#", 1)[0];
   if (!firstSegment) return null;
   const pkg = decodeClaimPackage(firstSegment);
   return {

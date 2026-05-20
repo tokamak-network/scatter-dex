@@ -1533,13 +1533,18 @@ function NewPayout() {
                     // names in the "Fix before continuing" banner
                     // back to the table.
                     const shapeOk = /^0x[a-fA-F0-9]{40}$/.test(r.address);
-                    const v = shapeOk ? recipientIdentity.get(r.address) : undefined;
+                    // `recipientIdentity.get()` returns `AddressVerification | null`
+                    // (never `undefined`); the inner `BatchCheckerContext.get`
+                    // already lowercases the address before the cache lookup, so
+                    // raw / checksummed / lowercase recipients all hit the same
+                    // entry — no extra normalize call needed here.
+                    const v = shapeOk ? recipientIdentity.get(r.address) : null;
                     let identityCell: ReactNode;
                     if (!shapeOk) {
                       identityCell = (
                         <span className="text-[var(--color-text-subtle)]">—</span>
                       );
-                    } else if (v === undefined || v === null) {
+                    } else if (v === null) {
                       identityCell = (
                         <span className="text-[var(--color-text-subtle)]">Checking…</span>
                       );
