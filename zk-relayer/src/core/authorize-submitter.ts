@@ -175,6 +175,23 @@ export class AuthorizeSubmitter {
   // (shutdown path in index.ts) can clear it cleanly.
   private cancelPollHandle: ReturnType<typeof setInterval> | null = null;
 
+  // Coalesce concurrent `indexCancels` callers (startup backfill vs.
+  // first poll tick that fires before backfill returns) onto a single
+  // in-flight Promise. Without this two parallel scans could race on
+  // `lastCancelBlock` and double-fire the same callback.
+  private cancelScanInflight: Promise<void> | null = null;
+
+  // Blocks of confirmation lag before we treat an event as "final"
+  // enough to act on. PR #782 review: matches `INDEX_CONFIRMATIONS`
+  // (commitments indexer) so an L1 reorg can't leave us with a
+  // cancelled-locally / restored-on-chain mismatch. Honors the same
+  // env var; default 0 keeps anvil dev fast.
+  private readonly cancelConfirmations = (() => {
+    const raw = process.env.INDEX_CONFIRMATIONS;
+    const parsed = raw !== undefined ? Number(raw) : 0;
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+  })();
+
   /**
    * Scan PrivateCancel events from `fromBlock` (or the last seen
    * block + 1 on subsequent calls) up to latest, fire every
@@ -197,10 +214,29 @@ export class AuthorizeSubmitter {
    * means the next tick has a slightly larger window.
    */
   async indexCancels(fromBlock: number): Promise<void> {
+    // Coalesce concurrent callers (startup backfill + first poll tick)
+    // onto a single in-flight Promise — otherwise two parallel scans
+    // race on `lastCancelBlock` and could double-fire the same event.
+    if (this.cancelScanInflight) return this.cancelScanInflight;
+    this.cancelScanInflight = this.runIndexCancels(fromBlock).finally(() => {
+      this.cancelScanInflight = null;
+    });
+    return this.cancelScanInflight;
+  }
+
+  private async runIndexCancels(fromBlock: number): Promise<void> {
     const startBlock = this.lastCancelBlock >= 0 ? this.lastCancelBlock + 1 : fromBlock;
-    const tip = await this.settlement.runner!.provider!.getBlockNumber();
-    if (startBlock > tip) {
-      // Nothing new to scan; keep `lastCancelBlock` where it was.
+    const head = await this.settlement.runner!.provider!.getBlockNumber();
+    // Stay `cancelConfirmations` blocks behind tip — a reorg that
+    // removes a cancel event after we acted on it would otherwise
+    // leave the relayer's local DB / shared-OB row stuck in the
+    // cancelled state with the on-chain row resurrected, an
+    // unrecoverable mismatch from the operator's standpoint. On
+    // anvil with default `INDEX_CONFIRMATIONS=0` this is a no-op.
+    const tip = head - this.cancelConfirmations;
+    if (tip < 0 || startBlock > tip) {
+      // Nothing new (or finality budget not reached); keep
+      // `lastCancelBlock` where it was so the next tick retries.
       return;
     }
     const filter = this.settlement.filters.PrivateCancel();
@@ -234,21 +270,37 @@ export class AuthorizeSubmitter {
 
   /**
    * Start the live PrivateCancel poller. Re-runs `indexCancels` every
-   * `intervalMs` (default 3 s — fast enough that operators see cancels
-   * propagate within one block on anvil, cheap enough on a real chain
-   * where eth_getLogs over a tiny block range is essentially free).
-   * Call this once at startup from index.ts after the initial backfill.
+   * `intervalMs` (env-overridable via `CANCEL_POLL_MS`, default 3 s).
+   * 3 s is a sweet spot on anvil: operators see cancels propagate
+   * within one block, eth_getLogs over a tiny block range is cheap.
+   * On a hosted RPC with strict rate limits, bump `CANCEL_POLL_MS`
+   * to something like 15000 — backfill on next restart still catches
+   * anything the slower poller missed.
+   *
+   * Idempotent: re-entry returns immediately when a poller is already
+   * running, so a caller that re-invokes after a config reload won't
+   * double-attach.
    */
-  startCancelEventListener(intervalMs = 3_000): void {
+  startCancelEventListener(intervalMs?: number): void {
     if (this.cancelPollHandle) return;
+    const envMs = Number(process.env.CANCEL_POLL_MS);
+    const ms =
+      intervalMs ??
+      (Number.isFinite(envMs) && envMs > 0 ? Math.floor(envMs) : 3_000);
     this.cancelPollHandle = setInterval(() => {
+      // No need to derive the next start block here — `indexCancels`
+      // pulls it from `this.lastCancelBlock` internally and serialises
+      // against any other in-flight scan via `cancelScanInflight`.
       this.indexCancels(this.lastCancelBlock + 1).catch((err) => {
         log.warn("PrivateCancel poll tick failed", {
           err: err instanceof Error ? err.message : String(err),
         });
       });
-    }, intervalMs);
-    log.info("Listening for PrivateCancel events", { intervalMs });
+    }, ms);
+    log.info("Listening for PrivateCancel events", {
+      intervalMs: ms,
+      confirmations: this.cancelConfirmations,
+    });
   }
 
   /** Stop the live cancel poller. Used by the index.ts shutdown path. */
