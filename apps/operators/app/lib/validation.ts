@@ -8,11 +8,12 @@
  *  this renders the same "invalid input" hint in a different
  *  context, so we keep the copy here.
  *
- *  Why a typed result instead of `null` / `Error`: the caller wants
- *  the failure reason rendered inline next to the input, and the
- *  same parser is reused across runtime (cap = `MAX_RELAYER_FEE_BPS`),
- *  profile, and register. Returning a tagged union keeps each call
- *  site a single `if (!result.ok) setError(result.reason)`. */
+ *  Why a typed result instead of `null` / `Error`: callers want the
+ *  failure reason rendered inline next to the input. Today only
+ *  runtime's FeeSection consumes the discriminated form (cap =
+ *  `MAX_RELAYER_FEE_BPS`); profile + register pass `Number(input)`
+ *  straight to the SDK, which raises a less granular error on the
+ *  same bound. Migrating those call sites is a follow-up. */
 export type FeeBpsParse =
   | { ok: true; value: number }
   | { ok: false; reason: string };
@@ -32,14 +33,19 @@ export function parseFeeBps(input: string, max: number): FeeBpsParse {
 /** Parse a decimal-ETH string into 18-decimal base units, returning
  *  null on bad input (so the caller can decide whether to halt or
  *  fall through). Behaviour aligned with `ethers.parseEther`:
- *  - `.5` is treated as `0.5` (leading-decimal form allowed)
+ *  - surrounding whitespace is trimmed before parsing
+ *  - `.5` and `1.` are both accepted (leading/trailing decimal forms)
  *  - more than 18 fractional digits is rejected (not silently
  *    truncated), so the parser never disagrees with the SDK helper
  *    that runs at submit time
- *  - non-numeric / negative / empty input returns `null`. */
+ *  - non-numeric / negative / empty / bare-`.` input returns `null`. */
 export function parseEth(input: string): bigint | null {
-  if (!/^[0-9]*\.?[0-9]+$/.test(input)) return null;
-  const [rawWhole, frac = ""] = input.split(".");
+  const trimmed = input.trim();
+  // Reject the bare "." case (no whole and no frac digits) up front.
+  // Otherwise: must be /digits(.digits?)?/ or /.digits/ — i.e. at
+  // least one digit on one side of an optional decimal point.
+  if (!/^(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) return null;
+  const [rawWhole, frac = ""] = trimmed.split(".");
   if (frac.length > 18) return null;
   const whole = rawWhole === "" ? "0" : rawWhole;
   const fracPadded = frac.padEnd(18, "0");

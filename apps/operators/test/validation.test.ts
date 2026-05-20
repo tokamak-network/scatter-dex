@@ -86,4 +86,16 @@ describe("parseEth", () => {
   it("rejects scientific notation", () => {
     expect(parseEth("1e18")).toBeNull();
   });
+
+  it("trims surrounding whitespace", () => {
+    expect(parseEth("  1  ")).toBe(10n ** 18n);
+  });
+
+  it("accepts trailing-decimal form (1. == 1.0)", () => {
+    expect(parseEth("1.")).toBe(10n ** 18n);
+  });
+
+  it("rejects a bare decimal point", () => {
+    expect(parseEth(".")).toBeNull();
+  });
 });

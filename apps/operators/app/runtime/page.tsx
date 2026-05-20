@@ -253,7 +253,7 @@ function FeeSection({
         <input
           type="number"
           min={0}
-          max={10_000}
+          max={MAX_RELAYER_FEE_BPS}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           className="w-32 rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
