@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { ERC20_ABI, formatTokenLabel } from "@zkscatter/sdk";
-import { buildExplorerTxUrl } from "@zkscatter/sdk/util";
+import { buildExplorerTxUrl, shortTxHash } from "@zkscatter/sdk/util";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import type { BalanceRow } from "./_types";
@@ -225,7 +225,7 @@ export function SendModal({
         )}
 
         {phase === "done" && txHash && (() => {
-          const short = `${txHash.slice(0, 10)}…${txHash.slice(-6)}`;
+          const short = shortTxHash(txHash);
           const href = buildExplorerTxUrl(explorerBase, txHash);
           return (
             <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-xs text-[var(--color-success)]">

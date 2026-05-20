@@ -3,6 +3,54 @@
 // lockstep with `CommitmentNote` if its fields ever change.
 import type { CommitmentNote } from "../zk/commitment";
 
+/** Truncate a transaction hash (or any long hex string) to the
+ *  canonical `0xabcd1234…01234` form used across status banners,
+ *  modal confirmations, and inline notes. Defaults match the
+ *  10/6 split Pay/Pro converged on; pass `prefixLen` / `suffixLen`
+ *  for surfaces that want a tighter or looser truncation.
+ *
+ *  Only truncates when the result would be strictly shorter than
+ *  the input — otherwise a 17-char input with the 10/6 defaults
+ *  would render as a 17-char string with an ellipsis in the
+ *  middle, which is the same length but harder to read. */
+export function shortTxHash(
+  hash: string,
+  opts: { prefixLen?: number; suffixLen?: number } = {},
+): string {
+  const prefixLen = opts.prefixLen ?? 10;
+  const suffixLen = opts.suffixLen ?? 6;
+  if (!hash) return "";
+  // `+ 1` for the ellipsis we'd insert — only worth truncating
+  // when the output is genuinely shorter than the input.
+  if (hash.length <= prefixLen + suffixLen + 1) return hash;
+  return `${hash.slice(0, prefixLen)}…${hash.slice(-suffixLen)}`;
+}
+
+/** Human time-until for an expiry unix-seconds timestamp. Returns
+ *  `"expired"` once the moment passes; otherwise the largest
+ *  meaningful unit pair, omitting zero sub-units so clean hour /
+ *  day boundaries don't render as the noisy `1h 0m` / `1d 0h`.
+ *
+ *  Boundary handling:
+ *  - `< 60s` returns `"<1m"` rather than `"0m"` — `0m` reads as
+ *    "expired" but the order still has time left.
+ *  - `1h 0m` collapses to `"1h"`, `1d 0h` to `"1d"`.
+ *  - The smaller unit only renders when non-zero. */
+export function formatExpiry(unixSec: number): string {
+  const delta = unixSec - Math.floor(Date.now() / 1000);
+  if (delta <= 0) return "expired";
+  if (delta < 60) return "<1m";
+  const h = Math.floor(delta / 3600);
+  const m = Math.floor((delta % 3600) / 60);
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    const remH = h % 24;
+    return remH > 0 ? `${d}d ${remH}h` : `${d}d`;
+  }
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${m}m`;
+}
+
 /** Render a fixed-point token amount as a decimal string without
  *  pulling `ethers` into the consumer (the SDK already lists it,
  *  apps don't have to). Trims trailing zeros from the fractional

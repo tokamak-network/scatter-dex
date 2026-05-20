@@ -1,5 +1,6 @@
 "use client";
 
+import { shortTxHash } from "@zkscatter/sdk/util";
 import { buildExplorerTxUrl } from "../_lib/explorerUrl";
 
 /** Inline transaction link — the canonical "tx <short-hash↗>" UI
@@ -36,7 +37,7 @@ export function TxLink({
    *  doesn't masquerade as a link. */
   fallbackClassName?: string;
 }) {
-  const short = `${txHash.slice(0, 10)}…${txHash.slice(-6)}`;
+  const short = shortTxHash(txHash);
   const url = buildExplorerTxUrl(explorerBase, txHash);
   if (!url) {
     return (

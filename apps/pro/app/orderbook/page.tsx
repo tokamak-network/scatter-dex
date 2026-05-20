@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { EmptyState } from "@zkscatter/ui";
 import { shortAddr } from "@zkscatter/sdk/react";
+import { formatExpiry } from "@zkscatter/sdk/util";
 import {
   SharedOrderbookClient,
   type SharedOrder,
@@ -409,12 +410,3 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function formatExpiry(unixSec: number): string {
-  const ms = unixSec * 1000 - Date.now();
-  if (ms <= 0) return "expired";
-  const m = Math.round(ms / 60_000);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const rem = m % 60;
-  return rem > 0 ? `${h}h ${rem}m` : `${h}h`;
-}

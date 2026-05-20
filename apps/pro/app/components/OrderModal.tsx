@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ZERO_ADDRESS } from "@zkscatter/sdk";
+import { shortTxHash } from "@zkscatter/sdk/util";
 import {
   randomFieldElement,
   type AuthorizeProofInput,
@@ -849,7 +850,7 @@ export function OrderModal({
           <>
             <Row
               k="Spending commitment"
-              v={`${confirmCommitments.spentHex.slice(0, 10)}…${confirmCommitments.spentHex.slice(-6)}`}
+              v={shortTxHash(confirmCommitments.spentHex)}
             />
             <Row
               k="Change note"
