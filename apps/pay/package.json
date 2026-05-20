@@ -17,6 +17,7 @@
     "generate-samples": "node ./scripts/generate-recipient-samples.mjs"
   },
   "dependencies": {
+    "@zkscatter/recipients": "file:../../packages/recipients",
     "@zkscatter/sdk": "file:../../packages/sdk",
     "@zkscatter/ui": "file:../../packages/ui",
     "ethers": "^6.13.0",
