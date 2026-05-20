@@ -46,3 +46,13 @@ export function buildExplorerAddressUrl(
 ): string | null {
   return buildExplorerUrl(base, "address", address);
 }
+
+/** Convenience wrapper for block links. Symmetric to the tx /
+ *  address pair — included so the segment enum stays exhaustive
+ *  from the caller's perspective. */
+export function buildExplorerBlockUrl(
+  base: string | undefined | null,
+  blockNumber: string | number | bigint,
+): string | null {
+  return buildExplorerUrl(base, "block", String(blockNumber));
+}

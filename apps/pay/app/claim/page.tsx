@@ -133,17 +133,23 @@ function ClaimInner() {
   }, []);
 
   const cfg = useMemo(() => getNetworkConfig(), []);
-  // Wrap the SDK builder so this hook still returns a `(hash) =>
-  // string | null` curried form callers can spread over multiple
-  // tx hashes without rebuilding the URL constructor each time.
-  const explorerTxUrl = useMemo(() => {
+  // Validate the base once; only return a callable when it'll
+  // produce safe URLs. The inner function re-parses on every call
+  // (the SDK helper's `new URL(base)` is cheap and the sentinel
+  // probe up front made sure `base` is well-formed), so the
+  // returned type is `(hash) => string` — non-null — which lets
+  // call sites pass the result straight into `<a href={...}>`
+  // under strict TS without a `?? "#"` dance.
+  const explorerTxUrl = useMemo<((hash: string) => string) | null>(() => {
     const base = cfg.explorerBase;
     if (!base) return null;
-    // Probe once with a sentinel to validate base shape early — if
-    // it returns null the base is malformed and we hand back `null`
-    // to skip the link UI entirely.
     if (buildExplorerTxUrl(base, "x") === null) return null;
-    return (txHash: string) => buildExplorerTxUrl(base, txHash);
+    // After the sentinel passes, `buildExplorerTxUrl` only returns
+    // null when `txHash` is empty — callers are expected to gate on
+    // a present tx hash before calling, so fall back to the base on
+    // the unlikely empty-hash path rather than break the type.
+    return (txHash: string) =>
+      buildExplorerTxUrl(base, txHash) ?? base;
   }, [cfg.explorerBase]);
   const isAvailable = parsed
     ? Math.floor(Date.now() / 1000) >= parsed.releaseTimeUnix
