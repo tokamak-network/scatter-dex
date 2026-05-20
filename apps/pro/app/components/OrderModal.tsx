@@ -177,6 +177,21 @@ function resolveClaims(
   });
 }
 
+// Centralised copy for the EdDSA ownership-mismatch UX. Keeping
+// these in one place avoids drift between the pre-submit guard,
+// the disabled-button title, the inline banner, and any future
+// surface (toast, post-mortem screen). The post-derive guard
+// stays distinct because it fires *after* the user paid for a
+// `personal_sign` prompt — the extra context about the circuit
+// gate explains why the signature didn't help.
+const OWNERSHIP_MISMATCH_PRE_SUBMIT =
+  "Connected wallet doesn't own this note. The note was deposited from a different MetaMask account — switch back to that account to place this order.";
+const OWNERSHIP_MISMATCH_POST_DERIVE =
+  "This note was deposited from a different MetaMask account. Switch MetaMask to the depositor's account before retrying — the authorize circuit's EdDSA gate won't accept a proof signed by any other wallet.";
+const OWNERSHIP_MISMATCH_BUTTON_TITLE =
+  "Connected wallet doesn't own this note — switch MetaMask to the depositor's account";
+const OWNERSHIP_MISMATCH_BUTTON_LABEL = "Wrong wallet for this note";
+
 export function OrderModal({
   open,
   onClose,
@@ -353,11 +368,7 @@ export function OrderModal({
     }
 
     if (noteOwnershipMismatch) {
-      setPhase({
-        kind: "error",
-        message:
-          "Connected wallet doesn't own this note. The note was deposited from a different MetaMask account — switch back to that account to place this order.",
-      });
+      setPhase({ kind: "error", message: OWNERSHIP_MISMATCH_PRE_SUBMIT });
       return;
     }
 
@@ -516,11 +527,7 @@ export function OrderModal({
         eddsaKey.publicKey[0] !== note.note.pubKeyAx ||
         eddsaKey.publicKey[1] !== note.note.pubKeyAy
       ) {
-        setPhase({
-          kind: "error",
-          message:
-            "This note was deposited from a different MetaMask account. Switch MetaMask to the depositor's account before retrying — the authorize circuit's EdDSA gate won't accept a proof signed by any other wallet.",
-        });
+        setPhase({ kind: "error", message: OWNERSHIP_MISMATCH_POST_DERIVE });
         return;
       }
 
@@ -790,14 +797,9 @@ export function OrderModal({
   return (
     <Modal open={open} onClose={close} title="Confirm private order" closeOnBackdrop={false}>
       <TestnetNotice />
-      {/* EdDSA ownership mismatch — surface at the top so the
-          operator catches it before reading the rest of the
-          summary. Mirrors WithdrawModal's banner. The submit
-          button is also disabled by `noteOwnershipMismatch`, so
-          this is purely an explanation of WHY the action is
-          blocked. Render only when the EdDSA key is already
-          cached (the post-derive check inside `submit` covers
-          the not-yet-cached path). */}
+      {/* Inline ownership warning. The post-derive guard inside
+          `submit` covers the uncached-key path, so the banner
+          renders only when a cached key is available to compare. */}
       {note && cachedEdDSAKey && noteOwnershipMismatch && (
         <div className="mb-3 rounded-md bg-[var(--color-warning-soft)] px-3 py-2 text-[11px] text-[var(--color-warning)]">
           ⚠ <strong>This note was deposited from a different wallet.</strong>{" "}
@@ -959,7 +961,7 @@ export function OrderModal({
                   : note.leafIndex < 0
                   ? "Waiting for the deposit's on-chain confirmation — usually one block"
                   : noteOwnershipMismatch
-                  ? "Connected wallet doesn't own this note — switch MetaMask to the depositor's account"
+                  ? OWNERSHIP_MISMATCH_BUTTON_TITLE
                   : undefined
               }
             >
@@ -970,7 +972,7 @@ export function OrderModal({
                 : note && note.leafIndex < 0
                 ? "Confirming deposit…"
                 : noteOwnershipMismatch
-                ? "Wrong wallet for this note"
+                ? OWNERSHIP_MISMATCH_BUTTON_LABEL
                 : "Sign & submit"}
             </Button>
           </>
