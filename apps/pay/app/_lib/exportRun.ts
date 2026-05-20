@@ -5,7 +5,7 @@ import {
   type RunRecord,
 } from "@zkscatter/sdk/storage";
 import { buildClaimUrl } from "./claimUrl";
-import { csvEscape, downloadCsv } from "./csv";
+import { csvEscape, downloadCsv } from "@zkscatter/recipients/csv";
 import { formatUtcStamp } from "./format";
 
 const HEADERS = [

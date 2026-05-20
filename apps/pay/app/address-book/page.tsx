@@ -9,7 +9,7 @@ import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { IdentityBadge } from "../_components/IdentityBadge";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { useWalletBook } from "../_lib/walletBook";
-import { csvEscape, downloadCsv } from "../_lib/csv";
+import { csvEscape, downloadCsv } from "@zkscatter/recipients/csv";
 
 /** Lightweight email shape check — RFC-5322 in full would be
  *  overkill; we just want "has an at-sign with something on either

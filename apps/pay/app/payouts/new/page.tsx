@@ -77,8 +77,8 @@ import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { csvSafeLabel, formatRecipientCsvRow, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
-import { csvEscape, downloadCsv } from "../../_lib/csv";
-import { parseRecipientFile } from "../../_lib/parseRecipientFile";
+import { csvEscape, downloadCsv } from "@zkscatter/recipients/csv";
+import { parseRecipientFile } from "@zkscatter/recipients/parser";
 import { SpreadsheetEditor } from "./_components/SpreadsheetEditor";
 import {
   clearWizardDraft,
