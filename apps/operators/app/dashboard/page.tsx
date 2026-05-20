@@ -12,18 +12,7 @@ import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 
 type Auth = AdminAuth | null;
 
-interface SettlementRow {
-  id: number;
-  tx_hash: string;
-  type: "settleAuth" | "scatterDirectAuth";
-  status: "confirmed" | "failed";
-  block_number: number | null;
-  gas_cost_eth: string | null;
-  sell_token: string | null;
-  buy_token: string | null;
-  error_reason: string | null;
-  created_at: number;
-}
+import type { SettlementRow } from "../lib/adminTypes";
 
 interface FeeTotals {
   totals: Array<{ token: string; count: number; totalWei: string }>;

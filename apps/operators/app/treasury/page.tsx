@@ -73,8 +73,8 @@ export default function TreasuryPage() {
           />
           <Stat
             label="Platform fee"
-            value="—"
-            sub="Reads vault.platformFeeBps once deployed"
+            value={platformFeeValue(vault, ph)}
+            sub={platformFeeSub(vault, ph)}
           />
         </div>
       </section>
@@ -307,6 +307,36 @@ function FeeAccrualLive({
   );
 }
 
+
+/** Render bps as a percentage with up to 2 fractional digits, trailing
+ *  zeros stripped. `30` → `"0.3%"`, `100` → `"1%"`, `1025` → `"10.25%"`.
+ *  Null means the one-shot read hasn't returned yet. Bps values are
+ *  bounded by `MAX_PLATFORM_FEE` in the contract, so we don't need
+ *  scientific-notation fallbacks. Exported for tests. */
+export function formatPlatformFee(bps: number | null): string {
+  if (bps === null) return "…";
+  if (bps === 0) return "0%";
+  const pct = bps / 100;
+  return `${pct.toFixed(2).replace(/\.?0+$/, "")}%`;
+}
+
+/** Pick the value for the Platform fee stat. Mirrors `vaultPlaceholder`
+ *  for the wallet/vault-deployed/balances-read paths so the stat reads
+ *  the same as its neighbors when the vault isn't loadable; otherwise
+ *  reports any platform-fee-specific RPC error explicitly, and only
+ *  falls back to `formatPlatformFee` once the read has actually run. */
+function platformFeeValue(state: FeeVaultState, ph: VaultPlaceholder | null): string {
+  if (ph) return ph.value;
+  if (state.platformFeeError) return "—";
+  return formatPlatformFee(state.platformFeeBps);
+}
+
+function platformFeeSub(state: FeeVaultState, ph: VaultPlaceholder | null): string {
+  if (ph) return ph.sub;
+  if (state.platformFeeError) return `Read error: ${state.platformFeeError}`;
+  if (state.platformFeeBps === null) return "Reading on-chain…";
+  return "Skimmed on every claim()";
+}
 
 interface VaultPlaceholder { value: string; sub: string }
 
