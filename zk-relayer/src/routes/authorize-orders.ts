@@ -542,6 +542,41 @@ export function drainAuthorizeOrders(): number {
   return toDelete.length;
 }
 
+/**
+ * Apply an on-chain `PrivateCancel` event to local state. Mirrors
+ * the cleanup `drainAuthorizeOrders` does for operator-initiated
+ * shutdown (status flip + pubKey count decrement + unindex + map
+ * delete + DB status update) so the relayer doesn't keep a zombie
+ * row that's been cancelled on-chain.
+ *
+ * Safe to call for an unknown nullifier — returns false silently.
+ * `db` access is guarded against post-shutdown calls via `_db?`.
+ * Any per-step exception is swallowed with a log so a partial
+ * cleanup doesn't poison the listener queue.
+ */
+export function applyOnChainAuthorizeCancel(nullifierDecimal: string): boolean {
+  const stored = authorizeOrders.get(nullifierDecimal);
+  if (!stored) return false;
+  try {
+    if (isLiveStatus(stored.status)) {
+      stored.status = "cancelled";
+      if (stored.pubKeyAx && stored.pubKeyAy) {
+        decPubKeyCount(stored.pubKeyAx, stored.pubKeyAy);
+      }
+    }
+    _db?.updateAuthorizeOrderStatus(nullifierDecimal, "cancelled");
+    unindexAuthorizeOrder(nullifierDecimal, stored.order);
+    authorizeOrders.delete(nullifierDecimal);
+    return true;
+  } catch (err) {
+    console.warn("[authorize-orders] applyOnChainAuthorizeCancel partial failure", {
+      nullifier: nullifierDecimal.slice(0, 18) + "...",
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+}
+
 /** Get current authorize order counts by status. */
 export function getAuthorizeOrderStats(): { pending: number; matched: number; total: number } {
   let pending = 0;
