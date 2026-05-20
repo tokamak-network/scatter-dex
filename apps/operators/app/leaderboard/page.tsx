@@ -14,6 +14,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { DEMO_NETWORK } from "../lib/network";
 import { formatEther, formatIsoDate } from "../lib/format";
+import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
@@ -313,20 +314,54 @@ function RelayerRow({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
       <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{shortAddr(row.address)}</td>
       <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
       <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
-      <td className="px-5 py-3 text-right font-mono">
-        {row.stats ? row.stats.settledOrders : "—"}
-      </td>
-      <td className="px-5 py-3 text-right font-mono">
-        {row.stats ? `${row.stats.successRate}%` : "—"}
-      </td>
-      <td className="px-5 py-3 text-right font-mono">
-        {row.stats?.avgSettleTimeMs != null ? `${Math.round(row.stats.avgSettleTimeMs)} ms` : "—"}
-      </td>
+      <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
+      <StatCell row={row} value={row.stats?.successRate} render={(n) => `${n}%`} />
+      <StatCell
+        row={row}
+        value={row.stats?.avgSettleTimeMs}
+        render={(n) => `${Math.round(n)} ms`}
+      />
       <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">
         {formatIsoDate(row.registeredAt)}
       </td>
     </tr>
   );
+}
+
+/** Stats-table cell that distinguishes three "no value" states:
+ *  live (render the value), unavailable (relayer is up but didn't
+ *  return this field — plain `—`), and offline (relayer didn't
+ *  respond to `/api/info` at all — muted `—` with a tooltip).
+ *  Previously every empty case rendered the same plain `—`, which
+ *  hid the difference between a dead relayer and an older build. */
+function StatCell({
+  row,
+  value,
+  render,
+}: {
+  row: RankedRelayer;
+  value: number | null | undefined;
+  render: (n: number) => string;
+}) {
+  const status = relayerStatsCellStatus(row, value);
+  if (status === "live") {
+    return <td className="px-5 py-3 text-right font-mono">{render(value as number)}</td>;
+  }
+  // "unavailable" reads as a plain `—` matching the surrounding
+  // table copy; "offline" gets the subtle tone so a dead relayer
+  // visibly stands out from peers that just don't report stats.
+  const tone = status === "offline" ? "text-[var(--color-text-subtle)]" : "";
+  const title = statsCellTitle(status);
+  return (
+    <td className={`px-5 py-3 text-right font-mono ${tone}`} title={title}>
+      —
+    </td>
+  );
+}
+
+function statsCellTitle(status: StatsCellStatus): string {
+  if (status === "offline") return "Relayer offline — /api/info didn't respond";
+  return "Relayer online but stats not reported";
 }
 
 function RelayerNameCell({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
