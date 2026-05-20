@@ -173,7 +173,8 @@ export class AuthorizeSubmitter {
 
   // setInterval handle for the live cancel poller — kept so callers
   // (shutdown path in index.ts) can clear it cleanly.
-  private cancelPollHandle: ReturnType<typeof setInterval> | null = null;
+  private cancelPollHandle: ReturnType<typeof setTimeout> | null = null;
+  private cancelPollStopped = true;
 
   // Coalesce concurrent `indexCancels` callers (startup backfill vs.
   // first poll tick that fires before backfill returns) onto a single
@@ -226,7 +227,7 @@ export class AuthorizeSubmitter {
 
   private async runIndexCancels(fromBlock: number): Promise<void> {
     const startBlock = this.lastCancelBlock >= 0 ? this.lastCancelBlock + 1 : fromBlock;
-    const head = await this.settlement.runner!.provider!.getBlockNumber();
+    const head = await this.provider.getBlockNumber();
     // Stay `cancelConfirmations` blocks behind tip — a reorg that
     // removes a cancel event after we acted on it would otherwise
     // leave the relayer's local DB / shared-OB row stuck in the
@@ -282,21 +283,32 @@ export class AuthorizeSubmitter {
    * double-attach.
    */
   startCancelEventListener(intervalMs?: number): void {
-    if (this.cancelPollHandle) return;
+    if (!this.cancelPollStopped) return;
     const envMs = Number(process.env.CANCEL_POLL_MS);
     const ms =
       intervalMs ??
       (Number.isFinite(envMs) && envMs > 0 ? Math.floor(envMs) : 3_000);
-    this.cancelPollHandle = setInterval(() => {
-      // No need to derive the next start block here — `indexCancels`
-      // pulls it from `this.lastCancelBlock` internally and serialises
-      // against any other in-flight scan via `cancelScanInflight`.
-      this.indexCancels(this.lastCancelBlock + 1).catch((err) => {
+    this.cancelPollStopped = false;
+    // Recursive setTimeout instead of setInterval so the next tick is
+    // only scheduled after the current scan finishes — no piled-up
+    // timers if `indexCancels` ever runs slow. `indexCancels` itself
+    // also coalesces overlapping callers via `cancelScanInflight`, but
+    // self-pacing here keeps the tick rhythm clean. We check the stop
+    // flag before each await and before re-arming so `stopCancelEventListener`
+    // can cleanly tear this down mid-scan.
+    const tick = async (): Promise<void> => {
+      if (this.cancelPollStopped) return;
+      try {
+        await this.indexCancels(this.lastCancelBlock + 1);
+      } catch (err) {
         log.warn("PrivateCancel poll tick failed", {
           err: err instanceof Error ? err.message : String(err),
         });
-      });
-    }, ms);
+      }
+      if (this.cancelPollStopped) return;
+      this.cancelPollHandle = setTimeout(tick, ms);
+    };
+    this.cancelPollHandle = setTimeout(tick, ms);
     log.info("Listening for PrivateCancel events", {
       intervalMs: ms,
       confirmations: this.cancelConfirmations,
@@ -305,8 +317,9 @@ export class AuthorizeSubmitter {
 
   /** Stop the live cancel poller. Used by the index.ts shutdown path. */
   stopCancelEventListener(): void {
+    this.cancelPollStopped = true;
     if (this.cancelPollHandle) {
-      clearInterval(this.cancelPollHandle);
+      clearTimeout(this.cancelPollHandle);
       this.cancelPollHandle = null;
     }
   }
