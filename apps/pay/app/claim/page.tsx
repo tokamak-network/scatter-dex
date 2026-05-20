@@ -13,6 +13,7 @@ import {
   markClaimInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
 import { getNetworkConfig } from "../_lib/network";
+import { buildExplorerTxUrl } from "../_lib/explorerUrl";
 import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
 import { useIdentityStatus } from "../_lib/identity";
@@ -132,22 +133,23 @@ function ClaimInner() {
   }, []);
 
   const cfg = useMemo(() => getNetworkConfig(), []);
-  // Resolve to a safe `<base>/tx/<hash>` URL or null. The base comes
-  // from a public env var, so a misconfigured `javascript:...` /
-  // `data:...` would render an unsafe link if rendered raw — guard
-  // by parsing through the URL constructor and accepting only http
-  // and https.
-  const explorerTxUrl = useMemo(() => {
+  // Validate the base once; only return a callable when it'll
+  // produce safe URLs. The inner function re-parses on every call
+  // (the SDK helper's `new URL(base)` is cheap and the sentinel
+  // probe up front made sure `base` is well-formed), so the
+  // returned type is `(hash) => string` — non-null — which lets
+  // call sites pass the result straight into `<a href={...}>`
+  // under strict TS without a `?? "#"` dance.
+  const explorerTxUrl = useMemo<((hash: string) => string) | null>(() => {
     const base = cfg.explorerBase;
     if (!base) return null;
-    try {
-      const u = new URL(base);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-      const trimmed = base.replace(/\/$/, "");
-      return (txHash: string) => `${trimmed}/tx/${txHash}`;
-    } catch {
-      return null;
-    }
+    if (buildExplorerTxUrl(base, "x") === null) return null;
+    // After the sentinel passes, `buildExplorerTxUrl` only returns
+    // null when `txHash` is empty — callers are expected to gate on
+    // a present tx hash before calling, so fall back to the base on
+    // the unlikely empty-hash path rather than break the type.
+    return (txHash: string) =>
+      buildExplorerTxUrl(base, txHash) ?? base;
   }, [cfg.explorerBase]);
   const isAvailable = parsed
     ? Math.floor(Date.now() / 1000) >= parsed.releaseTimeUnix

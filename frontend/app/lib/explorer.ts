@@ -1,3 +1,4 @@
+import { buildExplorerTxUrl, buildExplorerAddressUrl } from "@zkscatter/sdk/util";
 import { EXPECTED_CHAIN_ID, EXPLORER_BASES } from "./config";
 
 // Deliberately defaults to EXPECTED_CHAIN_ID so disconnected users get
@@ -9,11 +10,9 @@ function resolveBase(chainId: number | null | undefined): string | null {
 }
 
 export function getExplorerTxUrl(chainId: number | null | undefined, txHash: string): string | null {
-  const base = resolveBase(chainId);
-  return base ? `${base}/tx/${txHash}` : null;
+  return buildExplorerTxUrl(resolveBase(chainId), txHash);
 }
 
 export function getExplorerAddressUrl(chainId: number | null | undefined, address: string): string | null {
-  const base = resolveBase(chainId);
-  return base ? `${base}/address/${address}` : null;
+  return buildExplorerAddressUrl(resolveBase(chainId), address);
 }

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ethers } from "ethers";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { IDENTITY_GATE_ABI, type NetworkConfig } from "@zkscatter/sdk";
+import { buildExplorerTxUrl } from "@zkscatter/sdk/util";
 import { DEMO_NETWORK } from "../../lib/network";
 import { useIdentityGateAdmin } from "../../lib/identity";
 import { ZK_X509_URL } from "../../lib/features";
@@ -32,15 +33,7 @@ function explorerTxLink(
   cfg: NetworkConfig,
   txHash: string,
 ): string | null {
-  const base = cfg.explorerBase;
-  if (!base) return null;
-  try {
-    const u = new URL(base);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return `${base.replace(/\/$/, "")}/tx/${txHash}`;
-  } catch {
-    return null;
-  }
+  return buildExplorerTxUrl(cfg.explorerBase, txHash);
 }
 
 /** Admin console for the IdentityGate contract — list trusted
