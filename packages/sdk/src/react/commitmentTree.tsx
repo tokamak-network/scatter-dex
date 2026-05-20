@@ -72,17 +72,53 @@ export class CommitmentProofUnavailableError extends Error {
  *  on-chain tree, fall back to the empty-tree shortcut **only in
  *  demo mode**. In live mode a missing commitment throws so the UI
  *  surfaces "wait for confirmation" instead of producing an
- *  invalid-root proof that would fail at settle time. */
+ *  invalid-root proof that would fail at settle time.
+ *
+ *  When the live tree returns null on the first try, force one
+ *  re-hydrate and poll the local index for up to ~7.5 s before
+ *  giving up. This covers two real failure modes that used to
+ *  surface as a hard `CommitmentProofUnavailableError` even when
+ *  the commitment was already on-chain:
+ *    1. The hydrate effect raced the user's click — `ready` is
+ *       still propagating when withdraw/order submit fires.
+ *    2. The `subscribeCommitmentInserted` polling missed the
+ *       insert event (ethers `contract.on` is best-effort over
+ *       JsonRpcProvider polling; one missed tick = a permanently
+ *       stale `indexRef` until the user refreshes).
+ *  `tree.refresh()` bumps the provider's `refreshNonce`, which
+ *  re-runs `loadCommitmentInsertedHistory` and re-populates the
+ *  shared `indexRef`. Polling `findIndex` from the OLD snapshot
+ *  closure still sees the new data because the ref is mutated in
+ *  place across re-renders. */
 export async function getMerkleProofWithFallback(
   tree: CommitmentTreeState,
   commitment: bigint,
   fallback: () => Promise<{ merkleProof: MerkleProof; leafIndex: number }>,
 ): Promise<{ merkleProof: MerkleProof; leafIndex: number }> {
-  const live = await tree.tryProofFor(commitment);
-  if (live) return { merkleProof: live, leafIndex: tree.findIndex(commitment) };
-  if (tree.mode === "live") throw new CommitmentProofUnavailableError(commitment);
-  const empty = await fallback();
-  return { merkleProof: empty.merkleProof, leafIndex: empty.leafIndex };
+  const first = await tree.tryProofFor(commitment);
+  if (first) return { merkleProof: first, leafIndex: tree.findIndex(commitment) };
+
+  if (tree.mode !== "live") {
+    // Demo mode keeps the original empty-tree shortcut so unit
+    // tests / non-chain UIs stay fast.
+    const empty = await fallback();
+    return { merkleProof: empty.merkleProof, leafIndex: empty.leafIndex };
+  }
+
+  // Live mode: force a re-hydrate, then poll the local index.
+  // Budget: 30 × 250 ms = 7.5 s. Aligns with the "blocks land in
+  // ~2 s on anvil / ~12 s on a real chain" envelope, while still
+  // surfacing to the user fast enough on a genuinely-not-yet-mined
+  // commitment.
+  tree.refresh();
+  for (let i = 0; i < 30; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const idx = tree.findIndex(commitment);
+    if (idx < 0) continue;
+    const proof = await tree.tryProofFor(commitment);
+    if (proof) return { merkleProof: proof, leafIndex: idx };
+  }
+  throw new CommitmentProofUnavailableError(commitment);
 }
 
 const Ctx = createContext<CommitmentTreeState | null>(null);

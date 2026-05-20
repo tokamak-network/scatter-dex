@@ -46,9 +46,19 @@ interface ParsedClaim {
 
 function parseHashToClaim(hash: string | null): ParsedClaim | null {
   if (!hash) return null;
-  const trimmed = hash.replace(/^#/, "");
-  if (!trimmed) return null;
-  const pkg = decodeClaimPackage(trimmed);
+  // Strip the leading `#`, then keep only the first fragment segment if
+  // the URL accidentally ended up with more than one `#` (some routers
+  // double-push the hash on client-side nav, producing `#FRAG#FRAG`).
+  // base64url has no `#`, so anything after the second `#` can't be
+  // part of the payload — leaking it through would break `atob` with
+  // a confusing "malformed base64url" instead of just claiming the
+  // intended package.
+  // `String.prototype.split` always returns at least one element
+  // (the empty string for an empty source), so the `[0]` access is
+  // total — no fallback needed.
+  const firstSegment = hash.replace(/^#/, "").split("#", 1)[0];
+  if (!firstSegment) return null;
+  const pkg = decodeClaimPackage(firstSegment);
   return {
     pkg,
     amountRaw: BigInt(pkg.amount),

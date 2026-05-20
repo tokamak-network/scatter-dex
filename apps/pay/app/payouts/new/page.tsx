@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ethers } from "ethers";
 import { LAUNCH_TOKENS, chainName } from "@zkscatter/sdk";
 import {
@@ -1520,21 +1520,61 @@ function NewPayout() {
                   <tr>
                     <th className="text-left">{category.identifierLabel}</th>
                     <th className="text-left">Address</th>
+                    <th className="text-left pl-3">Identity</th>
                     <th className="text-right">Amount</th>
                     <th className="text-left pl-3">Available from</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.slice(0, MAX_RECIPIENTS_PER_RUN).map((r, i) => (
-                    <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
-                      <td className="py-1.5">{r.name}</td>
-                      <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
-                      <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
-                      <td className="py-1.5 pl-3 text-xs text-[var(--color-text-muted)]">
-                        {claimFrom ? formatClaimFrom(claimFrom) : "—"}
-                      </td>
-                    </tr>
-                  ))}
+                  {rows.slice(0, MAX_RECIPIENTS_PER_RUN).map((r, i) => {
+                    // Per-row zk-X509 status: surface verified vs
+                    // unverified vs still-loading inline so the
+                    // operator doesn't have to cross-reference the
+                    // names in the "Fix before continuing" banner
+                    // back to the table.
+                    const shapeOk = /^0x[a-fA-F0-9]{40}$/.test(r.address);
+                    // `recipientIdentity.get()` returns `AddressVerification | null`
+                    // (never `undefined`); the inner `BatchCheckerContext.get`
+                    // already lowercases the address before the cache lookup, so
+                    // raw / checksummed / lowercase recipients all hit the same
+                    // entry — no extra normalize call needed here.
+                    const v = shapeOk ? recipientIdentity.get(r.address) : null;
+                    let identityCell: ReactNode;
+                    if (!shapeOk) {
+                      identityCell = (
+                        <span className="text-[var(--color-text-subtle)]">—</span>
+                      );
+                    } else if (v === null) {
+                      identityCell = (
+                        <span className="text-[var(--color-text-subtle)]">Checking…</span>
+                      );
+                    } else if (v.isVerified) {
+                      identityCell = (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-success)]">
+                          <span aria-hidden>✓</span>
+                          Verified
+                        </span>
+                      );
+                    } else {
+                      identityCell = (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-semibold text-[var(--color-warning)]">
+                          <span aria-hidden>!</span>
+                          Unverified
+                        </span>
+                      );
+                    }
+                    return (
+                      <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
+                        <td className="py-1.5">{r.name}</td>
+                        <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
+                        <td className="py-1.5 pl-3">{identityCell}</td>
+                        <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
+                        <td className="py-1.5 pl-3 text-xs text-[var(--color-text-muted)]">
+                          {claimFrom ? formatClaimFrom(claimFrom) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               {rows.length > MAX_RECIPIENTS_PER_RUN && (

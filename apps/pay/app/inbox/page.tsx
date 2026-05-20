@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import { ethers } from "ethers";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { formatTokenLabel } from "@zkscatter/sdk";
@@ -217,12 +216,23 @@ export default function ClaimInbox() {
                       </span>
                       <div className="flex gap-1.5">
                         {e.status !== "claimed" && (
-                          <Link
+                          // Plain <a> instead of next/link <Link>: the
+                          // claim URL fragment is a 1+ KB base64url
+                          // payload, and App Router's <Link> double-pushes
+                          // the hash on client-side nav, producing
+                          // `#FRAG#FRAG` in the URL bar — which then
+                          // makes `window.location.hash.replace(/^#/, "")`
+                          // leak the inner `#` into the base64 input and
+                          // throws `decodeClaimPackage: malformed
+                          // base64url payload`. A bare <a> hard-navigates
+                          // and writes the URL verbatim, dodging the
+                          // duplication entirely.
+                          <a
                             href={claimHrefFor(e)}
                             className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-primary-soft)]"
                           >
                             Open
-                          </Link>
+                          </a>
                         )}
                         <button
                           type="button"
