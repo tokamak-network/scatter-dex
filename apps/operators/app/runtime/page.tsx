@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import {
   adminFetch,
@@ -11,6 +12,7 @@ import {
 } from "../lib/adminApi";
 import { AdminConnectBar } from "../components/AdminConnectBar";
 import { formatRelative } from "../lib/format";
+import { Panel, ErrorLine, useAdmin, formatEth, shortHex } from "../lib/adminUi";
 
 type AuthState = AdminAuth | null;
 
@@ -920,198 +922,23 @@ interface LogsBody {
 
 type LogLevelFilter = "all" | "debug" | "info" | "warn" | "error";
 
-interface PeerStatRow {
-  peer: string;
-  sent: number;
-  received: number;
-  settled: number;
-  rejected: number;
-  errored: number;
-  lastAt: number | null;
-}
-
-interface TradeOfferRow {
-  id: number;
-  direction: "sent" | "received";
-  peer_relayer: string;
-  status: string;
-  tx_hash: string | null;
-  reason: string | null;
-  created_at: number;
-}
-
-const PEER_STATS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-
-function CrossRelayerSection({ auth }: { auth: NonNullable<AuthState> }) {
-  const [tick, setTick] = useState(0);
-
-  const peersFetcher = useCallback(
-    (signal: AbortSignal) => {
-      const since = Date.now() - PEER_STATS_WINDOW_MS;
-      return adminGet<{ peers: PeerStatRow[] }>(
-        auth,
-        `/api/admin/peer-stats?since=${since}`,
-        signal,
-      );
-    },
-    [auth.url, auth.key],
-  );
-  const offersFetcher = useCallback(
-    (signal: AbortSignal) =>
-      adminGet<{ rows: TradeOfferRow[] }>(
-        auth,
-        `/api/admin/trade-offers?limit=20`,
-        signal,
-      ),
-    [auth.url, auth.key],
-  );
-
-  const peersState = useAdmin(peersFetcher, [tick]);
-  const offersState = useAdmin(offersFetcher, [tick]);
-
+/** Cross-relayer activity moved to its own page (`/cross-relayer`)
+ *  so operators can leave it open as a passive network-health
+ *  dashboard. Runtime keeps a Link slot via the parent component. */
+function CrossRelayerSection(_: { auth: NonNullable<AuthState> }) {
   return (
     <Panel
       title="Cross-relayer"
       eyebrow="GET /api/admin/peer-stats · /api/admin/trade-offers"
-      action={
-        <button
-          onClick={() => setTick((n) => n + 1)}
-          disabled={peersState.loading || offersState.loading}
-          className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Refresh
-        </button>
-      }
     >
-      <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-        Cross-relayer trade offers persist in <code className="font-mono">trade_offers</code>;
-        this section surfaces who you've matched with, the per-peer
-        settled / rejected / error split, and the most recent
-        offers. Empty when running solo (no shared orderbook).
+      <p className="text-sm text-[var(--color-text-muted)]">
+        Peer stats and recent trade offers now live on the{" "}
+        <Link href="/cross-relayer" className="text-[var(--color-primary)] hover:underline">
+          /cross-relayer
+        </Link>{" "}
+        page — bookmarkable and readable while you continue working here.
       </p>
-
-      {peersState.error && <ErrorLine text={peersState.error} />}
-      {offersState.error && <ErrorLine text={offersState.error} />}
-
-      <div>
-        <div className="mb-2 text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
-          Peers (last 7 days)
-        </div>
-        {!peersState.data ? (
-          <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
-        ) : peersState.data.peers.length === 0 ? (
-          <p className="text-sm text-[var(--color-text-muted)]">
-            No cross-relayer activity yet. Either no shared orderbook is
-            configured (set <code className="font-mono">SHARED_ORDERBOOK_URL</code>)
-            or no peers have matched in the last 7 days.
-          </p>
-        ) : (
-          <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-            <table className="w-full text-xs">
-              <thead className="bg-[var(--color-bg)] text-[var(--color-text-subtle)]">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">Peer</th>
-                  <th className="px-3 py-2 text-right font-medium">Sent</th>
-                  <th className="px-3 py-2 text-right font-medium">Received</th>
-                  <th className="px-3 py-2 text-right font-medium">Settled</th>
-                  <th className="px-3 py-2 text-right font-medium">Success%</th>
-                  <th className="px-3 py-2 text-right font-medium">Rejected</th>
-                  <th className="px-3 py-2 text-right font-medium">Error</th>
-                  <th className="px-3 py-2 text-left font-medium">Last</th>
-                </tr>
-              </thead>
-              <tbody>
-                {peersState.data.peers.map((p) => {
-                  const total = p.sent + p.received;
-                  const successPct =
-                    total > 0 ? Math.round((p.settled / total) * 100) : 0;
-                  return (
-                    <tr key={p.peer} className="border-t border-[var(--color-border)]">
-                      <td className="px-3 py-2 font-mono">{shortHex(p.peer)}</td>
-                      <td className="px-3 py-2 text-right font-mono">{p.sent}</td>
-                      <td className="px-3 py-2 text-right font-mono">{p.received}</td>
-                      <td className="px-3 py-2 text-right font-mono">{p.settled}</td>
-                      <td className="px-3 py-2 text-right font-mono">
-                        {total > 0 ? `${successPct}%` : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono">{p.rejected}</td>
-                      <td className="px-3 py-2 text-right font-mono">{p.errored}</td>
-                      <td className="px-3 py-2 text-[var(--color-text-muted)]">
-                        {p.lastAt ? formatRelative(p.lastAt) : "—"}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <div className="mt-5">
-        <div className="mb-2 text-xs uppercase tracking-wider text-[var(--color-text-subtle)]">
-          Recent trade offers
-        </div>
-        {!offersState.data ? (
-          <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
-        ) : offersState.data.rows.length === 0 ? (
-          <p className="text-sm text-[var(--color-text-muted)]">
-            No trade offers recorded.
-          </p>
-        ) : (
-          <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-            <table className="w-full text-xs">
-              <thead className="bg-[var(--color-bg)] text-[var(--color-text-subtle)]">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">When</th>
-                  <th className="px-3 py-2 text-left font-medium">Direction</th>
-                  <th className="px-3 py-2 text-left font-medium">Peer</th>
-                  <th className="px-3 py-2 text-left font-medium">Status</th>
-                  <th className="px-3 py-2 text-left font-medium">Tx / Reason</th>
-                </tr>
-              </thead>
-              <tbody>
-                {offersState.data.rows.map((r) => (
-                  <tr key={r.id} className="border-t border-[var(--color-border)]">
-                    <td className="px-3 py-2 text-[var(--color-text-muted)]">
-                      {formatRelative(r.created_at)}
-                    </td>
-                    <td className="px-3 py-2">{r.direction}</td>
-                    <td className="px-3 py-2 font-mono">{shortHex(r.peer_relayer)}</td>
-                    <td className="px-3 py-2">
-                      <OfferStatusPill status={r.status} />
-                    </td>
-                    <td className="px-3 py-2 font-mono text-[var(--color-text-muted)]">
-                      {r.tx_hash
-                        ? shortHex(r.tx_hash)
-                        : r.reason
-                        ? r.reason
-                        : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </Panel>
-  );
-}
-
-function OfferStatusPill({ status }: { status: string }) {
-  const cls =
-    status === "settled"
-      ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
-      : status === "rejected"
-      ? "bg-[var(--color-bg)] text-[var(--color-text-muted)]"
-      : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]";
-  return (
-    <span
-      className={`inline-block rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${cls}`}
-    >
-      {status}
-    </span>
   );
 }
 
@@ -1413,34 +1240,6 @@ function ClaimThresholdsSection({ auth }: { auth: NonNullable<AuthState> }) {
   );
 }
 
-function Panel({
-  title,
-  eyebrow,
-  action,
-  children,
-}: {
-  title: string;
-  eyebrow?: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          {eyebrow && (
-            <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--color-text-subtle)]">
-              {eyebrow}
-            </div>
-          )}
-          <h2 className="font-semibold">{title}</h2>
-        </div>
-        {action}
-      </div>
-      {children}
-    </section>
-  );
-}
 
 function Cell({
   label,
@@ -1505,56 +1304,6 @@ function FieldInput({
   );
 }
 
-function ErrorLine({ text }: { text: string }) {
-  return (
-    <p className="mt-3 rounded-md bg-[var(--color-warning-soft)] px-3 py-2 text-xs text-[var(--color-warning)]">
-      {text}
-    </p>
-  );
-}
 
-function useAdmin<T>(
-  fetcher: (signal: AbortSignal) => Promise<T>,
-  deps: React.DependencyList,
-) {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    fetcher(controller.signal)
-      .then((d) => {
-        if (!controller.signal.aborted) setData(d);
-      })
-      .catch((e) => {
-        if (controller.signal.aborted) return;
-        setError((e as Error).message);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
-      });
-    return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fetcher, ...deps]);
 
-  return { data, error, loading };
-}
-
-function formatEth(weiStr: string): string {
-  try {
-    const wei = BigInt(weiStr);
-    const whole = wei / 10n ** 18n;
-    const frac = (wei % 10n ** 18n) / 10n ** 14n;
-    return `${whole}.${frac.toString().padStart(4, "0")}`;
-  } catch {
-    return weiStr;
-  }
-}
-
-function shortHex(s: string): string {
-  if (s.length <= 14) return s;
-  return `${s.slice(0, 8)}…${s.slice(-6)}`;
-}
