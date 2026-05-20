@@ -258,6 +258,17 @@ if [ -d "$ROOT_DIR/apps/pay" ]; then
   # skipping the rewrite when nothing changed avoids `next dev`'s
   # `.env.local` watcher tripping a needless reload (sub-second but
   # surfaces in WebServer log noise during back-to-back spec runs).
+  # Mirror dev.sh's cache-buster: derive a short content hash from
+  # the deposit zkey so the IndexedDB-cached assets get a new key on
+  # every redeploy that ships fresh zkeys. Keep in sync with dev.sh.
+  ZK_ASSETS_VERSION=""
+  if [ -f "$ROOT_DIR/circuits/build/deposit_final.zkey" ]; then
+    if command -v shasum >/dev/null 2>&1; then
+      ZK_ASSETS_VERSION=$(shasum -a 256 "$ROOT_DIR/circuits/build/deposit_final.zkey" | awk '{print substr($1,1,12)}')
+    elif command -v sha256sum >/dev/null 2>&1; then
+      ZK_ASSETS_VERSION=$(sha256sum "$ROOT_DIR/circuits/build/deposit_final.zkey" | awk '{print substr($1,1,12)}')
+    fi
+  fi
   NEW_ENV=$(cat <<EOF
 NEXT_PUBLIC_PAY_CHAIN_ID=31337
 NEXT_PUBLIC_PAY_RPC_URL=$RPC_URL
@@ -271,6 +282,7 @@ NEXT_PUBLIC_PAY_USDT=$USDT
 NEXT_PUBLIC_PAY_TON=$TON
 NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$DEPLOY_BLOCK
+NEXT_PUBLIC_ZK_ASSETS_VERSION=$ZK_ASSETS_VERSION
 EOF
 )
   [ -n "$PRESERVED" ] && NEW_ENV="$NEW_ENV

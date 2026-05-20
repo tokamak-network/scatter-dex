@@ -17,10 +17,33 @@ const DB_NAME = "zk-asset-cache";
 const STORE = "blobs";
 const DB_VERSION = 1;
 /** Skip ETag revalidation while the cached entry is younger than this.
- *  Asset paths are not content-hashed, but a redeploy that ships new
- *  circuits in practice changes the filename (e.g. `_final.zkey` →
- *  `_v2.zkey`) so the staleness floor is effectively the deploy cadence. */
+ *  When `NEXT_PUBLIC_ZK_ASSETS_VERSION` is set (dev.sh writes it from
+ *  the deposit zkey's content hash on every deploy), the appended
+ *  `?v=…` query string changes the cache key on every redeploy and
+ *  the TTL is effectively bypassed — no more "stale zkey served
+ *  against a fresh verifier → opaque `InvalidProof()`" after a
+ *  contract redeploy. The 7-day TTL stays as a belt-and-braces
+ *  fallback for the case where the env isn't set (production builds
+ *  that ship content-hashed filenames already, or developer
+ *  environments missing the wiring). */
 const FRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Append the deploy's asset-version cache-buster to a canonical
+ *  asset URL so a contract redeploy that ships fresh zkeys
+ *  invalidates the IndexedDB cache automatically. Reads a literal
+ *  `process.env.NEXT_PUBLIC_ZK_ASSETS_VERSION` access (literal so
+ *  Next inlines the value at build time); returns the URL untouched
+ *  when the env isn't configured or already contains a `?v=`. */
+function withAssetVersion(url: string): string {
+  const v = process.env.NEXT_PUBLIC_ZK_ASSETS_VERSION;
+  if (!v) return url;
+  // Avoid double-appending when a caller has already attached a
+  // version (e.g. an explicit override at the call site). Query-key
+  // match is conservative: only skip when the URL has its own `v=`
+  // param, not when it has any other query string.
+  if (/[?&]v=/.test(url)) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(v)}`;
+}
 
 interface CachedEntry {
   url: string;
@@ -70,7 +93,12 @@ function idbPut(db: IDBDatabase, entry: CachedEntry): Promise<void> {
   });
 }
 
-async function fetchUncached(url: string): Promise<ArrayBuffer> {
+async function fetchUncached(rawUrl: string): Promise<ArrayBuffer> {
+  // Cache key + fetch URL share the versioned form so a redeploy
+  // invalidates both the IDB row and the network response in one
+  // step. The raw URL is never the cache key — callers that pre-
+  // versioned their URLs hit the same key the cache builds here.
+  const url = withAssetVersion(rawUrl);
   const memHit = memCache.get(url);
   if (memHit) return memHit;
 
@@ -129,10 +157,15 @@ async function fetchUncached(url: string): Promise<ArrayBuffer> {
   return bytes;
 }
 
-function fetchCachedAssetBytes(url: string): Promise<ArrayBuffer> {
+function fetchCachedAssetBytes(rawUrl: string): Promise<ArrayBuffer> {
+  // Dedup against the versioned key, not the raw URL — otherwise a
+  // re-version mid-session (e.g. hot-reload after a redeploy) would
+  // de-dup against the previous version's in-flight Promise and
+  // hand stale bytes to the new fetch.
+  const url = withAssetVersion(rawUrl);
   const existing = inflight.get(url);
   if (existing) return existing;
-  const promise = fetchUncached(url).finally(() => inflight.delete(url));
+  const promise = fetchUncached(rawUrl).finally(() => inflight.delete(url));
   inflight.set(url, promise);
   return promise;
 }
