@@ -21,6 +21,14 @@ describe("formatEth", () => {
   it("falls back to the raw string on unparseable input", () => {
     expect(formatEth("not a bigint")).toBe("not a bigint");
   });
+
+  it("formats negative balances with a leading sign (not `0.-5000`)", () => {
+    expect(formatEth("-500000000000000000")).toBe("-0.5000");
+  });
+
+  it("formats large negative balances", () => {
+    expect(formatEth("-1000000000000000000")).toBe("-1.0000");
+  });
 });
 
 describe("shortHex", () => {
