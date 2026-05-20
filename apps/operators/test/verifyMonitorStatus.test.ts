@@ -20,8 +20,13 @@ describe("backlogTone", () => {
     expect(backlogTone(5, NOW - 60_000, NOW)).toBe("warn");
   });
 
-  it("returns stale when backlog > 0 and no pass has been seen", () => {
-    expect(backlogTone(5, null, NOW)).toBe("stale");
+  it("returns warn (not stale) when backlog > 0 and no pass timestamp is available", () => {
+    // In production the verifier runs as a separate `settlement-verifier`
+    // compose service, so the orderbook API server's in-process monitor
+    // is null by design. Going red here would false-positive on every
+    // healthy production deployment. The backlog count itself is still
+    // authoritative; the tone just stays amber instead of jumping red.
+    expect(backlogTone(5, null, NOW)).toBe("warn");
   });
 
   it("returns stale when the last pass is older than the stale window", () => {
