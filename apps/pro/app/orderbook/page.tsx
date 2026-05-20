@@ -6,10 +6,17 @@ import { EmptyState } from "@zkscatter/ui";
 import {
   SharedOrderbookClient,
   type SharedOrder,
+  type SharedRelayer,
 } from "@zkscatter/sdk/orderbook";
 import { useActiveNetwork } from "../lib/activeNetwork";
 
 const POLL_MS = 10_000;
+/** Show orders expiring within this window as "soon" in the
+ *  expiry filter. Matches the workbench's mini-orderbook so the
+ *  operator's mental model is consistent across surfaces. */
+const EXPIRY_SOON_MS = 10 * 60_000;
+
+type ExpiryFilter = "all" | "active" | "soon";
 
 /** Shared order book — every live order across every relayer, not
  *  just the ones the current wallet submitted. Renders as a flat
@@ -26,10 +33,13 @@ export default function SharedOrderbookPage() {
   const configured = !!url;
 
   const [orders, setOrders] = useState<SharedOrder[]>([]);
+  const [relayers, setRelayers] = useState<SharedRelayer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [pairFilter, setPairFilter] = useState<string>("all");
+  const [relayerFilter, setRelayerFilter] = useState<string>("all");
+  const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("active");
 
   // Mounted-flag guards setState against late callbacks after
   // unmount (e.g. user navigates away mid-fetch).
@@ -66,9 +76,18 @@ export default function SharedOrderbookPage() {
       if (stopped) return;
       setLoading(true);
       try {
-        const list = await client.getOrders();
+        // Fetch orders + relayer list in parallel so the relayer
+        // name column doesn't fall a tick behind a fresh
+        // registration. Both requests share one timeout budget;
+        // a relayer-list failure is non-fatal — we still show
+        // orders, just with shortened-address fallback.
+        const [list, rels] = await Promise.all([
+          client.getOrders(),
+          client.getRelayers().catch(() => [] as SharedRelayer[]),
+        ]);
         if (stopped || cancelledRef.current) return;
         setOrders(list);
+        setRelayers(rels);
         setError(null);
         setLastUpdated(new Date());
       } catch (e) {
@@ -99,14 +118,47 @@ export default function SharedOrderbookPage() {
     return [...set];
   }, [orders]);
 
+  // Address → display name map. Falls back to the order's `relayer`
+  // address when the relayer hasn't registered a name (or the
+  // `/api/relayers` probe just failed) so the column never collapses
+  // to "—".
+  const relayerNameByAddr = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const r of relayers) {
+      if (r.name && r.name.length > 0) m[r.address.toLowerCase()] = r.name;
+    }
+    return m;
+  }, [relayers]);
+
+  // Filter dropdown options: every relayer that has at least one
+  // live order. Built from the order set rather than the full
+  // `relayers` list so we don't offer "Relayer-C" when it has no
+  // orders to show.
+  const orderRelayers = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of orders) set.add(o.relayer.toLowerCase());
+    return [...set];
+  }, [orders]);
+
   const filtered = useMemo(() => {
-    if (pairFilter === "all") return orders;
-    const [a, b] = pairFilter.split("|");
+    const nowMs = Date.now();
     return orders.filter((o) => {
-      const [oa, ob] = [o.sellToken.toLowerCase(), o.buyToken.toLowerCase()].sort();
-      return oa === a && ob === b;
+      if (pairFilter !== "all") {
+        const [a, b] = pairFilter.split("|");
+        const [oa, ob] = [o.sellToken.toLowerCase(), o.buyToken.toLowerCase()].sort();
+        if (oa !== a || ob !== b) return false;
+      }
+      if (relayerFilter !== "all" && o.relayer.toLowerCase() !== relayerFilter) {
+        return false;
+      }
+      const remainingMs = o.expiry * 1000 - nowMs;
+      if (expiryFilter === "active" && remainingMs <= 0) return false;
+      if (expiryFilter === "soon" && (remainingMs <= 0 || remainingMs > EXPIRY_SOON_MS)) {
+        return false;
+      }
+      return true;
     });
-  }, [orders, pairFilter]);
+  }, [orders, pairFilter, relayerFilter, expiryFilter]);
 
   if (!configured) {
     return (
@@ -155,27 +207,65 @@ export default function SharedOrderbookPage() {
         <StatCard label="Status" value={loading ? "Refreshing…" : "Live"} />
       </div>
 
-      <div className="flex items-center gap-3">
-        <label className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
-          Pair
-        </label>
-        <select
-          value={pairFilter}
-          onChange={(e) => setPairFilter(e.target.value)}
-          className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
-        >
-          <option value="all">All ({orders.length})</option>
-          {pairs.map((p) => {
-            const [a, b] = p.split("|");
-            const aSym = resolveToken(a)?.symbol ?? shortAddr(a);
-            const bSym = resolveToken(b)?.symbol ?? shortAddr(b);
-            return (
-              <option key={p} value={p}>
-                {aSym} / {bSym}
-              </option>
-            );
-          })}
-        </select>
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex items-center gap-2">
+          <label className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+            Pair
+          </label>
+          <select
+            value={pairFilter}
+            onChange={(e) => setPairFilter(e.target.value)}
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
+          >
+            <option value="all">All ({orders.length})</option>
+            {pairs.map((p) => {
+              const [a, b] = p.split("|");
+              const aSym = resolveToken(a)?.symbol ?? shortAddr(a);
+              const bSym = resolveToken(b)?.symbol ?? shortAddr(b);
+              return (
+                <option key={p} value={p}>
+                  {aSym} / {bSym}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+            Relayer
+          </label>
+          <select
+            value={relayerFilter}
+            onChange={(e) => setRelayerFilter(e.target.value)}
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
+          >
+            <option value="all">All</option>
+            {orderRelayers.map((addr) => {
+              const name = relayerNameByAddr[addr];
+              return (
+                <option key={addr} value={addr}>
+                  {name ? `${name} (${shortAddr(addr)})` : shortAddr(addr)}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+            Expiry
+          </label>
+          <select
+            value={expiryFilter}
+            onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
+            className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
+          >
+            <option value="active">Active</option>
+            <option value="soon">Expiring &lt; 10m</option>
+            <option value="all">All (incl. expired)</option>
+          </select>
+        </div>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -242,10 +332,21 @@ export default function SharedOrderbookPage() {
                       {formatExpiry(o.expiry)}
                     </td>
                     <td
-                      className="px-4 py-3 font-mono text-xs text-[var(--color-text-muted)]"
-                      title={o.relayer}
+                      className="px-4 py-3 text-xs text-[var(--color-text-muted)]"
+                      title={`${o.relayer}\n${o.relayerUrl}`}
                     >
-                      {shortAddr(o.relayer)}
+                      {(() => {
+                        const name = relayerNameByAddr[o.relayer.toLowerCase()];
+                        if (name) {
+                          return (
+                            <span>
+                              <span className="text-[var(--color-text)]">{name}</span>{" "}
+                              <span className="font-mono">{shortAddr(o.relayer)}</span>
+                            </span>
+                          );
+                        }
+                        return <span className="font-mono">{shortAddr(o.relayer)}</span>;
+                      })()}
                     </td>
                   </tr>
                 );
