@@ -5,6 +5,7 @@ import { ethers } from "ethers";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import type { SourceNotesPick } from "../../../_lib/sourceNotes";
 import { formatLocalStampSec } from "../../../_lib/format";
+import { TxLink } from "../../../_components/TxLink";
 
 export interface SourceNotesPanelProps {
   token: string;
@@ -330,21 +331,11 @@ export function SourceNotesPanel({
                       {n.txHash && (
                         <div className="text-[10px] text-[var(--color-text-muted)]">
                           tx:{" "}
-                          {explorerBase ? (
-                            <a
-                              href={`${explorerBase.replace(/\/$/, "")}/tx/${n.txHash}`}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="font-mono underline decoration-dotted hover:text-[var(--color-primary)]"
-                              title={n.txHash}
-                            >
-                              {n.txHash.slice(0, 10)}…{n.txHash.slice(-6)}
-                            </a>
-                          ) : (
-                            <span className="font-mono" title={n.txHash}>
-                              {n.txHash.slice(0, 10)}…{n.txHash.slice(-6)}
-                            </span>
-                          )}
+                          <TxLink
+                            txHash={n.txHash}
+                            explorerBase={explorerBase}
+                            className="font-mono underline decoration-dotted hover:text-[var(--color-primary)]"
+                          />
                         </div>
                       )}
                     </td>

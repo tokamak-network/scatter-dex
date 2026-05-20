@@ -33,6 +33,7 @@ import { useFolderStorage } from "../../_lib/folderStorage";
 import { useRunRecord } from "../../_lib/runRecord";
 import { ClaimReconciler } from "../../_lib/claimReconciler";
 import { getNetworkConfig } from "../../_lib/network";
+import { buildExplorerTxUrl, buildExplorerAddressUrl } from "../../_lib/explorerUrl";
 import { partialRunStats } from "../../_lib/resumeRun";
 import { downloadRunCsv } from "../../_lib/exportRun";
 import { buildClaimUrl } from "../../_lib/claimUrl";
@@ -1059,18 +1060,22 @@ function TxHashChip({
       >
         {copied ? "✓" : "Copy"}
       </button>
-      {explorerBase && (
-        <a
-          href={`${explorerBase.replace(/\/$/, "")}/tx/${txHash}`}
-          target="_blank"
-          rel="noreferrer noopener"
-          title="Open in explorer"
-          aria-label="Open in explorer"
-          className="rounded border border-current px-1 py-0.5 text-[10px] hover:bg-[var(--color-surface)]"
-        >
-          ↗
-        </a>
-      )}
+      {(() => {
+        const url = buildExplorerTxUrl(explorerBase, txHash);
+        if (!url) return null;
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer noopener"
+            title="Open in explorer"
+            aria-label="Open in explorer"
+            className="rounded border border-current px-1 py-0.5 text-[10px] hover:bg-[var(--color-surface)]"
+          >
+            ↗
+          </a>
+        );
+      })()}
     </span>
   );
 }
@@ -1105,18 +1110,22 @@ function AddressCell({ address }: { address: string }) {
       >
         {copied ? "✓" : "Copy"}
       </button>
-      {explorerBase && (
-        <a
-          href={`${explorerBase.replace(/\/$/, "")}/address/${address}`}
-          target="_blank"
-          rel="noreferrer noopener"
-          title="Open in explorer"
-          aria-label="Open in explorer"
-          className="rounded border border-[var(--color-border-strong)] px-1 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
-        >
-          ↗
-        </a>
-      )}
+      {(() => {
+        const url = buildExplorerAddressUrl(explorerBase, address);
+        if (!url) return null;
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noreferrer noopener"
+            title="Open in explorer"
+            aria-label="Open in explorer"
+            className="rounded border border-[var(--color-border-strong)] px-1 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)]"
+          >
+            ↗
+          </a>
+        );
+      })()}
     </span>
   );
 }

@@ -6,6 +6,7 @@ import { Modal } from "@zkscatter/ui";
 import { ERC20_ABI, formatTokenLabel } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { getNetworkConfig } from "../_lib/network";
+import { TxLink } from "../_components/TxLink";
 import type { BalanceRow } from "./_types";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -225,22 +226,7 @@ export function SendModal({
 
         {phase === "done" && txHash && (
           <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-xs text-[var(--color-success)]">
-            ✓ Transfer landed. Tx{" "}
-            {explorerBase ? (
-              <a
-                href={`${explorerBase.replace(/\/$/, "")}/tx/${txHash}`}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="font-mono underline decoration-dotted"
-              >
-                {txHash.slice(0, 10)}…{txHash.slice(-6)}
-              </a>
-            ) : (
-              <span className="font-mono">
-                {txHash.slice(0, 10)}…{txHash.slice(-6)}
-              </span>
-            )}
-            .
+            ✓ Transfer landed. Tx <TxLink txHash={txHash} explorerBase={explorerBase} />.
           </div>
         )}
 
