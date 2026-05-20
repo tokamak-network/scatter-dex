@@ -73,8 +73,12 @@ export default function TreasuryPage() {
           />
           <Stat
             label="Platform fee"
-            value="—"
-            sub="Reads vault.platformFeeBps once deployed"
+            value={formatPlatformFee(vault.platformFeeBps)}
+            sub={
+              vault.platformFeeBps === null
+                ? "Reading on-chain…"
+                : "Skimmed on every claim()"
+            }
           />
         </div>
       </section>
@@ -307,6 +311,17 @@ function FeeAccrualLive({
   );
 }
 
+
+/** Render bps as a percentage with up to 2 fractional digits. `30` →
+ *  `0.30%`. Null means the one-shot read hasn't returned yet. Bps
+ *  values are bounded (≤ `MAX_PLATFORM_FEE` in the contract) so this
+ *  doesn't need scientific-notation fallbacks. Exported for tests. */
+export function formatPlatformFee(bps: number | null): string {
+  if (bps === null) return "…";
+  if (bps === 0) return "0%";
+  const pct = bps / 100;
+  return `${pct.toFixed(2).replace(/\.?0+$/, "")}%`;
+}
 
 interface VaultPlaceholder { value: string; sub: string }
 

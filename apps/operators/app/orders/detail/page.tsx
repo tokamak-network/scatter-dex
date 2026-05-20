@@ -8,20 +8,9 @@ import { DEMO_NETWORK } from "../../lib/network";
 import { adminGet, type AdminAuth, readAdminAuth } from "../../lib/adminApi";
 import { formatRelative } from "../../lib/format";
 
-type Auth = AdminAuth | null;
+import type { AuthorizeProofSignals, SettlementRow } from "../../lib/adminTypes";
 
-interface SettlementRow {
-  id: number;
-  tx_hash: string;
-  type: "settleAuth" | "scatterDirectAuth";
-  status: "confirmed" | "failed";
-  block_number: number | null;
-  gas_cost_eth: string | null;
-  sell_token: string | null;
-  buy_token: string | null;
-  error_reason: string | null;
-  created_at: number;
-}
+type Auth = AdminAuth | null;
 
 interface FeeRow {
   id: number;
@@ -31,28 +20,6 @@ interface FeeRow {
   amount_wei: string;
   block_number: number | null;
   created_at: number;
-}
-
-// Mirror of `zk-relayer/src/core/decode-settlement.ts` `AuthorizeProofSignals`.
-// Duplicated rather than imported because Next.js doesn't share a tsconfig
-// path with zk-relayer; if the proof tuple ever grows, both sides update.
-interface AuthorizeProofSignals {
-  pubKeyBind: string;
-  commitmentRoot: string;
-  nullifier: string;
-  nonceNullifier: string;
-  newCommitment: string;
-  sellToken: string;
-  buyToken: string;
-  sellAmount: string;
-  buyAmount: string;
-  maxFee: number;
-  expiry: string;
-  claimsRoot: string;
-  totalLocked: string;
-  relayer: string;
-  orderHash: string;
-  tier: number;
 }
 
 type DecodedSettlement =

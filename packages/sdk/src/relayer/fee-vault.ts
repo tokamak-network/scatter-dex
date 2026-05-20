@@ -32,6 +32,19 @@ export async function loadFeeVaultBalances(
   );
 }
 
+/** Read the platform-fee cut (in basis points) that FeeVault skims
+ *  off the top of every relayer `claim()`. `0` means no platform
+ *  cut. Returned as a plain `number` because the contract caps it
+ *  at `MAX_PLATFORM_FEE` (≤ 10_000), well inside safe integer range. */
+export async function loadPlatformFeeBps(
+  feeVaultAddress: string,
+  provider: ethers.Provider,
+): Promise<number> {
+  const vault = new ethers.Contract(feeVaultAddress, FEE_VAULT_ABI, provider);
+  const raw = (await vault.platformFeeBps()) as bigint;
+  return Number(raw);
+}
+
 /** Submit `claim(token)` to pull the operator's accrued balance
  *  for a single token. Reverts with `NothingToClaim` when the
  *  balance is zero — gate the button on a non-zero balance read

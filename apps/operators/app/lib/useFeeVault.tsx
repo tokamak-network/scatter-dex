@@ -3,7 +3,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
-import { loadFeeVaultBalances, unwrapEthersError, type FeeVaultBalance } from "@zkscatter/sdk/relayer";
+import {
+  loadFeeVaultBalances,
+  loadPlatformFeeBps,
+  unwrapEthersError,
+  type FeeVaultBalance,
+} from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
 
 export interface FeeVaultState {
@@ -15,6 +20,11 @@ export interface FeeVaultState {
    *  When false, render the "not deployed yet" UX instead of
    *  attempting RPC reads against the zero address. */
   vaultDeployed: boolean;
+  /** Platform-fee cut in basis points, skimmed on every `claim()`.
+   *  `null` while the one-shot read is in flight or the vault is
+   *  unconfigured. Doesn't change with the connected account, so it
+   *  lives on the provider rather than being re-fetched per page. */
+  platformFeeBps: number | null;
   /** Re-fetch every token balance. Call after a successful claim
    *  so the row drops back to zero without a page reload. */
   refresh: () => void;
@@ -27,6 +37,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   const [balances, setBalances] = useState<FeeVaultBalance[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [platformFeeBps, setPlatformFeeBps] = useState<number | null>(null);
   const [tick, setTick] = useState(0);
   const vaultAddress = DEMO_NETWORK.contracts.feeVault;
   const vaultDeployed = isConfiguredAddress(vaultAddress);
@@ -63,9 +74,29 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [account, vaultDeployed, vaultAddress, readProvider, tick]);
 
+  // Platform-fee read is account-independent and rarely changes
+  // (owner-only `applyFeeChange` with a timelock), so we fetch it
+  // once per vault address rather than on every account switch or
+  // user-driven refresh.
+  useEffect(() => {
+    if (!vaultDeployed || !vaultAddress || !readProvider) {
+      setPlatformFeeBps(null);
+      return;
+    }
+    let cancelled = false;
+    loadPlatformFeeBps(vaultAddress, readProvider)
+      .then((bps) => { if (!cancelled) setPlatformFeeBps(bps); })
+      .catch((e) => {
+        if (cancelled) return;
+        console.warn("Failed to load platformFeeBps", e);
+        setPlatformFeeBps(null);
+      });
+    return () => { cancelled = true; };
+  }, [vaultDeployed, vaultAddress, readProvider]);
+
   const value = useMemo<FeeVaultState>(
-    () => ({ account, loading, balances, error, vaultDeployed, refresh }),
-    [account, loading, balances, error, vaultDeployed, refresh],
+    () => ({ account, loading, balances, error, vaultDeployed, platformFeeBps, refresh }),
+    [account, loading, balances, error, vaultDeployed, platformFeeBps, refresh],
   );
   return <FeeVaultCtx.Provider value={value}>{children}</FeeVaultCtx.Provider>;
 }
