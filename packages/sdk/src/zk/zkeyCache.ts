@@ -17,32 +17,35 @@ const DB_NAME = "zk-asset-cache";
 const STORE = "blobs";
 const DB_VERSION = 1;
 /** Skip ETag revalidation while the cached entry is younger than this.
- *  When `NEXT_PUBLIC_ZK_ASSETS_VERSION` is set (dev.sh writes it from
- *  the deposit zkey's content hash on every deploy), the appended
- *  `?v=…` query string changes the cache key on every redeploy and
- *  the TTL is effectively bypassed — no more "stale zkey served
- *  against a fresh verifier → opaque `InvalidProof()`" after a
- *  contract redeploy. The 7-day TTL stays as a belt-and-braces
- *  fallback for the case where the env isn't set (production builds
- *  that ship content-hashed filenames already, or developer
- *  environments missing the wiring). */
+ *  Acts as a belt-and-braces fallback when `NEXT_PUBLIC_ZK_ASSETS_VERSION`
+ *  is unset — the version field on the cache row is the primary
+ *  invalidation signal (see `ASSET_VERSION` below). */
 const FRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
-/** Append the deploy's asset-version cache-buster to a canonical
- *  asset URL so a contract redeploy that ships fresh zkeys
- *  invalidates the IndexedDB cache automatically. Reads a literal
- *  `process.env.NEXT_PUBLIC_ZK_ASSETS_VERSION` access (literal so
- *  Next inlines the value at build time); returns the URL untouched
- *  when the env isn't configured or already contains a `?v=`. */
-function withAssetVersion(url: string): string {
+/** Build-time snapshot of the deploy's asset version, read from
+ *  `NEXT_PUBLIC_ZK_ASSETS_VERSION` (dev.sh + start-e2e-env.sh write
+ *  this from the deposit zkey's content hash on every deploy). Used
+ *  as a record-field invalidation marker on every cached entry: a
+ *  row whose `assetVersion` doesn't match the current build is
+ *  treated as a miss on read, the in-place `put` overwrites it with
+ *  the fresh fetch, and the IndexedDB store stays bounded at one
+ *  row per canonical URL. Without this the cache row could grow
+ *  unbounded across deploys (each version-tagged URL would create a
+ *  new row that nothing prunes). */
+const ASSET_VERSION: string | null = (() => {
   const v = process.env.NEXT_PUBLIC_ZK_ASSETS_VERSION;
-  if (!v) return url;
-  // Avoid double-appending when a caller has already attached a
-  // version (e.g. an explicit override at the call site). Query-key
-  // match is conservative: only skip when the URL has its own `v=`
-  // param, not when it has any other query string.
+  return v && v.length > 0 ? v : null;
+})();
+
+/** Decorate the canonical URL with the current asset version for
+ *  the actual network fetch — the IDB key stays canonical so a
+ *  redeploy overwrites the same row, but the fetch URL changes so
+ *  HTTP / CDN caches also bust. No-op when the version env isn't
+ *  set or the caller already attached its own `v=` param. */
+function fetchUrlWithVersion(url: string): string {
+  if (!ASSET_VERSION) return url;
   if (/[?&]v=/.test(url)) return url;
-  return `${url}${url.includes("?") ? "&" : "?"}v=${encodeURIComponent(v)}`;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${ASSET_VERSION}`;
 }
 
 interface CachedEntry {
@@ -50,6 +53,15 @@ interface CachedEntry {
   bytes: ArrayBuffer;
   etag?: string;
   fetchedAt: number;
+  /** Snapshot of `NEXT_PUBLIC_ZK_ASSETS_VERSION` at the time the
+   *  bytes were stored. A mismatch with the current `ASSET_VERSION`
+   *  causes the cache to treat the row as a miss, overwriting it
+   *  on the next fetch — single row per canonical URL, bounded
+   *  storage growth across deploys. Optional so existing rows
+   *  written before this field shipped (already in real users'
+   *  IDBs) still read cleanly as `undefined` → mismatch on a
+   *  versioned build → graceful refetch. */
+  assetVersion?: string | null;
 }
 
 const memCache = new Map<string, ArrayBuffer>();
@@ -93,27 +105,44 @@ function idbPut(db: IDBDatabase, entry: CachedEntry): Promise<void> {
   });
 }
 
-async function fetchUncached(rawUrl: string): Promise<ArrayBuffer> {
-  // Cache key + fetch URL share the versioned form so a redeploy
-  // invalidates both the IDB row and the network response in one
-  // step. The raw URL is never the cache key — callers that pre-
-  // versioned their URLs hit the same key the cache builds here.
-  const url = withAssetVersion(rawUrl);
+async function fetchUncached(url: string): Promise<ArrayBuffer> {
+  // Cache key is the canonical URL — one row per asset, no
+  // unbounded growth across deploys. Version mismatch is handled
+  // via the `assetVersion` field check below, not via key churn.
   const memHit = memCache.get(url);
   if (memHit) return memHit;
 
   const db = await openDb();
   const cached = db ? await idbGet(db, url) : null;
 
-  if (cached && Date.now() - cached.fetchedAt < FRESH_TTL_MS) {
+  const cacheFresh =
+    cached !== null &&
+    cached.assetVersion === ASSET_VERSION &&
+    Date.now() - cached.fetchedAt < FRESH_TTL_MS;
+
+  if (cached && cacheFresh) {
     memCache.set(url, cached.bytes);
     return cached.bytes;
   }
 
+  // Append the version to the actual network fetch so HTTP / CDN
+  // caches also see a fresh URL on a redeploy. The IDB key stays
+  // canonical — `put` below overwrites the same row in place.
+  const fetchUrl = fetchUrlWithVersion(url);
+
   let response: Response;
   try {
-    response = await fetch(url, {
-      headers: cached?.etag ? { "If-None-Match": cached.etag } : undefined,
+    response = await fetch(fetchUrl, {
+      // Skip the ETag revalidation header when the cached row is
+      // version-mismatched: the bytes on disk belong to a previous
+      // deploy and ETag matching against them would return a 304
+      // that points the cache back at stale bytes. Only allow ETag
+      // when the version matches and the TTL alone is what made us
+      // re-check.
+      headers:
+        cached?.etag && cached.assetVersion === ASSET_VERSION
+          ? { "If-None-Match": cached.etag }
+          : undefined,
     });
   } catch (err) {
     if (cached) {
@@ -136,7 +165,7 @@ async function fetchUncached(rawUrl: string): Promise<ArrayBuffer> {
       memCache.set(url, cached.bytes);
       return cached.bytes;
     }
-    throw new Error(`zkeyCache: ${url} -> ${response.status}`);
+    throw new Error(`zkeyCache: ${fetchUrl} -> ${response.status}`);
   }
 
   const bytes = await response.arrayBuffer();
@@ -152,20 +181,16 @@ async function fetchUncached(rawUrl: string): Promise<ArrayBuffer> {
       bytes,
       etag: response.headers.get("ETag") ?? undefined,
       fetchedAt: Date.now(),
+      assetVersion: ASSET_VERSION,
     });
   }
   return bytes;
 }
 
-function fetchCachedAssetBytes(rawUrl: string): Promise<ArrayBuffer> {
-  // Dedup against the versioned key, not the raw URL — otherwise a
-  // re-version mid-session (e.g. hot-reload after a redeploy) would
-  // de-dup against the previous version's in-flight Promise and
-  // hand stale bytes to the new fetch.
-  const url = withAssetVersion(rawUrl);
+function fetchCachedAssetBytes(url: string): Promise<ArrayBuffer> {
   const existing = inflight.get(url);
   if (existing) return existing;
-  const promise = fetchUncached(rawUrl).finally(() => inflight.delete(url));
+  const promise = fetchUncached(url).finally(() => inflight.delete(url));
   inflight.set(url, promise);
   return promise;
 }
