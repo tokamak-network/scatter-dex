@@ -103,21 +103,24 @@ function CrossRelayerPanel({ auth }: { auth: NonNullable<Auth> }) {
   const peersFetcher = useCallback(
     (signal: AbortSignal) => {
       const since = Date.now() - PEER_STATS_WINDOW_MS;
+      const qs = new URLSearchParams({ since: String(since) });
       return adminGet<{ peers: PeerStatRow[] }>(
         { url, key },
-        `/api/admin/peer-stats?since=${since}`,
+        `/api/admin/peer-stats?${qs.toString()}`,
         signal,
       );
     },
     [url, key],
   );
   const offersFetcher = useCallback(
-    (signal: AbortSignal) =>
-      adminGet<{ rows: TradeOfferRow[] }>(
+    (signal: AbortSignal) => {
+      const qs = new URLSearchParams({ limit: "20" });
+      return adminGet<{ rows: TradeOfferRow[] }>(
         { url, key },
-        `/api/admin/trade-offers?limit=20`,
+        `/api/admin/trade-offers?${qs.toString()}`,
         signal,
-      ),
+      );
+    },
     [url, key],
   );
 

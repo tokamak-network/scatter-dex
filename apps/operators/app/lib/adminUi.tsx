@@ -62,6 +62,10 @@ export function useAdmin<T>(
     const controller = new AbortController();
     setLoading(true);
     setError(null);
+    // Drop the previous response so a deps change (e.g. switching
+    // relayer URL) doesn't keep rendering stale data until the new
+    // request resolves.
+    setData(null);
     fetcher(controller.signal)
       .then((d) => {
         if (!controller.signal.aborted) setData(d);
@@ -81,14 +85,20 @@ export function useAdmin<T>(
 }
 
 /** Truncate a wei-string to four fractional ether digits.
- *  `"1000000000000000000" → "1.0000"`. Falls back to the raw input
- *  on parse failure so an unexpected payload doesn't blank the cell. */
+ *  `"1000000000000000000" → "1.0000"`. Negative balances are
+ *  formatted with the sign moved to the front (`"-0.5000"`); this
+ *  shouldn't happen for FeeVault balances but a shared util shouldn't
+ *  silently emit `0.-5000` for a future caller. Falls back to the
+ *  raw input on parse failure so an unexpected payload doesn't
+ *  blank the cell. */
 export function formatEth(weiStr: string): string {
   try {
     const wei = BigInt(weiStr);
-    const whole = wei / 10n ** 18n;
-    const frac = (wei % 10n ** 18n) / 10n ** 14n;
-    return `${whole}.${frac.toString().padStart(4, "0")}`;
+    const negative = wei < 0n;
+    const abs = negative ? -wei : wei;
+    const whole = abs / 10n ** 18n;
+    const frac = (abs % 10n ** 18n) / 10n ** 14n;
+    return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(4, "0")}`;
   } catch {
     return weiStr;
   }
