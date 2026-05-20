@@ -1,30 +1,13 @@
 "use client";
 
 /**
- * `/operator-ca` — read-only surface for the Relayer-CA that gates
- * operator registration on this network.
+ * `/operator-ca` — read-only surface for the Relayer-CA.
  *
- * What this page does (and does not):
- *   - **Reads** the single IdentityRegistry address from
- *     `RelayerRegistry.identityRegistry()` (resolved by the
- *     `OperatorIdentityProvider` mounted in layout.tsx) and shows it
- *     alongside an explorer link.
- *   - **Reads** the connected operator's verification status from
- *     that registry (`isVerified` + `verifiedUntil`) and renders a
- *     status pill — exactly the same data source as the header
- *     identity pill, so they never disagree.
- *   - **Links out** to the Relayer-CA's own verification UI (the
- *     zk-X509 frontend that operates this registry). The URL is
- *     env-driven (`NEXT_PUBLIC_CA_REGISTRATION_URL`); when missing,
- *     the button renders disabled with an explanatory hint rather
- *     than fabricating a broken href.
- *
- * What it doesn't do — by design:
- *   - No `addCa` / `removeCa` writes. The registry slot is a single
- *     address governed off this app (multisig / deployer key), so
- *     governance flows live elsewhere.
- *   - No CA listing. The current `IIdentityRegistry` interface
- *     exposes a single registry per RelayerRegistry deployment.
+ * No `addCa` / `removeCa` writes and no list: the registry slot in
+ * `RelayerRegistry.identityRegistry()` is single-valued and governed
+ * off this app (multisig / deployer key). The page just shows the
+ * current address, the connected operator's verification status, and
+ * an outbound link to the CA's registration portal.
  */
 
 import Link from "next/link";
@@ -37,7 +20,13 @@ import {
   useRelayerCaAddress,
   type OperatorIdentityStatus,
 } from "../lib/identity";
+import { formatIsoDate } from "../lib/format";
 import { CA_REGISTRATION_URL, DEMO_NETWORK } from "../lib/network";
+import { safeOperatorUrl } from "../lib/operatorDisplay";
+
+// Validate at module load so a misconfigured deployment surfaces the
+// failure once (in build/SSR) rather than on every render.
+const REGISTRATION_URL = safeOperatorUrl(CA_REGISTRATION_URL);
 
 export default function OperatorCaPage() {
   const { account } = useWallet();
@@ -45,7 +34,6 @@ export default function OperatorCaPage() {
   const status = useOperatorIdentityStatus();
 
   const explorerUrl = buildExplorerUrl(caAddress);
-  const registrationUrl = sanitizeExternalUrl(CA_REGISTRATION_URL);
 
   return (
     <div className="space-y-10">
@@ -96,9 +84,9 @@ export default function OperatorCaPage() {
               View on explorer →
             </a>
           ) : null}
-          {registrationUrl ? (
+          {REGISTRATION_URL ? (
             <a
-              href={registrationUrl}
+              href={REGISTRATION_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 font-medium text-white hover:opacity-90"
@@ -179,12 +167,7 @@ function statusSub(status: OperatorIdentityStatus, account: string | null): stri
 }
 
 function formatExpiry(unixSec: number): string {
-  if (!unixSec || unixSec <= 0) return "—";
-  try {
-    return new Date(unixSec * 1000).toISOString().slice(0, 10);
-  } catch {
-    return "—";
-  }
+  return unixSec > 0 ? formatIsoDate(unixSec) : "—";
 }
 
 /** Build an explorer link for a contract address, mirroring the
@@ -203,17 +186,3 @@ function buildExplorerUrl(address: string | null): string | null {
   }
 }
 
-/** Validate the env-supplied CA registration URL the same way we
- *  validate explorer URLs — refuse anything that isn't http(s) so a
- *  misconfigured deployment can't ship `javascript:` / `data:` to the
- *  Get-verified button. Exported for the page-level tests. */
-export function sanitizeExternalUrl(value: string): string | null {
-  if (!value) return null;
-  try {
-    const u = new URL(value);
-    if (u.protocol !== "https:" && u.protocol !== "http:") return null;
-    return u.toString();
-  } catch {
-    return null;
-  }
-}
