@@ -33,6 +33,14 @@ describe("percentileLocal", () => {
     expect(percentileLocal([5, 10, 15], 0)).toBe(5);
   });
 
+  it("collapses NaN p to 0 (doesn't propagate NaN downstream)", () => {
+    expect(percentileLocal([5, 10, 15], Number.NaN)).toBe(0);
+  });
+
+  it("collapses Infinity p to 0", () => {
+    expect(percentileLocal([5, 10, 15], Number.POSITIVE_INFINITY)).toBe(0);
+  });
+
   it("does not mutate the input array", () => {
     const input = [3, 1, 2];
     percentileLocal(input, 50);
