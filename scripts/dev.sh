@@ -744,6 +744,20 @@ write_app_env() {
   if [ -f "$target_dir/.env.local" ]; then
     preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL)=' "$target_dir/.env.local" || true)
   fi
+  # Cache-bust the IndexedDB-cached zk assets on every deploy. Without
+  # this, Pro/Pay's `zk-asset-cache` keeps serving the previous zkey
+  # against the freshly-deployed Verifier and every proof reverts
+  # with the opaque `InvalidProof()`. Using the deposit zkey's
+  # content sha (first 12 hex chars) ties the cache-buster to the
+  # actual artifact set — only changes when the zkeys do.
+  local zk_assets_version=""
+  if [ -f "$ROOT_DIR/circuits/build/deposit_final.zkey" ]; then
+    if command -v shasum >/dev/null 2>&1; then
+      zk_assets_version=$(shasum -a 256 "$ROOT_DIR/circuits/build/deposit_final.zkey" | awk '{print substr($1,1,12)}')
+    elif command -v sha256sum >/dev/null 2>&1; then
+      zk_assets_version=$(sha256sum "$ROOT_DIR/circuits/build/deposit_final.zkey" | awk '{print substr($1,1,12)}')
+    fi
+  fi
   cat > "$target_dir/.env.local" << EOF
 NEXT_PUBLIC_RPC_URL=$RPC_URL
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=$RELAYER_REGISTRY
@@ -758,6 +772,7 @@ NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 NEXT_PUBLIC_ZK_X509_URL=${ZK_X509_URL:-http://localhost:3000}
+NEXT_PUBLIC_ZK_ASSETS_VERSION=$zk_assets_version
 EOF
   case "$target_dir" in
     */apps/pay)
