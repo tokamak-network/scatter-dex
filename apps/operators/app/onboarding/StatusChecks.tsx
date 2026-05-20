@@ -5,8 +5,13 @@ import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { loadRegistrationStatus, NATIVE_BOND_TOKEN } from "@zkscatter/sdk/relayer";
 import { useOperator } from "../lib/useOperator";
 import { DEMO_NETWORK } from "../lib/network";
-
-type Status = "ok" | "warn" | "fail" | "pending" | "skip";
+import { formatEth } from "../lib/adminUi";
+import {
+  healthCheckStatus,
+  summarizeFailedChecks,
+  type CheckStatus,
+  type HealthCheckState,
+} from "../lib/healthCheck";
 
 export function StatusChecks() {
   return (
@@ -242,8 +247,8 @@ function BondCheck() {
   const { nativeBalance, minBond, isErc20, allowance } = state;
   const nativeUnit = "native token";
   const minLabel = isErc20
-    ? `${formatUnits18(minBond)} (bond token)`
-    : `${formatUnits18(minBond)} ${nativeUnit}`;
+    ? `${formatEth(minBond)} (bond token)`
+    : `${formatEth(minBond)} ${nativeUnit}`;
 
   if (isErc20) {
     const allowanceOk = allowance >= minBond;
@@ -266,28 +271,16 @@ function BondCheck() {
       title="Bond balance"
       detail={
         enough
-          ? `${formatUnits18(nativeBalance)} ${nativeUnit} available, registry requires ≥ ${minLabel}.`
-          : `Have ${formatUnits18(nativeBalance)} ${nativeUnit}, registry requires ≥ ${minLabel}. Top up before Step 4.`
+          ? `${formatEth(nativeBalance)} ${nativeUnit} available, registry requires ≥ ${minLabel}.`
+          : `Have ${formatEth(nativeBalance)} ${nativeUnit}, registry requires ≥ ${minLabel}. Top up before Step 4.`
       }
     />
   );
 }
 
-function formatUnits18(wei: bigint): string {
-  const whole = wei / 10n ** 18n;
-  const frac = (wei % 10n ** 18n) / 10n ** 14n;
-  return `${whole}.${frac.toString().padStart(4, "0")}`;
-}
-
 function HealthCheck() {
   const [url, setUrl] = useState("");
-  const [state, setState] = useState<
-    | { kind: "idle" }
-    | { kind: "loading" }
-    | { kind: "ok"; uptime: number; checks: Record<string, string> }
-    | { kind: "degraded"; checks: Record<string, string> }
-    | { kind: "fail"; reason: string }
-  >({ kind: "idle" });
+  const [state, setState] = useState<HealthCheckState>({ kind: "idle" });
 
   const onPing = async () => {
     const trimmed = url.trim();
@@ -318,16 +311,7 @@ function HealthCheck() {
     }
   };
 
-  const status: Status =
-    state.kind === "ok"
-      ? "ok"
-      : state.kind === "degraded"
-      ? "warn"
-      : state.kind === "fail"
-      ? "fail"
-      : state.kind === "loading"
-      ? "pending"
-      : "skip";
+  const status: CheckStatus = healthCheckStatus(state.kind);
 
   let detail: ReactNode;
   if (state.kind === "ok") {
@@ -340,11 +324,7 @@ function HealthCheck() {
       </span>
     );
   } else if (state.kind === "degraded") {
-    const failed = Object.entries(state.checks)
-      .filter(([, v]) => v !== "ok")
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ") || "no detail";
-    detail = <span>Degraded — {failed}.</span>;
+    detail = <span>Degraded — {summarizeFailedChecks(state.checks)}.</span>;
   } else if (state.kind === "fail") {
     detail = <span>Could not reach the URL: {state.reason}</span>;
   } else if (state.kind === "loading") {
@@ -388,7 +368,7 @@ function StatusRow({
   title,
   detail,
 }: {
-  status: Status;
+  status: CheckStatus;
   title: string;
   detail: ReactNode;
 }) {
@@ -403,7 +383,7 @@ function StatusRow({
   );
 }
 
-const BADGE: Record<Status, { label: string; cls: string }> = {
+const BADGE: Record<CheckStatus, { label: string; cls: string }> = {
   ok: {
     label: "OK",
     cls: "bg-[var(--color-success-soft)] text-[var(--color-success)] border-[var(--color-success)]",
@@ -426,7 +406,7 @@ const BADGE: Record<Status, { label: string; cls: string }> = {
   },
 };
 
-function StatusBadge({ status }: { status: Status }) {
+function StatusBadge({ status }: { status: CheckStatus }) {
   const { label, cls } = BADGE[status];
   return (
     <span

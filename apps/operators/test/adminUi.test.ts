@@ -29,6 +29,18 @@ describe("formatEth", () => {
   it("formats large negative balances", () => {
     expect(formatEth("-1000000000000000000")).toBe("-1.0000");
   });
+
+  it("accepts a bigint directly (SDK on-chain read path)", () => {
+    expect(formatEth(10n ** 18n)).toBe("1.0000");
+  });
+
+  it("formats a fractional bigint", () => {
+    expect(formatEth(5n * 10n ** 17n)).toBe("0.5000");
+  });
+
+  it("formats negative bigint with leading sign", () => {
+    expect(formatEth(-(5n * 10n ** 17n))).toBe("-0.5000");
+  });
 });
 
 describe("shortHex", () => {

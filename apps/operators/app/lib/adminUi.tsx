@@ -90,23 +90,29 @@ export function useAdmin<T>(
 const WEI_PER_ETH = 10n ** 18n;
 const WEI_PER_TICK = 10n ** 14n; // 1 ETH / 10_000 — the 4-digit precision step.
 
-/** Truncate a wei-string to four fractional ether digits.
- *  `"1000000000000000000" → "1.0000"`. Negative balances are
- *  formatted with the sign moved to the front (`"-0.5000"`); this
- *  shouldn't happen for FeeVault balances but a shared util shouldn't
- *  silently emit `0.-5000` for a future caller. Falls back to the
- *  raw input on parse failure so an unexpected payload doesn't
- *  blank the cell. */
-export function formatEth(weiStr: string): string {
+/** Truncate a wei amount to four fractional ether digits.
+ *  `"1000000000000000000" → "1.0000"`, `10n ** 18n → "1.0000"`.
+ *  Accepts both wire-format strings (admin-API responses) and
+ *  on-chain `bigint` reads (SDK helpers) so every caller can format
+ *  through the same path. Negative balances are formatted with the
+ *  sign moved to the front (`"-0.5000"`); this shouldn't happen for
+ *  FeeVault balances but a shared util shouldn't silently emit
+ *  `0.-5000` for a future caller. Falls back to the raw string on
+ *  parse failure so an unexpected payload doesn't blank the cell. */
+export function formatEth(wei: bigint | string): string {
   try {
-    const wei = BigInt(weiStr);
-    const negative = wei < 0n;
-    const abs = negative ? -wei : wei;
+    // `BigInt` accepts bigint and string; we don't have to branch
+    // on the input type. The catch below recovers the raw form via
+    // `String(wei)` for the unparseable-string path (e.g. an
+    // admin-API payload of "0xnope").
+    const parsed = BigInt(wei);
+    const negative = parsed < 0n;
+    const abs = negative ? -parsed : parsed;
     const whole = abs / WEI_PER_ETH;
     const frac = (abs % WEI_PER_ETH) / WEI_PER_TICK;
     return `${negative ? "-" : ""}${whole}.${frac.toString().padStart(4, "0")}`;
   } catch {
-    return weiStr;
+    return String(wei);
   }
 }
 
