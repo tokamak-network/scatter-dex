@@ -1,13 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
-import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { WrongChainBanner } from "./components/WrongChainBanner";
 import { Brand } from "./components/Brand";
+import { OperatorWalletDropdown } from "./components/OperatorWalletDropdown";
+import { OperatorIdentityPill } from "./components/OperatorIdentityPill";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
 import { DEMO_NETWORK } from "./lib/network";
 import { OperatorProvider } from "./lib/useOperator";
 import { FeeVaultProvider } from "./lib/useFeeVault";
+import { OperatorIdentityProvider } from "./lib/identity";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -22,6 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <WalletProvider network={DEMO_NETWORK}>
           <OperatorProvider>
+            <OperatorIdentityProvider>
             <FeeVaultProvider>
             <AppShellHeader
               brand={<Brand />}
@@ -31,7 +34,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <span>{DEMO_NETWORK.name ?? "Network"}</span>
                 </Pill>
               }
-              walletSlot={<ConnectWalletPill />}
+              walletSlot={
+                <div className="flex items-center gap-2">
+                  <OperatorIdentityPill />
+                  <OperatorWalletDropdown />
+                </div>
+              }
               topRibbon={
                 <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
                   Relayer preview — Sepolia testnet. Pages with mock data are tagged inline.
@@ -59,6 +67,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Scatter Relayer · Powered by zkScatter · Tokamak Network
             </footer>
             </FeeVaultProvider>
+            </OperatorIdentityProvider>
           </OperatorProvider>
         </WalletProvider>
       </body>

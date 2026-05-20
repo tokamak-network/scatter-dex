@@ -9,11 +9,14 @@
     "dev": "next dev -p 4004",
     "build": "next build",
     "start": "next start -p 4004",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@zkscatter/sdk": "file:../../packages/sdk",
     "@zkscatter/ui": "file:../../packages/ui",
+    "ethers": "^6.16.0",
     "lucide-react": "^1.7.0",
     "marked": "^18.0.2",
     "next": "16.2.1",
@@ -28,6 +31,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

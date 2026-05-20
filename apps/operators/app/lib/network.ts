@@ -1,22 +1,40 @@
-import { ZERO_ADDRESS, type NetworkConfig } from "@zkscatter/sdk";
+import { parseTokenList, ZERO_ADDRESS, type NetworkConfig } from "@zkscatter/sdk";
 
-/** Sepolia stand-in for the operators console. Contract addresses
- *  are zero until deployment lands — pages must render a graceful
- *  "not deployed yet" state when the registry address is the zero
- *  sentinel rather than attempting RPC reads against it. Replace
- *  these addresses when contracts ship. */
-export const DEMO_NETWORK: NetworkConfig = {
-  chainId: 11155111,
-  name: "Sepolia",
-  rpcUrl: "https://rpc.sepolia.org",
-  explorerBase: "https://sepolia.etherscan.io",
-  contracts: {
-    privateSettlement: ZERO_ADDRESS,
-    commitmentPool: ZERO_ADDRESS,
-    identityGate: ZERO_ADDRESS,
-    relayerRegistry: ZERO_ADDRESS,
-    feeVault: ZERO_ADDRESS,
-    weth: ZERO_ADDRESS,
-  },
-  tokens: [],
-};
+const ZERO = ZERO_ADDRESS;
+
+function pick(value: string | undefined, fallback = ""): string {
+  return value && value.length > 0 ? value : fallback;
+}
+
+/** Operators-app network config — env-driven so a single build can
+ *  target any chain (anvil localhost during dev, Sepolia/mainnet in
+ *  deploy environments). Each `process.env.NEXT_PUBLIC_*` access is
+ *  a literal key so Next inlines the value into the client bundle
+ *  at build time. The Sepolia placeholders below are the dev
+ *  fallbacks for missing env — they keep every existing page that
+ *  imports `DEMO_NETWORK.name` rendering coherent strings even when
+ *  no `.env.local` is present.
+ *
+ *  Resolved at module load and exported as a const so existing
+ *  imports (`DEMO_NETWORK.contracts.relayerRegistry`,
+ *  `DEMO_NETWORK.chainId`, …) keep working unchanged.
+ */
+function resolveNetwork(): NetworkConfig {
+  return {
+    chainId: Number(pick(process.env.NEXT_PUBLIC_CHAIN_ID, "11155111")),
+    name: pick(process.env.NEXT_PUBLIC_CHAIN_NAME, "Sepolia"),
+    rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, "https://rpc.sepolia.org"),
+    explorerBase: pick(process.env.NEXT_PUBLIC_EXPLORER_BASE) || undefined,
+    contracts: {
+      privateSettlement: pick(process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS, ZERO),
+      commitmentPool: pick(process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS, ZERO),
+      identityGate: pick(process.env.NEXT_PUBLIC_IDENTITY_GATE_ADDRESS, ZERO),
+      relayerRegistry: pick(process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS, ZERO),
+      feeVault: pick(process.env.NEXT_PUBLIC_FEE_VAULT_ADDRESS, ZERO),
+      weth: pick(process.env.NEXT_PUBLIC_WETH_ADDRESS, ZERO),
+    },
+    tokens: parseTokenList(process.env.NEXT_PUBLIC_TOKENS),
+  };
+}
+
+export const DEMO_NETWORK: NetworkConfig = resolveNetwork();
