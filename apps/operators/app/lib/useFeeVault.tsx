@@ -25,6 +25,12 @@ export interface FeeVaultState {
    *  unconfigured. Doesn't change with the connected account, so it
    *  lives on the provider rather than being re-fetched per page. */
   platformFeeBps: number | null;
+  /** Error from the platform-fee read, distinct from the balances
+   *  read because the two reads have different shapes and surface
+   *  different UX (the fee is a single value rendered in one stat;
+   *  balances are a list with per-row claim buttons). `null` while
+   *  the read is in flight or has succeeded. */
+  platformFeeError: string | null;
   /** Re-fetch every token balance. Call after a successful claim
    *  so the row drops back to zero without a page reload. */
   refresh: () => void;
@@ -38,6 +44,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [platformFeeBps, setPlatformFeeBps] = useState<number | null>(null);
+  const [platformFeeError, setPlatformFeeError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
   const vaultAddress = DEMO_NETWORK.contracts.feeVault;
   const vaultDeployed = isConfiguredAddress(vaultAddress);
@@ -81,22 +88,31 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!vaultDeployed || !vaultAddress || !readProvider) {
       setPlatformFeeBps(null);
+      setPlatformFeeError(null);
       return;
     }
     let cancelled = false;
+    setPlatformFeeError(null);
     loadPlatformFeeBps(vaultAddress, readProvider)
       .then((bps) => { if (!cancelled) setPlatformFeeBps(bps); })
       .catch((e) => {
         if (cancelled) return;
         console.warn("Failed to load platformFeeBps", e);
         setPlatformFeeBps(null);
+        setPlatformFeeError(unwrapEthersError(e));
       });
     return () => { cancelled = true; };
   }, [vaultDeployed, vaultAddress, readProvider]);
 
   const value = useMemo<FeeVaultState>(
-    () => ({ account, loading, balances, error, vaultDeployed, platformFeeBps, refresh }),
-    [account, loading, balances, error, vaultDeployed, platformFeeBps, refresh],
+    () => ({
+      account, loading, balances, error, vaultDeployed,
+      platformFeeBps, platformFeeError, refresh,
+    }),
+    [
+      account, loading, balances, error, vaultDeployed,
+      platformFeeBps, platformFeeError, refresh,
+    ],
   );
   return <FeeVaultCtx.Provider value={value}>{children}</FeeVaultCtx.Provider>;
 }
