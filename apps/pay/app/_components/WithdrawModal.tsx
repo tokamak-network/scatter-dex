@@ -10,6 +10,7 @@ import { useVault } from "../_lib/vault";
 import { useCommitmentTree } from "../_lib/commitmentTree";
 import { getNetworkConfig } from "../_lib/network";
 import { submitWithdraw, type WithdrawPhase } from "../_lib/realWithdraw";
+import { TxLink } from "./TxLink";
 
 const PHASE_ORDER: WithdrawPhase[] = ["preparing", "proving", "submitting", "confirming"];
 const PHASE_COPY: Record<WithdrawPhase, { label: string; detail: string }> = {
@@ -235,22 +236,7 @@ export function WithdrawModal({
 
         {done && (
           <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-xs text-[var(--color-success)]">
-            ✓ Withdraw landed. Tx{" "}
-            {explorerBase ? (
-              <a
-                href={`${explorerBase.replace(/\/$/, "")}/tx/${done.txHash}`}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="font-mono underline decoration-dotted"
-              >
-                {done.txHash.slice(0, 10)}…{done.txHash.slice(-6)}
-              </a>
-            ) : (
-              <span className="font-mono">
-                {done.txHash.slice(0, 10)}…{done.txHash.slice(-6)}
-              </span>
-            )}
-            .
+            ✓ Withdraw landed. Tx <TxLink txHash={done.txHash} explorerBase={explorerBase} />.
           </div>
         )}
 
