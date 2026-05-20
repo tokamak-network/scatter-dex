@@ -9,6 +9,7 @@ import { AdminConnectBar } from "../components/AdminConnectBar";
 import { formatIsoDate, formatRelative } from "../lib/format";
 import { useOperator, type OperatorState } from "../lib/useOperator";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
+import { formatEth } from "../lib/adminUi";
 
 type Auth = AdminAuth | null;
 
@@ -658,17 +659,6 @@ function HealthCard({
   );
 }
 
-
-function formatEth(weiStr: string): string {
-  try {
-    const wei = BigInt(weiStr);
-    const whole = wei / 10n ** 18n;
-    const frac = (wei % 10n ** 18n) / 10n ** 14n;
-    return `${whole}.${frac.toString().padStart(4, "0")}`;
-  } catch {
-    return weiStr;
-  }
-}
 
 function formatUptime(uptimeSince: string | number): string {
   const ts = typeof uptimeSince === "number" ? uptimeSince : Date.parse(uptimeSince);
