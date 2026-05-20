@@ -72,13 +72,7 @@ export function extractEthersErrorMessage(e: unknown, fallback = "Request failed
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-/** Human time-until for an expiry unix-seconds timestamp. */
-export function formatExpiry(ts: number): string {
-  const delta = ts - Math.floor(Date.now() / 1000);
-  if (delta <= 0) return "expired";
-  const h = Math.floor(delta / 3600);
-  const m = Math.floor((delta % 3600) / 60);
-  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
+/** Human time-until for an expiry unix-seconds timestamp.
+ *  Re-export of the SDK helper. Canonical implementation now lives
+ *  in `@zkscatter/sdk/util` and is shared with apps/pro. */
+export { formatExpiry } from "@zkscatter/sdk/util";

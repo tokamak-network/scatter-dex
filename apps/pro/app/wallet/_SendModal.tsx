@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { ERC20_ABI, formatTokenLabel } from "@zkscatter/sdk";
+import { shortTxHash } from "@zkscatter/sdk/util";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import type { BalanceRow } from "./_types";
@@ -233,12 +234,10 @@ export function SendModal({
                 rel="noreferrer noopener"
                 className="font-mono underline decoration-dotted"
               >
-                {txHash.slice(0, 10)}…{txHash.slice(-6)}
+                {shortTxHash(txHash)}
               </a>
             ) : (
-              <span className="font-mono">
-                {txHash.slice(0, 10)}…{txHash.slice(-6)}
-              </span>
+              <span className="font-mono">{shortTxHash(txHash)}</span>
             )}
             .
           </div>

@@ -18,6 +18,7 @@ import { useOutsideClick } from "@zkscatter/ui";
 import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import { decodeClaimPackage } from "@zkscatter/sdk/notes";
 import { formatTokenLabel } from "@zkscatter/sdk";
+import { shortTxHash } from "@zkscatter/sdk/util";
 import { submitClaim } from "../../_lib/claimSubmit";
 import {
   indexLatestNotifications,
@@ -1035,7 +1036,7 @@ function TxHashChip({
   explorerBase?: string;
 }) {
   const [copied, setCopied] = useState(false);
-  const short = `${txHash.slice(0, 10)}…${txHash.slice(-6)}`;
+  const short = shortTxHash(txHash);
   return (
     <span className="inline-flex items-center gap-1">
       <span title={txHash} className="font-mono">

@@ -3,6 +3,35 @@
 // lockstep with `CommitmentNote` if its fields ever change.
 import type { CommitmentNote } from "../zk/commitment";
 
+/** Truncate a transaction hash (or any long hex string) to the
+ *  canonical `0xabcd1234…01234` form used across status banners,
+ *  modal confirmations, and inline notes. Defaults match the
+ *  10/6 split Pay/Pro converged on; pass `prefixLen` / `suffixLen`
+ *  for surfaces that want a tighter or looser truncation. */
+export function shortTxHash(
+  hash: string,
+  opts: { prefixLen?: number; suffixLen?: number } = {},
+): string {
+  const prefixLen = opts.prefixLen ?? 10;
+  const suffixLen = opts.suffixLen ?? 6;
+  if (!hash) return "";
+  if (hash.length <= prefixLen + suffixLen) return hash;
+  return `${hash.slice(0, prefixLen)}…${hash.slice(-suffixLen)}`;
+}
+
+/** Human time-until for an expiry unix-seconds timestamp. Returns
+ *  `"expired"` once the moment passes; otherwise the largest
+ *  meaningful unit pair (`Nd Nh`, `Nh Nm`, or `Nm`). */
+export function formatExpiry(unixSec: number): string {
+  const delta = unixSec - Math.floor(Date.now() / 1000);
+  if (delta <= 0) return "expired";
+  const h = Math.floor(delta / 3600);
+  const m = Math.floor((delta % 3600) / 60);
+  if (h >= 24) return `${Math.floor(h / 24)}d ${h % 24}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 /** Render a fixed-point token amount as a decimal string without
  *  pulling `ethers` into the consumer (the SDK already lists it,
  *  apps don't have to). Trims trailing zeros from the fractional

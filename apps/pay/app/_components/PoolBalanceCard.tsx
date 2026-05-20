@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { LAUNCH_TOKENS, formatTokenLabel } from "@zkscatter/sdk";
+import { shortTxHash } from "@zkscatter/sdk/util";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
 import { useCommitmentTree } from "../_lib/commitmentTree";
@@ -399,8 +400,7 @@ function NotesDrawer({
 }
 
 function shortHex(value: bigint): string {
-  const hex = "0x" + value.toString(16).padStart(64, "0");
-  return `${hex.slice(0, 10)}…${hex.slice(-6)}`;
+  return shortTxHash("0x" + value.toString(16).padStart(64, "0"));
 }
 
 function formatBalance(raw: bigint, decimals: number): string {
