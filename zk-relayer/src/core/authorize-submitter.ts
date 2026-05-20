@@ -166,6 +166,42 @@ export class AuthorizeSubmitter {
   }
 
   /**
+   * Backfill PrivateCancel events from a starting block up to head and
+   * fire every registered callback for each. Use this at startup so a
+   * relayer that was down (or recently restarted with a fresh
+   * `contract.on`) catches the cancels that happened while it wasn't
+   * listening — otherwise the shared orderbook keeps the listings as
+   * orphans forever. The live listener (`startCancelEventListener`)
+   * only fires for events going forward.
+   */
+  async indexCancels(fromBlock: number): Promise<void> {
+    const filter = this.settlement.filters.PrivateCancel();
+    const logs = await this.settlement.queryFilter(filter, fromBlock, "latest");
+    log.info("PrivateCancel backfill", { fromBlock, count: logs.length });
+    for (const ev of logs) {
+      // queryFilter on a named-event filter returns EventLog, so
+      // `args` is populated. Defensive narrow keeps the cast scoped.
+      const args = (ev as { args?: unknown[] }).args;
+      if (!args || args.length < 4) continue;
+      const [escrowNullifier, nonceNullifier, newCommitment, relayer] = args as [
+        string,
+        string,
+        string,
+        string,
+      ];
+      for (const listener of this.cancelListeners) {
+        try {
+          listener(escrowNullifier, nonceNullifier, newCommitment, relayer);
+        } catch (err) {
+          log.error("Cancel listener error (backfill)", {
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+  }
+
+  /**
    * Start listening for PrivateCancel events on-chain.
    * Call this once at startup from index.ts.
    */

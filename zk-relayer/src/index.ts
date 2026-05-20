@@ -15,7 +15,7 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeCrossRelayerMatchService } from "./core/authorize-cross-relayer-matcher.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle, applyOnChainAuthorizeCancel } from "./routes/authorize-orders.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createMetricsRoutes } from "./routes/metrics.js";
@@ -103,6 +103,19 @@ async function main() {
   log.info("Indexing on-chain commitments...");
   await submitter.indexCommitments();
 
+  // ─── On-chain PrivateCancel: local cleanup (always-on) ───
+  // Solo relayers (no shared orderbook configured) still need to
+  // reconcile their in-memory `authorizeOrders` map and the SQLite
+  // row when a user submits cancelPrivate() directly on-chain.
+  // Without this callback the local row stays in "pending" state
+  // indefinitely and shows up as a zombie in `getAuthorizeOrderStats`
+  // / `loadPendingAuthorizeOrders` until the next restart purge.
+  // Registered BEFORE the listener attaches so we don't miss the
+  // first event after `startCancelEventListener` below.
+  authSubmitter.onCancel((escrowNullifier) => {
+    applyOnChainAuthorizeCancel(BigInt(escrowNullifier).toString());
+  });
+
   // ─── Shared orderbook integration (optional) ───
   let sharedClient: SharedOrderbookClient | null = null;
   let remoteOrderbook: RemoteOrderStore | null = null;
@@ -133,6 +146,31 @@ async function main() {
       remoteOrderbook!.remove(orderId);
     });
 
+    // Bridge on-chain `PrivateCancel` events into the shared orderbook.
+    // The user submits cancelPrivate() directly on-chain (the relayer
+    // does NOT submit cancel because there's no fee incentive), so
+    // without this bridge a self-cancelled listing stays visible in
+    // the shared OB on every OTHER relayer indefinitely — only the
+    // origin relayer's local cleanup callback above wipes its own
+    // map / DB. We pick `escrowNullifier` because that's exactly the
+    // value `nullifierToOfferHandle` consumed at publish time, so the
+    // canonical `offerHandle` round-trips and the shared-OB DELETE
+    // matches the published row.
+    //
+    // `cancelOrder` resolves to `boolean` (true = HTTP ok or P2P
+    // broadcast queued) and swallows network errors internally, so
+    // `.catch` would never fire — surface the `ok=false` case via a
+    // warning instead so a silently-failed propagation is visible
+    // in the relayer log without taking down the listener queue.
+    authSubmitter.onCancel((escrowNullifier) => {
+      const offerHandle = nullifierToOfferHandle(BigInt(escrowNullifier).toString());
+      sharedClient!.cancelOrder(offerHandle).then((ok) => {
+        if (!ok) {
+          sharedOBLog.warn("Shared OB rejected propagated cancel", { offerHandle });
+        }
+      });
+    });
+
     // Phase 2.5a: wire the settlement push hook. Both the cross-relayer
     // matcher and the same-relayer settle path go through
     // `authSubmitter.submitAuthSettle`, so a single hook here covers both.
@@ -157,6 +195,28 @@ async function main() {
       sharedOBLog.warn("Failed to connect", { err: err instanceof Error ? err.message : "unknown" });
     }
   }
+
+  // ─── On-chain PrivateCancel: backfill + live listener (always-on) ───
+  // Runs AFTER the shared-OB handshake completes (when one exists) so
+  // the propagation callback registered inside the `if` block above
+  // can write through immediately. Solo relayers still need this for
+  // the local-cleanup callback registered above — without it a cancel
+  // that landed while the relayer was down leaves a zombie row in
+  // `authorizeOrders` / SQLite. Match the same `INDEX_FROM_BLOCK` env
+  // the commitments indexer consumes (private-submitter.ts) so we
+  // don't re-process the entire chain on every boot.
+  const indexFromBlockRaw = process.env.INDEX_FROM_BLOCK;
+  const indexFromBlock = Number.isFinite(Number(indexFromBlockRaw))
+    ? Math.max(0, Math.floor(Number(indexFromBlockRaw)))
+    : 0;
+  try {
+    await authSubmitter.indexCancels(indexFromBlock);
+  } catch (err) {
+    log.warn("PrivateCancel backfill failed", {
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  authSubmitter.startCancelEventListener();
 
   const app = express();
 
