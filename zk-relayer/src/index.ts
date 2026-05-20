@@ -509,6 +509,7 @@ async function main() {
     stopHealthMonitor();
     stopBalanceMonitor();
     stopClaimMonitor();
+    authSubmitter.stopCancelEventListener();
     sharedClient?.stop();
     // `settlementWorker.stop()` awaits any in-flight tick, which itself
     // runs SQLite statements through `db`. If we closed `db` before the
