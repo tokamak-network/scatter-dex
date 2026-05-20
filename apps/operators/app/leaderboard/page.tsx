@@ -347,9 +347,10 @@ function StatCell({
   if (status === "live") {
     return <td className="px-5 py-3 text-right font-mono">{render(value as number)}</td>;
   }
-  const tone = status === "offline"
-    ? "text-[var(--color-text-subtle)]"
-    : "text-[var(--color-text-muted)]";
+  // "unavailable" reads as a plain `—` matching the surrounding
+  // table copy; "offline" gets the subtle tone so a dead relayer
+  // visibly stands out from peers that just don't report stats.
+  const tone = status === "offline" ? "text-[var(--color-text-subtle)]" : "";
   const title = statsCellTitle(status);
   return (
     <td className={`px-5 py-3 text-right font-mono ${tone}`} title={title}>

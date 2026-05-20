@@ -14,15 +14,16 @@ import type { RelayerInfo } from "@zkscatter/sdk/relayer";
  *                    not exposing stats. */
 export type StatsCellStatus = "live" | "unavailable" | "offline";
 
-/** Resolve the stats-cell status for a single field. Pass the row
- *  and the optional numeric field — if the field is `number` the
- *  cell is live; if the relayer is online but the field is missing
- *  the cell is unavailable; otherwise offline. Pure / testable. */
+/** Resolve the stats-cell status for a single field. `online` is
+ *  checked before `fieldValue` so a stale stat left over from a
+ *  previous probe doesn't render as "live" once the relayer goes
+ *  down — matches the docstring above (offline = `/api/info`
+ *  didn't respond). Pure / testable. */
 export function relayerStatsCellStatus(
-  row: Pick<RelayerInfo, "online" | "stats">,
+  row: Pick<RelayerInfo, "online">,
   fieldValue: number | null | undefined,
 ): StatsCellStatus {
+  if (!row.online) return "offline";
   if (typeof fieldValue === "number") return "live";
-  if (row.online) return "unavailable";
-  return "offline";
+  return "unavailable";
 }

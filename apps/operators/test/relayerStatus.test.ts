@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { relayerStatsCellStatus } from "../app/lib/relayerStatus";
 
-const online = { online: true, stats: { settledOrders: 42 } };
-const onlineNoStats = { online: true, stats: undefined };
-const offline = { online: false, stats: undefined };
+// Fixtures only carry `online` because that's the single field
+// `relayerStatsCellStatus` reads — keeping them minimal also avoids
+// having to construct a full `RelayerStatsResponse` we never use.
+const online = { online: true };
+const offline = { online: false };
 
 describe("relayerStatsCellStatus", () => {
   it("returns live when the field is a number", () => {
@@ -15,7 +17,7 @@ describe("relayerStatsCellStatus", () => {
   });
 
   it("returns unavailable when the relayer is online but the field is missing", () => {
-    expect(relayerStatsCellStatus(onlineNoStats, undefined)).toBe("unavailable");
+    expect(relayerStatsCellStatus(online, undefined)).toBe("unavailable");
   });
 
   it("returns unavailable when the field is null on an online relayer", () => {
@@ -26,9 +28,9 @@ describe("relayerStatsCellStatus", () => {
     expect(relayerStatsCellStatus(offline, undefined)).toBe("offline");
   });
 
-  it("returns offline even if a stale stats blob is present (online flag wins)", () => {
-    // Hypothetical: stats from a previous probe but the relayer is now down.
-    expect(relayerStatsCellStatus({ online: false, stats: { settledOrders: 5 } }, undefined))
-      .toBe("offline");
+  it("returns offline even when a stale numeric stat is passed (online flag wins)", () => {
+    // Regression guard for the original implementation, which would
+    // return "live" here because it checked the field before `online`.
+    expect(relayerStatsCellStatus(offline, 5)).toBe("offline");
   });
 });
