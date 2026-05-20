@@ -165,19 +165,49 @@ export class AuthorizeSubmitter {
     this.cancelListeners.push(callback);
   }
 
+  // Highest block whose PrivateCancel events we've already fired.
+  // Tracked across backfill + live polling so a poll-tick after a
+  // backfill doesn't re-fire the same events. -1 means "not yet
+  // scanned" (the next call will treat `fromBlock` as authoritative).
+  private lastCancelBlock = -1;
+
+  // setInterval handle for the live cancel poller — kept so callers
+  // (shutdown path in index.ts) can clear it cleanly.
+  private cancelPollHandle: ReturnType<typeof setInterval> | null = null;
+
   /**
-   * Backfill PrivateCancel events from a starting block up to head and
-   * fire every registered callback for each. Use this at startup so a
-   * relayer that was down (or recently restarted with a fresh
-   * `contract.on`) catches the cancels that happened while it wasn't
-   * listening — otherwise the shared orderbook keeps the listings as
-   * orphans forever. The live listener (`startCancelEventListener`)
-   * only fires for events going forward.
+   * Scan PrivateCancel events from `fromBlock` (or the last seen
+   * block + 1 on subsequent calls) up to latest, fire every
+   * registered callback for each, and advance `lastCancelBlock`.
+   *
+   * Two call sites:
+   *   1. Startup backfill — `indexCancels(INDEX_FROM_BLOCK)` catches
+   *      every cancel that landed while the relayer was down.
+   *   2. Live poller — `startCancelEventListener()` calls this on a
+   *      timer; each tick only queries blocks past the last seen one
+   *      so we don't redo work.
+   *
+   * Replaces an earlier `contract.on("PrivateCancel", …)` subscription
+   * that was unreliable on anvil — ethers v6's JsonRpcProvider event
+   * polling occasionally stalled and silently dropped every cancel
+   * after the first tick, leaving the shared orderbook with zombie
+   * listings until the next restart. Explicit `queryFilter` polling
+   * eliminates that whole class of failure: we always read from
+   * `lastCancelBlock + 1` to the current head, so a missed tick just
+   * means the next tick has a slightly larger window.
    */
   async indexCancels(fromBlock: number): Promise<void> {
+    const startBlock = this.lastCancelBlock >= 0 ? this.lastCancelBlock + 1 : fromBlock;
+    const tip = await this.settlement.runner!.provider!.getBlockNumber();
+    if (startBlock > tip) {
+      // Nothing new to scan; keep `lastCancelBlock` where it was.
+      return;
+    }
     const filter = this.settlement.filters.PrivateCancel();
-    const logs = await this.settlement.queryFilter(filter, fromBlock, "latest");
-    log.info("PrivateCancel backfill", { fromBlock, count: logs.length });
+    const logs = await this.settlement.queryFilter(filter, startBlock, tip);
+    if (this.lastCancelBlock < 0 || logs.length > 0) {
+      log.info("PrivateCancel scan", { fromBlock: startBlock, toBlock: tip, count: logs.length });
+    }
     for (const ev of logs) {
       // queryFilter on a named-event filter returns EventLog, so
       // `args` is populated. Defensive narrow keeps the cast scoped.
@@ -193,38 +223,40 @@ export class AuthorizeSubmitter {
         try {
           listener(escrowNullifier, nonceNullifier, newCommitment, relayer);
         } catch (err) {
-          log.error("Cancel listener error (backfill)", {
+          log.error("Cancel listener error", {
             err: err instanceof Error ? err.message : String(err),
           });
         }
       }
     }
+    this.lastCancelBlock = tip;
   }
 
   /**
-   * Start listening for PrivateCancel events on-chain.
-   * Call this once at startup from index.ts.
+   * Start the live PrivateCancel poller. Re-runs `indexCancels` every
+   * `intervalMs` (default 3 s — fast enough that operators see cancels
+   * propagate within one block on anvil, cheap enough on a real chain
+   * where eth_getLogs over a tiny block range is essentially free).
+   * Call this once at startup from index.ts after the initial backfill.
    */
-  startCancelEventListener(): void {
-    this.settlement.on(
-      "PrivateCancel",
-      (escrowNullifier: string, nonceNullifier: string, newCommitment: string, relayer: string) => {
-        log.info("PrivateCancel detected", {
-          escrow: escrowNullifier.slice(0, 18) + "...",
-          nonce: nonceNullifier.slice(0, 18) + "...",
+  startCancelEventListener(intervalMs = 3_000): void {
+    if (this.cancelPollHandle) return;
+    this.cancelPollHandle = setInterval(() => {
+      this.indexCancels(this.lastCancelBlock + 1).catch((err) => {
+        log.warn("PrivateCancel poll tick failed", {
+          err: err instanceof Error ? err.message : String(err),
         });
-        for (const listener of this.cancelListeners) {
-          try {
-            listener(escrowNullifier, nonceNullifier, newCommitment, relayer);
-          } catch (err) {
-            log.error("Cancel listener error", {
-              err: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-      },
-    );
-    log.info("Listening for PrivateCancel events");
+      });
+    }, intervalMs);
+    log.info("Listening for PrivateCancel events", { intervalMs });
+  }
+
+  /** Stop the live cancel poller. Used by the index.ts shutdown path. */
+  stopCancelEventListener(): void {
+    if (this.cancelPollHandle) {
+      clearInterval(this.cancelPollHandle);
+      this.cancelPollHandle = null;
+    }
   }
 
   /**
