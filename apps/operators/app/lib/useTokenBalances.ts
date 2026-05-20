@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { ERC20_ABI, type TokenInfo } from "@zkscatter/sdk";
 
@@ -56,6 +56,15 @@ export function useTokenBalances(
 
   const [rows, setRows] = useState<TokenBalanceRow[]>(() => buildInitialRows(tokens));
 
+  // Cache ERC-20 contract instances by lowercased address. Without
+  // this every 30s poll tick rebuilds N ethers.Contract objects + ABI
+  // interfaces — minor on the hot path but adds GC pressure for no
+  // benefit. Cleared when `tokens` or `provider` swap (chain change).
+  const contractCacheRef = useRef<Map<string, ethers.Contract>>(new Map());
+  useEffect(() => {
+    contractCacheRef.current = new Map();
+  }, [tokens, provider]);
+
   // Rebuild placeholders when the token set changes so a chain swap
   // doesn't leave the old token list in view during the refetch.
   useEffect(() => {
@@ -64,15 +73,53 @@ export function useTokenBalances(
 
   useEffect(() => {
     if (!enabled) {
-      // Mark all rows as "not loading" so the panel renders empty
-      // values rather than a perpetual skeleton when the dropdown
-      // is closed or the wallet is disconnected.
-      setRows((prev) => prev.map((r) => ({ ...r, loading: false })));
+      // Reset to placeholder rows when disabled (dropdown closed /
+      // wallet disconnected) so the next open shows "loading…"
+      // skeleton instead of stale balances from a previous account.
+      setRows(buildInitialRows(tokens));
       return;
     }
     let cancelled = false;
+    // Guard against poll-tick overlap. If an RPC round takes longer
+    // than `pollIntervalMs` (slow public RPC, network blip), a naive
+    // setInterval fires the next round on top of the in-flight one
+    // and the late result can clobber the newer one. Skip a tick
+    // when one's already in flight; the next interval picks up.
+    let inFlight = false;
+
+    const safeMsg = (fallback: string) => (err: unknown) => {
+      // Don't leak ethers' wrapped error text (often includes RPC
+      // URL, internal codes, etc.) into a UI title attribute —
+      // the operator gets a generic label, the full error stays
+      // in the console for debugging.
+      if (err instanceof Error) {
+        // Console mirrors what UI hides so the operator can still
+        // see the cause when something breaks.
+        console.warn("[useTokenBalances]", fallback, err);
+      }
+      return fallback;
+    };
+
+    const contractFor = (t: TokenInfo): ethers.Contract => {
+      const key = t.address.toLowerCase();
+      const cached = contractCacheRef.current.get(key);
+      if (cached) return cached;
+      const c = new ethers.Contract(t.address, ERC20_ABI, provider!);
+      contractCacheRef.current.set(key, c);
+      return c;
+    };
 
     const runOnce = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        await runOnceInner();
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const runOnceInner = async () => {
       // Native ETH probe — separate from the token loop because the
       // call shape differs.
       const ethPromise: Promise<TokenBalanceRow> = provider!
@@ -92,12 +139,12 @@ export function useTokenBalances(
           decimals: 18,
           raw: null,
           loading: false,
-          error: err instanceof Error ? err.message : "ETH balance read failed",
+          error: safeMsg("ETH balance unavailable")(err),
           isNative: true,
         }));
 
       const tokenPromises: Promise<TokenBalanceRow>[] = tokens.map((t) => {
-        const erc = new ethers.Contract(t.address, ERC20_ABI, provider!);
+        const erc = contractFor(t);
         return (erc.balanceOf(account!) as Promise<bigint>)
           .then((raw) => ({
             symbol: t.symbol,
@@ -114,7 +161,7 @@ export function useTokenBalances(
             decimals: t.decimals,
             raw: null,
             loading: false,
-            error: err instanceof Error ? err.message : "balanceOf failed",
+            error: safeMsg(`${t.symbol} balance unavailable`)(err),
             isNative: false,
           }));
       });

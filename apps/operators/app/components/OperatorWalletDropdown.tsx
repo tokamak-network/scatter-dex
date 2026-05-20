@@ -74,9 +74,24 @@ function ConnectedDropdown() {
     enabled: open,
   });
 
-  const explorer = DEMO_NETWORK.explorerBase
-    ? `${DEMO_NETWORK.explorerBase.replace(/\/$/, "")}/address/${account}`
-    : null;
+  // Build the explorer URL through the URL API so a malformed env
+  // value (missing scheme, embedded `?`/`#`, etc.) can't produce a
+  // confusing string concatenation we then ship to <a href>.
+  // `URL` throws on invalid input — fall back to null so the link
+  // simply doesn't render rather than emitting a broken href.
+  const explorer = (() => {
+    const base = DEMO_NETWORK.explorerBase;
+    if (!base || !account) return null;
+    try {
+      const u = new URL(`/address/${encodeURIComponent(account)}`, base);
+      // Only allow http(s); reject `javascript:` / `data:` even if
+      // operator env somehow injected them.
+      if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+      return u.toString();
+    } catch {
+      return null;
+    }
+  })();
 
   const initials = addressInitials(account ?? "");
   const safeUrl = safeOperatorUrl(operatorRow?.url);
@@ -203,8 +218,14 @@ function IdentityHeaderSection({ account, explorer }: { account: string; explore
   );
 }
 
+// Anvil's default + the mainnet-fork variant scripts/dev-fork.sh
+// ships use. Treat both as "local" so the dev-fork flow renders the
+// same tag instead of mis-classifying as a real network. Keep this
+// in sync with the chain ids `scripts/dev*.sh` actually start.
+const LOCAL_DEV_CHAIN_IDS = new Set<number>([31337, 31338]);
+
 function NetworkSection() {
-  const isLocal = DEMO_NETWORK.chainId === 31337;
+  const isLocal = LOCAL_DEV_CHAIN_IDS.has(DEMO_NETWORK.chainId);
   return (
     <SectionShell title="Network">
       <div className="flex items-center justify-between gap-3 text-xs">
@@ -243,7 +264,15 @@ function BalancesSection({ balances }: { balances: TokenBalanceRow[] }) {
     <SectionShell title="Balances">
       <ul className="space-y-1.5">
         {balances.map((row) => (
-          <li key={row.symbol} className="flex items-center justify-between text-xs">
+          // Symbol can collide (token list could ship two "ETH"-named
+          // entries, or a native row alongside an ERC-20 WETH) — pair
+          // it with the address so React keys stay unique. The native
+          // row uses an empty `address`; the `:native` sentinel keeps
+          // it distinct from a hypothetical zero-address ERC-20.
+          <li
+            key={`${row.symbol}:${row.address || "native"}`}
+            className="flex items-center justify-between text-xs"
+          >
             <span className="font-medium">{row.symbol}</span>
             {row.error ? (
               <span
@@ -368,7 +397,15 @@ function OperatorIdentitySection({
       )}
       {identity.kind === "verified" && identity.verifiedUntil > 0 && (
         <div className="mt-1 text-[10px] text-[var(--color-text-subtle)]">
-          Expires {new Date(identity.verifiedUntil * 1000).toLocaleString()}
+          {/* `toLocaleString` resolves to the runtime's locale/zone,
+              so the SSR pass and the client hydration can disagree
+              by hours. The underlying instant is identical, so
+              suppressHydrationWarning is the right tradeoff vs.
+              the alternatives (UTC-only display / lazy mount). */}
+          Expires{" "}
+          <span suppressHydrationWarning>
+            {new Date(identity.verifiedUntil * 1000).toLocaleString()}
+          </span>
         </div>
       )}
       {identity.kind === "error" && (

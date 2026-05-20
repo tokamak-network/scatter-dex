@@ -71,10 +71,14 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
         setCa({ caAddress: addr, ready: true, error: null });
       } catch (err) {
         if (cancelled) return;
+        // Don't bubble ethers' wrapped error text (often includes the
+        // RPC URL, internal codes) into the UI. Console mirrors it
+        // for debug.
+        console.warn("[OperatorIdentityProvider] identityRegistry() failed", err);
         setCa({
           caAddress: null,
           ready: true,
-          error: err instanceof Error ? err.message : "Failed to read identityRegistry()",
+          error: "Failed to resolve operator identity registry",
         });
       }
     })();
@@ -84,6 +88,13 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
   }, [registry, registryDeployed, readProvider, tick]);
 
   // Stage 2 — probe isVerified + verifiedUntil against the resolved CA.
+  // Depend on the primitive ca fields rather than the snapshot object,
+  // so a no-op stage-1 refetch (same address, same error) doesn't
+  // re-fire the verification RPC. `tick` is consumed transitively via
+  // stage 1, no need to list it again here.
+  const caAddress = ca.caAddress;
+  const caReady = ca.ready;
+  const caError = ca.error;
   useEffect(() => {
     if (!account) {
       setStatus({ kind: "unconnected" });
@@ -93,12 +104,12 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
       setStatus({ kind: "no-registry" });
       return;
     }
-    if (!ca.ready) {
+    if (!caReady) {
       setStatus({ kind: "loading" });
       return;
     }
-    if (ca.error || !ca.caAddress || !isConfiguredAddress(ca.caAddress)) {
-      setStatus({ kind: "error", message: ca.error ?? "Relayer CA not configured" });
+    if (caError || !caAddress || !isConfiguredAddress(caAddress)) {
+      setStatus({ kind: "error", message: caError ?? "Relayer CA not configured" });
       return;
     }
     if (!readProvider) {
@@ -110,7 +121,7 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
     (async () => {
       try {
         const { isVerified, verifiedUntil } = await loadIdentityVerification(
-          ca.caAddress!,
+          caAddress,
           account,
           readProvider,
         );
@@ -127,16 +138,14 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
         setStatus({ kind: "verified", verifiedUntil });
       } catch (err) {
         if (cancelled) return;
-        setStatus({
-          kind: "error",
-          message: err instanceof Error ? err.message : "Identity read failed",
-        });
+        console.warn("[OperatorIdentityProvider] identity probe failed", err);
+        setStatus({ kind: "error", message: "Identity probe failed" });
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [account, registryDeployed, ca, readProvider, tick]);
+  }, [account, registryDeployed, caAddress, caReady, caError, readProvider]);
 
   return <Ctx.Provider value={{ ca, status, refresh }}>{children}</Ctx.Provider>;
 }
