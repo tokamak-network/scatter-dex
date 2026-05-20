@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { EmptyState } from "@zkscatter/ui";
+import { shortAddr } from "@zkscatter/sdk/react";
 import {
   SharedOrderbookClient,
   type SharedOrder,
@@ -209,10 +210,14 @@ export default function SharedOrderbookPage() {
 
       <div className="flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
-          <label className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+          <label
+            htmlFor="orderbook-pair-filter"
+            className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]"
+          >
             Pair
           </label>
           <select
+            id="orderbook-pair-filter"
             value={pairFilter}
             onChange={(e) => setPairFilter(e.target.value)}
             className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
@@ -232,10 +237,14 @@ export default function SharedOrderbookPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+          <label
+            htmlFor="orderbook-relayer-filter"
+            className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]"
+          >
             Relayer
           </label>
           <select
+            id="orderbook-relayer-filter"
             value={relayerFilter}
             onChange={(e) => setRelayerFilter(e.target.value)}
             className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
@@ -253,10 +262,14 @@ export default function SharedOrderbookPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+          <label
+            htmlFor="orderbook-expiry-filter"
+            className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]"
+          >
             Expiry
           </label>
           <select
+            id="orderbook-expiry-filter"
             value={expiryFilter}
             onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
             className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
@@ -368,11 +381,6 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
       <div className="mt-0.5 font-mono text-2xl font-bold leading-none">{value}</div>
     </div>
   );
-}
-
-function shortAddr(a: string): string {
-  if (!a) return "—";
-  return a.length > 10 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
 }
 
 function formatExpiry(unixSec: number): string {
