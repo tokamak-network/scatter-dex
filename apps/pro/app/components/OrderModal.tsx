@@ -192,7 +192,7 @@ export function OrderModal({
   const { add: addOrder } = useOrders();
   const { add: vaultAdd } = useVault();
   const { account } = useWallet();
-  const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
+  const { derive: deriveEdDSA, keyPair: cachedEdDSAKey, isDeriving } = useEdDSAKey();
   const { selected: selectedRelayer } = useRelayers();
   const { network: activeNetwork } = useActiveNetwork();
   const commitmentTree = useCommitmentTree();
@@ -292,6 +292,22 @@ export function OrderModal({
   );
   const recipientIdentity = useIdentityForAddresses(recipientAddresses);
 
+  // Pre-flight EdDSA ownership check — mirrors WithdrawModal. The
+  // authorize circuit's EdDSA gate (Poseidon(salt, …) signature
+  // verified against the note's `pubKeyAx/Ay`) rejects any proof not
+  // produced by the depositor's wallet. Without this guard the user
+  // burns the 1–2 s prove cost and sees a confusing "Assert Failed
+  // in EdDSAPoseidonVerifier" deep in witness generation when their
+  // MetaMask account differs from the one that deposited the note.
+  // Only catches the mismatch when the EdDSA key is already cached
+  // (no signing prompt just to open the modal); the post-derive
+  // check inside `submit` covers the not-yet-cached case.
+  const noteOwnershipMismatch =
+    note !== null &&
+    cachedEdDSAKey !== null &&
+    (note.note.pubKeyAx !== cachedEdDSAKey.publicKey[0] ||
+      note.note.pubKeyAy !== cachedEdDSAKey.publicKey[1]);
+
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // useRef instead of useState — we never need a re-render on
   // controller changes, only synchronous access from `close()`,
@@ -333,6 +349,15 @@ export function OrderModal({
     }
     if (!note) {
       setPhase({ kind: "error", message: "Deposit to your vault before placing an order." });
+      return;
+    }
+
+    if (noteOwnershipMismatch) {
+      setPhase({
+        kind: "error",
+        message:
+          "Connected wallet doesn't own this note. The note was deposited from a different MetaMask account — switch back to that account to place this order.",
+      });
       return;
     }
 
@@ -480,6 +505,24 @@ export function OrderModal({
       setPhase({ kind: "preparing" });
       const eddsaKey = await deriveEdDSA();
       if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+
+      // Post-derive ownership check — fires when `cachedEdDSAKey`
+      // was null at render time (so the inline UI couldn't compare
+      // upfront) but the derive prompt has now produced a key.
+      // Catches the wrong-wallet case before the prover runs and
+      // burns 1–2 s computing a witness that the authorize circuit's
+      // EdDSA gate would just reject. Mirrors WithdrawModal.
+      if (
+        eddsaKey.publicKey[0] !== note.note.pubKeyAx ||
+        eddsaKey.publicKey[1] !== note.note.pubKeyAy
+      ) {
+        setPhase({
+          kind: "error",
+          message:
+            "This note was deposited from a different MetaMask account. Switch MetaMask to the depositor's account before retrying — the authorize circuit's EdDSA gate won't accept a proof signed by any other wallet.",
+        });
+        return;
+      }
 
       // Capture a single `nowSec` and thread it through every
       // timestamp helper so the order's expiry + each claim's
@@ -726,7 +769,7 @@ export function OrderModal({
       if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
     }
   }, [
-    side, pair, price, size, account, note,
+    side, pair, price, size, account, note, noteOwnershipMismatch,
     activePair, recipients,
     deriveEdDSA, addOrder, toast, commitmentTree,
     selectedRelayer, recipientIdentity, activeNetwork,
@@ -747,6 +790,29 @@ export function OrderModal({
   return (
     <Modal open={open} onClose={close} title="Confirm private order" closeOnBackdrop={false}>
       <TestnetNotice />
+      {/* EdDSA ownership mismatch — surface at the top so the
+          operator catches it before reading the rest of the
+          summary. Mirrors WithdrawModal's banner. The submit
+          button is also disabled by `noteOwnershipMismatch`, so
+          this is purely an explanation of WHY the action is
+          blocked. Render only when the EdDSA key is already
+          cached (the post-derive check inside `submit` covers
+          the not-yet-cached path). */}
+      {note && cachedEdDSAKey && noteOwnershipMismatch && (
+        <div className="mb-3 rounded-md bg-[var(--color-warning-soft)] px-3 py-2 text-[11px] text-[var(--color-warning)]">
+          ⚠ <strong>This note was deposited from a different wallet.</strong>{" "}
+          The connected MetaMask account
+          {account && (
+            <>
+              {" "}(<span className="font-mono">{shortAddr(account)}</span>){" "}
+            </>
+          )}
+          doesn't hold the EdDSA key that signed this note's commitment.
+          Switch MetaMask back to the depositor's account, or pick a
+          different source note. The authorize circuit's signature check
+          would otherwise reject the proof.
+        </div>
+      )}
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
         <Row k="Pair" v={pair} />
         <Row k="Side" v={side === "sell" ? "Sell" : "Buy"} />
@@ -882,7 +948,8 @@ export function OrderModal({
                 isDeriving ||
                 !account ||
                 !note ||
-                (note && note.leafIndex < 0)
+                (note && note.leafIndex < 0) ||
+                noteOwnershipMismatch
               }
               title={
                 !account
@@ -891,6 +958,8 @@ export function OrderModal({
                   ? "Deposit to your vault first"
                   : note.leafIndex < 0
                   ? "Waiting for the deposit's on-chain confirmation — usually one block"
+                  : noteOwnershipMismatch
+                  ? "Connected wallet doesn't own this note — switch MetaMask to the depositor's account"
                   : undefined
               }
             >
@@ -900,6 +969,8 @@ export function OrderModal({
                 ? "Awaiting signature…"
                 : note && note.leafIndex < 0
                 ? "Confirming deposit…"
+                : noteOwnershipMismatch
+                ? "Wrong wallet for this note"
                 : "Sign & submit"}
             </Button>
           </>
