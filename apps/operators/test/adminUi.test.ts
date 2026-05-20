@@ -10,7 +10,7 @@ describe("formatEth", () => {
     expect(formatEth("500000000000000000")).toBe("0.5000");
   });
 
-  it("renders sub-wei dust as 0.0000", () => {
+  it("rounds 1 wei down to 0.0000 (below 4-digit precision)", () => {
     expect(formatEth("1")).toBe("0.0000");
   });
 

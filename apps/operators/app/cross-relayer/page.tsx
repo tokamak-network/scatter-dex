@@ -43,7 +43,10 @@ interface TradeOfferRow {
   created_at: number;
 }
 
-// 7-day rolling window — matches the relayer's `peer_stats` retention.
+// UI default for the `peer-stats?since=…` window. The endpoint
+// itself supports any `since` (and treats `0` as all-time), but this
+// page is for "what happened lately?" so we anchor on 7 days. Bump
+// if operators ask for a longer rolling view.
 const PEER_STATS_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export default function CrossRelayerPage() {
@@ -88,26 +91,34 @@ export default function CrossRelayerPage() {
 
 function CrossRelayerPanel({ auth }: { auth: NonNullable<Auth> }) {
   const [tick, setTick] = useState(0);
+  // Destructure `auth` into primitives so the `useCallback` deps
+  // arrays can stay exhaustive without an eslint suppression —
+  // `auth` itself is a fresh object reference on every render even
+  // when its fields are stable, and depending on it would re-fire
+  // the fetch every tick. Pulling `url`/`key` out also makes the
+  // intent obvious to a future reader: only these two fields drive
+  // the request.
+  const { url, key } = auth;
 
   const peersFetcher = useCallback(
     (signal: AbortSignal) => {
       const since = Date.now() - PEER_STATS_WINDOW_MS;
       return adminGet<{ peers: PeerStatRow[] }>(
-        auth,
+        { url, key },
         `/api/admin/peer-stats?since=${since}`,
         signal,
       );
     },
-    [auth.url, auth.key], // eslint-disable-line react-hooks/exhaustive-deps
+    [url, key],
   );
   const offersFetcher = useCallback(
     (signal: AbortSignal) =>
       adminGet<{ rows: TradeOfferRow[] }>(
-        auth,
+        { url, key },
         `/api/admin/trade-offers?limit=20`,
         signal,
       ),
-    [auth.url, auth.key], // eslint-disable-line react-hooks/exhaustive-deps
+    [url, key],
   );
 
   const peersState = useAdmin(peersFetcher, [tick]);

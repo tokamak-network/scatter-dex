@@ -66,7 +66,7 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
       <SanctionsSection auth={auth} />
       <WebhookSection auth={auth} />
       <ClaimThresholdsSection auth={auth} />
-      <CrossRelayerSection auth={auth} />
+      <CrossRelayerSection />
       <LogsSection auth={auth} />
     </div>
   );
@@ -924,8 +924,10 @@ type LogLevelFilter = "all" | "debug" | "info" | "warn" | "error";
 
 /** Cross-relayer activity moved to its own page (`/cross-relayer`)
  *  so operators can leave it open as a passive network-health
- *  dashboard. Runtime keeps a Link slot via the parent component. */
-function CrossRelayerSection(_: { auth: NonNullable<AuthState> }) {
+ *  dashboard. This in-page stub keeps the runtime layout intact and
+ *  hands users off to the full page; no `auth` parameter because the
+ *  destination page reads the same sessionStorage token. */
+function CrossRelayerSection() {
   return (
     <Panel
       title="Cross-relayer"
