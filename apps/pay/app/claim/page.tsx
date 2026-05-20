@@ -13,6 +13,7 @@ import {
   markClaimInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
 import { getNetworkConfig } from "../_lib/network";
+import { buildExplorerTxUrl } from "../_lib/explorerUrl";
 import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
 import { useIdentityStatus } from "../_lib/identity";
@@ -132,22 +133,17 @@ function ClaimInner() {
   }, []);
 
   const cfg = useMemo(() => getNetworkConfig(), []);
-  // Resolve to a safe `<base>/tx/<hash>` URL or null. The base comes
-  // from a public env var, so a misconfigured `javascript:...` /
-  // `data:...` would render an unsafe link if rendered raw — guard
-  // by parsing through the URL constructor and accepting only http
-  // and https.
+  // Wrap the SDK builder so this hook still returns a `(hash) =>
+  // string | null` curried form callers can spread over multiple
+  // tx hashes without rebuilding the URL constructor each time.
   const explorerTxUrl = useMemo(() => {
     const base = cfg.explorerBase;
     if (!base) return null;
-    try {
-      const u = new URL(base);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-      const trimmed = base.replace(/\/$/, "");
-      return (txHash: string) => `${trimmed}/tx/${txHash}`;
-    } catch {
-      return null;
-    }
+    // Probe once with a sentinel to validate base shape early — if
+    // it returns null the base is malformed and we hand back `null`
+    // to skip the link UI entirely.
+    if (buildExplorerTxUrl(base, "x") === null) return null;
+    return (txHash: string) => buildExplorerTxUrl(base, txHash);
   }, [cfg.explorerBase]);
   const isAvailable = parsed
     ? Math.floor(Date.now() / 1000) >= parsed.releaseTimeUnix
