@@ -14,12 +14,11 @@ export interface RecipientRow {
   amount: string;
 }
 
-/** Strip CSV-breaking characters from a free-form label. The wizard's
- *  CSV parser is `line.split(",")` with no quoting, so a comma or
- *  newline in the label would shift columns silently. */
-export function csvSafeLabel(label: string): string {
-  return (label || "").replace(/[,\n\r]/g, " ").trim();
-}
+// `csvSafeLabel` ships from `@zkscatter/recipients/csv` — re-export
+// so existing call sites keep importing it from this module while
+// the implementation lives in one place.
+import { csvSafeLabel } from "@zkscatter/recipients/csv";
+export { csvSafeLabel };
 
 /** Single source of truth for the wizard's recipient-row CSV format
  *  (`name,address,amount`). Address-book picker, spreadsheet editor,
