@@ -35,9 +35,9 @@ import {
   type VerifyStats,
 } from "../lib/verifyMonitor";
 import { formatRelative } from "../lib/format";
+import { backlogTone, type BacklogTone } from "../lib/verifyMonitorStatus";
 
 const POLL_INTERVAL_MS = 30_000;
-const STALE_BACKLOG_AFTER_MS = 30 * 60 * 1000; // 30 min — used to tint the card red
 
 export default function VerifyMonitorPage() {
   const [auth, setAuth] = useState<VerifyAuth | null>(null);
@@ -219,17 +219,8 @@ function StatsCard({ auth }: { auth: VerifyAuth }) {
   }
 
   const s = stats!;
-  const lastPassAgeMs = s.lastPass ? Date.now() - s.lastPass.finishedAt : null;
-  const backlogStale =
-    s.unverifiedCount > 0 &&
-    lastPassAgeMs !== null &&
-    lastPassAgeMs > STALE_BACKLOG_AFTER_MS;
-  const backlogTone =
-    s.unverifiedCount === 0
-      ? "text-[var(--color-success,#2f9e44)]"
-      : backlogStale
-        ? "text-[var(--color-danger,#c92a2a)]"
-        : "text-[var(--color-warning,#e67700)]";
+  const tone = backlogTone(s.unverifiedCount, s.lastPass?.finishedAt ?? null);
+  const toneClass = backlogToneClass(tone);
 
   return (
     <section className="space-y-4">
@@ -248,7 +239,7 @@ function StatsCard({ auth }: { auth: VerifyAuth }) {
           </span>
         </div>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Metric label="Unverified rows" value={String(s.unverifiedCount)} tone={backlogTone} />
+          <Metric label="Unverified rows" value={String(s.unverifiedCount)} tone={toneClass} />
           <Metric
             label="Oldest unverified block"
             value={s.oldestUnverifiedBlock !== null ? String(s.oldestUnverifiedBlock) : "—"}
@@ -303,6 +294,12 @@ function StatsCard({ auth }: { auth: VerifyAuth }) {
       </div>
     </section>
   );
+}
+
+function backlogToneClass(tone: BacklogTone): string {
+  if (tone === "ok") return "text-[var(--color-success,#2f9e44)]";
+  if (tone === "stale") return "text-[var(--color-danger,#c92a2a)]";
+  return "text-[var(--color-warning,#e67700)]";
 }
 
 function Metric({ label, value, tone }: { label: string; value: string; tone?: string }) {
