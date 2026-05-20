@@ -79,12 +79,17 @@ export default function SharedOrderbookPage() {
       try {
         // Fetch orders + relayer list in parallel so the relayer
         // name column doesn't fall a tick behind a fresh
-        // registration. Both requests share one timeout budget;
-        // a relayer-list failure is non-fatal — we still show
-        // orders, just with shortened-address fallback.
+        // registration. Each request carries its own timeout
+        // (`SharedOrderbookClient`'s default 5 s, per-call), so
+        // `Promise.all` waits for the slower of the two but
+        // neither hangs forever. `getRelayers` already returns
+        // `[]` on transport / parse failure, so we don't need an
+        // extra `.catch` — `Promise.all` only rejects when one
+        // promise actually rejects, and a non-fatal relayer
+        // fetch can't do that.
         const [list, rels] = await Promise.all([
           client.getOrders(),
-          client.getRelayers().catch(() => [] as SharedRelayer[]),
+          client.getRelayers(),
         ]);
         if (stopped || cancelledRef.current) return;
         setOrders(list);
@@ -142,12 +147,16 @@ export default function SharedOrderbookPage() {
   }, [orders]);
 
   const filtered = useMemo(() => {
+    // Parse the pair filter once outside the loop — `pairFilter` is
+    // constant for the whole filter pass, no point splitting per row.
+    // Same for the relayer filter (already lowercased on read from
+    // the dropdown value, which itself stores lowercased addresses).
+    const pairParts = pairFilter !== "all" ? pairFilter.split("|") : null;
     const nowMs = Date.now();
     return orders.filter((o) => {
-      if (pairFilter !== "all") {
-        const [a, b] = pairFilter.split("|");
+      if (pairParts) {
         const [oa, ob] = [o.sellToken.toLowerCase(), o.buyToken.toLowerCase()].sort();
-        if (oa !== a || ob !== b) return false;
+        if (oa !== pairParts[0] || ob !== pairParts[1]) return false;
       }
       if (relayerFilter !== "all" && o.relayer.toLowerCase() !== relayerFilter) {
         return false;
@@ -160,6 +169,17 @@ export default function SharedOrderbookPage() {
       return true;
     });
   }, [orders, pairFilter, relayerFilter, expiryFilter]);
+
+  // Auto-reset the relayer filter to "all" when the currently
+  // selected relayer no longer has any live orders — without this
+  // the page can land on 0 rows even though the filter promised
+  // never to. The poll tick that removes the last order is what
+  // triggers the reset on the next render.
+  useEffect(() => {
+    if (relayerFilter !== "all" && !orderRelayers.includes(relayerFilter)) {
+      setRelayerFilter("all");
+    }
+  }, [relayerFilter, orderRelayers]);
 
   if (!configured) {
     return (
@@ -274,9 +294,15 @@ export default function SharedOrderbookPage() {
             onChange={(e) => setExpiryFilter(e.target.value as ExpiryFilter)}
             className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-sm"
           >
+            {/* "Recently expired" is intentionally specific — the
+                shared-orderbook backend returns only `status=open`
+                rows and periodically purges expired ones, so this
+                option can only show entries that have expired since
+                the last server-side purge tick, not the full
+                historical set. */}
             <option value="active">Active</option>
             <option value="soon">Expiring &lt; 10m</option>
-            <option value="all">All (incl. expired)</option>
+            <option value="all">Including recently expired</option>
           </select>
         </div>
       </div>
