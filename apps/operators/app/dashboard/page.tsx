@@ -8,6 +8,11 @@ import { SectionHeader } from "../components/SectionHeader";
 import { AdminConnectBar } from "../components/AdminConnectBar";
 import { formatIsoDate, formatRelative } from "../lib/format";
 import { useOperator, type OperatorState } from "../lib/useOperator";
+import {
+  formatUptime,
+  operatorPlaceholder,
+  percentileLocal,
+} from "../lib/dashboardHelpers";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { formatEth } from "../lib/adminUi";
 
@@ -586,24 +591,6 @@ function BarChart({
   );
 }
 
-function percentileLocal(values: number[], p: number): number {
-  if (values.length === 0) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1);
-  return sorted[Math.max(0, idx)];
-}
-
-function operatorPlaceholder(state: OperatorState): { value: string; sub: string } | null {
-  if (!state.account) return { value: "—", sub: "Connect wallet to load" };
-  if (!state.registryDeployed) return { value: "—", sub: "Registry not deployed" };
-  if (state.loading) return { value: "…", sub: "Reading registry" };
-  if (state.error) return { value: "—", sub: `Read error: ${state.error}` };
-  if (!state.row || state.row.status === "unregistered") {
-    return { value: "—", sub: "Not registered yet" };
-  }
-  return null;
-}
-
 function BondCard({ operator }: { operator: OperatorState }) {
   const ph = operatorPlaceholder(operator);
   if (ph) return <Stat label="Bond posted" value={ph.value} sub={ph.sub} />;
@@ -660,8 +647,3 @@ function HealthCard({
 }
 
 
-function formatUptime(uptimeSince: string | number): string {
-  const ts = typeof uptimeSince === "number" ? uptimeSince : Date.parse(uptimeSince);
-  if (!Number.isFinite(ts)) return "—";
-  return formatRelative(ts);
-}
