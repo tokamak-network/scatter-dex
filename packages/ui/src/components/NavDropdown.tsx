@@ -1,7 +1,12 @@
 "use client";
 
-import Link from "next/link";
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { useOutsideClick } from "./useOutsideClick";
 
 export interface NavDropdownItem {
@@ -11,6 +16,18 @@ export interface NavDropdownItem {
    *  "(this workspace)". Pass `null`/omit to hide. */
   subLabel?: ReactNode;
 }
+
+/** Minimal contract a consumer's link component must honour. Lets
+ *  `@zkscatter/ui` stay framework-agnostic — hosts inject Next's
+ *  `Link`, react-router's `Link`, etc. Fallback is a plain `<a>` so
+ *  the primitive renders correctly in Storybook or any non-routed
+ *  shell. */
+export type NavDropdownLinkProps = {
+  href: string;
+  onClick?: () => void;
+  className?: string;
+  children: ReactNode;
+};
 
 export interface NavDropdownProps {
   /** Top-level trigger label. The "▾" caret is appended for you. */
@@ -24,6 +41,10 @@ export interface NavDropdownProps {
   /** Panel width preset. `"regular"` (w-52) fits two-word labels with a
    *  sub-label; `"narrow"` (w-44) suits single-word menus like Docs. */
   width?: "narrow" | "regular";
+  /** Host-provided link component (e.g. Next's `Link`). Omit to fall
+   *  back to a plain `<a>` — full-reload navigation, but keeps the UI
+   *  package framework-free. */
+  LinkComponent?: ComponentType<NavDropdownLinkProps>;
 }
 
 const WIDTH_CLS: Record<NonNullable<NavDropdownProps["width"]>, string> = {
@@ -31,19 +52,27 @@ const WIDTH_CLS: Record<NonNullable<NavDropdownProps["width"]>, string> = {
   regular: "w-52",
 };
 
+function PlainLink({ href, onClick, className, children }: NavDropdownLinkProps) {
+  return (
+    <a href={href} onClick={onClick} className={className}>
+      {children}
+    </a>
+  );
+}
+
 /** Top-nav hover/click dropdown shared across Pay, Pro, and operators.
  *
  *  Interaction model: hover + focus open, mouse-leave + blur + Escape +
- *  outside-click close. The same shape five+ components were
- *  duplicating before extraction (each ~70 lines). Items are passed in
- *  by the host so dual-CA app-local hooks (e.g. operators'
- *  `useIsRelayerRegistryAdmin` vs Pay's `useIsIdentityGateAdmin`) stay
- *  outside the primitive — the dropdown never queries on-chain state. */
+ *  outside-click close. Items are passed in by the host so dual-CA
+ *  app-local hooks (operators' `useIsRelayerRegistryAdmin` vs Pay's
+ *  `useIsIdentityGateAdmin`) stay outside the primitive — the dropdown
+ *  never queries on-chain state. */
 export function NavDropdown({
   label,
   items,
   align = "left",
   width = "regular",
+  LinkComponent = PlainLink,
 }: NavDropdownProps) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -78,7 +107,7 @@ export function NavDropdown({
         >
           <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
             {items.map((item, i) => (
-              <Link
+              <LinkComponent
                 key={`${i}:${item.href}`}
                 href={item.href}
                 onClick={close}
@@ -90,7 +119,7 @@ export function NavDropdown({
                     {item.subLabel}
                   </span>
                 )}
-              </Link>
+              </LinkComponent>
             ))}
           </div>
         </div>

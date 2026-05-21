@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { NavDropdown } from "@zkscatter/ui";
 
 export function MyMenu() {
   return (
-    <NavDropdown
+    <NavDropdown LinkComponent={Link}
       label="My"
       width="narrow"
       items={[

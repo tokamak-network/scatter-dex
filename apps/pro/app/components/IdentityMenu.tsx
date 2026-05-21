@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { NavDropdown, type NavDropdownItem } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
 import { useIsIdentityGateAdmin } from "../lib/identity";
@@ -22,5 +23,5 @@ export function IdentityMenu() {
       subLabel: "(admin)",
     });
   }
-  return <NavDropdown label="Identity" items={items} />;
+  return <NavDropdown LinkComponent={Link} label="Identity" items={items} />;
 }
