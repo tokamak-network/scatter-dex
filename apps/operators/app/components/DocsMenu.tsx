@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { NavDropdown } from "@zkscatter/ui";
 
 export function DocsMenu() {
   return (
-    <NavDropdown
+    <NavDropdown LinkComponent={Link}
       label="Docs"
       align="right"
       width="narrow"
