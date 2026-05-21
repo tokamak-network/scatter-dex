@@ -79,7 +79,11 @@ import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { formatRecipientCsvRow, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
 import { csvEscape, csvSafeLabel, downloadCsv } from "@zkscatter/recipients/csv";
 import { parseRecipientFile } from "@zkscatter/recipients/parser";
-import { SpreadsheetEditor } from "./_components/SpreadsheetEditor";
+import {
+  AddressBookPicker,
+  SpreadsheetEditor,
+  type RecipientField,
+} from "@zkscatter/recipients";
 import {
   clearWizardDraft,
   loadWizardDraft,
@@ -94,7 +98,6 @@ import {
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
-import { AddressBookPicker } from "../../_components/AddressBookPicker";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import { type WalletEntry } from "@zkscatter/sdk/storage";
@@ -108,6 +111,12 @@ import type { RecipientRow as Row } from "../../_lib/format";
 // until the org-settings page lands; the wizard exposes it as an
 // override in the Funds step.
 const DEFAULT_MAX_FEE_BPS = 30;
+
+// Pay's recipient editor only surfaces name/address/amount. `email`
+// is upload-only (parser opts it in via `parseRecipientFile`), and
+// `releaseAt` is set once for the whole run via the Claim schedule
+// block — not per row.
+const SPREADSHEET_COLUMNS: readonly RecipientField[] = ["name", "address", "amount"];
 
 // TODO: read from org settings
 const LARGE_AMOUNT_THRESHOLD = 50_000;
@@ -294,6 +303,21 @@ function NewPayout() {
   } = useRelayers();
   const eddsa = useEdDSAKey();
   const walletBook = useWalletBook();
+  // Probe each address-book entry through the shared IdentityGate
+  // cache so the picker can dim unverified ones (they can't claim).
+  const bookAddresses = useMemo(
+    () => walletBook.entries.map((e) => e.address ?? "").filter(Boolean),
+    [walletBook.entries],
+  );
+  const bookIdentity = useIdentityForAddresses(bookAddresses);
+  const getAddressVerification = useCallback(
+    (addr: string): "verified" | "unverified" | null => {
+      const v = bookIdentity.get(addr);
+      if (!v) return null;
+      return v.isVerified ? "verified" : "unverified";
+    },
+    [bookIdentity],
+  );
   const folder = useFolderStorage();
   const [showBookPicker, setShowBookPicker] = useState(false);
   type UploadStatusKind = "ok" | "warn" | "error";
@@ -1462,6 +1486,7 @@ function NewPayout() {
               <SpreadsheetEditor
                 csv={csv}
                 onCsvChange={setCsv}
+                columns={SPREADSHEET_COLUMNS}
                 readOnly={!!resumeRecord}
               />
             )}
@@ -2062,6 +2087,7 @@ function NewPayout() {
             appendFromAddressBook(picked);
             setShowBookPicker(false);
           }}
+          getVerification={getAddressVerification}
         />
       )}
     </div>

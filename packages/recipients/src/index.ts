@@ -13,3 +13,4 @@ export {
 } from "./format";
 export { AddressBookPicker } from "./components/AddressBookPicker";
 export { RecipientsEditor } from "./components/RecipientsEditor";
+export { SpreadsheetEditor } from "./components/SpreadsheetEditor";
