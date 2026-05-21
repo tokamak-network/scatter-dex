@@ -8,3 +8,4 @@ export * from "./Toast";
 export * from "./TokamakMark";
 export * from "./useOutsideClick";
 export * from "./AppShellHeader";
+export * from "./NavDropdown";
