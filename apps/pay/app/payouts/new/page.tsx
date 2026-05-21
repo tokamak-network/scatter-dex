@@ -77,7 +77,7 @@ import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { formatRecipientCsvRow, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
-import { csvEscape, csvSafeLabel, downloadCsv } from "@zkscatter/recipients/csv";
+import { csvEscape, csvSafeLabel, downloadCsv, splitCsvLine } from "@zkscatter/recipients/csv";
 import { parseRecipientFile } from "@zkscatter/recipients/parser";
 import {
   AddressBookPicker,
@@ -303,11 +303,18 @@ function NewPayout() {
   } = useRelayers();
   const eddsa = useEdDSAKey();
   const walletBook = useWalletBook();
+  const [showBookPicker, setShowBookPicker] = useState(false);
   // Probe each address-book entry through the shared IdentityGate
   // cache so the picker can dim unverified ones (they can't claim).
+  // Gated by `showBookPicker` so the RPC burst only happens when the
+  // modal is actually opened — closing the modal lets the cache keep
+  // serving subsequent opens without re-probing.
   const bookAddresses = useMemo(
-    () => walletBook.entries.map((e) => e.address ?? "").filter(Boolean),
-    [walletBook.entries],
+    () =>
+      showBookPicker
+        ? walletBook.entries.map((e) => e.address ?? "").filter(Boolean)
+        : [],
+    [showBookPicker, walletBook.entries],
   );
   const bookIdentity = useIdentityForAddresses(bookAddresses);
   const getAddressVerification = useCallback(
@@ -319,7 +326,6 @@ function NewPayout() {
     [bookIdentity],
   );
   const folder = useFolderStorage();
-  const [showBookPicker, setShowBookPicker] = useState(false);
   type UploadStatusKind = "ok" | "warn" | "error";
   const [uploadStatus, setUploadStatus] = useState<
     { kind: UploadStatusKind; message: string } | null
@@ -902,7 +908,10 @@ function NewPayout() {
       .map((l) => l.trim())
       .filter(Boolean)
       .map((l) => {
-        const parts = l.split(",").map((x) => (x ?? "").trim());
+        // Quote-aware split so values the shared SpreadsheetEditor
+        // emits via `csvEscape` (e.g. names containing `"`) round-trip
+        // back into `rows` without column-shift or stray quote chars.
+        const parts = splitCsvLine(l);
         return { name: parts[0] ?? "", address: parts[1] ?? "", amount: parts[2] ?? "" };
       })
       .filter((r) => r.address.length > 0);
