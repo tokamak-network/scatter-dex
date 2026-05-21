@@ -30,27 +30,32 @@ export function PauseStatus({ targets }: { targets: Target[] }) {
   );
 
   useEffect(() => {
+    if (!readProvider) return;
     let cancelled = false;
-    void Promise.all(
+    // Promise.allSettled: a single RPC failure shouldn't blank out
+    // the other rows — auditors need partial visibility for triage.
+    void Promise.allSettled(
       targets.map(async (t): Promise<Row> => {
         if (!isConfiguredAddress(t.address)) {
           return { label: t.label, address: t.address, paused: null, error: "unset" };
         }
-        try {
-          const c = new Contract(t.address, PAUSABLE_ABI, readProvider);
-          const p = (await c.paused()) as boolean;
-          return { label: t.label, address: t.address, paused: p, error: null };
-        } catch (e) {
-          return {
-            label: t.label,
-            address: t.address,
-            paused: null,
-            error: e instanceof Error ? e.message : String(e),
-          };
-        }
+        const c = new Contract(t.address, PAUSABLE_ABI, readProvider);
+        const p = (await c.paused()) as boolean;
+        return { label: t.label, address: t.address, paused: p, error: null };
       }),
-    ).then((next) => {
-      if (!cancelled) setRows(next);
+    ).then((results) => {
+      if (cancelled) return;
+      const next = results.map((r, i): Row => {
+        if (r.status === "fulfilled") return r.value;
+        const reason = r.reason;
+        return {
+          label: targets[i].label,
+          address: targets[i].address,
+          paused: null,
+          error: reason instanceof Error ? reason.message : String(reason),
+        };
+      });
+      setRows(next);
     });
     return () => {
       cancelled = true;
