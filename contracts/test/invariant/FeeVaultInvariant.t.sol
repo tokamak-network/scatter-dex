@@ -41,8 +41,9 @@ contract FeeVaultInvariantTest is StdInvariant, Test {
     /// @dev Vault token balance must always cover tracked liabilities + platform revenue.
     function invariant_solvency() public view {
         uint256 bal = token.balanceOf(address(vault));
-        assertGe(bal, vault.totalTracked(address(token)) + vault.platformRevenue(address(token)),
-            "vault undercollateralized");
+        assertGe(
+            bal, vault.totalTracked(address(token)) + vault.platformRevenue(address(token)), "vault undercollateralized"
+        );
     }
 
     /// @dev `totalTracked` must equal the sum of per-relayer balances (ghost mirror).
@@ -60,16 +61,14 @@ contract FeeVaultInvariantTest is StdInvariant, Test {
 
     /// @dev Platform revenue mirror must match on-chain bucket between calls.
     function invariant_platformRevenueMirror() public view {
-        assertEq(vault.platformRevenue(address(token)), handler.ghostPlatformRevenue(),
-            "platformRevenue drift");
+        assertEq(vault.platformRevenue(address(token)), handler.ghostPlatformRevenue(), "platformRevenue drift");
     }
 
     /// @dev Every platform fee skimmed during `claim` and every `withdrawPlatformRevenue`
     ///      lands at `treasury`. Since the handler never mints directly to treasury,
     ///      `token.balanceOf(treasury)` must match the cumulative ghost counter.
     function invariant_treasuryReceipts() public view {
-        assertEq(token.balanceOf(TREASURY), handler.ghostTreasuryReceived(),
-            "treasury balance / ghost mismatch");
+        assertEq(token.balanceOf(TREASURY), handler.ghostTreasuryReceived(), "treasury balance / ghost mismatch");
     }
 
     /// @dev Fee bps configuration must stay within the documented cap at all times.

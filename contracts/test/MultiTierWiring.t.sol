@@ -36,12 +36,7 @@ contract MultiTierWiringTest is Test {
         MockDepositVerifier depositVerifier = new MockDepositVerifier();
         MockWETH weth = new MockWETH();
         CommitmentPool pool = ProxyDeployer.deployCommitmentPool(
-            address(this),
-            address(this),
-            address(withdrawVerifier),
-            address(depositVerifier),
-            20,
-            30
+            address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30
         );
         claimVerifier16 = new MockClaimVerifier();
         settlement = ProxyDeployer.deployPrivateSettlement(
@@ -66,54 +61,22 @@ contract MultiTierWiringTest is Test {
     }
 
     function test_authorizeRegistryHasAllActiveTiers() public view {
-        assertEq(
-            address(settlement.authorizeVerifierByTier(16)),
-            address(authVerifier16),
-            "tier 16"
-        );
-        assertEq(
-            address(settlement.authorizeVerifierByTier(64)),
-            address(authVerifier64),
-            "tier 64"
-        );
-        assertEq(
-            address(settlement.authorizeVerifierByTier(128)),
-            address(authVerifier128),
-            "tier 128"
-        );
+        assertEq(address(settlement.authorizeVerifierByTier(16)), address(authVerifier16), "tier 16");
+        assertEq(address(settlement.authorizeVerifierByTier(64)), address(authVerifier64), "tier 64");
+        assertEq(address(settlement.authorizeVerifierByTier(128)), address(authVerifier128), "tier 128");
     }
 
     function test_claimRegistryHasAllActiveTiers() public view {
-        assertEq(
-            address(settlement.claimVerifierByTier(16)),
-            address(claimVerifier16),
-            "tier 16 (constructor-seeded)"
-        );
-        assertEq(
-            address(settlement.claimVerifierByTier(64)),
-            address(claimVerifier64),
-            "tier 64"
-        );
-        assertEq(
-            address(settlement.claimVerifierByTier(128)),
-            address(claimVerifier128),
-            "tier 128"
-        );
+        assertEq(address(settlement.claimVerifierByTier(16)), address(claimVerifier16), "tier 16 (constructor-seeded)");
+        assertEq(address(settlement.claimVerifierByTier(64)), address(claimVerifier64), "tier 64");
+        assertEq(address(settlement.claimVerifierByTier(128)), address(claimVerifier128), "tier 128");
     }
 
     function test_unknownTierStillUnregistered() public view {
         // 32 isn't a planned tier — registry must report empty so
         // settleAuth would revert with TierNotConfigured(32) instead
         // of falling through to a neighbour tier's verifier.
-        assertEq(
-            address(settlement.authorizeVerifierByTier(32)),
-            address(0),
-            "authorize tier 32"
-        );
-        assertEq(
-            address(settlement.claimVerifierByTier(32)),
-            address(0),
-            "claim tier 32"
-        );
+        assertEq(address(settlement.authorizeVerifierByTier(32)), address(0), "authorize tier 32");
+        assertEq(address(settlement.claimVerifierByTier(32)), address(0), "claim tier 32");
     }
 }

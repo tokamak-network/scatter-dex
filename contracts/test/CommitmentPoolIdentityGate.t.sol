@@ -11,7 +11,10 @@ import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract MockToken is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 /// @dev Covers the on-chain zk-X509 identity gate added to CommitmentPool:
@@ -49,17 +52,17 @@ contract CommitmentPoolIdentityGateTest is Test {
     }
 
     function _deposit(address from, uint256 commitment, uint256 amount) internal {
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.prank(from);
         pool.deposit(pa, pb, pc, commitment, address(token), amount);
     }
 
     function _withdraw(address caller, address recipient, uint256 amount) internal {
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         // Hoist the view read — `vm.prank` binds to the *next* call, and an
         // inline `pool.getLastRoot()` arg would consume the prank instead.
         uint256 root = pool.getLastRoot();
@@ -103,9 +106,9 @@ contract CommitmentPoolIdentityGateTest is Test {
 
     function test_deposit_gated_unverifiedReverts() public {
         pool.setIdentityGate(address(gate));
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.NotIdentityVerified.selector);
         pool.deposit(pa, pb, pc, COMMITMENT_1, address(token), 100 ether);
@@ -126,9 +129,9 @@ contract CommitmentPoolIdentityGateTest is Test {
         gate.setVerified(alice, true);
         _deposit(alice, COMMITMENT_1, 100 ether);
 
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         // Hoist the view read — `vm.expectRevert` binds to the *next* call,
         // and an inline `pool.getLastRoot()` arg would consume it instead.
         uint256 root = pool.getLastRoot();
@@ -144,9 +147,9 @@ contract CommitmentPoolIdentityGateTest is Test {
         gate.setVerified(bob, true);
         _deposit(bob, COMMITMENT_1, 100 ether);
 
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         uint256 root = pool.getLastRoot();
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.NotIdentityVerified.selector);
@@ -181,9 +184,9 @@ contract CommitmentPoolIdentityGateTest is Test {
 
         gate.setVerified(bob, false); // attestation lapses
 
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         uint256 root = pool.getLastRoot();
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.NotIdentityVerified.selector);

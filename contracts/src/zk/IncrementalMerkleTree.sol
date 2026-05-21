@@ -43,7 +43,9 @@ abstract contract IncrementalMerkleTree is Initializable {
         for (uint32 i; i < _levels;) {
             filledSubtrees[i] = currentZero;
             currentZero = _hashPair(currentZero, currentZero);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         roots[0] = currentZero;
     }
@@ -75,7 +77,9 @@ abstract contract IncrementalMerkleTree is Initializable {
             }
             currentHash = _hashPair(left, right);
             currentIndex /= 2;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         uint32 newRootIndex = (currentRootIndex + 1) % ROOT_HISTORY_SIZE;

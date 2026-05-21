@@ -27,6 +27,7 @@ import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
 ///      registries, off-chain indexing via events is recommended instead.
 contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
+
     struct Relayer {
         string url;
         // Operator-set display name — distinguishes co-running relayers
@@ -123,7 +124,11 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
 
     /// @param bondAmount In ERC20 mode, the amount to pull via `transferFrom` (caller must `approve` first).
     ///                   In native mode, MUST be 0 — bond is taken from `msg.value`.
-    function register(string calldata url, string calldata name, uint256 fee, uint256 bondAmount) external payable nonReentrant {
+    function register(string calldata url, string calldata name, uint256 fee, uint256 bondAmount)
+        external
+        payable
+        nonReentrant
+    {
         if (relayers[msg.sender].active) revert AlreadyRegistered();
         if (fee > MAX_FEE) revert FeeTooHigh();
         if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();
@@ -132,13 +137,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         if (bond < minBond) revert InsufficientBond();
 
         relayers[msg.sender] = Relayer({
-            url: url,
-            name: name,
-            fee: fee,
-            bond: bond,
-            registeredAt: block.timestamp,
-            exitRequestedAt: 0,
-            active: true
+            url: url, name: name, fee: fee, bond: bond, registeredAt: block.timestamp, exitRequestedAt: 0, active: true
         });
 
         // Only add to list if first-time registration (prevent duplicates on re-register)
@@ -269,9 +268,13 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         for (uint256 i; i < len;) {
             Relayer storage r = relayers[relayerList[i]];
             if (r.active && r.exitRequestedAt == 0) {
-                unchecked { ++count; }
+                unchecked {
+                    ++count;
+                }
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         address[] memory active = new address[](count);
@@ -281,9 +284,13 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
             Relayer storage r = relayers[rAddr];
             if (r.active && r.exitRequestedAt == 0) {
                 active[idx] = rAddr;
-                unchecked { ++idx; }
+                unchecked {
+                    ++idx;
+                }
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         return active;
     }
@@ -313,5 +320,4 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         emit IdentityRegistryUpdated(address(identityRegistry), _identityRegistry);
         identityRegistry = IIdentityRegistry(_identityRegistry);
     }
-
 }

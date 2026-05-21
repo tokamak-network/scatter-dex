@@ -110,7 +110,9 @@ contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList
                 sanctioned[a] = true;
                 emit AddressSanctioned(a);
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -124,7 +126,9 @@ contract SanctionsList is Initializable, Ownable2StepUpgradeable, ISanctionsList
                 sanctioned[a] = false;
                 emit AddressUnsanctioned(a);
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 }

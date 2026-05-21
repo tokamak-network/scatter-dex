@@ -29,7 +29,10 @@ import {PrivateSettlement} from "../../src/zk/PrivateSettlement.sol";
 contract FeeVaultV2 is FeeVault {
     uint256 public v2_counter;
     uint256[49] private __gap2;
-    function v2_setCounter(uint256 c) external { v2_counter = c; }
+
+    function v2_setCounter(uint256 c) external {
+        v2_counter = c;
+    }
 
     /// @dev Re-runs on upgrade via `reinitializer(2)`. Lets the upgrade
     ///      test exercise the "init data on upgrade" path (catches missing
@@ -42,29 +45,44 @@ contract FeeVaultV2 is FeeVault {
 contract SanctionsListV2 is SanctionsList {
     uint256 public v2_counter;
     uint256[49] private __gap2;
-    function v2_setCounter(uint256 c) external { v2_counter = c; }
+
+    function v2_setCounter(uint256 c) external {
+        v2_counter = c;
+    }
 }
 
 contract IdentityGateV2 is IdentityGate {
     uint256 public v2_counter;
     uint256[49] private __gap2;
-    function v2_setCounter(uint256 c) external { v2_counter = c; }
+
+    function v2_setCounter(uint256 c) external {
+        v2_counter = c;
+    }
 }
 
 contract RelayerRegistryV2 is RelayerRegistry {
     uint256 public v2_counter;
     uint256[49] private __gap2;
-    function v2_setCounter(uint256 c) external { v2_counter = c; }
+
+    function v2_setCounter(uint256 c) external {
+        v2_counter = c;
+    }
 }
 
 contract CommitmentPoolV2 is CommitmentPool {
     uint256 public v2_counter;
     uint256[49] private __gap2;
-    function v2_setCounter(uint256 c) external { v2_counter = c; }
+
+    function v2_setCounter(uint256 c) external {
+        v2_counter = c;
+    }
 }
 
 contract PrivateSettlementV2 is PrivateSettlement {
     uint256 public v2_counter;
     uint256[49] private __gap2;
-    function v2_setCounter(uint256 c) external { v2_counter = c; }
+
+    function v2_setCounter(uint256 c) external {
+        v2_counter = c;
+    }
 }

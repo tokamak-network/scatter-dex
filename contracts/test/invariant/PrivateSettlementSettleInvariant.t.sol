@@ -79,7 +79,7 @@ contract PrivateSettlementSettleInvariantTest is StdInvariant, Test {
     function invariant_totalClaimedBoundedByLocked() public view {
         bytes32[] memory roots = handler.allKnownClaimsRoots();
         for (uint256 i; i < roots.length; ++i) {
-            (uint128 locked, uint128 claimed,, ) = settlement.claimsGroups(roots[i]);
+            (uint128 locked, uint128 claimed,,) = settlement.claimsGroups(roots[i]);
             assertLe(claimed, locked, "totalClaimed exceeded totalLocked");
         }
     }

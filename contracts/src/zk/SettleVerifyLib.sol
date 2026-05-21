@@ -41,10 +41,11 @@ library SettleVerifyLib {
         // never have to know the tier their settlement used.
         uint8 tier;
     }
+
     struct AuthorizeProof {
-        uint[2] proofA;
-        uint[2][2] proofB;
-        uint[2] proofC;
+        uint256[2] proofA;
+        uint256[2][2] proofB;
+        uint256[2] proofC;
         bytes32 pubKeyBind;
         uint256 commitmentRoot;
         bytes32 nullifier;
@@ -54,8 +55,8 @@ library SettleVerifyLib {
         address buyToken;
         uint128 sellAmount;
         uint128 buyAmount;
-        uint16  maxFee;
-        uint64  expiry;
+        uint16 maxFee;
+        uint64 expiry;
         bytes32 claimsRoot;
         uint128 totalLocked;
         address relayer;
@@ -74,21 +75,17 @@ library SettleVerifyLib {
 
     /// @notice Pack an AuthorizeProof into the 15-element public-signal
     ///         array expected by authorize.circom's Groth16 verifier.
-    function packAuthSignals(AuthorizeProof calldata ap)
-        external
-        pure
-        returns (uint[15] memory signals)
-    {
-        signals[0]  = uint256(ap.pubKeyBind);
-        signals[1]  = ap.commitmentRoot;
-        signals[2]  = uint256(ap.nullifier);
-        signals[3]  = uint256(ap.nonceNullifier);
-        signals[4]  = uint256(ap.newCommitment);
-        signals[5]  = uint256(uint160(ap.sellToken));
-        signals[6]  = uint256(uint160(ap.buyToken));
-        signals[7]  = uint256(ap.sellAmount);
-        signals[8]  = uint256(ap.buyAmount);
-        signals[9]  = uint256(ap.maxFee);
+    function packAuthSignals(AuthorizeProof calldata ap) external pure returns (uint256[15] memory signals) {
+        signals[0] = uint256(ap.pubKeyBind);
+        signals[1] = ap.commitmentRoot;
+        signals[2] = uint256(ap.nullifier);
+        signals[3] = uint256(ap.nonceNullifier);
+        signals[4] = uint256(ap.newCommitment);
+        signals[5] = uint256(uint160(ap.sellToken));
+        signals[6] = uint256(uint160(ap.buyToken));
+        signals[7] = uint256(ap.sellAmount);
+        signals[8] = uint256(ap.buyAmount);
+        signals[9] = uint256(ap.maxFee);
         signals[10] = uint256(ap.expiry);
         signals[11] = uint256(ap.claimsRoot);
         signals[12] = uint256(ap.totalLocked);
@@ -196,12 +193,7 @@ library SettleVerifyLib {
     /// @notice Guard against two sides sharing the same `claimsRoot` when
     ///         both have non-zero locked amounts (would otherwise collide in
     ///         the claims-group registry). One-sided settles are permitted.
-    function requireDistinctClaimsRoots(
-        bytes32 rootA,
-        bytes32 rootB,
-        uint128 lockedA,
-        uint128 lockedB
-    ) external pure {
+    function requireDistinctClaimsRoots(bytes32 rootA, bytes32 rootB, uint128 lockedA, uint128 lockedB) external pure {
         if (rootA == rootB && lockedA > 0 && lockedB > 0) revert DuplicateClaimsRoot();
     }
 
@@ -226,11 +218,6 @@ library SettleVerifyLib {
         uint8 tier
     ) internal {
         if (claimsGroups[root].token != address(0)) revert ClaimsGroupAlreadyExists();
-        claimsGroups[root] = ClaimsGroup({
-            totalLocked: totalLocked,
-            totalClaimed: 0,
-            token: token,
-            tier: tier
-        });
+        claimsGroups[root] = ClaimsGroup({totalLocked: totalLocked, totalClaimed: 0, token: token, tier: tier});
     }
 }

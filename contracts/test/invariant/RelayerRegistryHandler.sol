@@ -46,7 +46,7 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
 
     function register(uint256 seed, uint256 fee, uint256 bond) external {
         address a = _actor(seed);
-        (,,,, , , bool active) = registry.relayers(a);
+        (,,,,,, bool active) = registry.relayers(a);
         if (active) return;
 
         fee = bound(fee, 0, registry.MAX_FEE());
@@ -63,7 +63,7 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
 
     function addBond(uint256 seed, uint256 amount) external {
         address a = _actor(seed);
-        (,,,, , , bool active) = registry.relayers(a);
+        (,,,,,, bool active) = registry.relayers(a);
         if (!active) return;
         amount = bound(amount, 1, 1e22);
         bondToken.mint(a, amount);
@@ -106,8 +106,13 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
         registry.setMinBond(v);
     }
 
-    function actorAt(uint256 i) external view returns (address) { return actors[i % actors.length]; }
-    function actorCount() external view returns (uint256) { return actors.length; }
+    function actorAt(uint256 i) external view returns (address) {
+        return actors[i % actors.length];
+    }
+
+    function actorCount() external view returns (uint256) {
+        return actors.length;
+    }
 
     // ─── Adversarial actions ────────────────────────────────────
 
@@ -125,7 +130,7 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
     function adversarialDoubleRegister(uint256 seed) external {
         adversarialDoubleRegisterAttempts += 1;
         address a = _actor(seed);
-        (,,,, , , bool active) = registry.relayers(a);
+        (,,,,,, bool active) = registry.relayers(a);
         if (!active) return; // pre-registration is the normal path, not adversarial here
         vm.prank(a);
         vm.expectRevert(RelayerRegistry.AlreadyRegistered.selector);
@@ -158,9 +163,7 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
         v = bound(v, 0, 1e21);
         address eoa = address(uint160(0xC0E0 + uint160(seed % 16))); // not an owner
         vm.prank(eoa);
-        vm.expectRevert(abi.encodeWithSelector(
-            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
-        ));
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa));
         registry.setMinBond(v);
     }
 }

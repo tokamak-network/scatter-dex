@@ -11,7 +11,9 @@ import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 contract SVLHarness {
     mapping(address => bool) public whitelistedTokens;
 
-    function setWhitelist(address t, bool ok) external { whitelistedTokens[t] = ok; }
+    function setWhitelist(address t, bool ok) external {
+        whitelistedTokens[t] = ok;
+    }
 
     function callValidateCrossSide(
         SettleVerifyLib.AuthorizeProof calldata maker,
@@ -22,35 +24,31 @@ contract SVLHarness {
         SettleVerifyLib.validateCrossSide(maker, taker, feeMaker, feeTaker, whitelistedTokens);
     }
 
-    function callValidateDexProof(
-        SettleVerifyLib.AuthorizeProof calldata proof,
-        address sender,
-        uint256 deadline
-    ) external view {
+    function callValidateDexProof(SettleVerifyLib.AuthorizeProof calldata proof, address sender, uint256 deadline)
+        external
+        view
+    {
         SettleVerifyLib.validateDexProof(proof, sender, deadline, whitelistedTokens);
     }
 
-    function callValidateScatterAuth(
-        SettleVerifyLib.AuthorizeProof calldata ap,
-        address sender,
-        uint96 fee
-    ) external view {
+    function callValidateScatterAuth(SettleVerifyLib.AuthorizeProof calldata ap, address sender, uint96 fee)
+        external
+        view
+    {
         SettleVerifyLib.validateScatterAuth(ap, sender, fee, whitelistedTokens);
     }
 
-    function callRequireDistinctClaimsRoots(
-        bytes32 rootA,
-        bytes32 rootB,
-        uint128 lockedA,
-        uint128 lockedB
-    ) external pure {
+    function callRequireDistinctClaimsRoots(bytes32 rootA, bytes32 rootB, uint128 lockedA, uint128 lockedB)
+        external
+        pure
+    {
         SettleVerifyLib.requireDistinctClaimsRoots(rootA, rootB, lockedA, lockedB);
     }
 
     function callPackAuthSignals(SettleVerifyLib.AuthorizeProof calldata ap)
         external
         pure
-        returns (uint[15] memory)
+        returns (uint256[15] memory)
     {
         return SettleVerifyLib.packAuthSignals(ap);
     }
@@ -80,13 +78,13 @@ contract SettleVerifyLibTest is Test {
     function test_packAuthSignals_layout() public view {
         SettleVerifyLib.AuthorizeProof memory ap = _baseProof();
         ap.commitmentRoot = uint256(0xC0FFEE);
-        uint[15] memory sig = h.callPackAuthSignals(ap);
+        uint256[15] memory sig = h.callPackAuthSignals(ap);
         // Layout (authorize.circom contract): pubKeyBind, commitmentRoot,
         // nullifier, nonceNullifier, newCommitment, sellToken, buyToken,
         // sellAmount, buyAmount, maxFee, expiry, claimsRoot, totalLocked,
         // relayer, orderHash.
-        assertEq(sig[1],  uint256(0xC0FFEE));
-        assertEq(sig[7],  uint256(ap.sellAmount));
+        assertEq(sig[1], uint256(0xC0FFEE));
+        assertEq(sig[7], uint256(ap.sellAmount));
         assertEq(sig[13], uint256(uint160(RELAYER)));
     }
 
@@ -304,9 +302,9 @@ contract SettleVerifyLibTest is Test {
     // ─── helpers ────────────────────────────────────────────────
 
     function _baseProof() internal view returns (SettleVerifyLib.AuthorizeProof memory ap) {
-        ap.proofA = [uint(0), uint(0)];
-        ap.proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-        ap.proofC = [uint(0), uint(0)];
+        ap.proofA = [uint256(0), uint256(0)];
+        ap.proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+        ap.proofC = [uint256(0), uint256(0)];
         ap.pubKeyBind = bytes32(uint256(0xAB));
         ap.commitmentRoot = uint256(0xCD);
         ap.nullifier = bytes32(uint256(0xEF));

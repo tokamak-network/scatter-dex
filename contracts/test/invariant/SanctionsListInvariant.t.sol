@@ -35,8 +35,7 @@ contract SanctionsListInvariantTest is StdInvariant, Test {
         uint256 n = handler.targetCount();
         for (uint256 i; i < n; ++i) {
             address t = handler.targetAt(i);
-            assertEq(list.sanctioned(t), handler.ghostSanctioned(t),
-                "sanctioned mapping diverged from ghost");
+            assertEq(list.sanctioned(t), handler.ghostSanctioned(t), "sanctioned mapping diverged from ghost");
         }
     }
 
@@ -46,8 +45,11 @@ contract SanctionsListInvariantTest is StdInvariant, Test {
         uint256 n = handler.targetCount();
         for (uint256 i; i < n; ++i) {
             address t = handler.targetAt(i);
-            assertEq(list.isSanctioned(t), list.sanctioned(t),
-                "isSanctioned diverged from sanctioned mapping (no oracle wired)");
+            assertEq(
+                list.isSanctioned(t),
+                list.sanctioned(t),
+                "isSanctioned diverged from sanctioned mapping (no oracle wired)"
+            );
         }
     }
 

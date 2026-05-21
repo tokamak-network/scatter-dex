@@ -69,10 +69,10 @@ contract IdentityGateInvariantTest is StdInvariant, Test {
             address candidate = handler.poolAt(i);
             bool inArray = false;
             for (uint256 j; j < len; ++j) {
-                if (list[j] == candidate) { inArray = true; break; }
+                if (list[j] == candidate) inArray = true;
+                break;
             }
-            assertEq(gate.registryExists(candidate), inArray,
-                "registryExists out of sync with array");
+            assertEq(gate.registryExists(candidate), inArray, "registryExists out of sync with array");
         }
     }
 

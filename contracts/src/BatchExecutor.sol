@@ -24,14 +24,14 @@ contract BatchExecutor {
     struct Execution {
         address target;
         uint256 value;
-        bytes   callData;
+        bytes callData;
     }
 
     // ERC-7579 mode layout (first two bytes of the mode bytes32):
     //   byte 0 = callType (0x00=single, 0x01=batch, 0xff=delegate)
     //   byte 1 = execType (0x00=default/revert, 0x01=try)
-    bytes1 internal constant CALLTYPE_BATCH    = 0x01;
-    bytes1 internal constant EXECTYPE_DEFAULT  = 0x00;
+    bytes1 internal constant CALLTYPE_BATCH = 0x01;
+    bytes1 internal constant EXECTYPE_DEFAULT = 0x00;
 
     error NotAuthorizedCaller();
     error UnsupportedCallType(bytes1 callType);
@@ -45,8 +45,7 @@ contract BatchExecutor {
     // past the first two bytes implies extended semantics we don't
     // honor. Rejecting explicitly prevents clients from silently
     // invoking an unimplemented ERC-7821 / 7579 extension.
-    bytes32 internal constant MODE_TAIL_MASK =
-        0x0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+    bytes32 internal constant MODE_TAIL_MASK = 0x0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
 
     /// @notice ERC-7579 execute entrypoint.
     /// @param  mode              Packed call/exec type (see above).
@@ -56,7 +55,7 @@ contract BatchExecutor {
 
         bytes1 callType = mode[0];
         bytes1 execType = mode[1];
-        if (callType != CALLTYPE_BATCH)   revert UnsupportedCallType(callType);
+        if (callType != CALLTYPE_BATCH) revert UnsupportedCallType(callType);
         if (execType != EXECTYPE_DEFAULT) revert UnsupportedExecType(execType);
         if ((mode & MODE_TAIL_MASK) != bytes32(0)) revert UnsupportedModeFields(mode);
 

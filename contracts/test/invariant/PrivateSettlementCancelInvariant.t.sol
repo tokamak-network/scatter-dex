@@ -84,8 +84,11 @@ contract PrivateSettlementCancelInvariantTest is StdInvariant, Test {
     function invariant_rootGrowthMatchesCancels() public view {
         // `nextIndex` is the strict leaf count: starts at 0, increments by 1
         // per insertCommitment. Every successful cancelPrivate calls insertCommitment exactly once.
-        assertGe(uint256(pool.nextIndex()), handler.ghostSuccessfulCancels(),
-            "leaf count regressed below successful cancel count");
+        assertGe(
+            uint256(pool.nextIndex()),
+            handler.ghostSuccessfulCancels(),
+            "leaf count regressed below successful cancel count"
+        );
     }
 
     /// @dev Coverage guard — see PR #718.
