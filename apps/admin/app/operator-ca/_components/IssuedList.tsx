@@ -1,18 +1,30 @@
 "use client";
 
-import type { IssuedRecord } from "./IssueForm";
+import { shortAddr } from "@zkscatter/sdk/react";
+import type { CertificateRequest } from "../../lib/x509";
+
+/** Sanitised issuance record — what gets persisted to localStorage.
+ *  Excludes the PKCS#8 private key, which only exists in memory at
+ *  issuance time and is downloaded once with the initial bundle. */
+export interface LedgerEntry {
+  walletAddress: string;
+  commonName: string;
+  organization: string;
+  country: string;
+  validityDays: number;
+  publicKeyFingerprint: string;
+  publicKeyPem: string;
+  request: CertificateRequest;
+  issuedAt: string;
+}
 
 interface Props {
-  records: IssuedRecord[];
-  onDownload: (record: IssuedRecord) => void;
+  records: LedgerEntry[];
+  onDownload: (entry: LedgerEntry) => void;
   onRemove: (walletAddress: string, issuedAt: string) => void;
 }
 
-function shortAddr(addr: string): string {
-  return addr.length >= 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
-}
-
-function expiresAt(record: IssuedRecord): string {
+function expiresAt(record: LedgerEntry): string {
   const issued = new Date(record.issuedAt).getTime();
   const expiry = new Date(issued + record.validityDays * 86_400_000);
   return expiry.toISOString().slice(0, 10);
@@ -22,7 +34,8 @@ export function IssuedList({ records, onDownload, onRemove }: Props) {
   if (records.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
-        No certificates issued yet. Issued records are kept in this browser's local storage.
+        No certificates issued yet. Issued records are kept in this browser's local storage
+        (metadata only — private keys are never persisted).
       </div>
     );
   }
@@ -40,7 +53,10 @@ export function IssuedList({ records, onDownload, onRemove }: Props) {
         </thead>
         <tbody>
           {records.map((r) => (
-            <tr key={`${r.walletAddress}-${r.issuedAt}`} className="border-t border-[var(--color-border)]">
+            <tr
+              key={`${r.walletAddress}-${r.issuedAt}`}
+              className="border-t border-[var(--color-border)]"
+            >
               <td className="px-4 py-3">
                 <div className="font-medium">{r.commonName}</div>
                 <div className="text-xs text-[var(--color-text-muted)]">
@@ -57,6 +73,7 @@ export function IssuedList({ records, onDownload, onRemove }: Props) {
                   type="button"
                   onClick={() => onDownload(r)}
                   className="mr-2 text-[var(--color-primary)] hover:underline"
+                  title="Re-download metadata bundle (no private key)"
                 >
                   Download
                 </button>

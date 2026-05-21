@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Contract, formatUnits } from "ethers";
+import { ZERO_ADDRESS, isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
@@ -16,18 +17,37 @@ const REGISTRY_ABI = [
   "function getRelayerCount() external view returns (uint256)",
 ];
 
-interface RegistrySnapshot {
-  minBond: string;
-  treasury: string;
-  identityRegistry: string;
-  bondToken: string;
-  owner: string;
-  relayerCount: string;
+const ERC20_META_ABI = [
+  "function decimals() external view returns (uint8)",
+  "function symbol() external view returns (string)",
+];
+
+interface Field<T> {
+  value: T | null;
+  error: string | null;
 }
+
+interface RegistrySnapshot {
+  minBond: Field<bigint>;
+  treasury: Field<string>;
+  identityRegistry: Field<string>;
+  bondToken: Field<string>;
+  owner: Field<string>;
+  relayerCount: Field<bigint>;
+}
+
+interface BondTokenMeta {
+  decimals: number;
+  symbol: string;
+}
+
+/** Native ETH placeholder when `bondToken == address(0)` —
+ *  RelayerRegistry treats this as the chain's native asset. */
+const NATIVE_BOND: BondTokenMeta = { decimals: 18, symbol: "ETH" };
 
 export default function ProtocolPage() {
   const registryAddress = DEMO_NETWORK.contracts.relayerRegistry;
-  const configured = registryAddress && registryAddress !== "0x0000000000000000000000000000000000000000";
+  const configured = isConfiguredAddress(registryAddress);
 
   return (
     <div className="space-y-10">
@@ -55,10 +75,24 @@ export default function ProtocolPage() {
   );
 }
 
+function fieldFromSettled<T>(result: PromiseSettledResult<T>): Field<T> {
+  return result.status === "fulfilled"
+    ? { value: result.value, error: null }
+    : { value: null, error: explainSettledReason(result.reason) };
+}
+
+function explainSettledReason(reason: unknown): string {
+  if (reason instanceof Error) {
+    const sm = (reason as { shortMessage?: string }).shortMessage;
+    return sm ?? reason.message;
+  }
+  return String(reason);
+}
+
 function RegistryParams() {
   const { readProvider } = useWallet();
   const [snap, setSnap] = useState<RegistrySnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [tokenMeta, setTokenMeta] = useState<BondTokenMeta | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,41 +101,71 @@ function RegistryParams() {
       REGISTRY_ABI,
       readProvider,
     );
-    void Promise.all([
+    void Promise.allSettled([
       contract.minBond() as Promise<bigint>,
       contract.treasury() as Promise<string>,
       contract.identityRegistry() as Promise<string>,
       contract.bondToken() as Promise<string>,
       contract.owner() as Promise<string>,
       contract.getRelayerCount() as Promise<bigint>,
-    ])
-      .then(([minBond, treasury, identityRegistry, bondToken, owner, relayerCount]) => {
-        if (cancelled) return;
-        setSnap({
-          minBond: `${formatUnits(minBond, 18)} TON`,
-          treasury,
-          identityRegistry,
-          bondToken,
-          owner,
-          relayerCount: relayerCount.toString(),
-        });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+    ]).then((results) => {
+      if (cancelled) return;
+      const [minBond, treasury, identityRegistry, bondToken, owner, relayerCount] = results;
+      setSnap({
+        minBond: fieldFromSettled(minBond as PromiseSettledResult<bigint>),
+        treasury: fieldFromSettled(treasury as PromiseSettledResult<string>),
+        identityRegistry: fieldFromSettled(identityRegistry as PromiseSettledResult<string>),
+        bondToken: fieldFromSettled(bondToken as PromiseSettledResult<string>),
+        owner: fieldFromSettled(owner as PromiseSettledResult<string>),
+        relayerCount: fieldFromSettled(relayerCount as PromiseSettledResult<bigint>),
       });
+    });
     return () => {
       cancelled = true;
     };
   }, [readProvider]);
 
-  if (error) {
+  // Resolve bond-token decimals + symbol from chain. Falls back to
+  // ETH defaults when bondToken is the zero address (native bond
+  // mode), or to an `(token)` label when an ERC20 doesn't expose
+  // standard metadata.
+  useEffect(() => {
+    const bondToken = snap?.bondToken.value;
+    if (bondToken == null) return;
+    if (!isConfiguredAddress(bondToken)) {
+      setTokenMeta(NATIVE_BOND);
+      return;
+    }
+    let cancelled = false;
+    const erc20 = new Contract(bondToken, ERC20_META_ABI, readProvider);
+    void Promise.allSettled([
+      erc20.decimals() as Promise<number | bigint>,
+      erc20.symbol() as Promise<string>,
+    ]).then(([decimals, symbol]) => {
+      if (cancelled) return;
+      setTokenMeta({
+        decimals:
+          decimals.status === "fulfilled" ? Number(decimals.value) : 18,
+        symbol: symbol.status === "fulfilled" ? symbol.value : "token",
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [snap?.bondToken.value, readProvider]);
+
+  if (!snap) {
     return (
-      <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-4 text-sm text-[var(--color-danger)]">
-        Failed to read RelayerRegistry: {error}
-      </div>
+      <section>
+        <SectionHeader title="RelayerRegistry" badge="live" />
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
+          Reading on-chain…
+        </div>
+      </section>
     );
   }
+
+  const meta = tokenMeta ?? NATIVE_BOND;
 
   return (
     <section>
@@ -109,36 +173,52 @@ function RegistryParams() {
       <div className="grid grid-cols-3 gap-4">
         <Stat
           label="Minimum bond"
-          value={snap?.minBond ?? "…"}
-          sub="Operator must post ≥ this to register"
+          value={formatField(snap.minBond, (v) => `${formatUnits(v, meta.decimals)} ${meta.symbol}`)}
+          sub={
+            snap.minBond.error ?? "Operator must post ≥ this to register"
+          }
         />
         <Stat
           label="Treasury"
-          value={snap?.treasury ? shortAddr(snap.treasury) : "…"}
-          sub="Protocol fee destination"
+          value={formatField(snap.treasury, shortAddr)}
+          sub={snap.treasury.error ?? "Protocol fee destination"}
         />
         <Stat
           label="Identity registry"
-          value={snap?.identityRegistry ? shortAddr(snap.identityRegistry) : "…"}
-          sub="Operator-CA contract"
+          value={formatField(snap.identityRegistry, shortAddr)}
+          sub={snap.identityRegistry.error ?? "Operator-CA contract"}
         />
         <Stat
           label="Bond token"
-          value={snap?.bondToken ? shortAddr(snap.bondToken) : "…"}
-          sub="ERC20 used for bonds"
+          value={
+            snap.bondToken.value === ZERO_ADDRESS
+              ? "Native (ETH)"
+              : formatField(snap.bondToken, shortAddr)
+          }
+          sub={
+            snap.bondToken.error ??
+            (snap.bondToken.value === ZERO_ADDRESS
+              ? "Bonds posted as msg.value"
+              : `ERC20 · ${meta.symbol}`)
+          }
         />
         <Stat
           label="Owner (multisig)"
-          value={snap?.owner ? shortAddr(snap.owner) : "…"}
-          sub="Holds setMinBond / setTreasury rights"
+          value={formatField(snap.owner, shortAddr)}
+          sub={snap.owner.error ?? "Holds setMinBond / setTreasury rights"}
         />
         <Stat
           label="Active relayers"
-          value={snap?.relayerCount ?? "…"}
-          sub="Total registered operators"
+          value={formatField(snap.relayerCount, (v) => v.toString())}
+          sub={snap.relayerCount.error ?? "Total registered operators"}
         />
       </div>
     </section>
   );
 }
 
+function formatField<T>(field: Field<T>, render: (v: T) => string): string {
+  if (field.error) return "—";
+  if (field.value === null) return "…";
+  return render(field.value);
+}

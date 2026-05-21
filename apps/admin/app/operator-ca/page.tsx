@@ -1,59 +1,90 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
 import { DEMO_NETWORK, IDENTITY_REGISTRY_ADDRESS } from "../lib/network";
 import { AttestationPanel } from "./_components/AttestationPanel";
 import { IssueForm, type IssuedRecord } from "./_components/IssueForm";
-import { IssuedList } from "./_components/IssuedList";
+import { IssuedList, type LedgerEntry } from "./_components/IssuedList";
 
 const STORAGE_KEY = "zkscatter.admin.operator-ca.issued";
 
-function loadIssued(): IssuedRecord[] {
+/** Strip the private key before persistence. The PKCS#8 PEM is only
+ *  in memory between issuance and the immediate bundle download — it
+ *  is never written to localStorage, where XSS or a malicious browser
+ *  extension could read it. The re-download from history therefore
+ *  cannot re-emit the private key. */
+function toLedgerEntry(record: IssuedRecord): LedgerEntry {
+  return {
+    walletAddress: record.walletAddress,
+    commonName: record.commonName,
+    organization: record.organization,
+    country: record.country,
+    validityDays: record.validityDays,
+    publicKeyFingerprint: record.publicKeyFingerprint,
+    publicKeyPem: record.publicKeyPem,
+    request: record.request,
+    issuedAt: record.issuedAt,
+  };
+}
+
+function loadLedger(): LedgerEntry[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as IssuedRecord[]) : [];
+    return Array.isArray(parsed) ? (parsed as LedgerEntry[]) : [];
   } catch {
     return [];
   }
 }
 
-function saveIssued(records: IssuedRecord[]) {
+function saveLedger(records: LedgerEntry[]) {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
 }
 
-function downloadBundle(record: IssuedRecord) {
-  const bundle = JSON.stringify(record, null, 2);
+function downloadBundle(filename: string, payload: unknown) {
+  const bundle = JSON.stringify(payload, null, 2);
   const blob = new Blob([bundle], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `operator-${record.walletAddress.slice(0, 10)}-${record.issuedAt.slice(0, 10)}.json`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
 
+function bundleFilename(walletAddress: string, issuedAt: string): string {
+  return `operator-${walletAddress.slice(0, 10)}-${issuedAt.slice(0, 10)}.json`;
+}
+
 export default function OperatorCaPage() {
-  const [records, setRecords] = useState<IssuedRecord[]>([]);
+  const [records, setRecords] = useState<LedgerEntry[]>([]);
 
   useEffect(() => {
-    setRecords(loadIssued());
+    setRecords(loadLedger());
   }, []);
 
   const onIssued = useCallback((record: IssuedRecord) => {
+    // Emit the full bundle (incl. private key) for one-shot download
+    // while it's still in memory. Persist only the sanitised entry.
+    downloadBundle(bundleFilename(record.walletAddress, record.issuedAt), record);
+    const entry = toLedgerEntry(record);
     setRecords((prev) => {
-      const next = [record, ...prev];
-      saveIssued(next);
+      const next = [entry, ...prev];
+      saveLedger(next);
       return next;
     });
-    downloadBundle(record);
+  }, []);
+
+  const onDownloadHistory = useCallback((entry: LedgerEntry) => {
+    downloadBundle(bundleFilename(entry.walletAddress, entry.issuedAt), entry);
   }, []);
 
   const onRemove = useCallback((walletAddress: string, issuedAt: string) => {
@@ -61,12 +92,12 @@ export default function OperatorCaPage() {
       const next = prev.filter(
         (r) => !(r.walletAddress === walletAddress && r.issuedAt === issuedAt),
       );
-      saveIssued(next);
+      saveLedger(next);
       return next;
     });
   }, []);
 
-  const registryConfigured = IDENTITY_REGISTRY_ADDRESS.length > 0;
+  const registryConfigured = isConfiguredAddress(IDENTITY_REGISTRY_ADDRESS);
 
   return (
     <div className="space-y-10">
@@ -103,7 +134,7 @@ export default function OperatorCaPage() {
           <Stat
             label="Issued (this device)"
             value={String(records.length)}
-            sub="Stored in browser localStorage"
+            sub="Metadata only — keys not persisted"
           />
         </div>
       </section>
@@ -114,8 +145,12 @@ export default function OperatorCaPage() {
       </section>
 
       <section>
-        <SectionHeader title="Recent issuances" badge="mock" hint="local-only ledger" />
-        <IssuedList records={records} onDownload={downloadBundle} onRemove={onRemove} />
+        <SectionHeader
+          title="Recent issuances"
+          badge="live"
+          hint="metadata only — private key never persisted"
+        />
+        <IssuedList records={records} onDownload={onDownloadHistory} onRemove={onRemove} />
       </section>
 
       <section>

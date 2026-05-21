@@ -9,7 +9,7 @@ Persona-specific frontends built on the shared zkScatter core
 | [`pay/`](./pay) | Small companies & DAOs — payroll & vendor payouts | scaffold | 4001 |
 | [`drop/`](./drop) | Token launch teams — sybil-resistant private airdrops | scaffold | 4002 |
 | [`operators/`](./operators) | Relayer operators — register, monitor, withdraw | scaffold | 4004 |
-| [`admin/`](./admin) | Platform admin — operator X.509 issuance, sanctions, params, treasury | scaffold | 4005 |
+| [`admin/`](./admin) | Platform admin — operator X.509 issuance, sanctions, params, treasury | partial | 4005 |
 
 `pro/` is a fresh light-theme reimagining of the trader experience.
 The existing dark `frontend/` and the `mobile/` consumer wallet stay

@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { Contract, type Signer } from "ethers";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { IDENTITY_REGISTRY_ADDRESS, DEMO_NETWORK } from "../../lib/network";
 import { explainError } from "../../lib/format";
@@ -28,7 +29,7 @@ export function AttestationPanel() {
   const [address, setAddress] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 
-  const registryConfigured = IDENTITY_REGISTRY_ADDRESS.length > 0;
+  const registryConfigured = isConfiguredAddress(IDENTITY_REGISTRY_ADDRESS);
   const addressValid = isValidEvmAddress(address.trim());
 
   const submit = useCallback(async () => {

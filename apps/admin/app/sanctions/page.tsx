@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Contract, type Signer } from "ethers";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
@@ -23,10 +24,8 @@ type Phase =
   | { kind: "success"; txHash: string; action: string }
   | { kind: "error"; msg: string };
 
-const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
-
 export default function SanctionsPage() {
-  const configured = SANCTIONS_LIST_ADDRESS.length > 0;
+  const configured = isConfiguredAddress(SANCTIONS_LIST_ADDRESS);
 
   return (
     <div className="space-y-10">
@@ -108,12 +107,10 @@ function ContractInfo() {
         <Stat
           label="External oracle"
           value={
-            info.externalOracle && info.externalOracle !== ZERO_ADDR
-              ? shortAddr(info.externalOracle)
-              : "Disabled"
+            isConfiguredAddress(info.externalOracle) ? shortAddr(info.externalOracle) : "Disabled"
           }
           sub={
-            info.externalOracle && info.externalOracle !== ZERO_ADDR
+            isConfiguredAddress(info.externalOracle)
               ? "Chainalysis OFAC fallback"
               : "Self-list only"
           }

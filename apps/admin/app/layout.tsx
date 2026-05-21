@@ -27,7 +27,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             }
             topRibbon={
               <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-                Admin preview — Sepolia testnet. Pages with mock data are tagged inline.
+                Admin preview — {DEMO_NETWORK.name ?? "unconfigured network"} (chain{" "}
+                {DEMO_NETWORK.chainId}). Pages with mock data are tagged inline.
               </div>
             }
             navLinks={

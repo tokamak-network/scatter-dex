@@ -16,7 +16,7 @@ const TILES = [
     blurb:
       "Manage the self-multisig sanction entries (KoFIU / emergency holds). The Chainalysis OFAC oracle is read-only and external.",
     cta: "Open list →",
-    badge: "mock" as const,
+    badge: "live" as const,
   },
   {
     href: "/protocol",
@@ -24,7 +24,7 @@ const TILES = [
     blurb:
       "Fee splits, bond minimums, pause switches, and other governed parameters across CommitmentPool, PrivateSettlement, and RelayerRegistry.",
     cta: "Review →",
-    badge: "mock" as const,
+    badge: "live" as const,
   },
   {
     href: "/treasury",
