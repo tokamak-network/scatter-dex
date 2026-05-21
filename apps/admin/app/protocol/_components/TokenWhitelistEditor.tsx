@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Contract } from "ethers";
+import { ZERO_ADDRESS, eqAddr } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { isValidEvmAddress } from "../../lib/x509";
@@ -33,7 +34,10 @@ export function TokenWhitelistEditor({ poolAddress, settlementAddress }: Props) 
   }>({ pool: null, settlement: null });
   const [reloadKey, setReloadKey] = useState(0);
 
-  const valid = isValidEvmAddress(token.trim());
+  // Both contracts revert on token == address(0), so reject that
+  // explicitly rather than letting an obvious revert reach the user.
+  const trimmed = token.trim();
+  const valid = isValidEvmAddress(trimmed) && !eqAddr(trimmed, ZERO_ADDRESS);
 
   useEffect(() => {
     if (!valid) {
@@ -44,8 +48,8 @@ export function TokenWhitelistEditor({ poolAddress, settlementAddress }: Props) 
     const pool = new Contract(poolAddress, POOL_ABI, readProvider);
     const settlement = new Contract(settlementAddress, SETTLEMENT_ABI, readProvider);
     void Promise.allSettled([
-      pool.whitelistedTokens(token.trim()) as Promise<boolean>,
-      settlement.whitelistedTokens(token.trim()) as Promise<boolean>,
+      pool.whitelistedTokens(trimmed) as Promise<boolean>,
+      settlement.whitelistedTokens(trimmed) as Promise<boolean>,
     ]).then(([p, s]) => {
       if (cancelled) return;
       setReadState({
@@ -67,7 +71,7 @@ export function TokenWhitelistEditor({ poolAddress, settlementAddress }: Props) 
     let firstTx: { hash: string; wait(): Promise<{ hash?: string } | null> } | null = null;
     if (applyPool) {
       const pool = new Contract(poolAddress, POOL_ABI, signer);
-      const tx = (await pool.setTokenWhitelist(token.trim(), allowed)) as {
+      const tx = (await pool.setTokenWhitelist(trimmed, allowed)) as {
         hash: string;
         wait(): Promise<{ hash?: string } | null>;
       };
@@ -76,7 +80,7 @@ export function TokenWhitelistEditor({ poolAddress, settlementAddress }: Props) 
     }
     if (applySettlement) {
       const settlement = new Contract(settlementAddress, SETTLEMENT_ABI, signer);
-      const tx = (await settlement.setTokenWhitelist(token.trim(), allowed)) as {
+      const tx = (await settlement.setTokenWhitelist(trimmed, allowed)) as {
         hash: string;
         wait(): Promise<{ hash?: string } | null>;
       };

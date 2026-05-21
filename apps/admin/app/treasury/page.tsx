@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Contract, formatUnits, type Signer } from "ethers";
 import { isConfiguredAddress, type TokenInfo } from "@zkscatter/sdk";
-import { shortAddr, useWallet } from "@zkscatter/sdk/react";
+import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
 import { explainError } from "../lib/format";
@@ -29,19 +29,22 @@ type TokenRow = NativeRow | Erc20Row;
 interface FeeVaultSnapshot {
   treasury: string | null;
   owner: string | null;
+  /** True once the initial Promise.allSettled batch resolves; lets the
+   *  UI distinguish "still loading" from "loaded with some failures"
+   *  so it doesn't render "…" forever on a misconfigured slot. */
+  loaded: boolean;
   platformFeeBps: bigint | null;
   pendingFeeBps: bigint | null;
   pendingFeeEffectiveTime: bigint | null;
-  error: string | null;
 }
 
 const EMPTY_SNAPSHOT: FeeVaultSnapshot = {
   treasury: null,
   owner: null,
+  loaded: false,
   platformFeeBps: null,
   pendingFeeBps: null,
   pendingFeeEffectiveTime: null,
-  error: null,
 };
 
 export default function TreasuryPage() {
@@ -92,11 +95,11 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
       setSnap({
         treasury: treasury.status === "fulfilled" ? treasury.value : null,
         owner: owner.status === "fulfilled" ? owner.value : null,
+        loaded: true,
         platformFeeBps: platformFeeBps.status === "fulfilled" ? platformFeeBps.value : null,
         pendingFeeBps: pendingFeeBps.status === "fulfilled" ? pendingFeeBps.value : null,
         pendingFeeEffectiveTime:
           pendingFeeEffectiveTime.status === "fulfilled" ? pendingFeeEffectiveTime.value : null,
-        error: null,
       });
     });
     return () => {
@@ -113,17 +116,23 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
         <div className="grid grid-cols-3 gap-4">
           <Stat
             label="Treasury"
-            value={snap.treasury ? shortAddr(snap.treasury) : "…"}
+            value={snap.treasury ? shortAddr(snap.treasury) : snap.loaded ? "—" : "…"}
             sub="Withdraw destination + caller for withdrawPlatformRevenue"
           />
           <Stat
             label="Owner (multisig)"
-            value={snap.owner ? shortAddr(snap.owner) : "…"}
+            value={snap.owner ? shortAddr(snap.owner) : snap.loaded ? "—" : "…"}
             sub="Holds setTreasury / fee-change rights"
           />
           <Stat
             label="Platform fee"
-            value={snap.platformFeeBps != null ? formatBps(snap.platformFeeBps) : "…"}
+            value={
+              snap.platformFeeBps != null
+                ? formatBps(snap.platformFeeBps)
+                : snap.loaded
+                  ? "—"
+                  : "…"
+            }
             sub="Cut from each relayer claim"
           />
         </div>
@@ -319,13 +328,13 @@ function TokenRevenueRow({
         {revenue == null ? "…" : `${formatUnits(revenue, meta.decimals)} ${meta.symbol}`}
       </td>
       <td className="px-4 py-3 text-right">
-        {!account ? (
+        {!account || !signer ? (
           <button
             type="button"
             onClick={() => void connect()}
             className="text-xs text-[var(--color-primary)] hover:underline"
           >
-            Connect
+            {account && !signer ? "Reconnect" : "Connect"}
           </button>
         ) : (
           <button
@@ -375,9 +384,14 @@ function PendingFeeBanner({
   effectiveTime: number;
   currentBps: bigint;
 }) {
+  // SSR renders an absolute UTC stamp; once mounted we switch to the
+  // live countdown. Prevents the Next dev-mode hydration warning when
+  // server-rendered `Date.now()` differs from the client value.
+  const mounted = useMounted();
   const now = Math.floor(Date.now() / 1000);
   const remaining = effectiveTime - now;
-  const ready = remaining <= 0;
+  const ready = mounted && remaining <= 0;
+  const utcLabel = new Date(effectiveTime * 1000).toISOString().slice(0, 16).replace("T", " ");
   return (
     <div
       className={`rounded-xl border p-5 ${
@@ -394,8 +408,8 @@ function PendingFeeBanner({
           </span>
         ) : (
           <span className="ml-2 text-[var(--color-text-muted)]">
-            · effective in {formatDuration(remaining)} (
-            {new Date(effectiveTime * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC)
+            · effective at {utcLabel} UTC
+            {mounted && ` (in ${formatDuration(remaining)})`}
           </span>
         )}
       </div>

@@ -7,7 +7,7 @@ import { isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { Stat } from "../../components/Stat";
-import { isValidEvmAddress } from "../../lib/x509";
+import { SetAddressCard } from "./SetAddressCard";
 
 const ABI = [
   "function minBond() external view returns (uint256)",
@@ -171,23 +171,19 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           title="Set treasury"
           description="RelayerRegistry.setTreasury(address) — protocol fee destination."
           submitLabel="Set treasury"
-          fnName="setTreasury"
-          contractAbi={ABI}
           contractAddress={address}
-          current={snap.treasury}
-          onSuccess={reload}
-          signer={signer}
+          contractAbi={ABI}
+          readerFn="treasury"
+          setterFn="setTreasury"
         />
         <SetAddressCard
           title="Set identity registry (Operator CA)"
           description="RelayerRegistry.setIdentityRegistry(address) — the contract RelayerRegistry asks isVerified() against."
           submitLabel="Set identity registry"
-          fnName="setIdentityRegistry"
-          contractAbi={ABI}
           contractAddress={address}
-          current={snap.identityRegistry}
-          onSuccess={reload}
-          signer={signer}
+          contractAbi={ABI}
+          readerFn="identityRegistry"
+          setterFn="setIdentityRegistry"
         />
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
           <h3 className="text-sm font-semibold">Issue operator X.509</h3>
@@ -272,75 +268,6 @@ function MinBondEditor({
         <input
           className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
           placeholder="0.0"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-      </label>
-    </AdminWriteCard>
-  );
-}
-
-interface SetAddressCardProps {
-  title: string;
-  description: string;
-  submitLabel: string;
-  fnName: string;
-  contractAbi: string[];
-  contractAddress: string;
-  current: string | null;
-  onSuccess: () => void;
-  signer: import("ethers").Signer | null;
-}
-
-function SetAddressCard({
-  title,
-  description,
-  submitLabel,
-  fnName,
-  contractAbi,
-  contractAddress,
-  current,
-  onSuccess,
-  signer,
-}: SetAddressCardProps) {
-  const [input, setInput] = useState("");
-  const valid = isValidEvmAddress(input.trim());
-
-  const submit = useCallback(async () => {
-    if (!signer) throw new Error("Wallet not connected");
-    if (!valid) throw new Error("Invalid address");
-    const c = new Contract(contractAddress, contractAbi, signer);
-    return (await (c as unknown as Record<string, (a: string) => Promise<{
-      hash: string;
-      wait(): Promise<{ hash?: string } | null>;
-    }>>)[fnName](input.trim())) as {
-      hash: string;
-      wait(): Promise<{ hash?: string } | null>;
-    };
-  }, [valid, input, signer, contractAddress, contractAbi, fnName]);
-
-  return (
-    <AdminWriteCard
-      title={title}
-      description={description}
-      submitLabel={submitLabel}
-      disabled={!valid}
-      onSubmit={submit}
-      onSuccess={() => {
-        setInput("");
-        onSuccess();
-      }}
-    >
-      <div className="text-xs text-[var(--color-text-muted)]">
-        Current: <strong className="font-mono">{current ? shortAddr(current) : "…"}</strong>
-      </div>
-      <label className="block text-xs">
-        <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
-          New address
-        </span>
-        <input
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
-          placeholder="0x…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />

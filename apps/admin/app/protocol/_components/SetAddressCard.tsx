@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Contract, type Signer } from "ethers";
+import { ZERO_ADDRESS, eqAddr } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { isValidEvmAddress } from "../../lib/x509";
@@ -64,8 +65,7 @@ export function SetAddressCard({
   }, [contractAddress, contractAbi, readerFn, readProvider, reloadKey]);
 
   const trimmed = input.trim();
-  const isZero =
-    trimmed.toLowerCase() === "0x0000000000000000000000000000000000000000";
+  const isZero = eqAddr(trimmed, ZERO_ADDRESS);
   const valid = isValidEvmAddress(trimmed) && (allowZeroAddress || !isZero);
 
   const submit = useCallback(async () => {

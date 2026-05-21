@@ -19,7 +19,9 @@ const ABI = [
   "function cancelFeeChange() external",
 ];
 
-const MAX_PLATFORM_FEE_BPS = 1000; // 10% — matches FeeVault.MAX_PLATFORM_FEE
+// Matches `FeeVault.MAX_PLATFORM_FEE` constant in contracts/src/FeeVault.sol.
+// Earlier draft had this at 1000 (10%) — the contract caps at 5000 (50%).
+const MAX_PLATFORM_FEE_BPS = 5000;
 
 interface Props {
   feeVaultAddress: string;
