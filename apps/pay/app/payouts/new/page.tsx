@@ -252,9 +252,9 @@ function NewPayout() {
   const [pickerEmails, setPickerEmails] = useState<Record<string, string>>({});
   // Picker-time snapshot map for label — same immutability rationale
   // as `pickerEmails` (see BuildRunRecordInput). Telegram / Kakao were
-  // removed: the address book no longer captures them at picker time,
-  // and historical run records' optional fields stay backwards-
-  // compatible (the build record only writes them when present).
+  // removed: the wizard no longer captures them at picker time, but
+  // historical run records' optional fields stay backwards-compatible
+  // in the storage schema.
   const [pickerLabels, setPickerLabels] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();

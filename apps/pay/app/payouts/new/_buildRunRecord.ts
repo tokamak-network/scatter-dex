@@ -79,9 +79,9 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
   // No live address-book lookup at build time — every contact field
   // must arrive via the picker-time snapshot maps below. The book is
   // mutable shared state; reading it here would let a later edit
-  // rewrite a historical run's email on the detail page. Self-contained:
-  // file in → record out. Historical records may still carry
-  // telegramHandle / kakaoId on individual rows — those survive
+  // rewrite a historical run's email or label on the detail page.
+  // Self-contained: file in → record out. Historical records may still
+  // carry telegramHandle / kakaoId on individual rows — those survive
   // verbatim because the row type still allows the fields; the wizard
   // simply no longer captures them at picker time.
   const recipients: RecipientRow[] = input.rows.map((r, i) => {
