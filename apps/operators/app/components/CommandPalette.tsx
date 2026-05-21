@@ -128,7 +128,11 @@ export function CommandPalette({
     }
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((i) => Math.min(filtered.length - 1, i + 1));
+      // `Math.max(0, ...)` guards the empty-results case — without
+      // it `filtered.length - 1` is `-1` and `active` goes negative,
+      // which then makes `aria-activedescendant` point at a stale
+      // id from the previous filter.
+      setActive((i) => Math.max(0, Math.min(filtered.length - 1, i + 1)));
       return;
     }
     if (e.key === "ArrowUp") {
@@ -267,7 +271,10 @@ export function useCommandPalette(): {
     const onKey = (e: KeyboardEvent) => {
       // Match both macOS ⌘K and Windows/Linux Ctrl+K. `e.metaKey` is
       // also set on platforms with a meta key (some Linux setups),
-      // so checking both still selects only the K binding.
+      // so checking both still selects only the K binding. Skip
+      // auto-repeat (key held down) — otherwise the toggle flickers
+      // through dozens of open/close cycles before the user lets go.
+      if (e.repeat) return;
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
         setOpen((v) => !v);

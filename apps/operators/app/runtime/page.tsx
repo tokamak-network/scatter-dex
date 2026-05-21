@@ -66,8 +66,14 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
   const palette = useCommandPalette();
   // Track current pause state for the palette label — flips between
   // "Pause" and "Resume" so the command surfaces the next-useful
-  // action rather than always offering both.
+  // action rather than always offering both. Reset to null on every
+  // auth change so a relayer switch (URL or key↔token mode) doesn't
+  // leave the palette claiming the *previous* relayer's pause state
+  // until the next /status fetch settles.
   const [paused, setPaused] = useState<boolean | null>(null);
+  useEffect(() => {
+    setPaused(null);
+  }, [auth.url, auth.key, auth.token]);
   // Palette closes optimistically on Enter, so a failed mutation
   // needs somewhere to surface. This banner sits above the section
   // list and clears either on Dismiss or on the next refresh tick.
