@@ -9,6 +9,9 @@ import { Stat } from "../components/Stat";
 import { explainError } from "../lib/format";
 import { DEMO_NETWORK, SANCTIONS_LIST_ADDRESS } from "../lib/network";
 import { isValidEvmAddress } from "../lib/x509";
+import { SetAddressCard } from "../protocol/_components/SetAddressCard";
+import { BatchEditor } from "./_components/BatchEditor";
+import { HistoryView } from "./_components/HistoryView";
 
 const SANCTIONS_ABI = [
   "function isSanctioned(address addr) external view returns (bool)",
@@ -16,6 +19,7 @@ const SANCTIONS_ABI = [
   "function removeSanction(address addr) external",
   "function externalOracle() external view returns (address)",
   "function owner() external view returns (address)",
+  "function setExternalOracle(address oracle) external",
 ];
 
 type Phase =
@@ -33,8 +37,8 @@ export default function SanctionsPage() {
         <h1 className="text-2xl font-semibold">SanctionsList</h1>
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
           Self-multisig sanction entries: KoFIU and emergency holds. The Chainalysis OFAC
-          oracle is consumed externally via{" "}
-          <code className="font-mono">externalOracle</code> and not editable here.
+          oracle plugs in via <code className="font-mono">externalOracle</code> — managed
+          below alongside the self-list.
         </p>
       </header>
 
@@ -45,6 +49,24 @@ export default function SanctionsPage() {
           <ContractInfo />
           <LookupPanel />
           <WritePanel />
+          <section>
+            <SectionHeader title="Batch operations" badge="live" />
+            <BatchEditor address={SANCTIONS_LIST_ADDRESS} />
+          </section>
+          <section>
+            <SectionHeader title="External oracle" badge="live" />
+            <SetAddressCard
+              title="Set external oracle"
+              description="SanctionsList.setExternalOracle(address). Typically the Chainalysis SDN oracle. Pass 0x0 to disable the OR-combine fallback and rely only on the self-managed list."
+              contractAddress={SANCTIONS_LIST_ADDRESS}
+              contractAbi={SANCTIONS_ABI}
+              readerFn="externalOracle"
+              setterFn="setExternalOracle"
+              submitLabel="Update oracle"
+              allowZeroAddress
+            />
+          </section>
+          <HistoryView address={SANCTIONS_LIST_ADDRESS} />
         </>
       )}
     </div>
