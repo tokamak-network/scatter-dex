@@ -58,6 +58,13 @@ export const config = {
     if (Buffer.byteLength(key, "utf8") < 32) throw new Error("ADMIN_API_KEY must be at least 32 bytes");
     return Buffer.from(key);
   })(),
+  // Wallet-signature admin auth: the operator hits POST /api/admin/session
+  // with a signed challenge, and the server verifies the recovered
+  // address is `isActiveRelayer()` on this RelayerRegistry. Optional so
+  // the API-key-only deploy path still boots; admin SIWE simply won't
+  // be exposed when the var is missing. Set on operator deploys that
+  // want the wallet flow.
+  relayerRegistryAddress: process.env.RELAYER_REGISTRY_ADDRESS || null,
   relayerFee: parseInt(process.env.RELAYER_FEE || "30", 10),
   port: parseInt(process.env.PORT || "3002", 10),
 
