@@ -18,12 +18,11 @@ const ABI = [
   "function setCancelVerifier(address _verifier) external",
 ];
 
-// Tier 16 is the canonical commitment-tree depth used across the
-// protocol's circom artefacts. Surfaced as the default so the most
-// common rotation is one click.
+// Tier values match the on-chain `maxClaimsPerSide` per-side bound.
+// PrivateSettlement seeds tier 16 in initialize() and tests exercise
+// 16/64/128; other values are treated as unknown tiers and revert.
 const DEFAULT_TIER = 16;
-// Other tiers the protocol supports are documented in circuits/.
-const TIER_OPTIONS = [16, 24, 32] as const;
+const TIER_OPTIONS = [16, 64, 128] as const;
 
 type TierKind = "authorize" | "claim" | "batchAuthorize";
 

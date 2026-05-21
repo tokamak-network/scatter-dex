@@ -31,6 +31,14 @@ export function SettlementQueue({ address }: { address: string }) {
   const [input, setInput] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
   const mounted = useMounted();
+  // Tick once per second so the countdown stays live without
+  // re-fetching state every tick. Stops once the timelock elapses.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!mounted) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [mounted]);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,13 +84,20 @@ export function SettlementQueue({ address }: { address: string }) {
     setReloadKey((k) => k + 1);
   };
 
-  // Three flows depending on current state:
+  // Four flows depending on current state:
   // 1. authorized == 0x0 → setAuthorizedSettlement (direct, one-time init)
   // 2. pending != 0x0 + timelock elapsed → activateAuthorizedSettlement
   // 3. pending != 0x0 + timelock pending → wait (show countdown)
   // 4. authorized != 0x0 + no pending → queueSetAuthorizedSettlement (timelocked)
-  const noAuthorized = snap.loaded && eqAddr(snap.authorized ?? ZERO_ADDRESS, ZERO_ADDRESS);
-  const hasPending = snap.loaded && !eqAddr(snap.pending ?? ZERO_ADDRESS, ZERO_ADDRESS);
+  //
+  // We treat failed reads as "unknown" and gate every action on a
+  // successful read so a transient RPC error can't push us into the
+  // init path when an authorized settlement already exists on-chain.
+  const noAuthorized =
+    snap.loaded && snap.authorized != null && eqAddr(snap.authorized, ZERO_ADDRESS);
+  const hasPending =
+    snap.loaded && snap.pending != null && !eqAddr(snap.pending, ZERO_ADDRESS);
+  const readsOk = snap.loaded && snap.authorized != null && snap.pending != null;
   const activateAtSec = snap.activateAt != null ? Number(snap.activateAt) : 0;
   const now = Math.floor(Date.now() / 1000);
   const timelockReady = mounted && hasPending && activateAtSec > 0 && now >= activateAtSec;
@@ -92,7 +107,14 @@ export function SettlementQueue({ address }: { address: string }) {
     <div className="space-y-4">
       <StateBanner snap={snap} mounted={mounted} timelockRemaining={timelockRemaining} />
 
-      {noAuthorized && (
+      {snap.loaded && !readsOk && (
+        <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-3 text-xs text-[var(--color-danger)]">
+          Failed to read current settlement state from the chain. Actions are disabled until
+          the reads succeed — refresh to retry.
+        </div>
+      )}
+
+      {readsOk && noAuthorized && (
         <AdminWriteCard
           title="Initialise authorized settlement (one-time)"
           description="CommitmentPool.setAuthorizedSettlement(address). Bypasses the timelock — only callable while authorizedSettlement is the zero address (initial deploy)."
@@ -105,7 +127,7 @@ export function SettlementQueue({ address }: { address: string }) {
         </AdminWriteCard>
       )}
 
-      {!noAuthorized && !hasPending && (
+      {readsOk && !noAuthorized && !hasPending && (
         <AdminWriteCard
           title="Queue new authorized settlement"
           description="CommitmentPool.queueSetAuthorizedSettlement(address). Starts the timelock — call activateAuthorizedSettlement() after the window."
@@ -118,7 +140,7 @@ export function SettlementQueue({ address }: { address: string }) {
         </AdminWriteCard>
       )}
 
-      {hasPending && timelockReady && (
+      {readsOk && hasPending && timelockReady && (
         <AdminWriteCard
           title="Activate pending settlement — timelock elapsed"
           description="CommitmentPool.activateAuthorizedSettlement(). Finalises the queued rotation; the pending address replaces the authorized settlement."
@@ -132,7 +154,7 @@ export function SettlementQueue({ address }: { address: string }) {
         </AdminWriteCard>
       )}
 
-      {hasPending && !timelockReady && (
+      {readsOk && hasPending && !timelockReady && (
         <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
           A pending rotation is waiting for the timelock to elapse. Queue another only after
           this one is activated.

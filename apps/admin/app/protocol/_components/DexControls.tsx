@@ -10,6 +10,7 @@ import { isValidEvmAddress } from "../../lib/x509";
 const ABI = [
   "function whitelistedDexRouters(address router) external view returns (bool)",
   "function dexPlatformFeeBps() external view returns (uint256)",
+  "function feeVault() external view returns (address)",
   "function setDexRouterWhitelist(address _router, bool _allowed) external",
   "function setDexPlatformFee(uint256 _bps) external",
 ];
@@ -117,27 +118,33 @@ function DexRouterEditor({ address }: { address: string }) {
 function DexPlatformFeeEditor({ address }: { address: string }) {
   const { signer, readProvider } = useWallet();
   const [current, setCurrent] = useState<bigint | null>(null);
+  // setDexPlatformFee reverts with FeeVaultRequired() when bps > 0 and
+  // feeVault is the zero address — surface that prerequisite in the UI
+  // so the operator doesn't waste gas on a guaranteed revert.
+  const [feeVault, setFeeVault] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     const c = new Contract(address, ABI, readProvider);
-    void c
-      .dexPlatformFeeBps()
-      .then((v: bigint) => {
-        if (!cancelled) setCurrent(v);
-      })
-      .catch(() => {
-        if (!cancelled) setCurrent(null);
-      });
+    void Promise.allSettled([
+      c.dexPlatformFeeBps() as Promise<bigint>,
+      c.feeVault() as Promise<string>,
+    ]).then(([feeRes, vaultRes]) => {
+      if (cancelled) return;
+      setCurrent(feeRes.status === "fulfilled" ? feeRes.value : null);
+      setFeeVault(vaultRes.status === "fulfilled" ? vaultRes.value : null);
+    });
     return () => {
       cancelled = true;
     };
   }, [address, readProvider, reloadKey]);
 
   const bps = parseBps(input);
-  const valid = bps !== null;
+  const vaultUnset = feeVault != null && eqAddr(feeVault, ZERO_ADDRESS);
+  const wouldRequireVault = bps !== null && bps > 0n && vaultUnset;
+  const valid = bps !== null && !wouldRequireVault;
 
   const submit = useCallback(async () => {
     if (!signer || bps == null) throw new Error("Invalid bps");
@@ -180,9 +187,16 @@ function DexPlatformFeeEditor({ address }: { address: string }) {
           onChange={(e) => setInput(e.target.value)}
         />
       </label>
-      {input && !valid && (
+      {input && bps === null && (
         <p className="text-xs text-[var(--color-danger)]">
           Must be an integer in 0–{MAX_DEX_PLATFORM_FEE_BPS}.
+        </p>
+      )}
+      {wouldRequireVault && (
+        <p className="text-xs text-[var(--color-danger)]">
+          FeeVault is not set on PrivateSettlement. setDexPlatformFee reverts with
+          <code className="ml-1 font-mono">FeeVaultRequired()</code> when bps &gt; 0. Set the
+          fee vault first (or use 0 bps).
         </p>
       )}
     </AdminWriteCard>
