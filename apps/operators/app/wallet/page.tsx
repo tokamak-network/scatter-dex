@@ -54,7 +54,10 @@ export default function WalletPage() {
           } catch (err) {
             return {
               token,
-              address: token.address,
+              // `BalanceRow.address` is a required string. Native tokens
+              // never had an address; falling back to the zero sentinel
+              // keeps the type contract honest even on the error path.
+              address: token.address ?? ethers.ZeroAddress,
               raw: 0n,
               loading: false,
               error: err instanceof Error ? err.message : String(err),

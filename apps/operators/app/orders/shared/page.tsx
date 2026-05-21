@@ -8,6 +8,21 @@ import { OperatorIdentityBar } from "../../components/OperatorIdentityBar";
 import { SectionHeader } from "../../components/SectionHeader";
 import { formatRelative } from "../../lib/format";
 
+/** Build `<base>/api/orders` through the URL API so a base with a
+ *  trailing slash or an unexpected scheme can't slip into the
+ *  rendered hint. Mirrors the same explorer-URL safety guard used
+ *  across Pay / operators. */
+function safeOrdersEndpoint(base: string): string | null {
+  if (!base) return null;
+  try {
+    const url = new URL("/api/orders", base);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export default function SharedOrdersPage() {
   const url = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "";
   const [state, setState] = useState<{
@@ -135,8 +150,9 @@ export default function SharedOrdersPage() {
       </section>
 
       <p className="text-xs text-[var(--color-text-subtle)]">
-        Data is fetched from <code className="font-mono">{url || "<unset>"}/api/orders</code> (up
-        to 500 rows). No admin token required — this view is what any
+        Data is fetched from{" "}
+        <code className="font-mono">{safeOrdersEndpoint(url) ?? "<unset>"}</code>{" "}
+        (up to 500 rows). No admin token required — this view is what any
         relayer peer would see.
       </p>
     </div>
