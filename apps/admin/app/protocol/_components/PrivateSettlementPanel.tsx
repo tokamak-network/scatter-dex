@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { Contract } from "ethers";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { Stat } from "../../components/Stat";
+import { DexControls } from "./DexControls";
 import { PauseControl } from "./PauseControl";
 import { SetAddressCard } from "./SetAddressCard";
+import { VerifierRotation } from "./VerifierRotation";
 
 const ABI = [
   "function paused() external view returns (bool)",
@@ -145,6 +147,26 @@ export function PrivateSettlementPanel({ address }: { address: string }) {
           submitLabel="Update identity gate"
           allowZeroAddress
         />
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-[var(--color-text-muted)]">
+          DEX controls{" "}
+          <span className="ml-1 rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] uppercase text-[var(--color-warning)]">
+            high-risk
+          </span>
+        </h3>
+        <DexControls address={address} />
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-[var(--color-text-muted)]">
+          Verifier rotation{" "}
+          <span className="ml-1 rounded-full bg-[var(--color-danger-soft)] px-2 py-0.5 text-[10px] uppercase text-[var(--color-danger)]">
+            critical
+          </span>
+        </h3>
+        <VerifierRotation address={address} />
       </div>
     </section>
   );
