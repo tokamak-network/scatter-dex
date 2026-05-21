@@ -78,7 +78,7 @@ function AdminIdentityPageInner() {
       )}
 
       <section>
-        <SectionHeader title="Current state" badge={loading ? "loading…" : "live"} />
+        <SectionHeader title="Current state" badge={loading ? "loading" : "live"} />
         <div className="grid grid-cols-2 gap-4">
           <Stat
             label="Contract"

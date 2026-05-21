@@ -1,13 +1,14 @@
 /**
  * Browser-side client for the relayer's `/api/admin/*` endpoints.
  *
- * All four operator pages that hit admin endpoints (/runtime,
- * /dashboard, /orders, /orders/detail) read the same auth pair —
- * URL + admin key — out of the same sessionStorage keys, then
- * issue requests with `x-admin-key` and the same JSON-with-fallback
- * response parser. This module is the canonical implementation;
- * /runtime and /dashboard still inline their own copies pre-dating
- * the extraction and will migrate in a follow-up.
+ * All operator pages that hit admin endpoints (/runtime, /dashboard,
+ * /orders, /orders/detail, /treasury) read the same auth pair out of
+ * sessionStorage and route through this module. Auth shape is a
+ * union: a SIWE session (`token` + `address` + `expiresAt`) or the
+ * legacy admin API key (`key`); the request header is picked per
+ * call by `authHeaders`. Sibling pages depend on `auth.token` *and*
+ * `auth.key` in their `useCallback` arrays so a mode switch (key →
+ * wallet or vice versa) re-fires their fetchers.
  */
 
 export const ADMIN_SS_URL = "operators-admin-url";

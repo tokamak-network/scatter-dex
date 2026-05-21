@@ -92,7 +92,7 @@ export default function SharedOrdersPage() {
       <section>
         <SectionHeader
           title={`${state.orders.length} open order${state.orders.length === 1 ? "" : "s"}`}
-          badge={state.loading ? "loading…" : "live"}
+          badge={state.loading ? "loading" : "live"}
         />
         {state.error && (
           <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-3 text-xs text-[var(--color-danger)]">

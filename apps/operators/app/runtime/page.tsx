@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  CommandPalette,
+  useCommandPalette,
+  type PaletteCommand,
+} from "../components/CommandPalette";
 import {
   adminFetch,
   adminGet,
@@ -58,21 +63,125 @@ export default function RuntimePage() {
 function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
   const [refreshTick, setRefreshTick] = useState(0);
   const refresh = useCallback(() => setRefreshTick((n) => n + 1), []);
+  const palette = useCommandPalette();
+  // Track current pause state for the palette label — flips between
+  // "Pause" and "Resume" so the command surfaces the next-useful
+  // action rather than always offering both.
+  const [paused, setPaused] = useState<boolean | null>(null);
+
+  const commands: PaletteCommand[] = useMemo(
+    () => [
+      // Actions — quick mutations that don't need a form.
+      {
+        id: "toggle-pause",
+        label: paused ? "Resume relayer" : "Pause relayer",
+        hint: paused === null ? "Loading…" : paused ? "currently paused" : "currently live",
+        section: "Actions",
+        keywords: paused ? ["unpause", "start"] : ["stop", "halt"],
+        run: async () => {
+          if (paused === null) return;
+          await adminPost(auth, `/api/admin/${paused ? "resume" : "pause"}`);
+          refresh();
+        },
+      },
+      {
+        id: "drain",
+        label: "Drain authorize-order queue",
+        hint: "Cancels pending POAB orders so a redeploy starts clean",
+        section: "Actions",
+        keywords: ["cancel", "purge", "clear"],
+        run: async () => {
+          await adminPost(auth, "/api/admin/drain");
+          refresh();
+        },
+      },
+      {
+        id: "webhook-test",
+        label: "Send test webhook",
+        hint: "Posts a ping to the configured webhook URL",
+        section: "Actions",
+        keywords: ["alert", "slack", "discord", "ping"],
+        run: async () => {
+          await adminPost(auth, "/api/admin/webhook/test", { kind: "info" });
+        },
+      },
+      // Navigation — scrolls the matching section into view.
+      ...RUNTIME_SECTIONS.map((s) => ({
+        id: `goto-${s.id}`,
+        label: `Jump to ${s.label}`,
+        section: "Navigate",
+        keywords: ["scroll", "goto", ...(s.keywords ?? [])],
+        run: () => {
+          const el = document.getElementById(s.id);
+          el?.scrollIntoView({ behavior: "smooth", block: "start" });
+        },
+      })),
+    ],
+    [auth, paused, refresh],
+  );
 
   return (
     <div className="space-y-6">
-      <StatusSection auth={auth} refreshTick={refreshTick} onChange={refresh} />
-      <FeeSection auth={auth} refreshTick={refreshTick} onChange={refresh} />
-      <DrainSection auth={auth} onChange={refresh} />
-      <ProfileSection auth={auth} />
-      <SanctionsSection auth={auth} />
-      <WebhookSection auth={auth} />
-      <ClaimThresholdsSection auth={auth} />
-      <CrossRelayerSection />
-      <LogsSection auth={auth} />
+      <section id="section-status">
+        <StatusSection
+          auth={auth}
+          refreshTick={refreshTick}
+          onChange={refresh}
+          onPausedKnown={setPaused}
+        />
+      </section>
+      <section id="section-fee">
+        <FeeSection auth={auth} refreshTick={refreshTick} onChange={refresh} />
+      </section>
+      <section id="section-drain">
+        <DrainSection auth={auth} onChange={refresh} />
+      </section>
+      <section id="section-profile">
+        <ProfileSection auth={auth} />
+      </section>
+      <section id="section-sanctions">
+        <SanctionsSection auth={auth} />
+      </section>
+      <section id="section-webhook">
+        <WebhookSection auth={auth} />
+      </section>
+      <section id="section-claim-thresholds">
+        <ClaimThresholdsSection auth={auth} />
+      </section>
+      <section id="section-cross-relayer">
+        <CrossRelayerSection />
+      </section>
+      <section id="section-logs">
+        <LogsSection auth={auth} />
+      </section>
+      <CommandPalette
+        commands={commands}
+        open={palette.open}
+        onClose={() => palette.setOpen(false)}
+      />
     </div>
   );
 }
+
+interface RuntimeSection {
+  id: string;
+  label: string;
+  keywords?: readonly string[];
+}
+
+/** Section anchors, in render order. Kept as data so the palette
+ *  can iterate them without duplicating labels in every page render. */
+const RUNTIME_SECTIONS: readonly RuntimeSection[] = [
+  { id: "section-status", label: "Status", keywords: ["pause", "resume"] },
+  { id: "section-fee", label: "Fee" },
+  { id: "section-drain", label: "Drain" },
+  { id: "section-profile", label: "Profile" },
+  { id: "section-sanctions", label: "Sanctions", keywords: ["pubkey", "blocklist"] },
+  { id: "section-webhook", label: "Webhook", keywords: ["alert", "slack"] },
+  { id: "section-claim-thresholds", label: "Claim thresholds", keywords: ["threshold"] },
+  { id: "section-cross-relayer", label: "Cross-relayer" },
+  { id: "section-logs", label: "Logs", keywords: ["debug", "info", "warn", "error"] },
+];
 
 interface StatusBody {
   paused: boolean;
@@ -95,17 +204,22 @@ function StatusSection({
   auth,
   refreshTick,
   onChange,
+  onPausedKnown,
 }: {
   auth: NonNullable<AuthState>;
   refreshTick: number;
   onChange: () => void;
+  onPausedKnown?: (paused: boolean) => void;
 }) {
   const fetcher = useCallback(
     (signal: AbortSignal) =>
       adminGet<StatusBody>(auth, "/api/admin/status", signal),
-    [auth.url, auth.key],
+    [auth.url, auth.key, auth.token],
   );
   const { data, error, loading } = useAdmin(fetcher, [refreshTick]);
+  useEffect(() => {
+    if (data) onPausedKnown?.(data.paused);
+  }, [data, onPausedKnown]);
   const [acting, setActing] = useState<null | "pause" | "resume">(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -210,7 +324,7 @@ function FeeSection({
       adminGet<{ feeBps: number }>(auth, "/api/admin/status", signal).then((s) => ({
         feeBps: s.feeBps,
       })),
-    [auth.url, auth.key],
+    [auth.url, auth.key, auth.token],
   );
   const { data } = useAdmin(fetcher, [refreshTick]);
   const [draft, setDraft] = useState("");
@@ -384,7 +498,7 @@ const PROFILE_FIELDS: Array<{
 function ProfileSection({ auth }: { auth: NonNullable<AuthState> }) {
   const fetcher = useCallback(
     (signal: AbortSignal) => adminGet<ProfileBody>(auth, "/api/admin/profile", signal),
-    [auth.url, auth.key],
+    [auth.url, auth.key, auth.token],
   );
   const { data, error: loadError } = useAdmin(fetcher, []);
   const [draft, setDraft] = useState<ProfileBody>({});
@@ -455,7 +569,7 @@ function SanctionsSection({ auth }: { auth: NonNullable<AuthState> }) {
   const [tick, setTick] = useState(0);
   const fetcher = useCallback(
     (signal: AbortSignal) => adminGet<SanctionsBody>(auth, "/api/admin/sanctions", signal),
-    [auth.url, auth.key],
+    [auth.url, auth.key, auth.token],
   );
   const { data, error: loadError } = useAdmin(fetcher, [tick]);
   const [ax, setAx] = useState("");
@@ -629,7 +743,7 @@ function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
   const fetcher = useCallback(
     (signal: AbortSignal) =>
       adminGet<WebhookStatusBody>(auth, "/api/admin/webhook", signal),
-    [auth.url, auth.key],
+    [auth.url, auth.key, auth.token],
   );
   const { data, error, loading } = useAdmin(fetcher, [tick]);
   const [testing, setTesting] = useState(false);
@@ -959,7 +1073,7 @@ function LogsSection({ auth }: { auth: NonNullable<AuthState> }) {
         signal,
       );
     },
-    [auth.url, auth.key, levelFilter, modFilter],
+    [auth.url, auth.key, auth.token, levelFilter, modFilter],
   );
   const { data, error, loading } = useAdmin(fetcher, [tick]);
 
@@ -1097,7 +1211,7 @@ function ClaimThresholdsSection({ auth }: { auth: NonNullable<AuthState> }) {
   const fetcher = useCallback(
     (signal: AbortSignal) =>
       adminGet<ClaimThresholdsBody>(auth, "/api/admin/claim-thresholds", signal),
-    [auth.url, auth.key],
+    [auth.url, auth.key, auth.token],
   );
   const { data, error, loading } = useAdmin(fetcher, [tick]);
   // Pending edits — keyed by lowercase token. Cleared on save success.
