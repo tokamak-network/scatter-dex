@@ -44,6 +44,12 @@ jobs:
   contracts:
     name: contracts / forge test
     runs-on: ubuntu-latest
+    # Skip on PRs that don't touch contracts (frontend / relayer / docs-only),
+    # mirroring the `contracts-invariant` gate. Saves ~5 min per non-contract
+    # PR. On `push` to main the gate is bypassed so the green-on-tip signal
+    # always reflects the full contract suite.
+    needs: changes
+    if: ${{ needs.changes.outputs.contracts == 'true' || github.event_name == 'push' }}
     defaults:
       run:
         working-directory: contracts
