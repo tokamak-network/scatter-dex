@@ -38,9 +38,9 @@ const TILES = [
     href: "/audit",
     title: "Audit",
     blurb:
-      "Surface the AUDIT.md state and external audit links for the deployment currently selected on the network pill.",
+      "In-scope contracts on this deployment, live pause state, and the repo's AUDIT.md + HARDENING.md bundled inline.",
     cta: "View →",
-    badge: "mock" as const,
+    badge: "live" as const,
   },
 ];
 
