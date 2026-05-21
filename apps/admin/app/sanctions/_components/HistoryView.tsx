@@ -24,15 +24,38 @@ interface EventRow {
   kind: "add" | "remove";
   address: string;
   block: number;
+  txIndex: number;
+  logIndex: number;
   txHash: string;
 }
 
 /** Narrow ethers v6's `(EventLog | Log)` union — `queryFilter` against
- *  a typed event filter only emits matching events, so the `args` we
- *  expect always exists, but TS still sees the union. */
+ *  a typed event filter should only emit matching events, but TS sees
+ *  the wider union. Throw on the never-happens path so a malformed
+ *  log doesn't silently flow into the replayed set with an empty
+ *  address. */
 function toRow(e: EventLog | Log, kind: "add" | "remove"): EventRow {
-  const addr = "args" in e ? ((e.args?.addr as string) ?? "") : "";
-  return { kind, address: addr, block: e.blockNumber, txHash: e.transactionHash };
+  if (!("args" in e) || e.args?.addr == null) {
+    throw new Error(`Unexpected log shape on SanctionsList event (block ${e.blockNumber})`);
+  }
+  return {
+    kind,
+    address: e.args.addr as string,
+    block: e.blockNumber,
+    txIndex: e.transactionIndex,
+    logIndex: e.index,
+    txHash: e.transactionHash,
+  };
+}
+
+/** Total-order events by (block, txIndex, logIndex). Two events in
+ *  the same block can flip an address back and forth — the contract
+ *  emits in execution order, so we need the same total order to
+ *  reconstruct the final state correctly. */
+function compareEvents(a: EventRow, b: EventRow): number {
+  if (a.block !== b.block) return a.block - b.block;
+  if (a.txIndex !== b.txIndex) return a.txIndex - b.txIndex;
+  return a.logIndex - b.logIndex;
 }
 
 interface State {
@@ -59,16 +82,30 @@ export function HistoryView({ address }: { address: string }) {
         const c = new Contract(address, ABI, readProvider);
         const head = BigInt(await readProvider.getBlockNumber());
         const from = head > DEFAULT_LOOKBACK_BLOCKS ? head - DEFAULT_LOOKBACK_BLOCKS : 0n;
-        const [adds, removes] = await Promise.all([
+        const [addsRes, removesRes] = await Promise.allSettled([
           c.queryFilter(c.filters.AddressSanctioned(), from, head),
           c.queryFilter(c.filters.AddressUnsanctioned(), from, head),
         ]);
         if (cancelled) return;
+        // Show partial data if one queryFilter fails — the panel is
+        // diagnostic, and a missing half is still more useful than
+        // a blank screen with an error.
+        const adds = addsRes.status === "fulfilled" ? addsRes.value : [];
+        const removes = removesRes.status === "fulfilled" ? removesRes.value : [];
         const rows: EventRow[] = [
           ...adds.map((e) => toRow(e, "add")),
           ...removes.map((e) => toRow(e, "remove")),
-        ].sort((a, b) => b.block - a.block);
-        setState({ rows, loading: false, error: null });
+        ].sort((a, b) => compareEvents(b, a));
+        const partial =
+          addsRes.status === "rejected" || removesRes.status === "rejected"
+            ? `Partial: ${[
+                addsRes.status === "rejected" ? "additions failed" : null,
+                removesRes.status === "rejected" ? "removals failed" : null,
+              ]
+                .filter(Boolean)
+                .join(", ")}`
+            : null;
+        setState({ rows, loading: false, error: partial });
       } catch (err) {
         if (cancelled) return;
         setState({
@@ -102,9 +139,12 @@ export function HistoryView({ address }: { address: string }) {
             Refresh
           </button>
         </div>
-        {state.error ? (
-          <div className="px-4 py-4 text-sm text-[var(--color-danger)]">{state.error}</div>
-        ) : state.rows.length === 0 && !state.loading ? (
+        {state.error && (
+          <div className="border-b border-[var(--color-border)] bg-[var(--color-warning-soft)] px-4 py-2 text-xs text-[var(--color-warning)]">
+            {state.error}
+          </div>
+        )}
+        {state.rows.length === 0 && !state.loading ? (
           <div className="px-4 py-8 text-center text-xs text-[var(--color-text-muted)]">
             No sanction events in the recent block window.
           </div>
@@ -156,10 +196,13 @@ function EventTable({ rows }: { rows: EventRow[] }) {
 }
 
 function CurrentSetSummary({ rows }: { rows: EventRow[] }) {
-  // Replay events in block order to derive the current sanctioned set.
-  // `rows` arrives sorted by block desc; reverse for replay.
+  // Replay events in total order (block, txIndex, logIndex) to
+  // derive the current sanctioned set. Two events in the same
+  // block can flip an address back and forth — block-only ordering
+  // would mis-order them.
   const current = new Set<string>();
-  for (const r of [...rows].reverse()) {
+  const ordered = [...rows].sort(compareEvents);
+  for (const r of ordered) {
     const a = r.address.toLowerCase();
     if (r.kind === "add") current.add(a);
     else current.delete(a);

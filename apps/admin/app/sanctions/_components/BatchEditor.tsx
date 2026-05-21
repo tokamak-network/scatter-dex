@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Contract, type Signer } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
@@ -24,7 +24,9 @@ export function BatchEditor({ address, onSuccess }: Props) {
   const [text, setText] = useState("");
   const [action, setAction] = useState<"add" | "remove">("add");
 
-  const parsed = parseAddressList(text);
+  // Memoize so paste-and-edit on a 200-row list doesn't re-scan the
+  // string + re-run the regex on every keystroke.
+  const parsed = useMemo(() => parseAddressList(text), [text]);
   const overLimit = parsed.valid.length > MAX_BATCH_SIZE;
   const valid = parsed.valid.length > 0 && parsed.invalid.length === 0 && !overLimit;
 

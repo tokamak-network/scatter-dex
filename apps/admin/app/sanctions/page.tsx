@@ -37,8 +37,8 @@ export default function SanctionsPage() {
         <h1 className="text-2xl font-semibold">SanctionsList</h1>
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
           Self-multisig sanction entries: KoFIU and emergency holds. The Chainalysis OFAC
-          oracle is consumed externally via{" "}
-          <code className="font-mono">externalOracle</code> and not editable here.
+          oracle plugs in via <code className="font-mono">externalOracle</code> — managed
+          below alongside the self-list.
         </p>
       </header>
 
