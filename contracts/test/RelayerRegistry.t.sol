@@ -191,6 +191,48 @@ contract RelayerRegistryTest is Test {
         registry.setTreasury(address(0x9999));
     }
 
+    function test_setIdentityRegistry() public {
+        MockIdentityRegistry newRegistry = new MockIdentityRegistry();
+        // IdentityRegistryUpdated has no indexed params; check data only.
+        vm.expectEmit(false, false, false, true);
+        emit RelayerRegistry.IdentityRegistryUpdated(address(identityRegistry), address(newRegistry));
+        registry.setIdentityRegistry(address(newRegistry));
+        assertEq(address(registry.identityRegistry()), address(newRegistry));
+    }
+
+    function test_setIdentityRegistry_not_owner_reverts() public {
+        MockIdentityRegistry newRegistry = new MockIdentityRegistry();
+        vm.prank(relayer1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
+        registry.setIdentityRegistry(address(newRegistry));
+    }
+
+    function test_setIdentityRegistry_zero_reverts() public {
+        vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
+        registry.setIdentityRegistry(address(0));
+    }
+
+    function test_setIdentityRegistry_preserves_existing_relayers() public {
+        // Register relayer1 under the original (verified-all) registry, then
+        // swap to a registry that returns false for everyone. The existing
+        // relayer stays active — proving the swap only gates future
+        // register() calls, not previously-seated operators.
+        vm.prank(relayer1);
+        registry.register("http://relay1", "Relayer-1", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        MockIdentityRegistry rejectAll = new MockIdentityRegistry();
+        registry.setIdentityRegistry(address(rejectAll));
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        // A fresh wallet that isn't in the new registry cannot register.
+        address newcomer = address(0xCAFE);
+        vm.deal(newcomer, 10 ether);
+        vm.prank(newcomer);
+        vm.expectRevert(RelayerRegistry.NotVerified.selector);
+        registry.register("http://newcomer", "Newcomer", 25, 0);
+    }
+
     function test_initialize_zero_treasury_reverts() public {
         RelayerRegistry impl = new RelayerRegistry();
         bytes memory initData =

@@ -21,7 +21,7 @@ export default function Landing() {
           treasury at the rate governance set, and exit with your bond on
           7 days notice.
         </p>
-        <div className="mt-8 flex justify-center gap-3">
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link
             href="/onboarding"
             className="rounded-lg bg-[var(--color-primary)] px-6 py-3 font-medium text-white hover:bg-[var(--color-primary-hover)]"
@@ -33,6 +33,12 @@ export default function Landing() {
             className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-[var(--color-primary-soft)]"
           >
             Skip to registration
+          </Link>
+          <Link
+            href="/leaderboard"
+            className="rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-6 py-3 font-medium hover:bg-[var(--color-primary-soft)]"
+          >
+            See active relayers →
           </Link>
         </div>
         <p className="mt-4 text-xs text-[var(--color-text-subtle)]">

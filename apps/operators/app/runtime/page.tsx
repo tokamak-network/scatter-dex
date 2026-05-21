@@ -30,7 +30,7 @@ export default function RuntimePage() {
   return (
     <div className="space-y-8">
       <header>
-        <h1 className="text-2xl font-semibold">Runtime controls</h1>
+        <h1 className="text-2xl font-semibold">Controls</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           Operate <em>your own</em> relayer process — pause/resume, fee
           updates, drain queue, sanctions list, profile metadata. Hits the
