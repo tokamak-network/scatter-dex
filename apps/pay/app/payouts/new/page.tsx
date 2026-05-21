@@ -77,9 +77,13 @@ import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
 import { formatRecipientCsvRow, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
-import { csvEscape, csvSafeLabel, downloadCsv } from "@zkscatter/recipients/csv";
+import { csvEscape, csvSafeLabel, downloadCsv, splitCsvLine } from "@zkscatter/recipients/csv";
 import { parseRecipientFile } from "@zkscatter/recipients/parser";
-import { SpreadsheetEditor } from "./_components/SpreadsheetEditor";
+import {
+  AddressBookPicker,
+  SpreadsheetEditor,
+  type RecipientField,
+} from "@zkscatter/recipients";
 import {
   clearWizardDraft,
   loadWizardDraft,
@@ -94,7 +98,6 @@ import {
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
-import { AddressBookPicker } from "../../_components/AddressBookPicker";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import { type WalletEntry } from "@zkscatter/sdk/storage";
@@ -108,6 +111,12 @@ import type { RecipientRow as Row } from "../../_lib/format";
 // until the org-settings page lands; the wizard exposes it as an
 // override in the Funds step.
 const DEFAULT_MAX_FEE_BPS = 30;
+
+// Pay's recipient editor only surfaces name/address/amount. `email`
+// is upload-only (parser opts it in via `parseRecipientFile`), and
+// `releaseAt` is set once for the whole run via the Claim schedule
+// block — not per row.
+const SPREADSHEET_COLUMNS: readonly RecipientField[] = ["name", "address", "amount"];
 
 // TODO: read from org settings
 const LARGE_AMOUNT_THRESHOLD = 50_000;
@@ -294,8 +303,29 @@ function NewPayout() {
   } = useRelayers();
   const eddsa = useEdDSAKey();
   const walletBook = useWalletBook();
-  const folder = useFolderStorage();
   const [showBookPicker, setShowBookPicker] = useState(false);
+  // Probe each address-book entry through the shared IdentityGate
+  // cache so the picker can dim unverified ones (they can't claim).
+  // Gated by `showBookPicker` so the RPC burst only happens when the
+  // modal is actually opened — closing the modal lets the cache keep
+  // serving subsequent opens without re-probing.
+  const bookAddresses = useMemo(
+    () =>
+      showBookPicker
+        ? walletBook.entries.map((e) => e.address ?? "").filter(Boolean)
+        : [],
+    [showBookPicker, walletBook.entries],
+  );
+  const bookIdentity = useIdentityForAddresses(bookAddresses);
+  const getAddressVerification = useCallback(
+    (addr: string): "verified" | "unverified" | null => {
+      const v = bookIdentity.get(addr);
+      if (!v) return null;
+      return v.isVerified ? "verified" : "unverified";
+    },
+    [bookIdentity],
+  );
+  const folder = useFolderStorage();
   type UploadStatusKind = "ok" | "warn" | "error";
   const [uploadStatus, setUploadStatus] = useState<
     { kind: UploadStatusKind; message: string } | null
@@ -878,7 +908,10 @@ function NewPayout() {
       .map((l) => l.trim())
       .filter(Boolean)
       .map((l) => {
-        const parts = l.split(",").map((x) => (x ?? "").trim());
+        // Quote-aware split so values the shared SpreadsheetEditor
+        // emits via `csvEscape` (e.g. names containing `"`) round-trip
+        // back into `rows` without column-shift or stray quote chars.
+        const parts = splitCsvLine(l);
         return { name: parts[0] ?? "", address: parts[1] ?? "", amount: parts[2] ?? "" };
       })
       .filter((r) => r.address.length > 0);
@@ -1462,6 +1495,7 @@ function NewPayout() {
               <SpreadsheetEditor
                 csv={csv}
                 onCsvChange={setCsv}
+                columns={SPREADSHEET_COLUMNS}
                 readOnly={!!resumeRecord}
               />
             )}
@@ -2062,6 +2096,7 @@ function NewPayout() {
             appendFromAddressBook(picked);
             setShowBookPicker(false);
           }}
+          getVerification={getAddressVerification}
         />
       )}
     </div>
