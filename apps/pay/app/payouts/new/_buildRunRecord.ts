@@ -52,12 +52,6 @@ export interface BuildRunRecordInput {
    *  Keeping this immutable at submit time means later book edits
    *  never mutate a historical run record's contact fields. */
   emailByAddress?: Record<string, string>;
-  /** Same picker-time snapshot pattern for telegram / kakao. The
-   *  address book is shared mutable state across runs; reading it at
-   *  display time would let later edits "rewrite history" on the
-   *  detail page. */
-  telegramByAddress?: Record<string, string>;
-  kakaoByAddress?: Record<string, string>;
   /** Picker-time snapshot of the chosen entry's label. Falls back to
    *  the typed name first; only used when the wizard row has no name. */
   labelByAddress?: Record<string, string>;
@@ -85,14 +79,15 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
   // No live address-book lookup at build time — every contact field
   // must arrive via the picker-time snapshot maps below. The book is
   // mutable shared state; reading it here would let a later edit
-  // rewrite a historical run's email/telegram/kakao on the detail
-  // page. Self-contained: file in → record out.
+  // rewrite a historical run's email on the detail page. Self-contained:
+  // file in → record out. Historical records may still carry
+  // telegramHandle / kakaoId on individual rows — those survive
+  // verbatim because the row type still allows the fields; the wizard
+  // simply no longer captures them at picker time.
   const recipients: RecipientRow[] = input.rows.map((r, i) => {
     const lower = r.address.toLowerCase();
     const pkg = input.claimPackages?.[i];
     const email = input.emailByAddress?.[lower];
-    const telegramHandle = input.telegramByAddress?.[lower];
-    const kakaoId = input.kakaoByAddress?.[lower];
     const labelSnapshot = input.labelByAddress?.[lower];
     return {
       rowIndex: i,
@@ -105,8 +100,6 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
       status: isFutureClaim ? "locked" : "available",
       ...(isFutureClaim ? { claimFrom: claimFromUnix! } : {}),
       ...(email ? { email } : {}),
-      ...(telegramHandle ? { telegramHandle } : {}),
-      ...(kakaoId ? { kakaoId } : {}),
       ...(pkg ? { claimPackage: encodeClaimPackage(pkg) } : {}),
     };
   });

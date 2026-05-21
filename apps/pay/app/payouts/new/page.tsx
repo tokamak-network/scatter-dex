@@ -250,10 +250,11 @@ function NewPayout() {
   // email survives into the run record even if the book is later
   // edited. Keyed by lowercase recipient address.
   const [pickerEmails, setPickerEmails] = useState<Record<string, string>>({});
-  // Picker-time snapshot maps for the other contact channels — see
-  // BuildRunRecordInput for the why (book is mutable shared state).
-  const [pickerTelegrams, setPickerTelegrams] = useState<Record<string, string>>({});
-  const [pickerKakaos, setPickerKakaos] = useState<Record<string, string>>({});
+  // Picker-time snapshot map for label — same immutability rationale
+  // as `pickerEmails` (see BuildRunRecordInput). Telegram / Kakao were
+  // removed: the address book no longer captures them at picker time,
+  // and historical run records' optional fields stay backwards-
+  // compatible (the build record only writes them when present).
   const [pickerLabels, setPickerLabels] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [claimFrom, setClaimFrom] = useState<string>();
@@ -560,8 +561,6 @@ function NewPayout() {
               txHash,
               claimPackages,
               emailByAddress: pickerEmails,
-              telegramByAddress: pickerTelegrams,
-              kakaoByAddress: pickerKakaos,
               labelByAddress: pickerLabels,
               ...(totalRelayerFeeRaw !== undefined
                 ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
@@ -792,8 +791,6 @@ function NewPayout() {
     const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
     const rowsToAdd: string[] = [];
     const newEmails: Record<string, string> = {};
-    const newTelegrams: Record<string, string> = {};
-    const newKakaos: Record<string, string> = {};
     const newLabels: Record<string, string> = {};
     // Snapshot every contact field the book entry carries at picker
     // time. The run record will only see these snapshots — buildRunRecord
@@ -801,8 +798,6 @@ function NewPayout() {
     // a historical run's contact info.
     const snapshot = (lower: string, e: WalletEntry) => {
       if (e.email) newEmails[lower] = e.email;
-      if (e.telegramHandle) newTelegrams[lower] = e.telegramHandle;
-      if (e.kakaoId) newKakaos[lower] = e.kakaoId;
       if (e.label) newLabels[lower] = e.label;
     };
     // Defensive guard: the picker already filters out address-less
@@ -820,12 +815,6 @@ function NewPayout() {
     if (rowsToAdd.length === 0) return;
     if (Object.keys(newEmails).length > 0) {
       setPickerEmails((prev) => ({ ...prev, ...newEmails }));
-    }
-    if (Object.keys(newTelegrams).length > 0) {
-      setPickerTelegrams((prev) => ({ ...prev, ...newTelegrams }));
-    }
-    if (Object.keys(newKakaos).length > 0) {
-      setPickerKakaos((prev) => ({ ...prev, ...newKakaos }));
     }
     if (Object.keys(newLabels).length > 0) {
       setPickerLabels((prev) => ({ ...prev, ...newLabels }));
