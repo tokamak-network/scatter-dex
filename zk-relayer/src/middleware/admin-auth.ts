@@ -34,15 +34,22 @@ export function buildAdminAuth(siwe: AdminSiweAuth | null): RequestHandler {
     // because operators on the wallet flow get the cheaper path (one
     // Map.get vs the timing-safe key compare).
     const authHeader = req.headers.authorization;
-    if (siwe && typeof authHeader === "string" && authHeader.startsWith(BEARER_PREFIX)) {
+    const hasBearer =
+      siwe && typeof authHeader === "string" && authHeader.startsWith(BEARER_PREFIX);
+    if (hasBearer) {
       const token = authHeader.slice(BEARER_PREFIX.length).trim();
       if (token && siwe.verifySession(token) !== null) {
         next();
         return;
       }
-      // Fall through to the key path so a stale session doesn't lock
-      // out a deploy that still has `ADMIN_API_KEY` configured for
-      // CI / scripts.
+      // Bearer was offered but it didn't verify. If the client also
+      // sent an `x-admin-key`, fall through and let the key path
+      // decide; otherwise surface a Bearer-specific 401 so the UI
+      // distinguishes "session expired" from "invalid key".
+      if (typeof req.headers["x-admin-key"] !== "string") {
+        res.status(401).json({ error: "Session expired — sign in again" });
+        return;
+      }
     }
 
     const key = config.adminApiKey;

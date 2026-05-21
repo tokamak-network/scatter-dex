@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ethers } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
+  readPersistedAdminUrl,
   requestSiweChallenge,
   submitSiweSession,
   writeAdminAuth,
@@ -28,7 +30,12 @@ export function AdminConnectBar({
   title?: string;
   subtitle?: string;
 }) {
-  const [url, setUrl] = useState(auth?.url ?? "");
+  // Initial URL falls back to the persisted value even when `auth`
+  // is null — sessions expire after 15 min and we don't want the
+  // operator retyping the relayer URL every time they re-sign.
+  const [url, setUrl] = useState(
+    () => auth?.url ?? readPersistedAdminUrl() ?? "",
+  );
   const [key, setKey] = useState(auth?.key ?? "");
   const [showKeyForm, setShowKeyForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,17 +84,22 @@ export function AdminConnectBar({
       // hasn't enabled wallet auth fails fast — no point prompting
       // the wallet if the server can't issue a session.
       const challenge = await requestSiweChallenge(trimmedUrl);
-      // The shared `useWallet` hook owns provider detection and
-      // late-injection retries. If `signer` is null, the operator
-      // hasn't connected yet; `connect()` prompts them.
-      const live = signer ?? (await (async () => {
-        await connect();
-        return signer;
-      })());
+      // Resolve a live signer. `useWallet().signer` is the happy
+      // path; if the operator hasn't connected this tab yet, we ask
+      // the hook to prompt (`connect()`) and then read a fresh
+      // signer directly from the injected provider — the hook's
+      // React state won't have flushed back into this closure yet.
+      let live = signer;
       if (!live) {
-        throw new Error(
-          "Connect your wallet first, then try again. (Use the admin-key form if no wallet is available.)",
-        );
+        const eth = (window as unknown as { ethereum?: ethers.Eip1193Provider })
+          .ethereum;
+        if (!eth) {
+          throw new Error(
+            "No browser wallet detected. Install MetaMask or use the admin key.",
+          );
+        }
+        await connect();
+        live = await new ethers.BrowserProvider(eth).getSigner();
       }
       // Sign the EXACT server-provided message — recomputing it
       // client-side risks a one-byte drift (line endings, whitespace)

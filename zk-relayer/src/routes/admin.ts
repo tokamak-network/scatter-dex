@@ -10,7 +10,6 @@ import { pipeline } from "node:stream/promises";
 import { adminAuth, setSiweAuth } from "../middleware/admin-auth.js";
 import {
   AdminSiweAuth,
-  formatChallengeMessage,
   makeAdminSiweAuthFromChain,
 } from "../core/admin-siwe.js";
 import { config, updateRelayerFee } from "../config.js";
@@ -80,10 +79,10 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     // until its 60s TTL elapses, so an unauthenticated attacker
     // could otherwise spam to consume memory.
     router.get("/challenge", ...wl, (_req: Request, res: Response) => {
-      const { nonce, expiresAt } = siwe!.issueChallenge();
-      const issuedAt = new Date().toISOString();
-      const message = formatChallengeMessage({ nonce, issuedAt });
-      res.json({ nonce, expiresAt, issuedAt, message });
+      // The SIWE module owns the canonical message format — issuing
+      // the message here would risk client/server drift between this
+      // route and `createSession`'s exact-match check.
+      res.json(siwe!.issueChallenge());
     });
 
     // Public — verifies the signature server-side. Slow path is the

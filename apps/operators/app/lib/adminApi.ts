@@ -171,11 +171,21 @@ function authHeaders(auth: AdminAuth): Record<string, string> {
   return {};
 }
 
+/** Read the persisted relayer URL alone, without any credential.
+ *  Used to pre-fill the connect bar even when the saved session has
+ *  expired — the operator shouldn't have to retype the URL after a
+ *  15-minute timeout. */
+export function readPersistedAdminUrl(): string | null {
+  if (typeof sessionStorage === "undefined") return null;
+  return sessionStorage.getItem(ADMIN_SS_URL);
+}
+
 /** Read the cached auth from sessionStorage. Prefers the SIWE
  *  session pair when present (the user explicitly chose the wallet
  *  flow); falls back to the legacy URL + key pair. Returns `null`
- *  when neither pair is complete so the host page renders the
- *  connect bar. */
+ *  when no usable credential is stored — `readPersistedAdminUrl`
+ *  is the right call when you only need the URL to pre-fill the
+ *  connect bar after a stale session. */
 export function readAdminAuth(): AdminAuth | null {
   if (typeof sessionStorage === "undefined") return null;
   const url = sessionStorage.getItem(ADMIN_SS_URL);
@@ -185,9 +195,9 @@ export function readAdminAuth(): AdminAuth | null {
     const expiresRaw = sessionStorage.getItem(ADMIN_SS_EXPIRES);
     const expiresAt = expiresRaw ? Number(expiresRaw) : undefined;
     // Expired token → treat as logged-out so the user re-signs
-    // instead of blasting through a request that 401s. We do NOT
-    // clear sessionStorage here — leave it to the connect bar so a
-    // mid-flight render isn't surprised by missing keys.
+    // instead of blasting through a request that 401s. The URL
+    // stays in sessionStorage so `readPersistedAdminUrl` can still
+    // pre-fill the connect bar without forcing a retype.
     if (expiresAt !== undefined && expiresAt <= Date.now()) return null;
     const address = sessionStorage.getItem(ADMIN_SS_ADDRESS) ?? undefined;
     return { url, token, address, expiresAt };

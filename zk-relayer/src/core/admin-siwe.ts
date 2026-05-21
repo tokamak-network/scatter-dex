@@ -24,6 +24,11 @@ import { ethers } from "ethers";
 
 const NONCE_TTL_MS = 60_000;
 const SESSION_TTL_MS = 15 * 60_000;
+// Gate the O(n) sweep across both maps to at most once per this many
+// ms. Independent expiry checks on individual entries still happen
+// on every read (see `verifySession`), so a single stale row never
+// becomes accessible just because the sweep hasn't run yet.
+const PURGE_INTERVAL_MS = 30_000;
 const NONCE_BYTES = 32;
 const SESSION_TOKEN_BYTES = 32;
 
@@ -33,6 +38,13 @@ const RELAYER_REGISTRY_ABI = [
 
 interface NonceEntry {
   expiresAt: number;
+  /** Exact challenge message bound to this nonce. The client must
+   *  present the byte-identical string back in `createSession`; this
+   *  prevents an attacker from getting an operator to sign an
+   *  innocuous-looking message that happens to contain the nonce
+   *  somewhere in its body — only the canonical SIWE message format
+   *  produced by `formatChallengeMessage` is accepted. */
+  message: string;
 }
 
 interface SessionEntry {
@@ -63,18 +75,31 @@ export function makeAdminSiweAuthFromChain(
 export class AdminSiweAuth {
   private nonces = new Map<string, NonceEntry>();
   private sessions = new Map<string, SessionEntry>();
+  // Last sweep timestamp. `purgeExpired` runs on every public call,
+  // but the actual O(n) walk is gated by `PURGE_INTERVAL_MS` so we
+  // don't iterate two maps on each request — sessions are short and
+  // request rate is low, but cheap is cheaper.
+  private lastPurgeAt = 0;
   constructor(
     private verifyActive: (address: string) => Promise<boolean>,
   ) {}
 
-  /** Reserve a fresh nonce. Caller is responsible for consuming it
-   *  via `createSession` before `NONCE_TTL_MS` elapses. */
-  issueChallenge(): { nonce: string; expiresAt: number } {
+  /** Reserve a fresh nonce and the canonical message that must be
+   *  signed against it. Caller is responsible for consuming the
+   *  challenge via `createSession` before `NONCE_TTL_MS` elapses. */
+  issueChallenge(): {
+    nonce: string;
+    expiresAt: number;
+    issuedAt: string;
+    message: string;
+  } {
     this.purgeExpired();
     const nonce = randomBytes(NONCE_BYTES).toString("hex");
     const expiresAt = Date.now() + NONCE_TTL_MS;
-    this.nonces.set(nonce, { expiresAt });
-    return { nonce, expiresAt };
+    const issuedAt = new Date().toISOString();
+    const message = formatChallengeMessage({ nonce, issuedAt });
+    this.nonces.set(nonce, { expiresAt, message });
+    return { nonce, expiresAt, issuedAt, message };
   }
 
   /** Verify the signature, ensure the signer is an active relayer in
@@ -98,8 +123,12 @@ export class AdminSiweAuth {
     if (entry.expiresAt <= Date.now()) {
       throw new Error("Challenge nonce expired");
     }
-    if (!message.includes(nonce)) {
-      throw new Error("Message does not reference the issued nonce");
+    // Exact-match against the message issued *with this nonce*. A
+    // permissive `includes(nonce)` check would let an attacker craft
+    // an innocuous-looking message containing the nonce and trick an
+    // active relayer into signing it.
+    if (message !== entry.message) {
+      throw new Error("Message does not match the issued challenge");
     }
     let recovered: string;
     try {
@@ -145,6 +174,8 @@ export class AdminSiweAuth {
 
   private purgeExpired(): void {
     const now = Date.now();
+    if (now - this.lastPurgeAt < PURGE_INTERVAL_MS) return;
+    this.lastPurgeAt = now;
     for (const [n, e] of this.nonces) {
       if (e.expiresAt <= now) this.nonces.delete(n);
     }
