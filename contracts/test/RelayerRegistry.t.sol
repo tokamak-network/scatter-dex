@@ -193,7 +193,8 @@ contract RelayerRegistryTest is Test {
 
     function test_setIdentityRegistry() public {
         MockIdentityRegistry newRegistry = new MockIdentityRegistry();
-        vm.expectEmit(true, true, true, true);
+        // IdentityRegistryUpdated has no indexed params; check data only.
+        vm.expectEmit(false, false, false, true);
         emit RelayerRegistry.IdentityRegistryUpdated(address(identityRegistry), address(newRegistry));
         registry.setIdentityRegistry(address(newRegistry));
         assertEq(address(registry.identityRegistry()), address(newRegistry));

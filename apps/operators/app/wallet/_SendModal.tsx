@@ -54,9 +54,19 @@ export function SendModal({
     ethers.isAddress(recipient) && recipient !== ethers.ZeroAddress;
   let amountRaw = 0n;
   let amountValid = false;
+  let amountWarning: string | null = null;
   try {
     amountRaw = ethers.parseUnits(amount.trim() || "0", row.token.decimals);
+    // Native sends need gas headroom — the `Max` button already
+    // reserves `NATIVE_MAX_GAS_RESERVE_WEI`, so warn (not reject) if
+    // the typed value crosses that line. A hard-cap would still let
+    // the user submit a tx the wallet then rejects with the opaque
+    // "insufficient funds" error.
+    const nativeCap = row.token.isNative ? computeMaxRaw() : row.raw;
     amountValid = amountRaw > 0n && amountRaw <= row.raw;
+    if (amountValid && row.token.isNative && amountRaw > nativeCap) {
+      amountWarning = "Leaves no gas headroom — wallet will likely reject the tx.";
+    }
   } catch {
     amountValid = false;
   }
@@ -175,6 +185,11 @@ export function SendModal({
               {amount && !amountValid && (
                 <div className="mt-1 text-[10px] text-[var(--color-warning)]">
                   Amount must be &gt; 0 and ≤ available balance.
+                </div>
+              )}
+              {amountWarning && (
+                <div className="mt-1 text-[10px] text-[var(--color-warning)]">
+                  {amountWarning}
                 </div>
               )}
             </label>

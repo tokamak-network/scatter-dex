@@ -38,7 +38,7 @@ export function MyMenu() {
             <MenuLink href="/dashboard" close={close}>Dashboard</MenuLink>
             <MenuLink href="/orders" close={close}>Orders</MenuLink>
             <MenuLink href="/treasury" close={close}>Earnings</MenuLink>
-            <MenuLink href="/runtime" close={close}>Runtime</MenuLink>
+            <MenuLink href="/runtime" close={close}>Controls</MenuLink>
             <MenuLink href="/profile" close={close}>Profile</MenuLink>
           </div>
         </div>

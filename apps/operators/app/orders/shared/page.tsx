@@ -23,10 +23,21 @@ export default function SharedOrdersPage() {
     }
     let cancelled = false;
     const client = new SharedOrderbookClient(url);
-    client
-      .getOrders(500)
-      .then((orders) => {
-        if (!cancelled) setState({ loading: false, orders, error: null });
+    // `SharedOrderbookClient.getOrders` swallows transport/parse errors
+    // and returns []; gate on the `isOnline` probe first so a service
+    // outage surfaces as an error instead of a misleading "no orders".
+    Promise.all([client.isOnline(), client.getOrders(500)])
+      .then(([online, orders]) => {
+        if (cancelled) return;
+        if (!online) {
+          setState({
+            loading: false,
+            orders: [],
+            error: `Shared orderbook unreachable at ${url}`,
+          });
+          return;
+        }
+        setState({ loading: false, orders, error: null });
       })
       .catch((err) => {
         if (!cancelled) {

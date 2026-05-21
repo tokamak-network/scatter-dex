@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ethers } from "ethers";
 import {
   ERC20_ABI,
@@ -114,7 +114,10 @@ export default function WalletPage() {
             {rows.map((r) => {
               const hasBalance = r.raw > 0n && !r.error;
               return (
-                <tr key={r.token.symbol} className="border-t border-[var(--color-border)]">
+                <tr
+                  key={`${r.token.symbol}:${r.address}`}
+                  className="border-t border-[var(--color-border)]"
+                >
                   <td className="px-4 py-3">
                     <div className="font-medium">{formatTokenLabel(r.token.symbol)}</div>
                     <div className="text-[10px] text-[var(--color-text-muted)]">

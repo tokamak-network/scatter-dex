@@ -250,14 +250,17 @@ function ActionCard({
   const submit = useCallback(async () => {
     setErr(null);
     setTxHash(null);
-    const validationErr = validate(value);
+    // Validate the trimmed form so " 0x… " (paste with whitespace)
+    // passes validation iff submit() would actually accept it.
+    const trimmed = value.trim();
+    const validationErr = validate(trimmed);
     if (validationErr) {
       setErr(validationErr);
       return;
     }
     setBusy(true);
     try {
-      const hash = await onSubmit(value.trim());
+      const hash = await onSubmit(trimmed);
       setTxHash(hash);
       setValue("");
       onDone();
