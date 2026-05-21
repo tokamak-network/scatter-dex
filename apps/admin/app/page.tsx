@@ -30,9 +30,9 @@ const TILES = [
     href: "/treasury",
     title: "Treasury",
     blurb:
-      "Multisig treasury operations: protocol fee withdrawals, grants, and reserve transfers.",
+      "FeeVault: per-token platform revenue + withdraw, timelocked fee changes, setTreasury, authorized depositors.",
     cta: "Open →",
-    badge: "mock" as const,
+    badge: "live" as const,
   },
   {
     href: "/audit",

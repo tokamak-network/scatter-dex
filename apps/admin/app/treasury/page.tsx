@@ -8,6 +8,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
 import { explainError } from "../lib/format";
 import { DEMO_NETWORK } from "../lib/network";
+import { FeeVaultWrites } from "./_components/FeeVaultWrites";
 
 const FEE_VAULT_ABI = [
   "function platformRevenue(address token) external view returns (uint256)",
@@ -151,6 +152,24 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           feeVaultAddress={feeVaultAddress}
           rows={tokenRows}
           onWithdrawn={() => setReloadKey((k) => k + 1)}
+        />
+      </section>
+
+      <section>
+        <SectionHeader title="Treasury writes" badge="live" />
+        <FeeVaultWrites
+          feeVaultAddress={feeVaultAddress}
+          hasPendingChange={
+            snap.pendingFeeBps != null &&
+            snap.pendingFeeEffectiveTime != null &&
+            snap.pendingFeeEffectiveTime > 0n
+          }
+          pendingReady={
+            snap.pendingFeeEffectiveTime != null &&
+            snap.pendingFeeEffectiveTime > 0n &&
+            Number(snap.pendingFeeEffectiveTime) <= Math.floor(Date.now() / 1000)
+          }
+          onReload={() => setReloadKey((k) => k + 1)}
         />
       </section>
     </>
