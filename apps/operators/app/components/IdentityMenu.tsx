@@ -51,6 +51,13 @@ function IdentityMenuImpl({ isAdmin }: { isAdmin: boolean }) {
             >
               My status
             </Link>
+            <Link
+              href="/register"
+              onClick={close}
+              className="block px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
+            >
+              Register relayer
+            </Link>
             {isAdmin && (
               <Link
                 href="/admin/identity"
