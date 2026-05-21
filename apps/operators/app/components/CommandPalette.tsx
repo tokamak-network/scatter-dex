@@ -18,9 +18,9 @@ export interface PaletteCommand {
    *  the order they appear in the input array; the section header is
    *  emitted whenever this value changes between adjacent items. */
   section: string;
-  /** Async handler. Errors propagate to the caller's toast — the
-   *  palette closes optimistically on Enter so the user sees the
-   *  next-action UI immediately. */
+  /** Async handler. The palette closes optimistically on Enter; any
+   *  thrown error is routed to the host via `onError` so the action's
+   *  outcome is still surfaced even though the palette is gone. */
   run: () => Promise<void> | void;
 }
 
@@ -37,14 +37,22 @@ export function CommandPalette({
   commands,
   open,
   onClose,
+  onError,
 }: {
   commands: readonly PaletteCommand[];
   open: boolean;
   onClose: () => void;
+  /** Surface a failed action to the host. The palette closes before
+   *  invoking — host can render an inline banner / toast without
+   *  fighting the modal overlay for stacking context. Defaults to a
+   *  console.error so silent failures are still visible during
+   *  development. */
+  onError?: (err: Error, cmd: PaletteCommand) => void;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const listboxId = "command-palette-listbox";
 
   // Reset to a clean state on every open so the previous session's
   // typed query doesn't linger. Focusing in the same effect avoids
@@ -56,24 +64,38 @@ export function CommandPalette({
     inputRef.current?.focus();
   }, [open]);
 
+  // Pre-build the search haystack per command outside the per-keystroke
+  // filter so each character typed only re-walks the cached strings.
+  // Each entry is a `(cmd, hay)` pair; the inner subsequence scan reads
+  // `hay` directly without re-joining/lowering on every render.
+  const indexed = useMemo(
+    () =>
+      commands.map((cmd) => ({
+        cmd,
+        hay: [cmd.label, cmd.hint ?? "", ...(cmd.keywords ?? [])]
+          .join(" ")
+          .toLowerCase(),
+      })),
+    [commands],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return commands;
-    return commands.filter((c) => {
-      const hay = [c.label, c.hint ?? "", ...(c.keywords ?? [])]
-        .join(" ")
-        .toLowerCase();
-      // Subsequence match: every char in the query must appear in
-      // order somewhere in the haystack. Lets "psr" match "pause
-      // relayer" without the operator typing the whole verb.
-      let i = 0;
-      for (const ch of hay) {
-        if (ch === q[i]) i += 1;
-        if (i === q.length) return true;
-      }
-      return false;
-    });
-  }, [commands, query]);
+    return indexed
+      .filter(({ hay }) => {
+        // Subsequence match: every char in the query must appear in
+        // order somewhere in the haystack. Lets "psr" match "pause
+        // relayer" without the operator typing the whole verb.
+        let i = 0;
+        for (const ch of hay) {
+          if (ch === q[i]) i += 1;
+          if (i === q.length) return true;
+        }
+        return false;
+      })
+      .map(({ cmd }) => cmd);
+  }, [commands, indexed, query]);
 
   // Clamp the active index whenever the filtered list shrinks below
   // it — without this, hitting Enter after a typo would index past
@@ -83,6 +105,20 @@ export function CommandPalette({
   }, [filtered.length, active]);
 
   if (!open) return null;
+
+  const execute = async (cmd: PaletteCommand) => {
+    onClose();
+    try {
+      await cmd.run();
+    } catch (err) {
+      // Log the full error first so RPC / network / contract-revert
+      // detail is preserved in devtools, then bubble a friendly
+      // message to the host's error banner.
+      console.error("[palette] command failed", cmd.id, err);
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      if (onError) onError(wrapped, cmd);
+    }
+  };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Escape") {
@@ -104,14 +140,12 @@ export function CommandPalette({
       e.preventDefault();
       const cmd = filtered[active];
       if (!cmd) return;
-      onClose();
-      // Run after close so an error path is free to show its own
-      // modal/toast without overlapping the palette overlay.
-      void Promise.resolve(cmd.run()).catch((err) => {
-        console.error("[palette] command failed", err);
-      });
+      void execute(cmd);
     }
   };
+
+  const activeId =
+    filtered[active] !== undefined ? `cmd-${filtered[active]!.id}` : undefined;
 
   return (
     <div
@@ -135,9 +169,20 @@ export function CommandPalette({
           }}
           placeholder="Run a command — e.g. pause, drain, jump to logs…"
           aria-label="Command query"
+          role="combobox"
+          aria-expanded
+          aria-controls={listboxId}
+          aria-haspopup="listbox"
+          aria-activedescendant={activeId}
+          aria-autocomplete="list"
           className="w-full border-b border-[var(--color-border)] bg-white px-4 py-3 text-sm outline-none"
         />
-        <ul role="listbox" className="max-h-[60vh] overflow-y-auto py-1">
+        <ul
+          id={listboxId}
+          role="listbox"
+          aria-label="Matching commands"
+          className="max-h-[60vh] overflow-y-auto py-1"
+        >
           {filtered.length === 0 && (
             <li className="px-4 py-3 text-xs text-[var(--color-text-muted)]">
               No commands match.
@@ -154,12 +199,7 @@ export function CommandPalette({
                 showSection={showSection}
                 selected={selected}
                 onHover={() => setActive(i)}
-                onClick={() => {
-                  onClose();
-                  void Promise.resolve(c.run()).catch((err) => {
-                    console.error("[palette] command failed", err);
-                  });
-                }}
+                onClick={() => void execute(c)}
               />
             );
           })}
@@ -196,6 +236,7 @@ function Row({
         </li>
       )}
       <li
+        id={`cmd-${cmd.id}`}
         role="option"
         aria-selected={selected}
         onMouseEnter={onHover}

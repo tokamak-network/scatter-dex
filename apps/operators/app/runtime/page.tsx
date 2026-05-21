@@ -68,6 +68,10 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
   // "Pause" and "Resume" so the command surfaces the next-useful
   // action rather than always offering both.
   const [paused, setPaused] = useState<boolean | null>(null);
+  // Palette closes optimistically on Enter, so a failed mutation
+  // needs somewhere to surface. This banner sits above the section
+  // list and clears either on Dismiss or on the next refresh tick.
+  const [paletteError, setPaletteError] = useState<string | null>(null);
 
   const commands: PaletteCommand[] = useMemo(
     () => [
@@ -122,6 +126,18 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
 
   return (
     <div className="space-y-6">
+      {paletteError && (
+        <div className="flex items-start justify-between gap-3 rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-2 text-xs text-[var(--color-danger)]">
+          <span>{paletteError}</span>
+          <button
+            type="button"
+            onClick={() => setPaletteError(null)}
+            className="text-[10px] underline opacity-70 hover:opacity-100"
+          >
+            dismiss
+          </button>
+        </div>
+      )}
       <section id="section-status">
         <StatusSection
           auth={auth}
@@ -158,6 +174,9 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
         commands={commands}
         open={palette.open}
         onClose={() => palette.setOpen(false)}
+        onError={(err, cmd) =>
+          setPaletteError(`${cmd.label} failed: ${err.message}`)
+        }
       />
     </div>
   );
