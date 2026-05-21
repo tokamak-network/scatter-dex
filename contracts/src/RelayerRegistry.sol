@@ -69,6 +69,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     event BondAdded(address indexed relayer, uint256 amount);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
+    event IdentityRegistryUpdated(address oldRegistry, address newRegistry);
 
     // ─── Errors ──────────────────────────────────────────────────
     error AlreadyRegistered();
@@ -300,6 +301,17 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     function setMinBond(uint256 _minBond) external onlyOwner {
         emit MinBondUpdated(minBond, _minBond);
         minBond = _minBond;
+    }
+
+    /// @notice Swap the IdentityRegistry the registry checks for relayer verification.
+    /// @dev Existing relayers stay registered — `register()` is the only entry point that
+    ///      consults `identityRegistry`, so the swap takes effect for new registrations only.
+    ///      Already-active relayers keep their seats regardless of whether they would still
+    ///      verify under the new CA; downgrades are a governance decision outside this hook.
+    function setIdentityRegistry(address _identityRegistry) external onlyOwner {
+        if (_identityRegistry == address(0)) revert ZeroAddress();
+        emit IdentityRegistryUpdated(address(identityRegistry), _identityRegistry);
+        identityRegistry = IIdentityRegistry(_identityRegistry);
     }
 
 }

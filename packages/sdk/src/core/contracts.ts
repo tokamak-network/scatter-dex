@@ -14,6 +14,18 @@ export const RELAYER_REGISTRY_ABI = [
   "function minBond() external view returns (uint256)",
   "function identityRegistry() external view returns (address)",
   "function bondToken() external view returns (address)",
+  // Owner-only management — exposed read-side here for admin UIs;
+  // mutating calls require the connected wallet to match `owner()`.
+  "function owner() external view returns (address)",
+  "function pendingOwner() external view returns (address)",
+  "function setTreasury(address _treasury) external",
+  "function setMinBond(uint256 _minBond) external",
+  "function setIdentityRegistry(address _identityRegistry) external",
+  "function transferOwnership(address newOwner) external",
+  "function acceptOwnership() external",
+  "event IdentityRegistryUpdated(address oldRegistry, address newRegistry)",
+  "event TreasuryUpdated(address oldTreasury, address newTreasury)",
+  "event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond)",
   // Custom-error fragments — needed for ethers v6 to decode reverts
   // by name. Without them, registry reverts arrive as raw selector
   // hex and `explainRegisterError`'s name match silently misses.

@@ -47,10 +47,13 @@ export default function TreasuryPage() {
       <OperatorIdentityBar />
       <header className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Treasury</h1>
+          <h1 className="text-2xl font-semibold">Earnings</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Fee revenue accrued in the FeeVault contract. Claim any time —
-            gas paid by you. Platform fee is deducted on claim.
+            Fee revenue accrued to your relayer in the FeeVault contract.
+            Claim any time — gas paid by you. Platform fee is deducted on
+            claim. (Not to be confused with{" "}
+            <code className="font-mono">RelayerRegistry.treasury()</code>,
+            which is the platform&apos;s own fee-recipient address.)
           </p>
         </div>
         <Link href="/dashboard" className="text-sm text-[var(--color-primary)] hover:underline">
