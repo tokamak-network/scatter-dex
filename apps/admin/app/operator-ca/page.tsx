@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
 import { DEMO_NETWORK, IDENTITY_REGISTRY_ADDRESS } from "../lib/network";
+import { AttestationPanel } from "./_components/AttestationPanel";
 import { IssueForm, type IssuedRecord } from "./_components/IssueForm";
 import { IssuedList } from "./_components/IssuedList";
 
@@ -118,22 +119,12 @@ export default function OperatorCaPage() {
       </section>
 
       <section>
-        <SectionHeader title="On-chain attestation" badge="mock" />
-        <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
-          <p>
-            After issuing the cert, the CA multisig posts an attestation to{" "}
-            <code className="font-mono">IdentityRegistry.setVerified(operatorAddress, validUntil)</code>{" "}
-            so <code className="font-mono">RelayerRegistry</code> sees the operator wallet as verified
-            (via <code className="font-mono">isVerified()</code> / <code className="font-mono">verifiedUntil()</code>).
-            The write is performed by the zk-X509 issuer service rather than this UI — that service
-            owns the registry's admin key and emits the attestation event after validating the issued
-            cert chain.
-          </p>
-          <p className="mt-3">
-            Wire <code className="font-mono">NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS</code> to enable
-            a direct-call mode here for testnet experimentation.
-          </p>
-        </div>
+        <SectionHeader
+          title="On-chain attestation"
+          badge={registryConfigured ? "live" : "mock"}
+          hint={registryConfigured ? undefined : "set NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS"}
+        />
+        <AttestationPanel />
       </section>
     </div>
   );

@@ -35,3 +35,13 @@ export const IDENTITY_REGISTRY_ADDRESS: string = pick(
   process.env.NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS,
   "",
 );
+
+/** Address of the project's `SanctionsList` (the self-managed
+ *  multisig-governed list, not the Chainalysis OFAC oracle).
+ *  Empty string disables the sanctions admin page actions and
+ *  surfaces a configuration banner instead.
+ */
+export const SANCTIONS_LIST_ADDRESS: string = pick(
+  process.env.NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS,
+  "",
+);
