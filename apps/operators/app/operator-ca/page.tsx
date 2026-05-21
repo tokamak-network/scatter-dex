@@ -166,8 +166,15 @@ function statusSub(status: OperatorIdentityStatus, account: string | null): stri
   }
 }
 
+// uint64.max sentinel from MockIdentityRegistry — production CAs
+// return a real timestamp so this branch is dev-only, but treating
+// it explicitly here keeps the verified row from rendering "—"
+// (which reads like missing data).
+const NEVER_EXPIRES = Number.MAX_SAFE_INTEGER;
 function formatExpiry(unixSec: number): string {
-  return unixSec > 0 ? formatIsoDate(unixSec) : "—";
+  if (unixSec <= 0) return "—";
+  if (unixSec >= NEVER_EXPIRES) return "no expiry";
+  return formatIsoDate(unixSec);
 }
 
 /** Build an explorer link for a contract address, mirroring the

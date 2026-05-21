@@ -10,6 +10,10 @@ import { DEMO_NETWORK } from "./lib/network";
 import { OperatorProvider } from "./lib/useOperator";
 import { FeeVaultProvider } from "./lib/useFeeVault";
 import { OperatorIdentityProvider } from "./lib/identity";
+import { IdentityMenu } from "./components/IdentityMenu";
+import { DocsMenu } from "./components/DocsMenu";
+import { MyMenu } from "./components/MyMenu";
+import { PlatformMenu } from "./components/PlatformMenu";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -48,18 +52,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               navLinks={
                 <>
                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
-                  <Link href="/onboarding" className="hover:text-[var(--color-text)]">Get started</Link>
-                  <Link href="/dashboard" className="hover:text-[var(--color-text)]">Dashboard</Link>
-                  <Link href="/orders" className="hover:text-[var(--color-text)]">Orders</Link>
-                  <Link href="/treasury" className="hover:text-[var(--color-text)]">Treasury</Link>
-                  <Link href="/leaderboard" className="hover:text-[var(--color-text)]">Leaderboard</Link>
-                  <Link href="/profile" className="hover:text-[var(--color-text)]">Profile</Link>
-                  <Link href="/runtime" className="hover:text-[var(--color-text)]">Runtime</Link>
-                  <Link href="/cross-relayer" className="hover:text-[var(--color-text)]">Cross-relayer</Link>
-                  <Link href="/verify-monitor" className="hover:text-[var(--color-text)]">Verify</Link>
-                  <Link href="/register" className="hover:text-[var(--color-text)]">Register</Link>
-                  <Link href="/operator-ca" className="hover:text-[var(--color-text)]">CA</Link>
-                  <Link href="/docs" className="hover:text-[var(--color-text)]">Docs</Link>
+                  <MyMenu />
+                  <PlatformMenu />
+                  <IdentityMenu />
+                  <DocsMenu />
                 </>
               }
             />

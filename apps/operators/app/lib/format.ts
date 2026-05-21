@@ -10,7 +10,12 @@ export { formatTokenAmount, formatEther } from "@zkscatter/sdk/util";
  *  uses a richer "Apr 26, 09:14 UTC" format, so a single shared
  *  date helper would force one team to compromise. */
 export function formatIsoDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toISOString().slice(0, 10);
+  const ms = unixSeconds * 1000;
+  // JS Date can only represent times within ±8.64e15 ms. Mock CAs
+  // return uint64.max as a "never expires" sentinel which overflows
+  // that range — clamp to a placeholder instead of throwing.
+  if (!Number.isFinite(ms) || Math.abs(ms) > 8.64e15) return "—";
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 /** Render an absolute unix-ms timestamp as a coarse "Xs/m/h/d ago"

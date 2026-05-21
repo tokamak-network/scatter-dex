@@ -174,3 +174,130 @@ export function useOperatorIdentityRefresh(): () => void {
   if (!ctx) throw new Error("useOperatorIdentityRefresh must be used inside <OperatorIdentityProvider>");
   return ctx.refresh;
 }
+
+export interface RelayerRegistryAdminSnapshot {
+  owner: string;
+  pendingOwner: string | null;
+  treasury: string;
+  minBond: bigint;
+  identityRegistry: string;
+}
+
+async function loadRelayerRegistryAdmin(
+  registryAddress: string,
+  provider: ethers.AbstractProvider,
+): Promise<RelayerRegistryAdminSnapshot> {
+  const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_ABI, provider);
+  const [owner, treasury, minBond, identityRegistry, pendingOwner] = await Promise.all([
+    registry.owner() as Promise<string>,
+    registry.treasury() as Promise<string>,
+    registry.minBond() as Promise<bigint>,
+    registry.identityRegistry() as Promise<string>,
+    // Forward-compat: a registry deployed before Ownable2Step lacks
+    // this selector. Catch so the rest of the batch still resolves.
+    registry.pendingOwner().catch(() => ethers.ZeroAddress) as Promise<string>,
+  ]);
+  return {
+    owner,
+    pendingOwner: pendingOwner === ethers.ZeroAddress ? null : pendingOwner,
+    treasury,
+    minBond,
+    identityRegistry,
+  };
+}
+
+interface AdminValue {
+  snapshot: RelayerRegistryAdminSnapshot | null;
+  loading: boolean;
+  error: string | null;
+  refresh: () => void;
+}
+
+const AdminCtx = createContext<AdminValue | null>(null);
+
+/** Loads RelayerRegistry's full owner/treasury/minBond/identityRegistry
+ *  snapshot on mount. Mount this only on `/admin/identity` — the
+ *  layout-level menu gate uses the cheaper `useIsRelayerRegistryAdmin`
+ *  (one `owner()` read) so every page boot doesn't pay 5 RPCs. */
+export function RelayerRegistryAdminProvider({ children }: { children: ReactNode }) {
+  const { readProvider } = useWallet();
+  const registry = DEMO_NETWORK.contracts.relayerRegistry;
+  const registryDeployed = isConfiguredAddress(registry);
+  const [snapshot, setSnapshot] = useState<RelayerRegistryAdminSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
+
+  useEffect(() => {
+    if (!readProvider || !registryDeployed) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    loadRelayerRegistryAdmin(registry, readProvider)
+      .then((snap) => {
+        if (!cancelled) {
+          setSnapshot(snap);
+          setError(null);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) setError((err as Error).message);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [readProvider, registry, registryDeployed, tick]);
+
+  return (
+    <AdminCtx.Provider value={{ snapshot, loading, error, refresh }}>
+      {children}
+    </AdminCtx.Provider>
+  );
+}
+
+export function useRelayerRegistryAdmin(): AdminValue {
+  const ctx = useContext(AdminCtx);
+  if (!ctx) {
+    throw new Error(
+      "useRelayerRegistryAdmin must be used within <RelayerRegistryAdminProvider>",
+    );
+  }
+  return ctx;
+}
+
+/** Layout-level admin gate — reads only `owner()` so menu visibility
+ *  on every page costs one RPC, not five. Heavier reads
+ *  (treasury/minBond/identityRegistry/pendingOwner) live behind
+ *  {@link useRelayerRegistryAdmin}, mounted only on `/admin/identity`. */
+export function useIsRelayerRegistryAdmin(): boolean | null {
+  const { account, readProvider } = useWallet();
+  const registry = DEMO_NETWORK.contracts.relayerRegistry;
+  const registryDeployed = isConfiguredAddress(registry);
+  const [owner, setOwner] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!readProvider || !registryDeployed) return;
+    let cancelled = false;
+    const c = new ethers.Contract(registry, RELAYER_REGISTRY_ABI, readProvider);
+    (c.owner() as Promise<string>)
+      .then((o) => {
+        if (!cancelled) setOwner(o);
+      })
+      .catch(() => {
+        /* leave owner null — menu will hide admin link until next attempt */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [readProvider, registry, registryDeployed]);
+
+  if (!account || !owner) return null;
+  return account.toLowerCase() === owner.toLowerCase();
+}
+
