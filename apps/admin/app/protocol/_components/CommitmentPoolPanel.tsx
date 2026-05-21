@@ -6,6 +6,7 @@ import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { Stat } from "../../components/Stat";
 import { PauseControl } from "./PauseControl";
 import { SetAddressCard } from "./SetAddressCard";
+import { SettlementQueue } from "./SettlementQueue";
 
 const ABI = [
   "function paused() external view returns (bool)",
@@ -97,6 +98,16 @@ export function CommitmentPoolPanel({ address }: { address: string }) {
           submitLabel="Update identity gate"
           allowZeroAddress
         />
+      </div>
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-[var(--color-text-muted)]">
+          Settlement rotation{" "}
+          <span className="ml-1 rounded-full bg-[var(--color-danger-soft)] px-2 py-0.5 text-[10px] uppercase text-[var(--color-danger)]">
+            critical · timelocked
+          </span>
+        </h3>
+        <SettlementQueue address={address} />
       </div>
     </section>
   );
