@@ -7,7 +7,12 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { adminAuth } from "../middleware/admin-auth.js";
+import { adminAuth, setSiweAuth } from "../middleware/admin-auth.js";
+import {
+  AdminSiweAuth,
+  formatChallengeMessage,
+  makeAdminSiweAuthFromChain,
+} from "../core/admin-siwe.js";
 import { config, updateRelayerFee } from "../config.js";
 import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
@@ -54,6 +59,71 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
 
   const router = Router();
   const wl = writeLimiter ? [writeLimiter] : [];
+
+  // Wallet-signature auth (Phase 1 of the SIWE migration). Initialised
+  // only when `RELAYER_REGISTRY_ADDRESS` is configured — deploys that
+  // run on the legacy key-only path skip this block entirely, so the
+  // challenge/session endpoints simply 404 and the middleware keeps
+  // accepting `x-admin-key` as before. When enabled, both auth modes
+  // coexist (operators can migrate at their own pace).
+  let siwe: AdminSiweAuth | null = null;
+  if (config.relayerRegistryAddress) {
+    siwe = makeAdminSiweAuthFromChain(
+      config.relayerRegistryAddress,
+      submitter.getProvider(),
+    );
+    setSiweAuth(siwe);
+
+    // Public — no auth — operators need this to mint a challenge
+    // they haven't yet signed for. Behind the writeLimiter even
+    // though it's a GET: each call grows the in-memory nonce map
+    // until its 60s TTL elapses, so an unauthenticated attacker
+    // could otherwise spam to consume memory.
+    router.get("/challenge", ...wl, (_req: Request, res: Response) => {
+      const { nonce, expiresAt } = siwe!.issueChallenge();
+      const issuedAt = new Date().toISOString();
+      const message = formatChallengeMessage({ nonce, issuedAt });
+      res.json({ nonce, expiresAt, issuedAt, message });
+    });
+
+    // Public — verifies the signature server-side. Slow path is the
+    // on-chain `isActiveRelayer` read; cap the writeLimiter so a
+    // brute-forcer can't pin the provider connection pool.
+    router.post("/session", ...wl, async (req: Request, res: Response) => {
+      const { nonce, message, signature } = req.body ?? {};
+      if (
+        typeof nonce !== "string" ||
+        typeof message !== "string" ||
+        typeof signature !== "string"
+      ) {
+        res.status(400).json({ error: "nonce, message, signature required (strings)" });
+        return;
+      }
+      try {
+        const { token, address, expiresAt } = await siwe!.createSession({
+          nonce,
+          message,
+          signature,
+        });
+        res.json({ token, address, expiresAt });
+      } catch (err) {
+        res.status(401).json({
+          error: err instanceof Error ? err.message : "Session creation failed",
+        });
+      }
+    });
+
+    // Authenticated — explicit logout. Idempotent. Mounted before the
+    // global `adminAuth` so it can read the bearer token directly
+    // from the header rather than going through the middleware twice.
+    router.post("/session/revoke", (req: Request, res: Response) => {
+      const auth = req.headers.authorization;
+      if (auth?.startsWith("Bearer ")) {
+        siwe!.revokeSession(auth.slice("Bearer ".length).trim());
+      }
+      res.status(204).end();
+    });
+  }
 
   router.use(adminAuth);
 
