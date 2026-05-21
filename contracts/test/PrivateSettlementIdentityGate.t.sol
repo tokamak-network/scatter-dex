@@ -14,7 +14,10 @@ import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract PsigToken is ERC20 {
     constructor() ERC20("Psig", "PSIG") {}
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
+
+    function mint(address to, uint256 amt) external {
+        _mint(to, amt);
+    }
 }
 
 /// @dev Covers the on-chain zk-X509 identity gate on PrivateSettlement:
@@ -29,15 +32,15 @@ contract PrivateSettlementIdentityGateTest is Test {
     MockIdentityRegistry gate;
 
     address alice = address(0xA11CE); // depositor
-    address bob = address(0xB0B);     // claim recipient
+    address bob = address(0xB0B); // claim recipient
     address relayer = address(0xBEEF);
 
     bytes32 constant TEST_CLAIMS_ROOT = bytes32(uint256(0xC1A1));
     uint256 constant COMMITMENT = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
 
-    uint[2] proofA = [uint(0), uint(0)];
-    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-    uint[2] proofC = [uint(0), uint(0)];
+    uint256[2] proofA = [uint256(0), uint256(0)];
+    uint256[2][2] proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+    uint256[2] proofC = [uint256(0), uint256(0)];
 
     function setUp() public {
         MockVerifier withdrawVerifier = new MockVerifier();
@@ -75,7 +78,9 @@ contract PrivateSettlementIdentityGateTest is Test {
     ///      reaches `_executeClaim` proper.
     function _registerGroup() internal {
         PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA, proofB: proofB, proofC: proofC,
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
             currentRoot: pool.getLastRoot(),
             nullifier: bytes32(uint256(0xABCD)),
             newCommitment: 0,
@@ -117,10 +122,15 @@ contract PrivateSettlementIdentityGateTest is Test {
         // bob is not verified.
         vm.expectRevert(PrivateSettlement.NotIdentityVerified.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x01)),
-            1 ether, address(token), bob, block.timestamp
+            1 ether,
+            address(token),
+            bob,
+            block.timestamp
         );
     }
 
@@ -130,10 +140,15 @@ contract PrivateSettlementIdentityGateTest is Test {
         gate.setVerified(bob, true);
 
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x02)),
-            1 ether, address(token), bob, block.timestamp
+            1 ether,
+            address(token),
+            bob,
+            block.timestamp
         );
         assertEq(token.balanceOf(bob), 1 ether);
     }
@@ -142,10 +157,15 @@ contract PrivateSettlementIdentityGateTest is Test {
         _registerGroup();
         // Gate unset — opt-in check skipped, claim behaves as before.
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x03)),
-            1 ether, address(token), bob, block.timestamp
+            1 ether,
+            address(token),
+            bob,
+            block.timestamp
         );
         assertEq(token.balanceOf(bob), 1 ether);
     }
@@ -160,10 +180,15 @@ contract PrivateSettlementIdentityGateTest is Test {
 
         vm.expectRevert(PrivateSettlement.NotIdentityVerified.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x04)),
-            1 ether, address(token), bob, block.timestamp
+            1 ether,
+            address(token),
+            bob,
+            block.timestamp
         );
     }
 }

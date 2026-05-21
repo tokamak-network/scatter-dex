@@ -12,12 +12,11 @@ contract MockDepositVerifier is IDepositVerifier {
         shouldPass = _pass;
     }
 
-    function verifyProof(
-        uint[2] calldata,
-        uint[2][2] calldata,
-        uint[2] calldata,
-        uint[3] calldata
-    ) external view returns (bool) {
+    function verifyProof(uint256[2] calldata, uint256[2][2] calldata, uint256[2] calldata, uint256[3] calldata)
+        external
+        view
+        returns (bool)
+    {
         return shouldPass;
     }
 }

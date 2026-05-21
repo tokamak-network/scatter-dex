@@ -14,20 +14,31 @@ import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract TdToken is ERC20 {
     constructor() ERC20("Td", "TD") {}
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
+
+    function mint(address to, uint256 amt) external {
+        _mint(to, amt);
+    }
 }
 
 contract TdAlwaysVerified is IIdentityRegistry {
-    function paused() external pure override returns (bool) { return false; }
-    function isVerified(address) external pure override returns (bool) { return true; }
-    function verifiedUntil(address) external pure override returns (uint64) { return type(uint64).max; }
+    function paused() external pure override returns (bool) {
+        return false;
+    }
+
+    function isVerified(address) external pure override returns (bool) {
+        return true;
+    }
+
+    function verifiedUntil(address) external pure override returns (uint64) {
+        return type(uint64).max;
+    }
 }
 
 /// @dev Transparent-style proxy shim — for triggering initialize reverts.
 contract InitRevertProxy {
     constructor(address impl, bytes memory data) payable {
         (bool ok, bytes memory ret) = impl.delegatecall(data);
-        if (!ok) { assembly { revert(add(ret, 32), mload(ret)) } }
+        if (!ok) assembly { revert(add(ret, 32), mload(ret)) }
     }
 }
 
@@ -179,8 +190,7 @@ contract TrackDBranchCoverage is Test {
         MockVerifier withdraw_ = new MockVerifier();
         MockDepositVerifier deposit_ = new MockDepositVerifier();
         bytes memory data = abi.encodeWithSelector(
-            CommitmentPool.initialize.selector,
-            owner, address(withdraw_), address(deposit_), uint32(0), uint32(10)
+            CommitmentPool.initialize.selector, owner, address(withdraw_), address(deposit_), uint32(0), uint32(10)
         );
         vm.expectRevert(IncrementalMerkleTree.InvalidLevels.selector);
         new InitRevertProxy(address(impl), data);
@@ -191,8 +201,7 @@ contract TrackDBranchCoverage is Test {
         MockVerifier withdraw_ = new MockVerifier();
         MockDepositVerifier deposit_ = new MockDepositVerifier();
         bytes memory data = abi.encodeWithSelector(
-            CommitmentPool.initialize.selector,
-            owner, address(withdraw_), address(deposit_), uint32(20), uint32(0)
+            CommitmentPool.initialize.selector, owner, address(withdraw_), address(deposit_), uint32(20), uint32(0)
         );
         vm.expectRevert(IncrementalMerkleTree.InvalidRootHistorySize.selector);
         new InitRevertProxy(address(impl), data);
@@ -203,8 +212,7 @@ contract TrackDBranchCoverage is Test {
         MockVerifier withdraw_ = new MockVerifier();
         MockDepositVerifier deposit_ = new MockDepositVerifier();
         bytes memory data = abi.encodeWithSelector(
-            CommitmentPool.initialize.selector,
-            owner, address(withdraw_), address(deposit_), uint32(21), uint32(10)
+            CommitmentPool.initialize.selector, owner, address(withdraw_), address(deposit_), uint32(21), uint32(10)
         );
         vm.expectRevert(IncrementalMerkleTree.InvalidLevels.selector);
         new InitRevertProxy(address(impl), data);

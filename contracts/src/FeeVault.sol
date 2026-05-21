@@ -89,7 +89,9 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         platformFeeBps = _platformFeeBps;
     }
 
-    function renounceOwnership() public pure override(OwnableUpgradeable) { revert RenounceOwnershipDisabled(); }
+    function renounceOwnership() public pure override(OwnableUpgradeable) {
+        revert RenounceOwnershipDisabled();
+    }
 
     // ─── Deposit (called by PrivateSettlement) ──────────────────
 

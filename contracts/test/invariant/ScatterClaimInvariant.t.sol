@@ -60,7 +60,7 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
         uint256 n = handler.knownClaimsRootsCount();
         for (uint256 i; i < n; ++i) {
             bytes32 root = handler.knownClaimsRoots(i);
-            (uint128 locked, uint128 claimed,, ) = settlement.claimsGroups(root);
+            (uint128 locked, uint128 claimed,,) = settlement.claimsGroups(root);
             assertLe(claimed, locked, "totalClaimed exceeded totalLocked");
         }
     }
@@ -72,7 +72,7 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
         uint256 n = handler.knownClaimsRootsCount();
         for (uint256 i; i < n; ++i) {
             bytes32 root = handler.knownClaimsRoots(i);
-            (uint128 locked, uint128 claimed,, ) = settlement.claimsGroups(root);
+            (uint128 locked, uint128 claimed,,) = settlement.claimsGroups(root);
             assertEq(locked, handler.ghostTotalLocked(root), "totalLocked drift");
             assertEq(claimed, handler.ghostTotalClaimed(root), "totalClaimed drift");
         }
@@ -95,7 +95,7 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
         uint256 n = handler.knownClaimsRootsCount();
         for (uint256 i; i < n; ++i) {
             bytes32 root = handler.knownClaimsRoots(i);
-            (uint128 locked, uint128 claimed,, ) = settlement.claimsGroups(root);
+            (uint128 locked, uint128 claimed,,) = settlement.claimsGroups(root);
             // Surface the real violation explicitly instead of letting the
             // subtraction underflow into a generic arithmetic revert.
             assertLe(claimed, locked, "totalClaimed exceeded totalLocked in coverage loop");
@@ -114,11 +114,7 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
     function invariant_recipientLedgerExact() public view {
         for (uint160 i = 1; i <= 5; ++i) {
             address recipient = address(uint160(0xB100 + i));
-            assertEq(
-                token.balanceOf(recipient),
-                handler.ghostRecipientCredited(recipient),
-                "recipient ledger drift"
-            );
+            assertEq(token.balanceOf(recipient), handler.ghostRecipientCredited(recipient), "recipient ledger drift");
         }
     }
 

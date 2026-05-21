@@ -11,12 +11,11 @@ contract MockVerifier is IVerifier {
         shouldPass = _pass;
     }
 
-    function verifyProof(
-        uint[2] calldata,
-        uint[2][2] calldata,
-        uint[2] calldata,
-        uint[7] calldata
-    ) external view returns (bool) {
+    function verifyProof(uint256[2] calldata, uint256[2][2] calldata, uint256[2] calldata, uint256[7] calldata)
+        external
+        view
+        returns (bool)
+    {
         return shouldPass;
     }
 }

@@ -13,7 +13,10 @@ import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract PscToken is ERC20 {
     constructor() ERC20("Psc", "PSC") {}
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
+
+    function mint(address to, uint256 amt) external {
+        _mint(to, amt);
+    }
 }
 
 /// @title PrivateSettlementClaimGuardsTest
@@ -38,9 +41,9 @@ contract PrivateSettlementClaimGuardsTest is Test {
     // Below the BN254 scalar field max so deposit's range check passes.
     uint256 constant COMMITMENT = 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef;
 
-    uint[2] proofA = [uint(0), uint(0)];
-    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-    uint[2] proofC = [uint(0), uint(0)];
+    uint256[2] proofA = [uint256(0), uint256(0)];
+    uint256[2][2] proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+    uint256[2] proofC = [uint256(0), uint256(0)];
 
     function setUp() public {
         MockVerifier withdrawVerifier = new MockVerifier();
@@ -86,7 +89,9 @@ contract PrivateSettlementClaimGuardsTest is Test {
     function _registerErc20Group() internal {
         // scatterDirect: relayer pays no fee, withdrawAmount == totalLocked.
         PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA, proofB: proofB, proofC: proofC,
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
             currentRoot: pool.getLastRoot(),
             nullifier: bytes32(uint256(0xABCD)),
             newCommitment: 0,
@@ -102,7 +107,9 @@ contract PrivateSettlementClaimGuardsTest is Test {
 
     function _registerWethGroup() internal {
         PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA, proofB: proofB, proofC: proofC,
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
             currentRoot: pool.getLastRoot(),
             nullifier: bytes32(uint256(0xDCBA)),
             newCommitment: 0,
@@ -121,7 +128,9 @@ contract PrivateSettlementClaimGuardsTest is Test {
     function test_scatterDirect_unwhitelistedToken_reverts() public {
         PscToken stranger = new PscToken();
         PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA, proofB: proofB, proofC: proofC,
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
             currentRoot: pool.getLastRoot(),
             nullifier: bytes32(uint256(0x11)),
             newCommitment: 0,
@@ -139,7 +148,9 @@ contract PrivateSettlementClaimGuardsTest is Test {
     function test_scatterDirect_amountOverflow_reverts() public {
         // withdrawAmount must equal totalLocked + fee.
         PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA, proofB: proofB, proofC: proofC,
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
             currentRoot: pool.getLastRoot(),
             nullifier: bytes32(uint256(0x12)),
             newCommitment: 0,
@@ -156,7 +167,9 @@ contract PrivateSettlementClaimGuardsTest is Test {
 
     function test_scatterDirect_unknownRoot_reverts() public {
         PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA, proofB: proofB, proofC: proofC,
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
             currentRoot: uint256(0xDEAD),
             nullifier: bytes32(uint256(0x13)),
             newCommitment: 0,
@@ -174,7 +187,9 @@ contract PrivateSettlementClaimGuardsTest is Test {
     function test_scatterDirect_nullifierReplay_reverts() public {
         _registerErc20Group(); // uses nullifier 0xABCD
         PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA, proofB: proofB, proofC: proofC,
+            proofA: proofA,
+            proofB: proofB,
+            proofC: proofC,
             currentRoot: pool.getLastRoot(),
             nullifier: bytes32(uint256(0xABCD)),
             newCommitment: 0,
@@ -207,10 +222,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         // No scatter yet — claimsGroup not registered.
         vm.expectRevert(PrivateSettlement.ClaimsGroupNotFound.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             bytes32(uint256(0xBAD0)),
             bytes32(uint256(0x01)),
-            1 ether, address(token), alice, block.timestamp
+            1 ether,
+            address(token),
+            alice,
+            block.timestamp
         );
     }
 
@@ -218,11 +238,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         _registerErc20Group();
         vm.expectRevert(PrivateSettlement.AmountOverflow.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x02)),
             uint256(type(uint128).max) + 1,
-            address(token), alice, block.timestamp
+            address(token),
+            alice,
+            block.timestamp
         );
     }
 
@@ -230,10 +254,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         _registerErc20Group(); // group totalLocked = 10 ether
         vm.expectRevert(PrivateSettlement.ExceedsTotalLocked.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x03)),
-            11 ether, address(token), alice, block.timestamp
+            11 ether,
+            address(token),
+            alice,
+            block.timestamp
         );
     }
 
@@ -241,10 +270,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         _registerErc20Group();
         vm.expectRevert(PrivateSettlement.NotYetReleasable.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x04)),
-            1 ether, address(token), alice, block.timestamp + 1 days
+            1 ether,
+            address(token),
+            alice,
+            block.timestamp + 1 days
         );
     }
 
@@ -252,10 +286,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         _registerErc20Group(); // group.token = address(token)
         vm.expectRevert(PrivateSettlement.TokenMismatch.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x05)),
-            1 ether, address(weth), alice, block.timestamp
+            1 ether,
+            address(weth),
+            alice,
+            block.timestamp
         );
     }
 
@@ -264,10 +303,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         settlement.setClaimVerifier(16, address(0)); // disable tier 16
         vm.expectRevert(abi.encodeWithSelector(PrivateSettlement.TierNotConfigured.selector, uint8(16)));
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x06)),
-            1 ether, address(token), alice, block.timestamp
+            1 ether,
+            address(token),
+            alice,
+            block.timestamp
         );
     }
 
@@ -276,10 +320,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         claimVerifier.setShouldPass(false);
         vm.expectRevert(PrivateSettlement.InvalidProof.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             TEST_CLAIMS_ROOT,
             bytes32(uint256(0x07)),
-            1 ether, address(token), alice, block.timestamp
+            1 ether,
+            address(token),
+            alice,
+            block.timestamp
         );
     }
 
@@ -287,15 +336,11 @@ contract PrivateSettlementClaimGuardsTest is Test {
         _registerErc20Group();
         bytes32 nul = bytes32(uint256(0x08));
         settlement.claimWithProof(
-            proofA, proofB, proofC,
-            TEST_CLAIMS_ROOT, nul,
-            1 ether, address(token), alice, block.timestamp
+            proofA, proofB, proofC, TEST_CLAIMS_ROOT, nul, 1 ether, address(token), alice, block.timestamp
         );
         vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
-            TEST_CLAIMS_ROOT, nul,
-            1 ether, address(token), alice, block.timestamp
+            proofA, proofB, proofC, TEST_CLAIMS_ROOT, nul, 1 ether, address(token), alice, block.timestamp
         );
     }
 
@@ -303,9 +348,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         _registerErc20Group();
         uint256 before_ = token.balanceOf(alice);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
-            TEST_CLAIMS_ROOT, bytes32(uint256(0x09)),
-            3 ether, address(token), alice, block.timestamp
+            proofA,
+            proofB,
+            proofC,
+            TEST_CLAIMS_ROOT,
+            bytes32(uint256(0x09)),
+            3 ether,
+            address(token),
+            alice,
+            block.timestamp
         );
         assertEq(token.balanceOf(alice), before_ + 3 ether);
     }
@@ -314,9 +365,15 @@ contract PrivateSettlementClaimGuardsTest is Test {
         _registerWethGroup();
         uint256 before_ = alice.balance;
         settlement.claimWithProof(
-            proofA, proofB, proofC,
-            WETH_CLAIMS_ROOT, bytes32(uint256(0x0A)),
-            2 ether, address(weth), alice, block.timestamp
+            proofA,
+            proofB,
+            proofC,
+            WETH_CLAIMS_ROOT,
+            bytes32(uint256(0x0A)),
+            2 ether,
+            address(weth),
+            alice,
+            block.timestamp
         );
         assertEq(alice.balance, before_ + 2 ether);
     }

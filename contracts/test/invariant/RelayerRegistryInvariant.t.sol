@@ -45,7 +45,7 @@ contract RelayerRegistryInvariantTest is StdInvariant, Test {
         uint256 sum;
         uint256 n = handler.actorCount();
         for (uint256 i; i < n; ++i) {
-            (,,, uint256 bond,, , bool active) = registry.relayers(handler.actorAt(i));
+            (,,, uint256 bond,,, bool active) = registry.relayers(handler.actorAt(i));
             if (active) sum += bond;
         }
         assertEq(sum, handler.ghostActiveBondSum(), "ghost vs on-chain active bond sum");

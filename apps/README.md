@@ -9,6 +9,7 @@ Persona-specific frontends built on the shared zkScatter core
 | [`pay/`](./pay) | Small companies & DAOs — payroll & vendor payouts | scaffold | 4001 |
 | [`drop/`](./drop) | Token launch teams — sybil-resistant private airdrops | scaffold | 4002 |
 | [`operators/`](./operators) | Relayer operators — register, monitor, withdraw | scaffold | 4004 |
+| [`admin/`](./admin) | Platform admin — operator X.509 issuance, sanctions, params, treasury | partial | 4005 |
 
 `pro/` is a fresh light-theme reimagining of the trader experience.
 The existing dark `frontend/` and the `mobile/` consumer wallet stay
@@ -23,6 +24,7 @@ One core, four personas:
 - **Pay** — finance ops at small crypto-native companies. Private bulk payouts.
 - **Drop** — projects shipping a token. Anti-sybil + private airdrops.
 - **Operators** — relayer operators. Console for register, profile, dashboard, treasury, leaderboard.
+- **Admin** — platform admin (Tokamak). X.509 issuance for operators, SanctionsList management, protocol parameters, treasury.
 
 Each frontend gets its own domain, copy, pricing, and growth channel.
 They share the underlying contracts and `packages/sdk` + `packages/ui`.
@@ -34,6 +36,7 @@ cd apps/pro       && npm install && npm run dev   # http://localhost:4003
 cd apps/pay       && npm install && npm run dev   # http://localhost:4001
 cd apps/drop      && npm install && npm run dev   # http://localhost:4002
 cd apps/operators && npm install && npm run dev   # http://localhost:4004
+cd apps/admin     && npm install && npm run dev   # http://localhost:4005
 ```
 
 Each app is currently a clickable wireframe with mock data — no chain

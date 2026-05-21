@@ -19,9 +19,9 @@ contract PrivateSettlementCancelHandler is CommonBase, StdCheats, StdUtils {
     MockCancelVerifier public immutable cancelVerifier;
     address public immutable owner;
 
-    uint[2] internal proofA;
-    uint[2][2] internal proofB;
-    uint[2] internal proofC;
+    uint256[2] internal proofA;
+    uint256[2][2] internal proofB;
+    uint256[2] internal proofC;
 
     bytes32[] public escrowKeys;
     bytes32[] public nonceKeys;
@@ -72,7 +72,7 @@ contract PrivateSettlementCancelHandler is CommonBase, StdCheats, StdUtils {
         bytes32 oldNonce = _pickNonce(nonceSeed);
 
         bytes32 root = useStaleRoot
-            ? bytes32(uint256(0xDEAD)) // deliberately unknown — will revert
+            ? bytes32(uint256(0xDEAD))  // deliberately unknown — will revert
             : bytes32(pool.getLastRoot());
 
         bytes32 newCommitment = bytes32(ghostNextCommitmentSeed++);
@@ -113,7 +113,10 @@ contract PrivateSettlementCancelHandler is CommonBase, StdCheats, StdUtils {
         bytes32 freshNonce = _pickNonce(seed >> 8);
         if (settlement.paused()) {
             vm.prank(owner);
-            try settlement.unpause() {} catch { return; }
+            try settlement.unpause() {}
+            catch {
+                return;
+            }
         }
         PrivateSettlement.CancelParams memory p = PrivateSettlement.CancelParams({
             proofA: proofA,
@@ -137,12 +140,22 @@ contract PrivateSettlementCancelHandler is CommonBase, StdCheats, StdUtils {
     ///         Wrapped in try/catch because pause/unpause revert when already in target state.
     function flipPause(bool paused) external {
         vm.prank(owner);
-        if (paused) try settlement.pause() {} catch {}
-        else try settlement.unpause() {} catch {}
+        if (paused) try settlement.pause() {} catch {} else try settlement.unpause() {} catch {}
     }
 
-    function escrowKeyCount() external view returns (uint256) { return escrowKeys.length; }
-    function nonceKeyCount() external view returns (uint256) { return nonceKeys.length; }
-    function escrowKeyAt(uint256 i) external view returns (bytes32) { return escrowKeys[i % escrowKeys.length]; }
-    function nonceKeyAt(uint256 i) external view returns (bytes32) { return nonceKeys[i % nonceKeys.length]; }
+    function escrowKeyCount() external view returns (uint256) {
+        return escrowKeys.length;
+    }
+
+    function nonceKeyCount() external view returns (uint256) {
+        return nonceKeys.length;
+    }
+
+    function escrowKeyAt(uint256 i) external view returns (bytes32) {
+        return escrowKeys[i % escrowKeys.length];
+    }
+
+    function nonceKeyAt(uint256 i) external view returns (bytes32) {
+        return nonceKeys[i % nonceKeys.length];
+    }
 }

@@ -49,9 +49,8 @@ contract UpgradeableInitTest is Test {
 
     function test_relayerRegistry_proxy_reinit_reverts() public {
         MockIdentityRegistry reg = new MockIdentityRegistry();
-        RelayerRegistry r = ProxyDeployer.deployRelayerRegistry(
-            address(this), owner, address(0xCAFE), address(reg), address(0)
-        );
+        RelayerRegistry r =
+            ProxyDeployer.deployRelayerRegistry(address(this), owner, address(0xCAFE), address(reg), address(0));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         r.initialize(owner, address(0xCAFE), address(reg), address(0));
     }
@@ -65,9 +64,7 @@ contract UpgradeableInitTest is Test {
     function test_commitmentPool_proxy_reinit_reverts() public {
         MockVerifier wv = new MockVerifier();
         MockDepositVerifier dv = new MockDepositVerifier();
-        CommitmentPool p = ProxyDeployer.deployCommitmentPool(
-            address(this), owner, address(wv), address(dv), 20, 30
-        );
+        CommitmentPool p = ProxyDeployer.deployCommitmentPool(address(this), owner, address(wv), address(dv), 20, 30);
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         p.initialize(owner, address(wv), address(dv), 20, 30);
     }
@@ -84,12 +81,10 @@ contract UpgradeableInitTest is Test {
         MockVerifier wv = new MockVerifier();
         MockDepositVerifier dv = new MockDepositVerifier();
         MockClaimVerifier cv = new MockClaimVerifier();
-        CommitmentPool p = ProxyDeployer.deployCommitmentPool(
-            address(this), address(this), address(wv), address(dv), 20, 30
-        );
-        PrivateSettlement s = ProxyDeployer.deployPrivateSettlement(
-            address(this), owner, address(p), address(cv), address(0xBEEF)
-        );
+        CommitmentPool p =
+            ProxyDeployer.deployCommitmentPool(address(this), address(this), address(wv), address(dv), 20, 30);
+        PrivateSettlement s =
+            ProxyDeployer.deployPrivateSettlement(address(this), owner, address(p), address(cv), address(0xBEEF));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         s.initialize(owner, address(p), address(cv), address(0xBEEF));
     }

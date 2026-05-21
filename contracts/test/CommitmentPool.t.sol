@@ -11,7 +11,10 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 
 contract MockToken is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 contract CommitmentPoolTest is Test {
@@ -35,7 +38,9 @@ contract CommitmentPoolTest is Test {
     function setUp() public {
         verifier = new MockVerifier();
         depositVerifier = new MockDepositVerifier();
-        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(verifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(
+            address(this), address(this), address(verifier), address(depositVerifier), 20, 30
+        );
         token = new MockToken();
 
         pool.setTokenWhitelist(address(token), true);
@@ -51,9 +56,9 @@ contract CommitmentPoolTest is Test {
 
     /// @dev Helper: deposit with empty proof params (MockDepositVerifier always passes).
     function _deposit(uint256 commitment, address tok, uint256 amount) internal {
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         pool.deposit(pa, pb, pc, commitment, tok, amount);
     }
 
@@ -130,9 +135,9 @@ contract CommitmentPoolTest is Test {
 
     function test_deposit_amount_above_field_reverts() public {
         uint256 BN254 = 21888242871839275222246405745257275088548364400416034343698204186575808495617;
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.FieldElementOutOfRange.selector);
         pool.deposit(pa, pb, pc, COMMITMENT_1, address(token), BN254);
@@ -156,12 +161,14 @@ contract CommitmentPoolTest is Test {
         uint256 root = pool.getLastRoot();
 
         // Withdraw full amount (newCommitment = 0 means no change)
-        uint[2] memory proofA = [uint(0), uint(0)];
-        uint[2][2] memory proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-        uint[2] memory proofC = [uint(0), uint(0)];
+        uint256[2] memory proofA = [uint256(0), uint256(0)];
+        uint256[2][2] memory proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+        uint256[2] memory proofC = [uint256(0), uint256(0)];
 
         pool.withdraw(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             root,
             NULLIFIER_1,
             0, // no change commitment
@@ -183,12 +190,14 @@ contract CommitmentPoolTest is Test {
         uint256 root = pool.getLastRoot();
         uint32 indexBefore = pool.nextIndex();
 
-        uint[2] memory proofA;
-        uint[2][2] memory proofB;
-        uint[2] memory proofC;
+        uint256[2] memory proofA;
+        uint256[2][2] memory proofB;
+        uint256[2] memory proofC;
 
         pool.withdraw(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             root,
             NULLIFIER_1,
             COMMITMENT_2, // change commitment
@@ -208,9 +217,9 @@ contract CommitmentPoolTest is Test {
         _deposit(COMMITMENT_1, address(token), 100 ether);
 
         uint256 root = pool.getLastRoot();
-        uint[2] memory proofA;
-        uint[2][2] memory proofB;
-        uint[2] memory proofC;
+        uint256[2] memory proofA;
+        uint256[2][2] memory proofB;
+        uint256[2] memory proofC;
 
         pool.withdraw(proofA, proofB, proofC, root, NULLIFIER_1, 0, address(token), 100 ether, alice, address(0));
 
@@ -220,9 +229,9 @@ contract CommitmentPoolTest is Test {
     }
 
     function test_withdraw_unknown_root_reverts() public {
-        uint[2] memory proofA;
-        uint[2][2] memory proofB;
-        uint[2] memory proofC;
+        uint256[2] memory proofA;
+        uint256[2][2] memory proofB;
+        uint256[2] memory proofC;
 
         vm.expectRevert(CommitmentPool.UnknownRoot.selector);
         pool.withdraw(proofA, proofB, proofC, 0x999, NULLIFIER_1, 0, address(token), 100 ether, alice, address(0));
@@ -235,9 +244,9 @@ contract CommitmentPoolTest is Test {
         uint256 root = pool.getLastRoot();
         verifier.setShouldPass(false);
 
-        uint[2] memory proofA;
-        uint[2][2] memory proofB;
-        uint[2] memory proofC;
+        uint256[2] memory proofA;
+        uint256[2][2] memory proofB;
+        uint256[2] memory proofC;
 
         vm.expectRevert(CommitmentPool.InvalidProof.selector);
         pool.withdraw(proofA, proofB, proofC, root, NULLIFIER_1, 0, address(token), 100 ether, alice, address(0));
@@ -250,9 +259,9 @@ contract CommitmentPoolTest is Test {
         pool.pause();
         uint256 root = pool.getLastRoot();
 
-        uint[2] memory proofA;
-        uint[2][2] memory proofB;
-        uint[2] memory proofC;
+        uint256[2] memory proofA;
+        uint256[2][2] memory proofB;
+        uint256[2] memory proofC;
 
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         pool.withdraw(proofA, proofB, proofC, root, NULLIFIER_1, 0, address(token), 100 ether, alice, address(0));
@@ -263,9 +272,9 @@ contract CommitmentPoolTest is Test {
         _deposit(COMMITMENT_1, address(token), 100 ether);
 
         uint256 root = pool.getLastRoot();
-        uint[2] memory proofA;
-        uint[2][2] memory proofB;
-        uint[2] memory proofC;
+        uint256[2] memory proofA;
+        uint256[2][2] memory proofB;
+        uint256[2] memory proofC;
 
         vm.expectEmit(true, false, false, true);
         emit CommitmentPool.Withdrawal(alice, NULLIFIER_1, 0, 100 ether);
@@ -411,9 +420,9 @@ contract CommitmentPoolTest is Test {
     // ─── Withdraw Guard Branch Coverage ─────────────────────────
 
     function test_withdrawFor_unauthorized_reverts() public {
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.prank(alice);
         vm.expectRevert(CommitmentPool.NotAuthorizedSettlement.selector);
         pool.withdrawFor(pa, pb, pc, 0, NULLIFIER_1, 0, address(token), 1 ether, bob, address(0));
@@ -425,9 +434,9 @@ contract CommitmentPoolTest is Test {
         vm.prank(alice);
         _deposit(COMMITMENT_1, address(token), 100 ether);
         uint256 root = pool.getLastRoot();
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.expectRevert(CommitmentPool.ZeroAmount.selector);
         pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), 0, bob, address(0));
     }
@@ -436,9 +445,9 @@ contract CommitmentPoolTest is Test {
         vm.prank(alice);
         _deposit(COMMITMENT_1, address(token), 100 ether);
         uint256 root = pool.getLastRoot();
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.expectRevert(CommitmentPool.ZeroAddress.selector);
         pool.withdraw(pa, pb, pc, root, NULLIFIER_1, 0, address(token), 1 ether, address(0), address(0));
     }

@@ -34,8 +34,8 @@ import {
 ///         `upgradeAndCall(impl, reinitData)` path (catches double-init, missing
 ///         `reinitializer` modifier, etc.) on FeeVault as a representative case.
 contract UpgradeSimTest is Test {
-    address admin = address(0xA0);   // ProxyAdmin owner (upgrade authority)
-    address owner = address(0xB0);   // Contract owner
+    address admin = address(0xA0); // ProxyAdmin owner (upgrade authority)
+    address owner = address(0xB0); // Contract owner
 
     // ─── FeeVault ────────────────────────────────────────────────
 

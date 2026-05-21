@@ -16,9 +16,17 @@ import {BatchExecutor} from "../src/BatchExecutor.sol";
 
 /// @dev Mock identity registry that verifies everyone (for local testing)
 contract MockIdentityRegistry is IIdentityRegistry {
-    function isVerified(address) external pure override returns (bool) { return true; }
-    function verifiedUntil(address) external pure override returns (uint64) { return type(uint64).max; }
-    function paused() external pure override returns (bool) { return false; }
+    function isVerified(address) external pure override returns (bool) {
+        return true;
+    }
+
+    function verifiedUntil(address) external pure override returns (uint64) {
+        return type(uint64).max;
+    }
+
+    function paused() external pure override returns (bool) {
+        return false;
+    }
 }
 
 /// @notice Deploy everything for local E2E testing on anvil.
@@ -43,8 +51,8 @@ contract DeployLocal is Script {
         address weth;
         address usdc;
         uint8 usdcDecimals;
-        address usdt;  // 0x0 when not using real tokens
-        address wton;  // 0x0 when not using real tokens
+        address usdt; // 0x0 when not using real tokens
+        address wton; // 0x0 when not using real tokens
         address pool;
         address privateSettlement;
         address gate;
@@ -61,7 +69,8 @@ contract DeployLocal is Script {
     }
 
     function run() external {
-        uint256 deployerKey = vm.envOr("DEPLOYER_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
+        uint256 deployerKey =
+            vm.envOr("DEPLOYER_KEY", uint256(0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80));
 
         vm.startBroadcast(deployerKey);
         address deployer = msg.sender;
@@ -241,8 +250,12 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=", vm.toString(relayerRegistry)));
         console.log(string.concat("NEXT_PUBLIC_WETH_ADDRESS=", vm.toString(weth)));
         string memory tokens = string.concat(
-            "NEXT_PUBLIC_TOKENS=", vm.toString(weth), ":WETH:18,",
-            vm.toString(usdc), ":USDC:", vm.toString(d.usdcDecimals)
+            "NEXT_PUBLIC_TOKENS=",
+            vm.toString(weth),
+            ":WETH:18,",
+            vm.toString(usdc),
+            ":USDC:",
+            vm.toString(d.usdcDecimals)
         );
         if (d.usdt != address(0)) {
             tokens = string.concat(tokens, ",", vm.toString(d.usdt), ":USDT:6");
@@ -289,10 +302,7 @@ contract DeployLocal is Script {
     ///      EVM's 16-slot limit. Returns `<addr>:<symbol>:<decimals>`.
     function _tonEntry(address tonAddr) internal returns (string memory) {
         bool useRealTokens = vm.envOr("USE_REAL_TOKENS", false);
-        return string.concat(
-            vm.toString(tonAddr), ":",
-            useRealTokens ? "WTON:27" : "TON:18"
-        );
+        return string.concat(vm.toString(tonAddr), ":", useRealTokens ? "WTON:27" : "TON:18");
     }
 
     /// @dev Resolve `UPGRADE_OWNER` once per deploy. On local dev chains
@@ -404,8 +414,7 @@ contract DeployLocal is Script {
     {
         address deployer = msg.sender;
         PrivateSettlement impl = new PrivateSettlement();
-        bytes memory initData =
-            abi.encodeCall(PrivateSettlement.initialize, (deployer, pool_, claimVerifier, weth_));
+        bytes memory initData = abi.encodeCall(PrivateSettlement.initialize, (deployer, pool_, claimVerifier, weth_));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("PrivateSettlement impl:", address(impl));
         console.log("PrivateSettlement proxy:", address(proxy));
@@ -509,14 +518,14 @@ contract DeployLocal is Script {
                 0x14dC79964da2C08b23698B3D3cc7Ca32193d9955, // anvil #7
                 0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f, // anvil #8
                 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720, // anvil #9
-                0xBcd4042DE499D14e55001CcbB24a551F3b954096  // anvil #10
+                0xBcd4042DE499D14e55001CcbB24a551F3b954096 // anvil #10
             ];
             wethMock.deposit{value: uint256(testers.length) * 100 ether}();
             for (uint256 i = 0; i < testers.length; i++) {
-                wethMock.transfer(testers[i], 100 ether);  // 100 WETH (18 dec)
-                usdcMock.mint(testers[i], 1_000_000e6);    // 1M USDC (6 dec)
-                usdtMock.mint(testers[i], 1_000_000e6);    // 1M USDT (6 dec)
-                tonMock.mint(testers[i], 100_000e18);      // 100k TON (18 dec)
+                wethMock.transfer(testers[i], 100 ether); // 100 WETH (18 dec)
+                usdcMock.mint(testers[i], 1_000_000e6); // 1M USDC (6 dec)
+                usdtMock.mint(testers[i], 1_000_000e6); // 1M USDT (6 dec)
+                tonMock.mint(testers[i], 100_000e18); // 100k TON (18 dec)
             }
             console.log("Minted WETH/USDC/USDT/TON to anvil testers (11 accounts: #0-#10)");
         }
@@ -524,10 +533,7 @@ contract DeployLocal is Script {
 
     /// @dev Deploy verifiers + CommitmentPool + PrivateSettlement.
     ///      Extracted into its own function to avoid "stack too deep" in run().
-    function _deployZkCore(address weth)
-        internal
-        returns (CommitmentPool pool, PrivateSettlement privateSettlement)
-    {
+    function _deployZkCore(address weth) internal returns (CommitmentPool pool, PrivateSettlement privateSettlement) {
         address withdrawVerifier = _deployCode("WithdrawVerifier.sol:Groth16Verifier");
         address claimVerifier = _deployCode("ClaimVerifier.sol:Groth16Verifier");
         address claimVerifier64 = _deployCode("ClaimVerifier_64.sol:Groth16Verifier");

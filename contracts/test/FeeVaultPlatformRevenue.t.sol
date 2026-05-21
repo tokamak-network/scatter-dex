@@ -8,7 +8,10 @@ import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock", "MCK") {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 /// @dev Hooks `transfer` to re-enter FeeVault, used to prove the
@@ -19,9 +22,19 @@ contract ReentrantToken is ERC20 {
     bool public attacking;
 
     constructor() ERC20("Reenter", "REE") {}
-    function setup(FeeVault _v, address _a) external { vault = _v; attacker = _a; }
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
-    function arm() external { attacking = true; }
+
+    function setup(FeeVault _v, address _a) external {
+        vault = _v;
+        attacker = _a;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function arm() external {
+        attacking = true;
+    }
 
     function transfer(address to, uint256 amount) public override returns (bool) {
         if (attacking && msg.sender == address(vault)) {

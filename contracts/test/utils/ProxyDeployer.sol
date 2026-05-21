@@ -67,8 +67,7 @@ library ProxyDeployer {
     ) internal returns (CommitmentPool) {
         CommitmentPool impl = new CommitmentPool();
         bytes memory initData = abi.encodeCall(
-            CommitmentPool.initialize,
-            (initialOwner, withdrawVerifier, depositVerifier, treeLevels, rootHistorySize)
+            CommitmentPool.initialize, (initialOwner, withdrawVerifier, depositVerifier, treeLevels, rootHistorySize)
         );
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
         return CommitmentPool(address(proxy));
@@ -82,8 +81,7 @@ library ProxyDeployer {
         address weth
     ) internal returns (PrivateSettlement) {
         PrivateSettlement impl = new PrivateSettlement();
-        bytes memory initData =
-            abi.encodeCall(PrivateSettlement.initialize, (initialOwner, pool, claimVerifier, weth));
+        bytes memory initData = abi.encodeCall(PrivateSettlement.initialize, (initialOwner, pool, claimVerifier, weth));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
         return PrivateSettlement(payable(address(proxy)));
     }

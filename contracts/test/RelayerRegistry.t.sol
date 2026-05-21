@@ -17,7 +17,9 @@ contract RelayerRegistryTest is Test {
 
     function setUp() public {
         identityRegistry = new MockIdentityRegistry();
-        registry = ProxyDeployer.deployRelayerRegistry(address(this), address(this), treasury, address(identityRegistry), address(0));
+        registry = ProxyDeployer.deployRelayerRegistry(
+            address(this), address(this), treasury, address(identityRegistry), address(0)
+        );
         vm.deal(relayer1, 10 ether);
         vm.deal(relayer2, 10 ether);
         // Verify relayers by default so existing tests pass
@@ -235,8 +237,9 @@ contract RelayerRegistryTest is Test {
 
     function test_initialize_zero_treasury_reverts() public {
         RelayerRegistry impl = new RelayerRegistry();
-        bytes memory initData =
-            abi.encodeCall(RelayerRegistry.initialize, (address(this), address(0), address(identityRegistry), address(0)));
+        bytes memory initData = abi.encodeCall(
+            RelayerRegistry.initialize, (address(this), address(0), address(identityRegistry), address(0))
+        );
         vm.expectRevert(RelayerRegistry.ZeroAddress.selector);
         new TransparentUpgradeableProxy(address(impl), address(this), initData);
     }
@@ -283,7 +286,7 @@ contract RelayerRegistryTest is Test {
         registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         vm.prank(relayer1);
         registry.updateInfo("http://new.url", "Relayer-test", 500);
-        (,,uint256 fee,,,,) = registry.relayers(relayer1);
+        (,, uint256 fee,,,,) = registry.relayers(relayer1);
         assertEq(fee, 500);
     }
 
@@ -382,7 +385,10 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 contract MockTON is ERC20 {
     constructor() ERC20("Mock TON", "TON") {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 contract RelayerRegistryERC20Test is Test {
@@ -395,7 +401,9 @@ contract RelayerRegistryERC20Test is Test {
     function setUp() public {
         identityRegistry = new MockIdentityRegistry();
         ton = new MockTON();
-        registry = ProxyDeployer.deployRelayerRegistry(address(this), address(this), treasury, address(identityRegistry), address(ton));
+        registry = ProxyDeployer.deployRelayerRegistry(
+            address(this), address(this), treasury, address(identityRegistry), address(ton)
+        );
         identityRegistry.setVerified(relayer1, true);
         ton.mint(relayer1, 10 ether);
     }

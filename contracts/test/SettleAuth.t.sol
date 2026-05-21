@@ -20,7 +20,10 @@ import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 
 contract SAToken is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 /// @title SettleAuthTest
@@ -44,20 +47,20 @@ contract SettleAuthTest is Test {
     address takerRelayer = address(0xBEEF2);
 
     // Dummy proof params
-    uint[2] proofA = [uint(0), uint(0)];
-    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-    uint[2] proofC = [uint(0), uint(0)];
+    uint256[2] proofA = [uint256(0), uint256(0)];
+    uint256[2][2] proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+    uint256[2] proofC = [uint256(0), uint256(0)];
 
-    bytes32 constant M_NULL       = bytes32(uint256(0xa1));
+    bytes32 constant M_NULL = bytes32(uint256(0xa1));
     bytes32 constant M_NONCE_NULL = bytes32(uint256(0xa2));
     bytes32 constant M_NEW_COMMIT = bytes32(uint256(0xa3));
-    bytes32 constant M_CLAIMS_R   = bytes32(uint256(0xa4));
+    bytes32 constant M_CLAIMS_R = bytes32(uint256(0xa4));
     bytes32 constant M_ORDER_HASH = bytes32(uint256(0xa5));
 
-    bytes32 constant T_NULL       = bytes32(uint256(0xb1));
+    bytes32 constant T_NULL = bytes32(uint256(0xb1));
     bytes32 constant T_NONCE_NULL = bytes32(uint256(0xb2));
     bytes32 constant T_NEW_COMMIT = bytes32(uint256(0xb3));
-    bytes32 constant T_CLAIMS_R   = bytes32(uint256(0xb4));
+    bytes32 constant T_CLAIMS_R = bytes32(uint256(0xb4));
     bytes32 constant T_ORDER_HASH = bytes32(uint256(0xb5));
 
     function setUp() public {
@@ -66,7 +69,9 @@ contract SettleAuthTest is Test {
         claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
-        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(
+            address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30
+        );
         weth = new MockWETH();
         settlement = ProxyDeployer.deployPrivateSettlement(
             address(this), address(this), address(pool), address(claimVerifier), address(weth)
@@ -149,10 +154,7 @@ contract SettleAuthTest is Test {
 
     function _defaultParams() internal view returns (PrivateSettlement.SettleAuthParams memory) {
         return PrivateSettlement.SettleAuthParams({
-            maker: _defaultMaker(),
-            taker: _defaultTaker(),
-            feeTokenMaker: 0,
-            feeTokenTaker: 0
+            maker: _defaultMaker(), taker: _defaultTaker(), feeTokenMaker: 0, feeTokenTaker: 0
         });
     }
 
@@ -197,8 +199,8 @@ contract SettleAuthTest is Test {
         // and survives `_defaultParams` edits.
         uint96 feeMakerCap = uint96(uint256(p.maker.buyAmount) * p.maker.maxFee / 10000);
         uint96 feeTakerCap = uint96(uint256(p.taker.buyAmount) * p.taker.maxFee / 10000);
-        p.feeTokenMaker = feeMakerCap;                   // paid by maker, in USDC
-        p.feeTokenTaker = feeTakerCap;                   // paid by taker, in WETH
+        p.feeTokenMaker = feeMakerCap; // paid by maker, in USDC
+        p.feeTokenTaker = feeTakerCap; // paid by taker, in WETH
         p.maker.totalLocked = uint128(p.maker.buyAmount) - uint128(feeMakerCap);
         p.taker.totalLocked = uint128(p.taker.buyAmount) - uint128(feeTakerCap);
 
@@ -454,7 +456,7 @@ contract SettleAuthTest is Test {
         SettleVerifyLib.AuthorizeProof memory taker = _defaultTaker();
         maker.commitmentRoot = thinPool.getLastRoot();
         taker.commitmentRoot = thinPool.getLastRoot();
-        maker.sellAmount = uint128(2_000e18);  // 2000 USDC
+        maker.sellAmount = uint128(2_000e18); // 2000 USDC
         maker.buyAmount = uint128(1 ether);
         maker.sellToken = address(usdc);
         maker.buyToken = address(weth);
@@ -467,8 +469,8 @@ contract SettleAuthTest is Test {
         PrivateSettlement.SettleAuthParams memory p = PrivateSettlement.SettleAuthParams({
             maker: maker,
             taker: taker,
-            feeTokenMaker: uint96(0.003 ether),  // 30 bps of 1 WETH
-            feeTokenTaker: uint96(6e18)          // 30 bps of 2000 USDC
+            feeTokenMaker: uint96(0.003 ether), // 30 bps of 1 WETH
+            feeTokenTaker: uint96(6e18) // 30 bps of 2000 USDC
         });
 
         vm.prank(makerRelayer);
@@ -657,7 +659,9 @@ contract SettleAuthTest is Test {
         MockIdentityRegistry idRegistry = new MockIdentityRegistry();
         idRegistry.setVerified(makerRelayer, true);
         idRegistry.setVerified(takerRelayer, true);
-        RelayerRegistry registry = ProxyDeployer.deployRelayerRegistry(address(this), address(this), treasury, address(idRegistry), address(0));
+        RelayerRegistry registry = ProxyDeployer.deployRelayerRegistry(
+            address(this), address(this), treasury, address(idRegistry), address(0)
+        );
 
         // Fund makerRelayer and register; takerRelayer stays unregistered.
         vm.deal(makerRelayer, 1 ether);
@@ -751,7 +755,9 @@ contract SettleAuthTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(PrivateSettlement.TierNotConfigured.selector, uint8(16)));
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             M_CLAIMS_R,
             bytes32(uint256(0xDEAD)),
             1 ether,
@@ -815,10 +821,10 @@ contract SettleAuthTest is Test {
     //  scatterDirectAuth — single-party, same-token via authorize proof
     // ════════════════════════════════════════════════════════════
 
-    bytes32 constant SD_NULL       = bytes32(uint256(0xd1));
+    bytes32 constant SD_NULL = bytes32(uint256(0xd1));
     bytes32 constant SD_NONCE_NULL = bytes32(uint256(0xd2));
     bytes32 constant SD_NEW_COMMIT = bytes32(uint256(0xd3));
-    bytes32 constant SD_CLAIMS_R   = bytes32(uint256(0xd4));
+    bytes32 constant SD_CLAIMS_R = bytes32(uint256(0xd4));
     bytes32 constant SD_ORDER_HASH = bytes32(uint256(0xd5));
 
     function _defaultScatterDirectAuth() internal view returns (PrivateSettlement.ScatterDirectAuthParams memory) {
@@ -833,10 +839,10 @@ contract SettleAuthTest is Test {
                 nonceNullifier: SD_NONCE_NULL,
                 newCommitment: SD_NEW_COMMIT,
                 sellToken: address(usdc),
-                buyToken: address(usdc),       // same token
+                buyToken: address(usdc), // same token
                 sellAmount: 10_000e18,
                 buyAmount: 9_000e18,
-                maxFee: 100,                   // 1%
+                maxFee: 100, // 1%
                 expiry: uint64(block.timestamp + 1 hours),
                 claimsRoot: SD_CLAIMS_R,
                 totalLocked: uint128(9_900e18),

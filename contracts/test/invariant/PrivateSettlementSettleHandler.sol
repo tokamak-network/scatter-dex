@@ -43,9 +43,9 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     address[] internal relayers;
     address[] internal recipients;
 
-    uint[2] internal proofA;
-    uint[2][2] internal proofB;
-    uint[2] internal proofC;
+    uint256[2] internal proofA;
+    uint256[2][2] internal proofB;
+    uint256[2] internal proofC;
 
     uint256 internal constant FIELD_SAFE_MASK = (uint256(1) << 252) - 1;
 
@@ -94,14 +94,23 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         tokenB = _tokenB;
         dex = _dex;
         owner = _owner;
-        for (uint160 i = 1; i <= 3; ++i) relayers.push(address(uint160(0xA200 + i)));
-        for (uint160 i = 1; i <= 4; ++i) recipients.push(address(uint160(0xB200 + i)));
+        for (uint160 i = 1; i <= 3; ++i) {
+            relayers.push(address(uint160(0xA200 + i)));
+        }
+        for (uint160 i = 1; i <= 4; ++i) {
+            recipients.push(address(uint160(0xB200 + i)));
+        }
     }
 
     // ─── utility ────────────────────────────────────────────────
 
-    function _relayer(uint256 s) internal view returns (address) { return relayers[s % relayers.length]; }
-    function _recipient(uint256 s) internal view returns (address) { return recipients[s % recipients.length]; }
+    function _relayer(uint256 s) internal view returns (address) {
+        return relayers[s % relayers.length];
+    }
+
+    function _recipient(uint256 s) internal view returns (address) {
+        return recipients[s % recipients.length];
+    }
 
     /// @dev Fresh non-zero BN254-safe scalar. Used for every nullifier /
     ///      claims root / order hash etc. — uniqueness is the only property.
@@ -158,22 +167,16 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         bytes32 makerClaimsRoot = _fresh();
         bytes32 takerClaimsRoot = _fresh();
 
-        SettleVerifyLib.AuthorizeProof memory maker = _buildProof(
-            address(tokenA), address(tokenB), amtA, amtB, amtB, makerClaimsRoot, _relayer(relayerSeed)
-        );
-        SettleVerifyLib.AuthorizeProof memory taker = _buildProof(
-            address(tokenB), address(tokenA), amtB, amtA, amtA, takerClaimsRoot, _relayer(relayerSeed + 1)
-        );
+        SettleVerifyLib.AuthorizeProof memory maker =
+            _buildProof(address(tokenA), address(tokenB), amtA, amtB, amtB, makerClaimsRoot, _relayer(relayerSeed));
+        SettleVerifyLib.AuthorizeProof memory taker =
+            _buildProof(address(tokenB), address(tokenA), amtB, amtA, amtA, takerClaimsRoot, _relayer(relayerSeed + 1));
 
         tokenB.mint(address(pool), amtB);
         tokenA.mint(address(pool), amtA);
 
-        PrivateSettlement.SettleAuthParams memory p = PrivateSettlement.SettleAuthParams({
-            maker: maker,
-            taker: taker,
-            feeTokenMaker: 0,
-            feeTokenTaker: 0
-        });
+        PrivateSettlement.SettleAuthParams memory p =
+            PrivateSettlement.SettleAuthParams({maker: maker, taker: taker, feeTokenMaker: 0, feeTokenTaker: 0});
 
         vm.prank(maker.relayer);
         try settlement.settleAuth(p) {
@@ -199,23 +202,18 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         bytes32 claimsRoot = _fresh();
 
         // 1:1 router rate → amountOut == sellAmount, so totalLocked == sellAmount.
-        SettleVerifyLib.AuthorizeProof memory proof = _buildProof(
-            address(tokenA), address(tokenB), sellAmount, sellAmount, sellAmount, claimsRoot, relayer
-        );
+        SettleVerifyLib.AuthorizeProof memory proof =
+            _buildProof(address(tokenA), address(tokenB), sellAmount, sellAmount, sellAmount, claimsRoot, relayer);
 
         tokenA.mint(address(pool), sellAmount);
         tokenB.mint(address(dex), sellAmount);
 
         bytes memory dexCalldata = abi.encodeCall(
-            InvariantDexRouter.swap,
-            (address(tokenA), address(tokenB), sellAmount, address(settlement))
+            InvariantDexRouter.swap, (address(tokenA), address(tokenB), sellAmount, address(settlement))
         );
 
         PrivateSettlement.SettleDexParams memory p = PrivateSettlement.SettleDexParams({
-            proof: proof,
-            dexRouter: address(dex),
-            dexCalldata: dexCalldata,
-            deadline: block.timestamp + 1 hours
+            proof: proof, dexRouter: address(dex), dexCalldata: dexCalldata, deadline: block.timestamp + 1 hours
         });
 
         vm.prank(relayer);
@@ -235,9 +233,8 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         address relayer = _relayer(relayerSeed);
         bytes32 claimsRoot = _fresh();
 
-        SettleVerifyLib.AuthorizeProof memory proof = _buildProof(
-            address(tokenA), address(tokenA), amount, amount, amount, claimsRoot, relayer
-        );
+        SettleVerifyLib.AuthorizeProof memory proof =
+            _buildProof(address(tokenA), address(tokenA), amount, amount, amount, claimsRoot, relayer);
 
         tokenA.mint(address(pool), amount);
 
@@ -302,15 +299,15 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         if (tok == address(0)) return;
         if (settlement.paused()) {
             vm.prank(owner);
-            try settlement.unpause() {} catch { return; }
+            try settlement.unpause() {}
+            catch {
+                return;
+            }
         }
         amount = uint128(bound(amount, 1, 1e22));
         vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
-            anyRoot, spentNullifier,
-            uint256(amount), tok,
-            _recipient(recipientSeed), 0
+            proofA, proofB, proofC, anyRoot, spentNullifier, uint256(amount), tok, _recipient(recipientSeed), 0
         );
     }
 
@@ -329,13 +326,9 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
         if (tok == address(0)) tok = address(tokenA);
         address recipient = _recipient(recipientSeed);
         uint256 balBefore = IERC20(tok).balanceOf(recipient);
-        try settlement.claimWithProof(
-            proofA, proofB, proofC,
-            root, _fresh(), 0, tok, recipient, 0
-        ) {
+        try settlement.claimWithProof(proofA, proofB, proofC, root, _fresh(), 0, tok, recipient, 0) {
             require(
-                IERC20(tok).balanceOf(recipient) == balBefore,
-                "invariant violation: zero-amount claim moved tokens"
+                IERC20(tok).balanceOf(recipient) == balBefore, "invariant violation: zero-amount claim moved tokens"
             );
         } catch {
             require(
@@ -346,21 +339,11 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
     }
 
     /// @dev Extracted from `claim` to keep the parent under solc's stack-depth limit.
-    function _attemptClaim(
-        bytes32 root,
-        bytes32 nullifier,
-        uint128 amount,
-        address token,
-        address recipient
-    ) internal returns (bool) {
-        try settlement.claimWithProof(
-            proofA, proofB, proofC,
-            root, nullifier,
-            uint256(amount),
-            token,
-            recipient,
-            0
-        ) {
+    function _attemptClaim(bytes32 root, bytes32 nullifier, uint128 amount, address token, address recipient)
+        internal
+        returns (bool)
+    {
+        try settlement.claimWithProof(proofA, proofB, proofC, root, nullifier, uint256(amount), token, recipient, 0) {
             return true;
         } catch {
             return false;
@@ -369,15 +352,28 @@ contract PrivateSettlementSettleHandler is CommonBase, StdCheats, StdUtils {
 
     function flipPause(bool paused) external {
         vm.prank(owner);
-        if (paused) try settlement.pause() {} catch {}
-        else try settlement.unpause() {} catch {}
+        if (paused) try settlement.pause() {} catch {} else try settlement.unpause() {} catch {}
     }
 
     // ─── views ──────────────────────────────────────────────────
 
-    function knownClaimsRootsCount() external view returns (uint256) { return knownClaimsRoots.length; }
-    function allKnownClaimsRoots() external view returns (bytes32[] memory) { return knownClaimsRoots; }
-    function allObservedEscrowNullifiers() external view returns (bytes32[] memory) { return observedEscrowNullifiers; }
-    function allObservedNonceNullifiers() external view returns (bytes32[] memory) { return observedNonceNullifiers; }
-    function allObservedClaimNullifiers() external view returns (bytes32[] memory) { return observedClaimNullifiers; }
+    function knownClaimsRootsCount() external view returns (uint256) {
+        return knownClaimsRoots.length;
+    }
+
+    function allKnownClaimsRoots() external view returns (bytes32[] memory) {
+        return knownClaimsRoots;
+    }
+
+    function allObservedEscrowNullifiers() external view returns (bytes32[] memory) {
+        return observedEscrowNullifiers;
+    }
+
+    function allObservedNonceNullifiers() external view returns (bytes32[] memory) {
+        return observedNonceNullifiers;
+    }
+
+    function allObservedClaimNullifiers() external view returns (bytes32[] memory) {
+        return observedClaimNullifiers;
+    }
 }

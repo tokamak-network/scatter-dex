@@ -58,7 +58,9 @@ contract SanctionsListHandler is CommonBase, StdCheats, StdUtils {
         addrs[2] = _t(seed3);
         vm.prank(owner);
         try list.addSanctionsBatch(addrs) {
-            for (uint256 i; i < 3; ++i) ghostSanctioned[addrs[i]] = true;
+            for (uint256 i; i < 3; ++i) {
+                ghostSanctioned[addrs[i]] = true;
+            }
         } catch {}
     }
 
@@ -69,12 +71,19 @@ contract SanctionsListHandler is CommonBase, StdCheats, StdUtils {
         addrs[2] = _t(seed3);
         vm.prank(owner);
         try list.removeSanctionsBatch(addrs) {
-            for (uint256 i; i < 3; ++i) ghostSanctioned[addrs[i]] = false;
+            for (uint256 i; i < 3; ++i) {
+                ghostSanctioned[addrs[i]] = false;
+            }
         } catch {}
     }
 
-    function targetCount() external view returns (uint256) { return targets.length; }
-    function targetAt(uint256 i) external view returns (address) { return targets[i % targets.length]; }
+    function targetCount() external view returns (uint256) {
+        return targets.length;
+    }
+
+    function targetAt(uint256 i) external view returns (address) {
+        return targets[i % targets.length];
+    }
 
     // ─── Adversarial actions ────────────────────────────────────
 
@@ -85,9 +94,7 @@ contract SanctionsListHandler is CommonBase, StdCheats, StdUtils {
         adversarialUnauthorizedAddAttempts += 1;
         address eoa = address(uint160(0xD0E0 + uint160(seed % 16)));
         vm.prank(eoa);
-        vm.expectRevert(abi.encodeWithSelector(
-            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
-        ));
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa));
         list.addSanction(_t(seed));
     }
 
@@ -96,9 +103,7 @@ contract SanctionsListHandler is CommonBase, StdCheats, StdUtils {
         adversarialUnauthorizedRemoveAttempts += 1;
         address eoa = address(uint160(0xD0E0 + uint160(seed % 16)));
         vm.prank(eoa);
-        vm.expectRevert(abi.encodeWithSelector(
-            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
-        ));
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa));
         list.removeSanction(_t(seed));
     }
 }

@@ -20,7 +20,12 @@ import {IIdentityRegistry} from "../interfaces/IIdentityRegistry.sol";
 ///      Withdrawals require a ZK proof of commitment ownership + nullifier.
 ///      Commitment = Poseidon(ownerSecret, token, amount, salt)
 ///      Nullifier  = Poseidon(ownerSecret, salt)
-contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, PausableUpgradeable, Ownable2StepUpgradeable {
+contract CommitmentPool is
+    IncrementalMerkleTree,
+    ReentrancyGuardUpgradeable,
+    PausableUpgradeable,
+    Ownable2StepUpgradeable
+{
     using SafeERC20 for IERC20;
 
     // ─── Errors ──────────────────────────────────────────────────
@@ -44,17 +49,8 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     error NotIdentityVerified();
 
     // ─── Events ──────────────────────────────────────────────────
-    event CommitmentInserted(
-        uint256 indexed commitment,
-        uint32 leafIndex,
-        uint256 timestamp
-    );
-    event Withdrawal(
-        address indexed recipient,
-        uint256 nullifierHash,
-        uint256 newCommitment,
-        uint256 amount
-    );
+    event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp);
+    event Withdrawal(address indexed recipient, uint256 nullifierHash, uint256 newCommitment, uint256 amount);
 
     // ─── State ───────────────────────────────────────────────────
     /// @dev Was `immutable` before the proxy migration; now a state var set
@@ -103,7 +99,6 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
 
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
     uint256[49] private __gap;
-
 
     // ─── Initializer ─────────────────────────────────────────────
 
@@ -185,8 +180,13 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     ///         `withdrawFor` is intentionally NOT gated: in-flight settlement
     ///         flows must complete once started, since the user has already
     ///         lost their commitment to the settle path.
-    function pause() external onlyOwner { _pause(); }
-    function unpause() external onlyOwner { _unpause(); }
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
 
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
@@ -251,9 +251,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     /// @param token The ERC20 token being deposited
     /// @param amount The amount being deposited
     function deposit(
-        uint[2] calldata proofA,
-        uint[2][2] calldata proofB,
-        uint[2] calldata proofC,
+        uint256[2] calldata proofA,
+        uint256[2][2] calldata proofB,
+        uint256[2] calldata proofC,
         uint256 commitment,
         address token,
         uint256 amount
@@ -276,11 +276,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
 
         // Verify the commitment binds to (token, amount)
         // Public signals: [commitment, token (uint160), amount]
-        uint[3] memory pubSignals = [
-            commitment,
-            uint256(uint160(token)),
-            amount
-        ];
+        uint256[3] memory pubSignals = [commitment, uint256(uint160(token)), amount];
         if (!depositVerifier.verifyProof(proofA, proofB, proofC, pubSignals)) {
             revert InvalidProof();
         }
@@ -377,9 +373,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     /// @param recipient The address receiving the tokens
     /// @param relayer The relayer address (address(0) if self-withdraw)
     function withdraw(
-        uint[2] calldata proofA,
-        uint[2][2] calldata proofB,
-        uint[2] calldata proofC,
+        uint256[2] calldata proofA,
+        uint256[2][2] calldata proofB,
+        uint256[2] calldata proofC,
         uint256 root,
         uint256 nullifierHash,
         uint256 newCommitment,
@@ -403,9 +399,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
     /// @dev Only callable by the authorized PrivateSettlement contract.
     ///      Intentionally skips paused check — settlement flows must complete once started.
     function withdrawFor(
-        uint[2] calldata proofA,
-        uint[2][2] calldata proofB,
-        uint[2] calldata proofC,
+        uint256[2] calldata proofA,
+        uint256[2][2] calldata proofB,
+        uint256[2] calldata proofC,
         uint256 root,
         uint256 nullifierHash,
         uint256 newCommitment,
@@ -420,9 +416,9 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
 
     /// @dev Shared withdraw logic: verify proof, mark nullifier, insert change, transfer tokens.
     function _processWithdraw(
-        uint[2] calldata proofA,
-        uint[2][2] calldata proofB,
-        uint[2] calldata proofC,
+        uint256[2] calldata proofA,
+        uint256[2][2] calldata proofB,
+        uint256[2] calldata proofC,
         uint256 root,
         uint256 nullifierHash,
         uint256 newCommitment,
@@ -438,7 +434,7 @@ contract CommitmentPool is IncrementalMerkleTree, ReentrancyGuardUpgradeable, Pa
 
         uint256 tokenHash = PoseidonT2.hash([uint256(uint160(token))]);
 
-        uint[7] memory pubSignals = [
+        uint256[7] memory pubSignals = [
             root,
             nullifierHash,
             newCommitment,

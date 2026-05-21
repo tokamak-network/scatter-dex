@@ -92,7 +92,7 @@ export default function WalletPage() {
         </div>
         <div className="mt-1 font-mono text-sm">{account}</div>
         <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-          Chain {cfg.chainId} · {cfg.name ?? `Chain ${cfg.chainId}`}
+          {cfg.name ?? 'Chain'} {cfg.chainId}
         </div>
         <div className="mt-3 flex gap-2 text-xs">
           <button

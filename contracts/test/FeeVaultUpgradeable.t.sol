@@ -27,5 +27,4 @@ contract FeeVaultUpgradeableTest is Test {
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(owner, treasury, 500);
     }
-
 }

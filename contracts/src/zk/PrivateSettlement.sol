@@ -87,11 +87,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
     // ─── Events ──────────────────────────────────────────────────
     event PrivateClaim(
-        bytes32 indexed claimsRoot,
-        bytes32 indexed nullifier,
-        address indexed recipient,
-        address token,
-        uint256 amount
+        bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount
     );
     // Paused / Unpaused emitted by PausableUpgradeable on `_pause`/`_unpause`.
     event RelayerRegistryUpdated(address oldRegistry, address newRegistry);
@@ -108,10 +104,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     ///         was cancelled. The `nonceNullifier` identifies the specific
     ///         order nonce that was killed.
     event PrivateCancel(
-        bytes32 indexed escrowNullifier,
-        bytes32 indexed nonceNullifier,
-        bytes32 newCommitment,
-        address indexed relayer
+        bytes32 indexed escrowNullifier, bytes32 indexed nonceNullifier, bytes32 newCommitment, address indexed relayer
     );
 
     /// @notice Emitted by `settleAuth` (Half-proof).
@@ -152,21 +145,11 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     /// @notice Emitted when platform fee is collected from a settleWithDex trade.
     ///         Distinguishes DEX platform fees from relayer fees (FeeClaimed)
     ///         and surplus (SettledWithDex.amountOut − totalLocked).
-    event DexPlatformFeeCollected(
-        bytes32 indexed nullifier,
-        address indexed token,
-        uint256 amount,
-        address vault
-    );
+    event DexPlatformFeeCollected(bytes32 indexed nullifier, address indexed token, uint256 amount, address vault);
 
     /// @notice Emitted when positive slippage from settleWithDex is credited
     ///         to FeeVault.platformRevenue as market-order surplus.
-    event DexSurplusCollected(
-        bytes32 indexed nullifier,
-        address indexed token,
-        uint256 amount,
-        address vault
-    );
+    event DexSurplusCollected(bytes32 indexed nullifier, address indexed token, uint256 amount, address vault);
 
     // ─── State ───────────────────────────────────────────────────
     // ClaimsGroup struct lives in SettleVerifyLib (shared with the library).
@@ -228,9 +211,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     ///      `setPaused(bool)` to `pause()` / `unpause()`.
     bool private __deprecated_paused;
 
-    mapping(bytes32 => bool) public nullifiers;       // escrow nullifiers
-    mapping(bytes32 => bool) public nonceNullifiers;   // nonce nullifiers
-    mapping(bytes32 => bool) public claimNullifiers;   // claim nullifiers
+    mapping(bytes32 => bool) public nullifiers; // escrow nullifiers
+    mapping(bytes32 => bool) public nonceNullifiers; // nonce nullifiers
+    mapping(bytes32 => bool) public claimNullifiers; // claim nullifiers
     mapping(bytes32 => SettleVerifyLib.ClaimsGroup) public claimsGroups;
     mapping(address => bool) public whitelistedTokens;
 
@@ -252,15 +235,14 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         _disableInitializers();
     }
 
-    function initialize(
-        address initialOwner,
-        address _pool,
-        address _claimVerifier,
-        address _weth
-    ) external initializer {
+    function initialize(address initialOwner, address _pool, address _claimVerifier, address _weth)
+        external
+        initializer
+    {
         if (initialOwner == address(0)) revert ZeroAddress();
-        if (_pool == address(0) || _claimVerifier == address(0) || _weth == address(0))
+        if (_pool == address(0) || _claimVerifier == address(0) || _weth == address(0)) {
             revert ZeroAddress();
+        }
         __Ownable_init(initialOwner);
         __Ownable2Step_init();
         __ReentrancyGuard_init();
@@ -272,12 +254,21 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         weth = _weth;
     }
 
-    function renounceOwnership() public pure override(OwnableUpgradeable) { revert RenounceOwnershipDisabled(); }
+    function renounceOwnership() public pure override(OwnableUpgradeable) {
+        revert RenounceOwnershipDisabled();
+    }
+
     /// @notice Pause every user-facing settlement entrypoint. Flip on before
     ///         an upgrade or in response to an incident — claim / settle /
     ///         settleWithDex / cancel are all `whenNotPaused`.
-    function pause() external onlyOwner { _pause(); }
-    function unpause() external onlyOwner { _unpause(); }
+    function pause() external onlyOwner {
+        _pause();
+    }
+
+    function unpause() external onlyOwner {
+        _unpause();
+    }
+
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
@@ -290,6 +281,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         emit RelayerRegistryUpdated(address(relayerRegistry), _registry);
         relayerRegistry = RelayerRegistry(payable(_registry));
     }
+
     /// @notice Set the fee vault. Pass address(0) to send fees directly to relayer (legacy mode).
     function setFeeVault(address _vault) external onlyOwner {
         if (_vault != address(0) && _vault.code.length == 0) revert NotAContract();
@@ -454,17 +446,14 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         // SLOAD by reusing the maker's verifier.
         IAuthorizeVerifier _makerVerifier = authorizeVerifierByTier[p.maker.tier];
         if (address(_makerVerifier) == address(0)) revert TierNotConfigured(p.maker.tier);
-        IAuthorizeVerifier _takerVerifier = p.maker.tier == p.taker.tier
-            ? _makerVerifier
-            : authorizeVerifierByTier[p.taker.tier];
+        IAuthorizeVerifier _takerVerifier =
+            p.maker.tier == p.taker.tier ? _makerVerifier : authorizeVerifierByTier[p.taker.tier];
         if (address(_takerVerifier) == address(0)) revert TierNotConfigured(p.taker.tier);
 
         // Cross-side invariants: non-zero amounts, whitelist, token
         // compatibility (C1), price (C2), claims+fee cap (C4), fee
         // upper bound, and per-side expiry.
-        SettleVerifyLib.validateCrossSide(
-            p.maker, p.taker, p.feeTokenMaker, p.feeTokenTaker, whitelistedTokens
-        );
+        SettleVerifyLib.validateCrossSide(p.maker, p.taker, p.feeTokenMaker, p.feeTokenTaker, whitelistedTokens);
 
         // 8. Nullifier double-spend (4 nullifiers — escrow + nonce per side)
         //
@@ -512,17 +501,23 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         //     sides share a tier (the batch verifier is itself tier-specific
         //     because the IC base points differ per circuit). Mixed-tier
         //     settlements always fall back to per-side verification.
-        uint[15] memory makerSignals = SettleVerifyLib.packAuthSignals(p.maker);
-        uint[15] memory takerSignals = SettleVerifyLib.packAuthSignals(p.taker);
+        uint256[15] memory makerSignals = SettleVerifyLib.packAuthSignals(p.maker);
+        uint256[15] memory takerSignals = SettleVerifyLib.packAuthSignals(p.taker);
 
         IBatchAuthorizeVerifier _batchVerifier = p.maker.tier == p.taker.tier
             ? batchAuthorizeVerifierByTier[p.maker.tier]
             : IBatchAuthorizeVerifier(address(0));
         if (address(_batchVerifier) != address(0)) {
             if (!_batchVerifier.verifyBatchProof(
-                p.maker.proofA, p.maker.proofB, p.maker.proofC, makerSignals,
-                p.taker.proofA, p.taker.proofB, p.taker.proofC, takerSignals
-            )) {
+                    p.maker.proofA,
+                    p.maker.proofB,
+                    p.maker.proofC,
+                    makerSignals,
+                    p.taker.proofA,
+                    p.taker.proofB,
+                    p.taker.proofC,
+                    takerSignals
+                )) {
                 revert InvalidProof();
             }
         } else {
@@ -574,8 +569,12 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         SettleVerifyLib.requireDistinctClaimsRoots(
             p.maker.claimsRoot, p.taker.claimsRoot, p.maker.totalLocked, p.taker.totalLocked
         );
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked, p.maker.tier);
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked, p.taker.tier);
+        SettleVerifyLib.registerClaimsGroup(
+            claimsGroups, p.maker.claimsRoot, p.maker.buyToken, p.maker.totalLocked, p.maker.tier
+        );
+        SettleVerifyLib.registerClaimsGroup(
+            claimsGroups, p.taker.claimsRoot, p.taker.buyToken, p.taker.totalLocked, p.taker.tier
+        );
 
         emit PrivateSettledAuth(
             p.maker.nullifier,
@@ -603,9 +602,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     //     (relayers listen for the nonceNullifier to remove from orderbook)
 
     struct CancelParams {
-        uint[2] proofA;
-        uint[2][2] proofB;
-        uint[2] proofC;
+        uint256[2] proofA;
+        uint256[2][2] proofB;
+        uint256[2] proofC;
         uint256 commitmentRoot;
         bytes32 oldNullifier;
         bytes32 oldNonceNullifier;
@@ -638,12 +637,12 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         if (!pool.isKnownRoot(p.commitmentRoot)) revert UnknownRoot();
 
         // Verify cancel proof (5 public signals)
-        uint[5] memory pubSignals = [
+        uint256[5] memory pubSignals = [
             p.commitmentRoot,
             uint256(p.oldNullifier),
             uint256(p.oldNonceNullifier),
             uint256(p.newCommitment),
-            uint256(uint160(msg.sender))  // relayer = msg.sender (bound in proof)
+            uint256(uint160(msg.sender)) // relayer = msg.sender (bound in proof)
         ];
         if (!cancelVerifier.verifyProof(p.proofA, p.proofB, p.proofC, pubSignals)) {
             revert InvalidProof();
@@ -660,12 +659,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         // slither-disable-next-line unused-return
         pool.insertCommitment(uint256(p.newCommitment));
 
-        emit PrivateCancel(
-            p.oldNullifier,
-            p.oldNonceNullifier,
-            p.newCommitment,
-            msg.sender
-        );
+        emit PrivateCancel(p.oldNullifier, p.oldNonceNullifier, p.newCommitment, msg.sender);
     }
 
     // ─── settleWithDex (single-party DEX swap, permissionless) ────
@@ -686,9 +680,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
     struct SettleDexParams {
         SettleVerifyLib.AuthorizeProof proof;
-        address dexRouter;    // any whitelisted DEX router (Uniswap, 1inch, Curve, etc.)
-        bytes   dexCalldata;  // encoded swap call for the specific DEX
-        uint256 deadline;     // [C-1] tx must be mined before this timestamp
+        address dexRouter; // any whitelisted DEX router (Uniswap, 1inch, Curve, etc.)
+        bytes dexCalldata; // encoded swap call for the specific DEX
+        uint256 deadline; // [C-1] tx must be mined before this timestamp
     }
 
     /// @notice Execute a private settlement via any whitelisted external DEX.
@@ -723,7 +717,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         if (!pool.isKnownRoot(proof.commitmentRoot)) revert UnknownRoot();
 
         // 7. Verify Groth16 proof
-        uint[15] memory signals = SettleVerifyLib.packAuthSignals(proof);
+        uint256[15] memory signals = SettleVerifyLib.packAuthSignals(proof);
         if (!_verifier.verifyProof(proof.proofA, proof.proofB, proof.proofC, signals)) {
             revert InvalidProof();
         }
@@ -792,7 +786,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         if (amountOut < proof.totalLocked) revert DexOutputInsufficient(amountOut, proof.totalLocked);
 
         // 13. Register claims group
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked, proof.tier);
+        SettleVerifyLib.registerClaimsGroup(
+            claimsGroups, proof.claimsRoot, proof.buyToken, proof.totalLocked, proof.tier
+        );
 
         // 14. Surplus handling: positive slippage is transferred to FeeVault
         //     and credited to FeeVault.platformRevenue (independent of
@@ -817,10 +813,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     ///      enough to push the emit-site over the 16-slot ceiling
     ///      without via_ir). The split is purely for compilation; the
     ///      event semantics are unchanged.
-    function _emitSettledWithDex(
-        SettleVerifyLib.AuthorizeProof calldata proof,
-        uint256 amountOut
-    ) internal {
+    function _emitSettledWithDex(SettleVerifyLib.AuthorizeProof calldata proof, uint256 amountOut) internal {
         emit SettledWithDex(
             proof.nullifier,
             proof.claimsRoot,
@@ -836,25 +829,20 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     // ─── Scatter Direct (same-token, no counterparty) ─────────────
 
     struct ScatterDirectParams {
-        uint[2] proofA;
-        uint[2][2] proofB;
-        uint[2] proofC;
+        uint256[2] proofA;
+        uint256[2][2] proofB;
+        uint256[2] proofC;
         uint256 currentRoot;
         bytes32 nullifier;
         bytes32 newCommitment;
         address token;
-        uint256 withdrawAmount;      // total amount withdrawn from commitment
+        uint256 withdrawAmount; // total amount withdrawn from commitment
         bytes32 claimsRoot;
-        uint128 totalLocked;         // sum of claim amounts; matches circuit Num2Bits(128)
-        uint96 fee;                  // relayer fee
+        uint128 totalLocked; // sum of claim amounts; matches circuit Num2Bits(128)
+        uint96 fee; // relayer fee
     }
 
-    event ScatterDirect(
-        bytes32 indexed nullifier,
-        bytes32 indexed claimsRoot,
-        address relayer,
-        uint96 fee
-    );
+    event ScatterDirect(bytes32 indexed nullifier, bytes32 indexed claimsRoot, address relayer, uint96 fee);
 
     /// @notice Single-party scatter: consume a commitment and register claims directly.
     ///         Uses withdraw proof — no counterparty or settle circuit needed.
@@ -875,14 +863,16 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         // so the post-call nullifier write is safe against cross-function reentry.
         // slither-disable-next-line reentrancy-no-eth,reentrancy-events
         pool.withdrawFor(
-            p.proofA, p.proofB, p.proofC,
+            p.proofA,
+            p.proofB,
+            p.proofC,
             p.currentRoot,
             uint256(p.nullifier),
             uint256(p.newCommitment),
             p.token,
             p.withdrawAmount,
-            address(this),   // funds come to PrivateSettlement
-            msg.sender       // relayer bound in proof
+            address(this), // funds come to PrivateSettlement
+            msg.sender // relayer bound in proof
         );
 
         // Mark nullifier
@@ -905,7 +895,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
     struct ScatterDirectAuthParams {
         SettleVerifyLib.AuthorizeProof proof;
-        uint96 fee;              // relayer-chosen fee in token units
+        uint96 fee; // relayer-chosen fee in token units
     }
 
     event ScatterDirectAuthSettled(
@@ -946,7 +936,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         if (!pool.isKnownRoot(ap.commitmentRoot)) revert UnknownRoot();
 
         // 11. Verify Groth16 proof (~200K gas — most expensive check, last)
-        uint[15] memory signals = SettleVerifyLib.packAuthSignals(ap);
+        uint256[15] memory signals = SettleVerifyLib.packAuthSignals(ap);
         if (!_verifier.verifyProof(ap.proofA, ap.proofB, ap.proofC, signals)) {
             revert InvalidProof();
         }
@@ -977,9 +967,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
     /// @notice Calldata struct for a single claim within `claimWithProofBatch`.
     struct ClaimParams {
-        uint[2] proofA;
-        uint[2][2] proofB;
-        uint[2] proofC;
+        uint256[2] proofA;
+        uint256[2][2] proofB;
+        uint256[2] proofC;
         bytes32 claimsRoot;
         bytes32 claimNullifier;
         uint256 amount;
@@ -991,9 +981,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     /// @notice Claim funds from a private settlement using ZK proof.
     ///         Proves membership in a claimsRoot without revealing which settle.
     function claimWithProof(
-        uint[2] calldata proofA,
-        uint[2][2] calldata proofB,
-        uint[2] calldata proofC,
+        uint256[2] calldata proofA,
+        uint256[2][2] calldata proofB,
+        uint256[2] calldata proofC,
         bytes32 claimsRoot,
         bytes32 claimNullifier,
         uint256 amount,
@@ -1001,11 +991,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         address recipient,
         uint256 releaseTime
     ) external nonReentrant whenNotPaused {
-        _executeClaim(
-            proofA, proofB, proofC,
-            claimsRoot, claimNullifier,
-            amount, token, recipient, releaseTime
-        );
+        _executeClaim(proofA, proofB, proofC, claimsRoot, claimNullifier, amount, token, recipient, releaseTime);
     }
 
     /// @notice Batch variant: execute multiple claims in one tx.
@@ -1021,19 +1007,27 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         for (uint256 i = 0; i < n;) {
             ClaimParams calldata c = claims[i];
             _executeClaim(
-                c.proofA, c.proofB, c.proofC,
-                c.claimsRoot, c.claimNullifier,
-                c.amount, c.token, c.recipient, c.releaseTime
+                c.proofA,
+                c.proofB,
+                c.proofC,
+                c.claimsRoot,
+                c.claimNullifier,
+                c.amount,
+                c.token,
+                c.recipient,
+                c.releaseTime
             );
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
     /// @dev Assumes `paused` already checked and reentrancy lock already held by the caller.
     function _executeClaim(
-        uint[2] calldata proofA,
-        uint[2][2] calldata proofB,
-        uint[2] calldata proofC,
+        uint256[2] calldata proofA,
+        uint256[2][2] calldata proofB,
+        uint256[2] calldata proofC,
         bytes32 claimsRoot,
         bytes32 claimNullifier,
         uint256 amount,
@@ -1055,7 +1049,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
         // Verify ZK proof
         // Public signals: [claimsRoot, nullifier, amount, token, recipient, releaseTime]
-        uint[6] memory pubSignals = [
+        uint256[6] memory pubSignals = [
             uint256(claimsRoot),
             uint256(claimNullifier),
             amount,
