@@ -17,7 +17,10 @@ import {ISanctionsList} from "../src/interfaces/ISanctionsList.sol";
 
 contract SLToken is ERC20 {
     constructor() ERC20("Test", "TST") {}
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
+
+    function mint(address to, uint256 amt) external {
+        _mint(to, amt);
+    }
 }
 
 /// @dev Minimal oracle stand-in that returns true for any address explicitly
@@ -25,8 +28,14 @@ contract SLToken is ERC20 {
 ///      (the same surface the Chainalysis SDN Oracle exposes in production).
 contract MockOracle is ISanctionsList {
     mapping(address => bool) public flagged;
-    function flag(address a, bool v) external { flagged[a] = v; }
-    function isSanctioned(address a) external view returns (bool) { return flagged[a]; }
+
+    function flag(address a, bool v) external {
+        flagged[a] = v;
+    }
+
+    function isSanctioned(address a) external view returns (bool) {
+        return flagged[a];
+    }
 }
 
 /// @dev Stand-in for a misbehaving external oracle — reverts on every probe.
@@ -52,9 +61,9 @@ contract SanctionsListTest is Test {
     address bob = address(0xB0B);
     address sanctionedAddr = address(0xBAD);
 
-    uint[2] proofA = [uint(0), uint(0)];
-    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-    uint[2] proofC = [uint(0), uint(0)];
+    uint256[2] proofA = [uint256(0), uint256(0)];
+    uint256[2][2] proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+    uint256[2] proofC = [uint256(0), uint256(0)];
 
     function setUp() public {
         sanctions = ProxyDeployer.deploySanctionsList(address(this), address(this));
@@ -64,7 +73,9 @@ contract SanctionsListTest is Test {
         MockClaimVerifier claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
-        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(
+            address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30
+        );
         weth = new MockWETH();
         settlement = ProxyDeployer.deployPrivateSettlement(
             address(this), address(this), address(pool), address(claimVerifier), address(weth)
@@ -191,7 +202,9 @@ contract SanctionsListTest is Test {
         // so we test that the sanctions check happens before the claims group lookup.
         vm.expectRevert(PrivateSettlement.AddressSanctioned.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             bytes32(uint256(0x1111)),
             bytes32(uint256(0x2222)),
             1 ether,
@@ -207,19 +220,29 @@ contract SanctionsListTest is Test {
 
         PrivateSettlement.SettleDexParams memory p = PrivateSettlement.SettleDexParams({
             proof: SettleVerifyLib.AuthorizeProof({
-                proofA: proofA, proofB: proofB, proofC: proofC,
-                pubKeyBind: bytes32(0), commitmentRoot: pool.getLastRoot(),
-                nullifier: bytes32(uint256(0x11)), nonceNullifier: bytes32(uint256(0x22)),
+                proofA: proofA,
+                proofB: proofB,
+                proofC: proofC,
+                pubKeyBind: bytes32(0),
+                commitmentRoot: pool.getLastRoot(),
+                nullifier: bytes32(uint256(0x11)),
+                nonceNullifier: bytes32(uint256(0x22)),
                 newCommitment: bytes32(uint256(0x33)),
-                sellToken: address(weth), buyToken: address(token),
-                sellAmount: 1 ether, buyAmount: 0, maxFee: 0,
+                sellToken: address(weth),
+                buyToken: address(token),
+                sellAmount: 1 ether,
+                buyAmount: 0,
+                maxFee: 0,
                 expiry: uint64(block.timestamp + 3600),
-                claimsRoot: bytes32(uint256(0x44)), totalLocked: 1 ether,
-                relayer: sanctionedAddr, orderHash: bytes32(uint256(0x55)),
+                claimsRoot: bytes32(uint256(0x44)),
+                totalLocked: 1 ether,
+                relayer: sanctionedAddr,
+                orderHash: bytes32(uint256(0x55)),
                 tier: 16
             }),
             dexRouter: address(authVerifier),
-            dexCalldata: "", deadline: block.timestamp + 1800
+            dexCalldata: "",
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(sanctionedAddr);

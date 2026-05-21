@@ -15,7 +15,10 @@ import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/Pau
 
 contract PsgToken is ERC20 {
     constructor() ERC20("Psg", "PSG") {}
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
+
+    function mint(address to, uint256 amt) external {
+        _mint(to, amt);
+    }
 }
 
 /// @title PrivateSettlementGuardsTest
@@ -33,9 +36,9 @@ contract PrivateSettlementGuardsTest is Test {
 
     address alice = address(0xA11CE);
 
-    uint[2] proofA = [uint(0), uint(0)];
-    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-    uint[2] proofC = [uint(0), uint(0)];
+    uint256[2] proofA = [uint256(0), uint256(0)];
+    uint256[2][2] proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+    uint256[2] proofC = [uint256(0), uint256(0)];
 
     function setUp() public {
         MockVerifier withdrawVerifier = new MockVerifier();
@@ -159,9 +162,15 @@ contract PrivateSettlementGuardsTest is Test {
     function test_claimWithProof_zeroRecipient_reverts() public {
         vm.expectRevert(PrivateSettlement.ZeroAddress.selector);
         settlement.claimWithProof(
-            proofA, proofB, proofC,
-            bytes32(uint256(1)), bytes32(uint256(2)),
-            1 ether, address(token), address(0), block.timestamp
+            proofA,
+            proofB,
+            proofC,
+            bytes32(uint256(1)),
+            bytes32(uint256(2)),
+            1 ether,
+            address(token),
+            address(0),
+            block.timestamp
         );
     }
 
@@ -171,24 +180,20 @@ contract PrivateSettlementGuardsTest is Test {
         vm.deal(alice, 1 ether);
         vm.prank(alice);
         vm.expectRevert(PrivateSettlement.OnlyWETH.selector);
-        (bool ok, ) = address(settlement).call{value: 1 ether}("");
+        (bool ok,) = address(settlement).call{value: 1 ether}("");
         ok; // silence unused-warning — the expectRevert above is the assertion
     }
 
     function test_receive_fromWeth_succeeds() public {
         vm.deal(address(weth), 1 ether);
         vm.prank(address(weth));
-        (bool ok, ) = address(settlement).call{value: 1 ether}("");
+        (bool ok,) = address(settlement).call{value: 1 ether}("");
         assertTrue(ok, "settlement accepts ETH from WETH callback");
     }
 
     // ─── helpers ────────────────────────────────────────────────
 
-    function _cancelParams(bytes32 newCommitment)
-        internal
-        view
-        returns (PrivateSettlement.CancelParams memory)
-    {
+    function _cancelParams(bytes32 newCommitment) internal view returns (PrivateSettlement.CancelParams memory) {
         return PrivateSettlement.CancelParams({
             proofA: proofA,
             proofB: proofB,

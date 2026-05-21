@@ -22,9 +22,9 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
     address[] public relayers;
     address[] public recipients;
 
-    uint[2] internal proofA;
-    uint[2][2] internal proofB;
-    uint[2] internal proofC;
+    uint256[2] internal proofA;
+    uint256[2][2] internal proofB;
+    uint256[2] internal proofC;
 
     /// @dev Stay below BN254 field modulus for nullifiers/roots that get fed to mock proofs.
     uint256 internal constant FIELD_SAFE_MASK = (uint256(1) << 252) - 1;
@@ -57,23 +57,27 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
     uint256 public adversarialDoubleClaimAttempts;
     uint256 public adversarialZeroAmountClaimAttempts;
 
-    constructor(
-        PrivateSettlement _settlement,
-        CommitmentPool _pool,
-        InvariantToken _token,
-        address _owner
-    ) {
+    constructor(PrivateSettlement _settlement, CommitmentPool _pool, InvariantToken _token, address _owner) {
         settlement = _settlement;
         pool = _pool;
         token = _token;
         owner = _owner;
 
-        for (uint160 i = 1; i <= 3; ++i) relayers.push(address(uint160(0xA100 + i)));
-        for (uint160 i = 1; i <= 5; ++i) recipients.push(address(uint160(0xB100 + i)));
+        for (uint160 i = 1; i <= 3; ++i) {
+            relayers.push(address(uint160(0xA100 + i)));
+        }
+        for (uint160 i = 1; i <= 5; ++i) {
+            recipients.push(address(uint160(0xB100 + i)));
+        }
     }
 
-    function _relayer(uint256 s) internal view returns (address) { return relayers[s % relayers.length]; }
-    function _recipient(uint256 s) internal view returns (address) { return recipients[s % recipients.length]; }
+    function _relayer(uint256 s) internal view returns (address) {
+        return relayers[s % relayers.length];
+    }
+
+    function _recipient(uint256 s) internal view returns (address) {
+        return recipients[s % recipients.length];
+    }
 
     /// @notice Single-party scatter. Pre-funds the pool then registers a fresh
     ///         ClaimsGroup whose totalLocked is what's now sitting at the settlement.
@@ -97,7 +101,7 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
             proofC: proofC,
             currentRoot: pool.getLastRoot(),
             nullifier: nullifier,
-            newCommitment: bytes32(0),     // empty change UTXO
+            newCommitment: bytes32(0), // empty change UTXO
             token: address(token),
             withdrawAmount: withdrawAmount,
             claimsRoot: claimsRoot,
@@ -129,8 +133,11 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
 
         address recipient = _recipient(recipientSeed);
         try settlement.claimWithProof(
-            proofA, proofB, proofC,
-            root, nullifier,
+            proofA,
+            proofB,
+            proofC,
+            root,
+            nullifier,
             uint256(amount),
             address(token),
             recipient,
@@ -168,10 +175,15 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
         // fuzzer continue when other validation (e.g. UnknownRoot)
         // happens to revert first — both are valid rejections.
         try settlement.claimWithProof(
-            proofA, proofB, proofC,
-            anyRoot, spentNullifier,
-            uint256(amount), address(token),
-            _recipient(nullifierSeed), 0
+            proofA,
+            proofB,
+            proofC,
+            anyRoot,
+            spentNullifier,
+            uint256(amount),
+            address(token),
+            _recipient(nullifierSeed),
+            0
         ) {
             revert("invariant violation: double-claim succeeded");
         } catch {}
@@ -191,25 +203,23 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
         if (nullifier == bytes32(0)) nullifier = bytes32(uint256(1));
         address recipient = _recipient(recipientSeed);
         uint256 balBefore = token.balanceOf(recipient);
-        try settlement.claimWithProof(
-            proofA, proofB, proofC,
-            root, nullifier, 0, address(token), recipient, 0
-        ) {
+        try settlement.claimWithProof(proofA, proofB, proofC, root, nullifier, 0, address(token), recipient, 0) {
             // If the contract accepts amount=0, the recipient must be
             // exactly as before — no skim, no credit.
-            require(
-                token.balanceOf(recipient) == balBefore,
-                "invariant violation: zero-amount claim moved tokens"
-            );
+            require(token.balanceOf(recipient) == balBefore, "invariant violation: zero-amount claim moved tokens");
         } catch {}
     }
 
     function flipPause(bool paused) external {
         vm.prank(owner);
-        if (paused) try settlement.pause() {} catch {}
-        else try settlement.unpause() {} catch {}
+        if (paused) try settlement.pause() {} catch {} else try settlement.unpause() {} catch {}
     }
 
-    function knownClaimsRootsCount() external view returns (uint256) { return knownClaimsRoots.length; }
-    function observedClaimNullifiersCount() external view returns (uint256) { return observedClaimNullifiers.length; }
+    function knownClaimsRootsCount() external view returns (uint256) {
+        return knownClaimsRoots.length;
+    }
+
+    function observedClaimNullifiersCount() external view returns (uint256) {
+        return observedClaimNullifiers.length;
+    }
 }

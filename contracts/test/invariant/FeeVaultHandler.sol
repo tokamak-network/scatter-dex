@@ -11,7 +11,10 @@ import {FeeVault} from "../../src/FeeVault.sol";
 /// @dev Minimal mintable ERC20 used as the fee token in invariant runs.
 contract InvariantToken is ERC20 {
     constructor() ERC20("Invariant Token", "INV") {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 /// @notice Actor-based handler for FeeVault invariant tests.
@@ -127,8 +130,13 @@ contract FeeVaultHandler is CommonBase, StdCheats, StdUtils {
         vault.applyFeeChange();
     }
 
-    function relayerAt(uint256 i) external view returns (address) { return relayers[i % relayers.length]; }
-    function relayerCount() external view returns (uint256) { return relayers.length; }
+    function relayerAt(uint256 i) external view returns (address) {
+        return relayers[i % relayers.length];
+    }
+
+    function relayerCount() external view returns (uint256) {
+        return relayers.length;
+    }
 
     // ─── Adversarial actions ────────────────────────────────────
     //
@@ -170,10 +178,7 @@ contract FeeVaultHandler is CommonBase, StdCheats, StdUtils {
         vm.prank(relayer);
         vm.expectRevert(FeeVault.NothingToClaim.selector);
         vault.claim(address(token));
-        require(
-            token.balanceOf(relayer) == balBefore,
-            "invariant violation: empty claim moved tokens"
-        );
+        require(token.balanceOf(relayer) == balBefore, "invariant violation: empty claim moved tokens");
     }
 
     /// @notice Random EOA tries to drain platform revenue. Must revert

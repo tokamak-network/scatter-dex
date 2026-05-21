@@ -8,7 +8,9 @@ contract MockClaimVerifier is IClaimVerifier {
     bool public enforceRecipient;
     address public expectedRecipient;
 
-    function setShouldPass(bool _pass) external { shouldPass = _pass; }
+    function setShouldPass(bool _pass) external {
+        shouldPass = _pass;
+    }
 
     /// @notice Pin public-signal #4 (recipient) to a specific address.
     ///         Lets tests assert the caller bound the proof to the
@@ -20,9 +22,12 @@ contract MockClaimVerifier is IClaimVerifier {
         expectedRecipient = _recipient;
     }
 
-    function verifyProof(uint[2] calldata, uint[2][2] calldata, uint[2] calldata, uint[6] calldata _pubSignals)
-        external view returns (bool)
-    {
+    function verifyProof(
+        uint256[2] calldata,
+        uint256[2][2] calldata,
+        uint256[2] calldata,
+        uint256[6] calldata _pubSignals
+    ) external view returns (bool) {
         if (!shouldPass) return false;
         if (enforceRecipient) {
             // Public signals: [claimsRoot, nullifier, amount, token, recipient, releaseTime]

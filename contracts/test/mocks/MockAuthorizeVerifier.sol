@@ -25,10 +25,10 @@ contract MockAuthorizeVerifier is IAuthorizeVerifier {
     }
 
     function verifyProof(
-        uint[2] calldata,
-        uint[2][2] calldata,
-        uint[2] calldata,
-        uint[15] calldata _pubSignals
+        uint256[2] calldata,
+        uint256[2][2] calldata,
+        uint256[2] calldata,
+        uint256[15] calldata _pubSignals
     ) external view returns (bool) {
         if (!shouldPass) return false;
         if (enforceRelayer) {

@@ -20,9 +20,9 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
 
     address[] public actors;
 
-    uint[2] internal proofA;
-    uint[2][2] internal proofB;
-    uint[2] internal proofC;
+    uint256[2] internal proofA;
+    uint256[2][2] internal proofB;
+    uint256[2] internal proofC;
 
     /// @dev Use safely-low leading nibble to stay below BN254 field modulus
     ///      (pool rejects commitments / amounts >= the modulus).
@@ -87,7 +87,9 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
         if (token.balanceOf(address(pool)) < amount) return;
 
         try pool.withdraw(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             root,
             nullifier,
             0, // newCommitment = 0 means no rotation
@@ -125,8 +127,7 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
 
     function flipPause(bool paused) external {
         vm.prank(owner);
-        if (paused) try pool.pause() {} catch {}
-        else try pool.unpause() {} catch {}
+        if (paused) try pool.pause() {} catch {} else try pool.unpause() {} catch {}
     }
 
     /// @notice Replay a previously-spent withdraw nullifier. Must always
@@ -147,12 +148,17 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
 
         if (pool.paused()) {
             vm.prank(owner);
-            try pool.unpause() {} catch { return; }
+            try pool.unpause() {}
+            catch {
+                return;
+            }
         }
         uint256 root = pool.getLastRoot();
         vm.expectRevert(CommitmentPool.NullifierAlreadySpent.selector);
         pool.withdraw(
-            proofA, proofB, proofC,
+            proofA,
+            proofB,
+            proofC,
             root,
             spentNullifier,
             0, // newCommitment
@@ -163,6 +169,11 @@ contract CommitmentPoolHandler is CommonBase, StdCheats, StdUtils {
         );
     }
 
-    function nullifiersObservedCount() external view returns (uint256) { return observedNullifiers.length; }
-    function nullifierAt(uint256 i) external view returns (uint256) { return observedNullifiers[i]; }
+    function nullifiersObservedCount() external view returns (uint256) {
+        return observedNullifiers.length;
+    }
+
+    function nullifierAt(uint256 i) external view returns (uint256) {
+        return observedNullifiers[i];
+    }
 }

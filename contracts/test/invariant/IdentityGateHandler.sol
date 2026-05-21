@@ -50,8 +50,13 @@ contract IdentityGateHandler is CommonBase, StdCheats, StdUtils {
         try gate.removeRegistry(r) {} catch {}
     }
 
-    function poolCount() external view returns (uint256) { return registryPool.length; }
-    function poolAt(uint256 i) external view returns (address) { return registryPool[i % registryPool.length]; }
+    function poolCount() external view returns (uint256) {
+        return registryPool.length;
+    }
+
+    function poolAt(uint256 i) external view returns (address) {
+        return registryPool[i % registryPool.length];
+    }
 
     // ─── Adversarial actions ────────────────────────────────────
 
@@ -63,9 +68,7 @@ contract IdentityGateHandler is CommonBase, StdCheats, StdUtils {
         adversarialUnauthorizedAddAttempts += 1;
         address eoa = address(uint160(0xC0E0 + uint160(seed % 16)));
         vm.prank(eoa);
-        vm.expectRevert(abi.encodeWithSelector(
-            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
-        ));
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa));
         gate.addRegistry(_r(seed));
     }
 
@@ -74,9 +77,7 @@ contract IdentityGateHandler is CommonBase, StdCheats, StdUtils {
         adversarialUnauthorizedRemoveAttempts += 1;
         address eoa = address(uint160(0xC0E0 + uint160(seed % 16)));
         vm.prank(eoa);
-        vm.expectRevert(abi.encodeWithSelector(
-            OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa
-        ));
+        vm.expectRevert(abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, eoa));
         gate.removeRegistry(_r(seed));
     }
 }

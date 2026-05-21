@@ -26,7 +26,7 @@ contract SettleWithDexForkTest is Test {
     address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     address constant USDC = 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48;
     address constant USDT = 0xdAC17F958D2ee523a2206206994597C13D831ec7;
-    address constant DAI  = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+    address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
 
     // Uniswap V3 SwapRouter02
     address constant UNISWAP_ROUTER = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
@@ -45,12 +45,12 @@ contract SettleWithDexForkTest is Test {
     address treasury = makeAddr("treasury");
 
     // Dummy proof params (mock verifier accepts all)
-    uint[2] proofA = [uint(0), uint(0)];
-    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-    uint[2] proofC = [uint(0), uint(0)];
+    uint256[2] proofA = [uint256(0), uint256(0)];
+    uint256[2][2] proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+    uint256[2] proofC = [uint256(0), uint256(0)];
 
-    bytes32 constant PUB_KEY_BIND   = bytes32(uint256(0xf1));
-    bytes32 constant ORDER_HASH     = bytes32(uint256(0xf5));
+    bytes32 constant PUB_KEY_BIND = bytes32(uint256(0xf1));
+    bytes32 constant ORDER_HASH = bytes32(uint256(0xf5));
 
     function setUp() public {
         // Deploy mock verifiers + core contracts
@@ -59,7 +59,9 @@ contract SettleWithDexForkTest is Test {
         MockClaimVerifier claimVerifier = new MockClaimVerifier();
         authVerifier = new MockAuthorizeVerifier();
 
-        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(
+            address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30
+        );
         settlement = ProxyDeployer.deployPrivateSettlement(
             address(this), address(this), address(pool), address(claimVerifier), WETH
         );
@@ -116,7 +118,7 @@ contract SettleWithDexForkTest is Test {
             sellToken: sellToken,
             buyToken: buyToken,
             sellAmount: sellAmount,
-            buyAmount: 0,  // market order: no min from circuit perspective
+            buyAmount: 0, // market order: no min from circuit perspective
             maxFee: 0,
             expiry: uint64(block.timestamp + 3600),
             claimsRoot: claimsRoot,
@@ -142,19 +144,29 @@ contract SettleWithDexForkTest is Test {
         // Encode Uniswap V3 SwapRouter02 exactInputSingle
         bytes memory dexCalldata = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))",
-            WETH,                    // tokenIn
-            USDC,                    // tokenOut
-            uint24(3000),            // fee tier 0.3%
-            address(settlement),     // recipient
-            sellAmount,              // amountIn
-            totalLocked,             // amountOutMinimum
-            uint160(0)               // sqrtPriceLimitX96 (0 = no limit)
+            WETH, // tokenIn
+            USDC, // tokenOut
+            uint24(3000), // fee tier 0.3%
+            address(settlement), // recipient
+            sellAmount, // amountIn
+            totalLocked, // amountOutMinimum
+            uint160(0) // sqrtPriceLimitX96 (0 = no limit)
         );
 
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
-            proof: _makeAuthProof(WETH, USDC, sellAmount, totalLocked, nullifier, nonceNull, bytes32(uint256(0xe3)), bytes32(uint256(0xe4))),
+            proof: _makeAuthProof(
+                WETH,
+                USDC,
+                sellAmount,
+                totalLocked,
+                nullifier,
+                nonceNull,
+                bytes32(uint256(0xe3)),
+                bytes32(uint256(0xe4))
+            ),
             dexRouter: UNISWAP_ROUTER,
-            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
+            dexCalldata: dexCalldata,
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(user);
@@ -205,16 +217,19 @@ contract SettleWithDexForkTest is Test {
         // USDC(1) → DAI(0)
         bytes memory dexCalldata = abi.encodeWithSignature(
             "exchange(int128,int128,uint256,uint256)",
-            int128(1),          // i = USDC
-            int128(0),          // j = DAI
+            int128(1), // i = USDC
+            int128(0), // j = DAI
             uint256(sellAmount),
             uint256(totalLocked) // min_dy
         );
 
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
-            proof: _makeAuthProof(USDC, DAI, sellAmount, totalLocked, nullifier, nonceNull, bytes32(uint256(0xc3)), bytes32(uint256(0xc4))),
+            proof: _makeAuthProof(
+                USDC, DAI, sellAmount, totalLocked, nullifier, nonceNull, bytes32(uint256(0xc3)), bytes32(uint256(0xc4))
+            ),
             dexRouter: CURVE_3POOL,
-            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
+            dexCalldata: dexCalldata,
+            deadline: block.timestamp + 1800
         });
 
         // Curve 3pool pulls tokens via transferFrom, so settlement must approve
@@ -255,13 +270,29 @@ contract SettleWithDexForkTest is Test {
 
         bytes memory dexCalldata = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))",
-            WETH, USDC, uint24(3000), address(settlement), sellAmount, uint256(0), uint160(0)
+            WETH,
+            USDC,
+            uint24(3000),
+            address(settlement),
+            sellAmount,
+            uint256(0),
+            uint160(0)
         );
 
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
-            proof: _makeAuthProof(WETH, USDC, sellAmount, totalLocked, bytes32(uint256(0xf1)), bytes32(uint256(0xf2)), bytes32(uint256(0xf3)), bytes32(uint256(0xf4))),
+            proof: _makeAuthProof(
+                WETH,
+                USDC,
+                sellAmount,
+                totalLocked,
+                bytes32(uint256(0xf1)),
+                bytes32(uint256(0xf2)),
+                bytes32(uint256(0xf3)),
+                bytes32(uint256(0xf4))
+            ),
             dexRouter: UNISWAP_ROUTER,
-            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
+            dexCalldata: dexCalldata,
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(user);
@@ -277,7 +308,16 @@ contract SettleWithDexForkTest is Test {
         address fakeRouter = makeAddr("fakeRouter");
 
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
-            proof: _makeAuthProof(WETH, USDC, 1 ether, 1000e6, bytes32(uint256(0xa1)), bytes32(uint256(0xa2)), bytes32(uint256(0xa3)), bytes32(uint256(0xa4))),
+            proof: _makeAuthProof(
+                WETH,
+                USDC,
+                1 ether,
+                1000e6,
+                bytes32(uint256(0xa1)),
+                bytes32(uint256(0xa2)),
+                bytes32(uint256(0xa3)),
+                bytes32(uint256(0xa4))
+            ),
             dexRouter: fakeRouter,
             dexCalldata: "",
             deadline: block.timestamp + 1800
@@ -310,15 +350,29 @@ contract SettleWithDexForkTest is Test {
 
         bytes memory dexCalldata = abi.encodeWithSignature(
             "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))",
-            WETH, USDC, uint24(3000), address(settlement),
+            WETH,
+            USDC,
+            uint24(3000),
+            address(settlement),
             amountIn,
-            totalLocked, uint160(0)
+            totalLocked,
+            uint160(0)
         );
 
         PrivateSettlement.SettleDexParams memory params = PrivateSettlement.SettleDexParams({
-            proof: _makeAuthProof(WETH, USDC, sellAmount, totalLocked, nullifier, nonceNull, bytes32(uint256(0xd3)), bytes32(uint256(0xd4))),
+            proof: _makeAuthProof(
+                WETH,
+                USDC,
+                sellAmount,
+                totalLocked,
+                nullifier,
+                nonceNull,
+                bytes32(uint256(0xd3)),
+                bytes32(uint256(0xd4))
+            ),
             dexRouter: UNISWAP_ROUTER,
-            dexCalldata: dexCalldata, deadline: block.timestamp + 1800
+            dexCalldata: dexCalldata,
+            deadline: block.timestamp + 1800
         });
 
         vm.prank(user);

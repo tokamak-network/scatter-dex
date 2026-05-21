@@ -81,7 +81,9 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
                 emit RegistryRemoved(_registry);
                 return;
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         // Unreachable: `registryExists` guard above ensures the loop finds the entry.
         revert RegistryNotFound();
@@ -96,7 +98,9 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
         address[] memory addrs = new address[](len);
         for (uint256 i; i < len;) {
             addrs[i] = address(registries[i]);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         return addrs;
     }
@@ -113,7 +117,9 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
             } catch {
                 // skip reverting registry
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         return false;
     }
@@ -127,7 +133,9 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
             try registries[i].verifiedUntil(user) returns (uint64 until) {
                 if (until > latest) latest = until;
             } catch {}
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         return latest;
     }
@@ -143,7 +151,9 @@ contract IdentityGate is Initializable, Ownable2StepUpgradeable, IIdentityRegist
             try registries[i].paused() returns (bool isPaused) {
                 if (isPaused) return true;
             } catch {}
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         return false;
     }

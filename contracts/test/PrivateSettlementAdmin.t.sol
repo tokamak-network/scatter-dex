@@ -15,7 +15,10 @@ import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
 contract PsToken is ERC20 {
     constructor() ERC20("Ps", "PS") {}
-    function mint(address to, uint256 amt) external { _mint(to, amt); }
+
+    function mint(address to, uint256 amt) external {
+        _mint(to, amt);
+    }
 }
 
 /// @title PrivateSettlementAdminTest
@@ -173,16 +176,26 @@ contract PrivateSettlementAdminTest is Test {
 
     function test_setters_onlyOwner() public {
         vm.startPrank(alice);
-        vm.expectRevert(); settlement.setTokenWhitelist(address(token), true);
-        vm.expectRevert(); settlement.setRelayerRegistry(address(token));
-        vm.expectRevert(); settlement.setFeeVault(address(token));
-        vm.expectRevert(); settlement.setAuthorizeVerifier(16, address(authVerifier));
-        vm.expectRevert(); settlement.setBatchAuthorizeVerifier(16, address(authVerifier));
-        vm.expectRevert(); settlement.setCancelVerifier(address(authVerifier));
-        vm.expectRevert(); settlement.setClaimVerifier(16, address(claimVerifier));
-        vm.expectRevert(); settlement.setSanctionsList(address(token));
-        vm.expectRevert(); settlement.setDexRouterWhitelist(address(token), true);
-        vm.expectRevert(); settlement.setDexPlatformFee(50);
+        vm.expectRevert();
+        settlement.setTokenWhitelist(address(token), true);
+        vm.expectRevert();
+        settlement.setRelayerRegistry(address(token));
+        vm.expectRevert();
+        settlement.setFeeVault(address(token));
+        vm.expectRevert();
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
+        vm.expectRevert();
+        settlement.setBatchAuthorizeVerifier(16, address(authVerifier));
+        vm.expectRevert();
+        settlement.setCancelVerifier(address(authVerifier));
+        vm.expectRevert();
+        settlement.setClaimVerifier(16, address(claimVerifier));
+        vm.expectRevert();
+        settlement.setSanctionsList(address(token));
+        vm.expectRevert();
+        settlement.setDexRouterWhitelist(address(token), true);
+        vm.expectRevert();
+        settlement.setDexPlatformFee(50);
         vm.stopPrank();
     }
 
@@ -219,24 +232,22 @@ contract PrivateSettlementAdminTest is Test {
 
     function test_claimWithProof_paused_reverts() public {
         settlement.pause();
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
         settlement.claimWithProof(
-            pa, pb, pc, bytes32(uint256(1)), bytes32(uint256(2)),
-            1 ether, address(weth), alice, block.timestamp
+            pa, pb, pc, bytes32(uint256(1)), bytes32(uint256(2)), 1 ether, address(weth), alice, block.timestamp
         );
     }
 
     function test_claimWithProof_unknownGroup_reverts() public {
-        uint[2] memory pa;
-        uint[2][2] memory pb;
-        uint[2] memory pc;
+        uint256[2] memory pa;
+        uint256[2][2] memory pb;
+        uint256[2] memory pc;
         vm.expectRevert(PrivateSettlement.ClaimsGroupNotFound.selector);
         settlement.claimWithProof(
-            pa, pb, pc, bytes32(uint256(0xDEAD)), bytes32(uint256(2)),
-            1 ether, address(weth), alice, block.timestamp
+            pa, pb, pc, bytes32(uint256(0xDEAD)), bytes32(uint256(2)), 1 ether, address(weth), alice, block.timestamp
         );
     }
 }

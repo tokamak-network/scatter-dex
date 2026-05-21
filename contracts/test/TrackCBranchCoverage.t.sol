@@ -13,10 +13,22 @@ import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 ///      needing the production zk-X509 wiring.
 contract AlwaysVerified is IIdentityRegistry {
     bool private _paused;
-    function setPaused(bool p) external { _paused = p; }
-    function paused() external view override returns (bool) { return _paused; }
-    function isVerified(address) external view override returns (bool) { return !_paused; }
-    function verifiedUntil(address) external view override returns (uint64) { return type(uint64).max; }
+
+    function setPaused(bool p) external {
+        _paused = p;
+    }
+
+    function paused() external view override returns (bool) {
+        return _paused;
+    }
+
+    function isVerified(address) external view override returns (bool) {
+        return !_paused;
+    }
+
+    function verifiedUntil(address) external view override returns (uint64) {
+        return type(uint64).max;
+    }
 }
 
 /// @title TrackCBranchCoverage

@@ -6,10 +6,14 @@ import {ICancelVerifier} from "../../src/zk/ICancelVerifier.sol";
 contract MockCancelVerifier is ICancelVerifier {
     bool public shouldPass = true;
 
-    function setShouldPass(bool _pass) external { shouldPass = _pass; }
+    function setShouldPass(bool _pass) external {
+        shouldPass = _pass;
+    }
 
-    function verifyProof(uint[2] calldata, uint[2][2] calldata, uint[2] calldata, uint[5] calldata)
-        external view returns (bool)
+    function verifyProof(uint256[2] calldata, uint256[2][2] calldata, uint256[2] calldata, uint256[5] calldata)
+        external
+        view
+        returns (bool)
     {
         return shouldPass;
     }

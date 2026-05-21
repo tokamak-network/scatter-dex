@@ -71,16 +71,14 @@ contract CommitmentPoolInvariantTest is StdInvariant, Test {
     ///      `withdraw` doesn't insert (newCommitment = 0 in the handler).
     function invariant_leafCountFloor() public view {
         uint256 expectedFloor = handler.ghostDepositSuccesses() + handler.ghostInsertedByAuth();
-        assertGe(uint256(pool.nextIndex()), expectedFloor,
-            "leaf count below successful insert/deposit count");
+        assertGe(uint256(pool.nextIndex()), expectedFloor, "leaf count below successful insert/deposit count");
     }
 
     /// @dev `insertCommitment` is `onlyAuthorizedSettlement`. The handler's
     ///      `insertCommitmentAsRandom` path tries as a non-auth actor and must
     ///      always revert. If this counter ever moves, access control regressed.
     function invariant_insertCommitmentAccessControl() public view {
-        assertEq(handler.ghostUnauthorizedInsertSuccesses(), 0,
-            "unauthorized insertCommitment succeeded");
+        assertEq(handler.ghostUnauthorizedInsertSuccesses(), 0, "unauthorized insertCommitment succeeded");
     }
 
     /// @dev Whitelist gate: the test token must remain whitelisted (handler never flips

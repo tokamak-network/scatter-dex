@@ -18,7 +18,10 @@ import {MockWETH} from "./mocks/MockWETH.sol";
 
 contract SDToken is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 /// @dev Generic mock DEX router that simulates a swap via `swap(tokenIn, tokenOut, amountIn)`.
@@ -37,7 +40,10 @@ contract MockDexRouter {
     }
 
     /// @dev Simple swap: pull tokenIn, push tokenOut at configured rate.
-    function swap(address tokenIn, address tokenOut, uint256 amountIn, address recipient) external returns (uint256 amountOut) {
+    function swap(address tokenIn, address tokenOut, uint256 amountIn, address recipient)
+        external
+        returns (uint256 amountOut)
+    {
         require(!shouldRevert, "MockDexRouter: swap reverted");
         IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
         amountOut = amountIn * exchangeRate / 1e18;
@@ -65,16 +71,16 @@ contract SettleWithDexTest is Test {
     address treasury = address(0x78EA);
 
     // Dummy proof params (mock verifier accepts all)
-    uint[2] proofA = [uint(0), uint(0)];
-    uint[2][2] proofB = [[uint(0), uint(0)], [uint(0), uint(0)]];
-    uint[2] proofC = [uint(0), uint(0)];
+    uint256[2] proofA = [uint256(0), uint256(0)];
+    uint256[2][2] proofB = [[uint256(0), uint256(0)], [uint256(0), uint256(0)]];
+    uint256[2] proofC = [uint256(0), uint256(0)];
 
-    bytes32 constant NULL_ESCROW    = bytes32(uint256(0xd1));
-    bytes32 constant NULL_NONCE     = bytes32(uint256(0xd2));
+    bytes32 constant NULL_ESCROW = bytes32(uint256(0xd1));
+    bytes32 constant NULL_NONCE = bytes32(uint256(0xd2));
     bytes32 constant NEW_COMMITMENT = bytes32(uint256(0xd3));
-    bytes32 constant CLAIMS_ROOT    = bytes32(uint256(0xd4));
-    bytes32 constant ORDER_HASH     = bytes32(uint256(0xd5));
-    bytes32 constant PUB_KEY_BIND   = bytes32(uint256(0xd6));
+    bytes32 constant CLAIMS_ROOT = bytes32(uint256(0xd4));
+    bytes32 constant ORDER_HASH = bytes32(uint256(0xd5));
+    bytes32 constant PUB_KEY_BIND = bytes32(uint256(0xd6));
 
     function setUp() public {
         withdrawVerifier = new MockVerifier();
@@ -83,7 +89,9 @@ contract SettleWithDexTest is Test {
         authVerifier = new MockAuthorizeVerifier();
         dexRouter = new MockDexRouter();
 
-        pool = ProxyDeployer.deployCommitmentPool(address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30);
+        pool = ProxyDeployer.deployCommitmentPool(
+            address(this), address(this), address(withdrawVerifier), address(depositVerifier), 20, 30
+        );
         weth = new MockWETH();
         settlement = ProxyDeployer.deployPrivateSettlement(
             address(this), address(this), address(pool), address(claimVerifier), address(weth)
@@ -119,10 +127,7 @@ contract SettleWithDexTest is Test {
     // ─── Helpers ─────────────────────────────────────────────────
 
     function _encodeDexCalldata() internal view returns (bytes memory) {
-        return abi.encodeCall(
-            MockDexRouter.swap,
-            (address(weth), address(usdc), 10 ether, address(settlement))
-        );
+        return abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 10 ether, address(settlement)));
     }
 
     function _defaultDexParams() internal view returns (PrivateSettlement.SettleDexParams memory) {
@@ -183,7 +188,7 @@ contract SettleWithDexTest is Test {
             address(weth),
             address(usdc),
             10 ether,
-            20_000e18,    // 10 WETH * 2000 rate
+            20_000e18, // 10 WETH * 2000 rate
             19_000e18,
             user
         );
@@ -217,10 +222,8 @@ contract SettleWithDexTest is Test {
 
         PrivateSettlement.SettleDexParams memory p = _defaultDexParams();
         p.dexRouter = address(secondRouter);
-        p.dexCalldata = abi.encodeCall(
-            MockDexRouter.swap,
-            (address(weth), address(usdc), 10 ether, address(settlement))
-        );
+        p.dexCalldata =
+            abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 10 ether, address(settlement)));
 
         vm.prank(user);
         settlement.settleWithDex(p);
@@ -356,19 +359,30 @@ contract SettleWithDexTest is Test {
         // because the contract only approves swapAmount to the router.
         PrivateSettlement.SettleDexParams memory p = PrivateSettlement.SettleDexParams({
             proof: SettleVerifyLib.AuthorizeProof({
-                proofA: proofA, proofB: proofB, proofC: proofC,
-                pubKeyBind: PUB_KEY_BIND, commitmentRoot: pool.getLastRoot(),
-                nullifier: NULL_ESCROW, nonceNullifier: NULL_NONCE,
+                proofA: proofA,
+                proofB: proofB,
+                proofC: proofC,
+                pubKeyBind: PUB_KEY_BIND,
+                commitmentRoot: pool.getLastRoot(),
+                nullifier: NULL_ESCROW,
+                nonceNullifier: NULL_NONCE,
                 newCommitment: NEW_COMMITMENT,
-                sellToken: address(weth), buyToken: address(usdc),
-                sellAmount: 10 ether, buyAmount: 19_000e18, maxFee: 0,
+                sellToken: address(weth),
+                buyToken: address(usdc),
+                sellAmount: 10 ether,
+                buyAmount: 19_000e18,
+                maxFee: 0,
                 expiry: uint64(block.timestamp + 300),
-                claimsRoot: CLAIMS_ROOT, totalLocked: 19_000e18,
-                relayer: user, orderHash: ORDER_HASH,
+                claimsRoot: CLAIMS_ROOT,
+                totalLocked: 19_000e18,
+                relayer: user,
+                orderHash: ORDER_HASH,
                 tier: 16
             }),
             dexRouter: address(dexRouter),
-            dexCalldata: abi.encodeCall(MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement))),
+            dexCalldata: abi.encodeCall(
+                MockDexRouter.swap, (address(weth), address(usdc), 9.9 ether, address(settlement))
+            ),
             deadline: block.timestamp + 1800
         });
 

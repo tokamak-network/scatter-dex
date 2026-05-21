@@ -30,8 +30,8 @@ contract BatchExecutorTest is Test {
     Sink sinkB;
 
     bytes32 constant BATCH_DEFAULT_MODE = bytes32(uint256(1) << 248);
-    bytes32 constant BATCH_TRY_MODE     = bytes32((uint256(1) << 248) | (uint256(1) << 240));
-    bytes32 constant SINGLE_DEFAULT     = bytes32(0);
+    bytes32 constant BATCH_TRY_MODE = bytes32((uint256(1) << 248) | (uint256(1) << 240));
+    bytes32 constant SINGLE_DEFAULT = bytes32(0);
 
     function setUp() public {
         executor = new BatchExecutor();

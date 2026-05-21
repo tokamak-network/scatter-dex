@@ -27,12 +27,12 @@ contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
     uint256 constant q_mod = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
 
     // ── Verification key (same as AuthorizeVerifier.sol) ──
-    uint256 constant alphax  = 14384235950119042070567818654293029140252137645950092982200714679054372372256;
-    uint256 constant alphay  = 14075923080327348721385669700616374867289808503732072523040648403250897957648;
-    uint256 constant betax1  = 1618103450510739521020245476891711802836810401088853005485593396117986383843;
-    uint256 constant betax2  = 21655532960701529153129077519508441025297202035621250212899765885768489397519;
-    uint256 constant betay1  = 4723287139694702391024121862840241728712425624069410330204922501305415335416;
-    uint256 constant betay2  = 1313449656396141369532788943395729775208866318295459447514040949756582166527;
+    uint256 constant alphax = 14384235950119042070567818654293029140252137645950092982200714679054372372256;
+    uint256 constant alphay = 14075923080327348721385669700616374867289808503732072523040648403250897957648;
+    uint256 constant betax1 = 1618103450510739521020245476891711802836810401088853005485593396117986383843;
+    uint256 constant betax2 = 21655532960701529153129077519508441025297202035621250212899765885768489397519;
+    uint256 constant betay1 = 4723287139694702391024121862840241728712425624069410330204922501305415335416;
+    uint256 constant betay2 = 1313449656396141369532788943395729775208866318295459447514040949756582166527;
     uint256 constant gammax1 = 11559732032986387107991004021392285783925812861821192530917403151452391805634;
     uint256 constant gammax2 = 10857046999023057135944570762232829481370756359578518086990519993285655852781;
     uint256 constant gammay1 = 4082367875863433681332203403145435568316851327593401208105741076214120093531;
@@ -87,8 +87,14 @@ contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
     /// @param _pubSignals2 Proof 2 public signals (15 elements)
     /// @return result True if both proofs are valid
     function verifyBatchProof(
-        uint[2] calldata _pA1, uint[2][2] calldata _pB1, uint[2] calldata _pC1, uint[15] calldata _pubSignals1,
-        uint[2] calldata _pA2, uint[2][2] calldata _pB2, uint[2] calldata _pC2, uint[15] calldata _pubSignals2
+        uint256[2] calldata _pA1,
+        uint256[2][2] calldata _pB1,
+        uint256[2] calldata _pC1,
+        uint256[15] calldata _pubSignals1,
+        uint256[2] calldata _pA2,
+        uint256[2][2] calldata _pB2,
+        uint256[2] calldata _pC2,
+        uint256[15] calldata _pubSignals2
     ) public view returns (bool result) {
         // Batched 5-pairing verification via random linear combination.
         //   r = keccak256(proofs, address(this), chainid) mod r_mod
@@ -102,11 +108,17 @@ contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
                 mstore(add(mIn, 32), y)
                 mstore(add(mIn, 64), s)
                 let success := staticcall(sub(gas(), 2000), 7, mIn, 96, mIn, 64)
-                if iszero(success) { ok := 0 leave }
+                if iszero(success) {
+                    ok := 0
+                    leave
+                }
                 mstore(add(mIn, 64), mload(pR))
                 mstore(add(mIn, 96), mload(add(pR, 32)))
                 success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
-                if iszero(success) { ok := 0 leave }
+                if iszero(success) {
+                    ok := 0
+                    leave
+                }
             }
 
             function g1_mul(pOut, x, y, s) -> ok {
@@ -209,14 +221,28 @@ contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
 
                 // L_combined = L₁ + r·L₂  →  tmp = r·L₂, then Lc = L₁ + tmp
                 if iszero(g1_mul(add(p, 128), mload(pL2), mload(add(pL2, 32)), challenge)) { leave }
-                if iszero(g1_add(add(p, 192), mload(p), mload(add(p, 32)), mload(add(p, 128)), mload(add(p, 160)))) { leave }
+                if iszero(g1_add(add(p, 192), mload(p), mload(add(p, 32)), mload(add(p, 128)), mload(add(p, 160)))) {
+                    leave
+                }
 
                 // C_combined = C₁ + r·C₂  →  tmp = r·C₂, then Cc = C₁ + tmp
-                if iszero(g1_mul(add(p, 128), calldataload(pC2), calldataload(add(pC2, 32)), challenge)) { leave }
-                if iszero(g1_add(add(p, 256), calldataload(pC1), calldataload(add(pC1, 32)), mload(add(p, 128)), mload(add(p, 160)))) { leave }
+                if iszero(g1_mul(add(p, 128), calldataload(pC2), calldataload(add(pC2, 32)), challenge)) {
+                    leave
+                }
+                if iszero(
+                    g1_add(
+                        add(p, 256),
+                        calldataload(pC1),
+                        calldataload(add(pC1, 32)),
+                        mload(add(p, 128)),
+                        mload(add(p, 160))
+                    )
+                ) { leave }
 
                 // r·A₂ at p+320
-                if iszero(g1_mul(add(p, 320), calldataload(pA2), calldataload(add(pA2, 32)), challenge)) { leave }
+                if iszero(g1_mul(add(p, 320), calldataload(pA2), calldataload(add(pA2, 32)), challenge)) {
+                    leave
+                }
 
                 // α_combined = (1+r)·α — single ecMul instead of ecMul + ecAdd
                 if iszero(g1_mul(add(p, 384), alphax, alphay, addmod(1, challenge, r_mod))) { leave }
@@ -283,11 +309,14 @@ contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
     ///      frame, which would skip the second proof in verifyBatchProof.
     ///      Instead, the result is assigned to the Solidity return variable.
     function _verifySingle(
-        uint[2] calldata _pA, uint[2][2] calldata _pB, uint[2] calldata _pC, uint[15] calldata _pubSignals
+        uint256[2] calldata _pA,
+        uint256[2][2] calldata _pB,
+        uint256[2] calldata _pC,
+        uint256[15] calldata _pubSignals
     ) internal view returns (bool result) {
         assembly {
             function doVerify(pA, pB, pC, pubSignals) -> isOk {
-                isOk := 0  // default: invalid
+                isOk := 0 // default: invalid
 
                 function g1_mulAccC(pR, x, y, s) -> ok {
                     ok := 1
@@ -296,11 +325,17 @@ contract BatchAuthorizeVerifier is IBatchAuthorizeVerifier {
                     mstore(add(mIn, 32), y)
                     mstore(add(mIn, 64), s)
                     let success := staticcall(sub(gas(), 2000), 7, mIn, 96, mIn, 64)
-                    if iszero(success) { ok := 0 leave }
+                    if iszero(success) {
+                        ok := 0
+                        leave
+                    }
                     mstore(add(mIn, 64), mload(pR))
                     mstore(add(mIn, 96), mload(add(pR, 32)))
                     success := staticcall(sub(gas(), 2000), 6, mIn, 128, pR, 64)
-                    if iszero(success) { ok := 0 leave }
+                    if iszero(success) {
+                        ok := 0
+                        leave
+                    }
                 }
 
                 let pMem := mload(0x40)
