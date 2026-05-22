@@ -24,17 +24,26 @@ export function AdminConnectBar({
   onAuth,
   title,
   subtitle,
+  suggestedUrl,
 }: {
   auth: AdminAuth | null;
   onAuth: (next: AdminAuth | null) => void;
   title?: string;
   subtitle?: string;
+  /** On-chain registered URL for the connected operator. Used as the
+   *  third-tier default when neither the active session nor the
+   *  persisted last-used URL is populated, so a freshly-loaded
+   *  dashboard doesn't ask the operator to retype their own URL. */
+  suggestedUrl?: string;
 }) {
   // Initial URL falls back to the persisted value even when `auth`
   // is null — sessions expire after 15 min and we don't want the
   // operator retyping the relayer URL every time they re-sign.
+  // Suggested URL (from the on-chain registry row) is the third tier
+  // so an operator who has never connected on this tab still gets a
+  // prefill on first render.
   const [url, setUrl] = useState(
-    () => auth?.url ?? readPersistedAdminUrl() ?? "",
+    () => auth?.url ?? readPersistedAdminUrl() ?? suggestedUrl ?? "",
   );
   const [key, setKey] = useState(auth?.key ?? "");
   const [showKeyForm, setShowKeyForm] = useState(false);
@@ -43,10 +52,12 @@ export function AdminConnectBar({
   const { signer, connect } = useWallet();
 
   // Reflect parent-driven auth changes (route nav re-reads sessionStorage).
+  // Keep the suggestedUrl fallback so a logged-out tab still shows the
+  // on-chain endpoint instead of an empty input.
   useEffect(() => {
-    setUrl(auth?.url ?? "");
+    setUrl(auth?.url ?? suggestedUrl ?? "");
     setKey(auth?.key ?? "");
-  }, [auth]);
+  }, [auth, suggestedUrl]);
 
   const connectedAsWallet = !!auth?.token;
   const connected = connectedAsWallet || !!auth?.key;

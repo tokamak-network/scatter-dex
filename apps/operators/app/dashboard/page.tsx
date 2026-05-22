@@ -72,12 +72,15 @@ export default function Dashboard() {
         </div>
       </section>
 
+      <PublicEndpointCard url={operator.row?.url} />
+
       {hydrated && (
         <AdminConnectBar
           auth={auth}
           onAuth={setAuth}
           title="Relayer connection"
           subtitle="Powers the live sections below. Cleared when this tab closes."
+          suggestedUrl={operator.row?.url}
         />
       )}
 
@@ -94,6 +97,64 @@ export default function Dashboard() {
         </section>
       )}
     </div>
+  );
+}
+
+/** Surfaces the operator's on-chain registered relayer endpoint —
+ *  the URL the wider network (other relayers, the Pro/Pay clients
+ *  picking a relayer) will hit. Operators kept asking "how do my
+ *  users connect?" while the answer was already on-chain via
+ *  `RelayerRegistry.operators(addr).url`; this card lifts it into
+ *  plain sight with a one-click copy. */
+function PublicEndpointCard({ url }: { url: string | undefined }) {
+  const [copied, setCopied] = useState(false);
+  const trimmed = url?.trim();
+  if (!trimmed) {
+    return (
+      <section className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
+        <div className="font-semibold text-[var(--color-text)]">Public endpoint</div>
+        <p className="mt-1">
+          Not set on-chain. Open{" "}
+          <Link href="/profile" className="text-[var(--color-primary)] underline">
+            /profile
+          </Link>{" "}
+          to publish a URL so peers and clients can route orders to your relayer.
+        </p>
+      </section>
+    );
+  }
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(trimmed);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard unavailable — surface nothing; URL is already visible */
+    }
+  };
+  return (
+    <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold">Public endpoint</div>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+            Published on-chain via{" "}
+            <code className="font-mono">RelayerRegistry.operators().url</code>.
+            Peers and Pro/Pay clients pick your relayer using this URL.
+          </p>
+          <div className="mt-2 truncate font-mono text-sm" title={trimmed}>
+            {trimmed}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="flex-shrink-0 rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-xs hover:bg-[var(--color-bg)]"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </section>
   );
 }
 
