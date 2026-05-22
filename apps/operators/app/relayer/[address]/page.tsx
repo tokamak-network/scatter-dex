@@ -33,6 +33,7 @@ import {
   RelayerClient,
   unwrapEthersError,
   type OperatorRow,
+  type RelayerApiInfo,
   type RelayerStatsResponse,
 } from "@zkscatter/sdk/relayer";
 import { Stat } from "../../components/Stat";
@@ -46,6 +47,11 @@ const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 interface PageState {
   loading: boolean;
   row: OperatorRow | null;
+  /** Live `/api/info` payload from the target relayer, captured so
+   *  the display name can fall back to `profile.name` / `api.name`
+   *  (matching the leaderboard's preference order) when the on-chain
+   *  row's `name` field is empty or stale. */
+  api: RelayerApiInfo | null;
   stats: RelayerStatsResponse | null;
   online: boolean;
   error: string | null;
@@ -55,6 +61,7 @@ interface PageState {
 const INITIAL_STATE: PageState = {
   loading: false,
   row: null,
+  api: null,
   stats: null,
   online: false,
   error: null,
@@ -63,6 +70,12 @@ const INITIAL_STATE: PageState = {
 
 export default function RelayerDetailPage() {
   const params = useParams<{ address: string }>();
+  // Route param is forwarded as-is to `loadOperatorRow` + the
+  // RelayerRegistry — Solidity address args are case-insensitive,
+  // so no explicit normalization is needed here. Display uses the
+  // user-typed casing; an `ethers.getAddress(...)` pass would
+  // checksum it but throws on invalid input and isn't worth the
+  // try/catch for a debug surface like this one.
   const targetAddress = (params?.address ?? "").toString();
   const { readProvider } = useWallet();
   const registryDeployed = isConfiguredAddress(REGISTRY);
@@ -74,7 +87,10 @@ export default function RelayerDetailPage() {
       return;
     }
     let cancelled = false;
-    setState((s) => ({ ...s, loading: true, error: null, notRegistered: false }));
+    // Reset to INITIAL_STATE on every target change so an in-flight
+    // nav between /relayer/A → /relayer/B doesn't briefly render
+    // A's row/stats under B's URL while the new fetch is in flight.
+    setState({ ...INITIAL_STATE, loading: true });
     loadOperatorRow(REGISTRY, targetAddress, readProvider)
       .then(async (row) => {
         if (cancelled) return;
@@ -85,6 +101,7 @@ export default function RelayerDetailPage() {
         // Only probe the live endpoints when the on-chain row has a
         // URL — saves a guaranteed-to-fail network call when the
         // operator hasn't published one yet.
+        let api: RelayerApiInfo | null = null;
         let stats: RelayerStatsResponse | null = null;
         let online = false;
         if (row.url) {
@@ -96,13 +113,17 @@ export default function RelayerDetailPage() {
             client.getInfo(),
             client.getStats(),
           ]);
-          online = infoR.status === "fulfilled";
+          if (infoR.status === "fulfilled") {
+            online = true;
+            api = infoR.value;
+          }
           stats = statsR.status === "fulfilled" ? statsR.value : null;
         }
         if (cancelled) return;
         setState({
           loading: false,
           row,
+          api,
           stats,
           online,
           error: null,
@@ -122,15 +143,25 @@ export default function RelayerDetailPage() {
     };
   }, [registryDeployed, readProvider, targetAddress]);
 
-  const { row, stats, online, loading, error, notRegistered } = state;
+  const { row, api, stats, online, loading, error, notRegistered } = state;
   const safeUrl = safeOperatorUrl(row?.url);
+  // Display-name preference mirrors the leaderboard's `relayerDisplayName`
+  // helper: API profile > API top-level name > on-chain row name >
+  // fallback. Keeps the detail page in sync with the leaderboard so
+  // an operator who edits their off-chain profile sees that name on
+  // both surfaces immediately.
+  const displayName =
+    api?.profile?.name?.trim() ||
+    api?.name?.trim() ||
+    row?.name?.trim() ||
+    (row ? "Relayer" : "Relayer detail");
 
   return (
     <div className="space-y-10">
       <header className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">
-            {row?.name?.trim() || (row ? "Relayer" : "Relayer detail")}
+            {displayName}
           </h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
             Public profile from{" "}
@@ -283,7 +314,7 @@ export default function RelayerDetailPage() {
                 }
                 sub={
                   stats?.uptimeSince
-                    ? `up since ${formatIsoDate(stats.uptimeSince)}`
+                    ? `up since ${formatIsoDate(Math.floor(stats.uptimeSince / 1000))}`
                     : undefined
                 }
               />

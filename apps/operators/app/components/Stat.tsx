@@ -1,7 +1,13 @@
+import type { ReactNode } from "react";
+
 interface StatProps {
   label: string;
   value: string;
-  sub: string;
+  /** Sub-line under the value. Accepts any ReactNode so callers can
+   *  drop in a tooltip / colored span / hydration-safe `<When>` cell.
+   *  Optional — pages that don't need a sub-line render the slot
+   *  empty instead of being forced to pass an empty string. */
+  sub?: ReactNode;
   /** Smaller surface variant for nested panels (e.g. inside another card). */
   compact?: boolean;
 }
