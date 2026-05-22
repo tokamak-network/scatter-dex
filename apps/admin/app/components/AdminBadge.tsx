@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ethers } from "ethers";
+import { eqAddr, isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "../lib/network";
 
@@ -36,14 +37,17 @@ export function AdminBadge() {
     }
     let cancelled = false;
     setState("loading");
-    const targets: Array<[string, string]> = [
-      ["IdentityGate", DEMO_NETWORK.contracts.identityGate],
-      ["RelayerRegistry", DEMO_NETWORK.contracts.relayerRegistry],
-      ["FeeVault", DEMO_NETWORK.contracts.feeVault],
-    ].filter(([, addr]) => addr && addr !== ethers.ZeroAddress) as Array<
-      [string, string]
-    >;
+    const targets: Array<[string, string]> = (
+      [
+        ["IdentityGate", DEMO_NETWORK.contracts.identityGate],
+        ["RelayerRegistry", DEMO_NETWORK.contracts.relayerRegistry],
+        ["FeeVault", DEMO_NETWORK.contracts.feeVault],
+      ] as Array<[string, string | undefined]>
+    ).filter((p): p is [string, string] => isConfiguredAddress(p[1]));
     if (targets.length === 0) {
+      // No platform contracts configured for this network — the badge
+      // can't tell admin from non-admin, so render "error" rather than
+      // misleadingly claim the wallet isn't an admin.
       setState("error");
       return;
     }
@@ -58,14 +62,23 @@ export function AdminBadge() {
         if (cancelled) return;
         const map: Record<string, string> = {};
         let isAdmin = false;
-        const lc = account.toLowerCase();
+        let successCount = 0;
         for (const r of results) {
           if (r.status !== "fulfilled") continue;
+          successCount++;
           map[r.value.name] = r.value.owner;
-          if (r.value.owner.toLowerCase() === lc) isAdmin = true;
+          if (eqAddr(r.value.owner, account)) isAdmin = true;
         }
         setOwners(map);
-        setState(isAdmin ? "admin" : "not-admin");
+        // Zero successful reads → we genuinely don't know. Falling
+        // through to "not-admin" would be misleading (RPC down vs
+        // truly non-owner look identical to the operator). Surface
+        // it as "error" so the tooltip explains the situation.
+        if (successCount === 0) {
+          setState("error");
+        } else {
+          setState(isAdmin ? "admin" : "not-admin");
+        }
       })
       .catch(() => {
         if (!cancelled) setState("error");
