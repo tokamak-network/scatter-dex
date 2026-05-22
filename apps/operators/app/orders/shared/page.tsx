@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { SharedOrderbookClient, type SharedOrder } from "@zkscatter/sdk/orderbook";
 import { shortAddr } from "@zkscatter/sdk/react";
-import { OperatorIdentityBar } from "../../components/OperatorIdentityBar";
 import { SectionHeader } from "../../components/SectionHeader";
 import { formatRelative } from "../../lib/format";
 
@@ -70,7 +69,6 @@ export default function SharedOrdersPage() {
 
   return (
     <div className="space-y-8">
-      <OperatorIdentityBar />
       <header className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Shared orders</h1>

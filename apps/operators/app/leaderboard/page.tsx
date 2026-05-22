@@ -11,7 +11,6 @@ import {
 } from "@zkscatter/sdk/relayer";
 import { Stat } from "../components/Stat";
 import { SectionHeader } from "../components/SectionHeader";
-import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { DEMO_NETWORK } from "../lib/network";
 import { formatEther, formatIsoDate } from "../lib/format";
 import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
@@ -54,7 +53,6 @@ export default function LeaderboardPage() {
 
   return (
     <div className="space-y-10">
-      <OperatorIdentityBar />
       <header className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Leaderboard</h1>
