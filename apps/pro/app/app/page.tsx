@@ -563,7 +563,7 @@ export default function Workbench() {
       <OrderModal
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
-        onSubmitted={() => {
+        onSubmitted={(intent) => {
           // Note that funded this order is now spent; the page
           // re-derives `selectedNote` from the vault, which the
           // submit flow already updated. Clear the order-specific
@@ -573,7 +573,11 @@ export default function Workbench() {
           resetRecipients();
           setBulkClaimFrom("");
           setSelectedNoteId(null);
-          router.push("/orders");
+          // "Place another" stays on the workbench; every other
+          // dismissal path (× / Escape / "View my orders" Link / the
+          // primary "Done") routes to /orders so the user lands on
+          // the canonical listing of their submitted order.
+          if (intent === "navigate") router.push("/orders");
         }}
         side={side}
         pair={pair.display}
