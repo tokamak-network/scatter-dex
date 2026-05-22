@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { Button, EmptyState, Field } from "@zkscatter/ui";
@@ -68,6 +69,7 @@ function projectOrderbook(
 }
 
 export default function Workbench() {
+  const router = useRouter();
   const {
     pair, side, setSide, price, setPrice, size, setSize,
     recipients, resetRecipients, bulkClaimFrom, setBulkClaimFrom,
@@ -571,6 +573,7 @@ export default function Workbench() {
           resetRecipients();
           setBulkClaimFrom("");
           setSelectedNoteId(null);
+          router.push("/orders");
         }}
         side={side}
         pair={pair.display}
