@@ -47,6 +47,20 @@ breaking the master brand)
 These tokens are codified in each app's `app/globals.css` and will
 move to `packages/ui/tokens/*` when the shared package is extracted.
 
+### Status tokens (shared across all apps)
+
+Status colors are identical across Pro / Pay / Drop so that
+shared components (e.g. `@zkscatter/recipients` upload-status
+pills) render the same regardless of which app embeds them.
+Always reference these via the CSS variable — never inline a hex
+value at the call site.
+
+| Token | Hex | Used for |
+| --- | --- | --- |
+| `--color-success` / `--color-success-soft` | `#059669` / `#ecfdf5` | OK / verified states |
+| `--color-warning` / `--color-warning-soft` | `#d97706` / `#fffbeb` | Recoverable issues, soft warnings |
+| `--color-danger` / `--color-danger-soft` | `#dc2626` / `#fef2f2` | Errors, destructive actions |
+
 ## Typography
 
 - **Inter** for UI everywhere.
