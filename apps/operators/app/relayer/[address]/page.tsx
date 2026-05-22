@@ -2,17 +2,25 @@
 
 /**
  *  `/relayer/<address>` — public read-only profile for any registered
- *  relayer. Reuses the leaderboard's data fetch (on-chain row + the
- *  relayer's public `/api/relayer/stats`) so visitors can inspect a
- *  peer's fee, bond, success rate, and live endpoint without needing
- *  admin auth on that peer. Lives in the operators app (rather than a
- *  separate marketing site) so the leaderboard row's link target sits
- *  one click away.
+ *  relayer. Reads the on-chain row directly via `loadOperatorRow` and
+ *  probes the target's own `/api/relayer/stats` for live counters, so
+ *  visitors can inspect a peer's fee, bond, success rate, and live
+ *  endpoint without needing admin auth on that peer. Lives in the
+ *  operators app (rather than a separate marketing site) so the
+ *  leaderboard row's link target sits one click away.
  *
  *  Anonymous visitors: works without a connected wallet. The page
  *  treats every reader as a third party — no "you" highlight, no
  *  edit affordances. Owners discover their own row from
  *  `/dashboard` instead.
+ *
+ *  We use `loadOperatorRow` instead of `loadRelayersWithApiInfo` so a
+ *  single detail-page view costs one row read + one stats probe,
+ *  regardless of how many relayers the registry has. The previous
+ *  implementation fanned out across every active relayer's endpoint
+ *  on every page load, and would mis-report registered-but-not-active
+ *  relayers as "not found" because `getActiveRelayers()` excludes
+ *  them.
  */
 
 import Link from "next/link";
@@ -21,64 +29,92 @@ import { useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
-  loadRelayersWithApiInfo,
+  loadOperatorRow,
+  RelayerClient,
   unwrapEthersError,
-  type RelayerInfo,
+  type OperatorRow,
+  type RelayerStatsResponse,
 } from "@zkscatter/sdk/relayer";
 import { Stat } from "../../components/Stat";
 import { SectionHeader } from "../../components/SectionHeader";
 import { DEMO_NETWORK } from "../../lib/network";
-import { formatEther, formatIsoDate } from "../../lib/format";
+import { formatIsoDate } from "../../lib/format";
 import { safeOperatorUrl } from "../../lib/operatorDisplay";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
 interface PageState {
   loading: boolean;
-  row: RelayerInfo | null;
+  row: OperatorRow | null;
+  stats: RelayerStatsResponse | null;
+  online: boolean;
   error: string | null;
-  notFound: boolean;
+  notRegistered: boolean;
 }
+
+const INITIAL_STATE: PageState = {
+  loading: false,
+  row: null,
+  stats: null,
+  online: false,
+  error: null,
+  notRegistered: false,
+};
 
 export default function RelayerDetailPage() {
   const params = useParams<{ address: string }>();
   const targetAddress = (params?.address ?? "").toString();
   const { readProvider } = useWallet();
   const registryDeployed = isConfiguredAddress(REGISTRY);
-  const [state, setState] = useState<PageState>({
-    loading: false,
-    row: null,
-    error: null,
-    notFound: false,
-  });
+  const [state, setState] = useState<PageState>(INITIAL_STATE);
 
   useEffect(() => {
     if (!registryDeployed || !targetAddress) {
-      setState({ loading: false, row: null, error: null, notFound: false });
+      setState(INITIAL_STATE);
       return;
     }
     let cancelled = false;
-    setState((s) => ({ ...s, loading: true, error: null, notFound: false }));
-    loadRelayersWithApiInfo(REGISTRY, readProvider, { withStats: true })
-      .then((rows) => {
+    setState((s) => ({ ...s, loading: true, error: null, notRegistered: false }));
+    loadOperatorRow(REGISTRY, targetAddress, readProvider)
+      .then(async (row) => {
         if (cancelled) return;
-        const lc = targetAddress.toLowerCase();
-        const hit = rows.find((r) => r.address.toLowerCase() === lc) ?? null;
+        if (row.registeredAt === 0) {
+          setState({ ...INITIAL_STATE, notRegistered: true });
+          return;
+        }
+        // Only probe the live endpoints when the on-chain row has a
+        // URL — saves a guaranteed-to-fail network call when the
+        // operator hasn't published one yet.
+        let stats: RelayerStatsResponse | null = null;
+        let online = false;
+        if (row.url) {
+          const client = new RelayerClient(row.url, { timeoutMs: 4000 });
+          // Run info + stats in parallel; either can fail
+          // independently (older builds return 404 on /api/relayer/stats
+          // while /api/info still works).
+          const [infoR, statsR] = await Promise.allSettled([
+            client.getInfo(),
+            client.getStats(),
+          ]);
+          online = infoR.status === "fulfilled";
+          stats = statsR.status === "fulfilled" ? statsR.value : null;
+        }
+        if (cancelled) return;
         setState({
           loading: false,
-          row: hit,
+          row,
+          stats,
+          online,
           error: null,
-          notFound: !hit,
+          notRegistered: false,
         });
       })
       .catch((e) => {
         if (cancelled) return;
         console.error("Failed to load relayer detail", e);
         setState({
-          loading: false,
-          row: null,
+          ...INITIAL_STATE,
           error: unwrapEthersError(e),
-          notFound: false,
         });
       });
     return () => {
@@ -86,7 +122,7 @@ export default function RelayerDetailPage() {
     };
   }, [registryDeployed, readProvider, targetAddress]);
 
-  const { row, loading, error, notFound } = state;
+  const { row, stats, online, loading, error, notRegistered } = state;
   const safeUrl = safeOperatorUrl(row?.url);
 
   return (
@@ -125,7 +161,7 @@ export default function RelayerDetailPage() {
         <Notice tone="warn">Failed to load: {error}</Notice>
       )}
 
-      {registryDeployed && !loading && !error && notFound && (
+      {registryDeployed && !loading && !error && notRegistered && (
         <Notice tone="warn">
           No relayer registered at this address. Check the leaderboard for the
           current set.
@@ -138,22 +174,27 @@ export default function RelayerDetailPage() {
             <div className="flex flex-wrap items-center gap-3">
               <span
                 className={`inline-flex h-2.5 w-2.5 rounded-full ${
-                  row.online
+                  online
                     ? "bg-[var(--color-success)]"
                     : "bg-[var(--color-text-subtle)]"
                 }`}
                 title={
-                  row.online
+                  online
                     ? "Relayer responded to /api/info"
                     : "Relayer didn't respond — offline or unreachable"
                 }
               />
-              <span className="font-mono text-sm" title={row.address}>
-                {row.address}
+              <span className="font-mono text-sm" title={targetAddress}>
+                {targetAddress}
               </span>
               {row.exitRequestedAt > 0 && (
                 <span className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]">
                   exiting
+                </span>
+              )}
+              {!row.active && row.registeredAt > 0 && row.exitRequestedAt === 0 && (
+                <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-subtle)]">
+                  inactive
                 </span>
               )}
             </div>
@@ -188,22 +229,18 @@ export default function RelayerDetailPage() {
             <div className="grid grid-cols-3 gap-4">
               <Stat
                 label="Fee"
-                value={`${(row.fee / 100).toFixed(2)}%`}
-                sub={`${row.fee} bps per fill`}
+                value={`${(row.feeBps / 100).toFixed(2)}%`}
+                sub={`${row.feeBps} bps per fill`}
               />
               <Stat
                 label="Bond posted"
-                value={`${formatEther(row.bond)} ETH`}
+                value={`${row.bondEth} ETH`}
                 sub={row.active ? "Active" : "Not active"}
               />
               <Stat
                 label="Registered"
                 value={formatIsoDate(row.registeredAt)}
-                sub={
-                  row.registeredAt
-                    ? `${daysAgo(row.registeredAt)} days ago`
-                    : undefined
-                }
+                sub={<DaysAgo unixSec={row.registeredAt} />}
               />
             </div>
           </section>
@@ -214,39 +251,39 @@ export default function RelayerDetailPage() {
               <Stat
                 label="Settled orders"
                 value={
-                  row.stats?.settledOrders !== undefined
-                    ? String(row.stats.settledOrders)
+                  stats?.settledOrders !== undefined
+                    ? String(stats.settledOrders)
                     : "—"
                 }
                 sub={
-                  row.stats?.totalOrders !== undefined
-                    ? `of ${row.stats.totalOrders} routed`
+                  stats?.totalOrders !== undefined
+                    ? `of ${stats.totalOrders} routed`
                     : "stats unavailable"
                 }
               />
               <Stat
                 label="Success rate"
                 value={
-                  row.stats?.successRate !== undefined
-                    ? `${row.stats.successRate}%`
+                  stats?.successRate !== undefined
+                    ? `${stats.successRate}%`
                     : "—"
                 }
                 sub={
-                  row.stats?.pendingOrders !== undefined
-                    ? `${row.stats.pendingOrders} pending`
+                  stats?.pendingOrders !== undefined
+                    ? `${stats.pendingOrders} pending`
                     : undefined
                 }
               />
               <Stat
                 label="Avg settle time"
                 value={
-                  row.stats?.avgSettleTimeMs != null
-                    ? `${Math.round(row.stats.avgSettleTimeMs)} ms`
+                  stats?.avgSettleTimeMs != null
+                    ? `${Math.round(stats.avgSettleTimeMs)} ms`
                     : "—"
                 }
                 sub={
-                  row.stats?.uptimeSince
-                    ? `up since ${formatIsoDate(row.stats.uptimeSince)}`
+                  stats?.uptimeSince
+                    ? `up since ${formatIsoDate(stats.uptimeSince)}`
                     : undefined
                 }
               />
@@ -276,7 +313,17 @@ function Notice({
   );
 }
 
-function daysAgo(unixSec: number): number {
-  const ms = Date.now() - unixSec * 1000;
-  return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)));
+/** Relative-time sub-label for the "Registered" stat. Computing it
+ *  during render against `Date.now()` causes a hydration mismatch
+ *  because SSR's clock differs from the client's; we initialise to
+ *  `null` (suppressed on first paint) and fill in on mount. */
+function DaysAgo({ unixSec }: { unixSec: number }) {
+  const [days, setDays] = useState<number | null>(null);
+  useEffect(() => {
+    if (!unixSec) return;
+    const ms = Date.now() - unixSec * 1000;
+    setDays(Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000))));
+  }, [unixSec]);
+  if (days === null) return null;
+  return <>{days} days ago</>;
 }

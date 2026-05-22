@@ -363,7 +363,7 @@ function statsCellTitle(status: StatsCellStatus): string {
 }
 
 function RelayerNameCell({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
-  const endpointDisplay = row.url ? row.url.replace(/^https?:\/\//, "").replace(/\/$/, "") : null;
+  const endpointDisplay = formatEndpointDisplay(row.url);
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-2">
@@ -395,4 +395,21 @@ function RelayerNameCell({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
       )}
     </div>
   );
+}
+
+
+/** Render a relayer endpoint URL as `host[:port][/path]` — no scheme,
+ *  no trailing slash. Uses `new URL()` so the parser handles paths,
+ *  query strings, and non-default ports correctly; falls back to a
+ *  conservative regex strip when `row.url` isn't a well-formed URL
+ *  (legacy registrations may carry a free-form string). */
+function formatEndpointDisplay(rawUrl: string | undefined): string | null {
+  if (!rawUrl) return null;
+  try {
+    const u = new URL(rawUrl);
+    const tail = u.pathname === "/" ? "" : u.pathname.replace(/\/$/, "");
+    return `${u.host}${tail}`;
+  } catch {
+    return rawUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  }
 }
