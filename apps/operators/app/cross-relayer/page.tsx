@@ -15,7 +15,6 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { AdminConnectBar } from "../components/AdminConnectBar";
 import { adminGet, readAdminAuth, type AdminAuth } from "../lib/adminApi";
 import { Panel, ErrorLine, useAdmin, shortHex } from "../lib/adminUi";
@@ -60,8 +59,6 @@ export default function CrossRelayerPage() {
 
   return (
     <div className="space-y-8">
-      <OperatorIdentityBar />
-
       <header>
         <h1 className="text-2xl font-semibold">Cross-relayer</h1>
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
