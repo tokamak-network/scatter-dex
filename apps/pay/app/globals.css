@@ -6,6 +6,7 @@
  * package (e.g. `AppShellHeader`'s `gap-x-4`, `flex-wrap`) get
  * tree-shaken out unless we point the source scanner at it. */
 @source "../../../packages/ui/src";
+@source "../../../packages/recipients/src";
 
 @theme inline {
   --color-bg: #f7f8fb;
