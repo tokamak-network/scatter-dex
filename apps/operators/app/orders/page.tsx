@@ -29,12 +29,20 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { eqAddr } from "@zkscatter/sdk";
 import { SharedOrderbookClient, type SharedOrder } from "@zkscatter/sdk/orderbook";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { useOperator } from "../lib/useOperator";
 import { formatRelative } from "../lib/format";
 import type { SettlementRow } from "../lib/adminTypes";
+
+/** Re-fetch interval for both data sources. 30s keeps the table
+ *  fresh enough that a newly-routed order shows up without a manual
+ *  refresh, while staying clear of the shared orderbook's per-IP
+ *  rate limit (no hard quota today, but the page must not become a
+ *  source of background load on a long-open tab). */
+const POLL_INTERVAL_MS = 30_000;
 
 type Auth = AdminAuth | null;
 
@@ -48,8 +56,11 @@ const FILTERS: Array<{ key: "all" | UnifiedStatus; label: string }> = [
 ];
 
 interface UnifiedRow {
-  /** Stable React key. SharedOrder.id for open rows, tx_hash for
-   *  history rows; never overlap by construction. */
+  /** Stable React key. `open:<SharedOrder.id>` for open / expired
+   *  rows, `tx:<tx_hash>` for settled / failed. The namespace
+   *  prefix prevents the (unlikely) case where a shared-order id
+   *  happens to share its leading bytes with a tx hash from
+   *  colliding under React's key. */
   key: string;
   status: UnifiedStatus;
   sellToken?: string;
@@ -110,7 +121,12 @@ export default function OrdersPage() {
 function OrdersBody({ auth }: { auth: Auth }) {
   const { account } = useOperator();
   const [filter, setFilter] = useState<"all" | UnifiedStatus>("all");
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  // `nowMs` stays at 0 until the component mounts. Both the
+  // "expired" classifier and the relative-time cells branch on this
+  // — server-side they render an absolute timestamp (deterministic,
+  // safe for hydration), and after `setNowMs(Date.now())` runs in
+  // the mount effect they switch to live relative strings.
+  const [nowMs, setNowMs] = useState<number>(0);
   const [shared, setShared] = useState<SharedOrder[]>([]);
   const [sharedError, setSharedError] = useState<string | null>(null);
   const [history, setHistory] = useState<SettlementRow[]>([]);
@@ -118,10 +134,13 @@ function OrdersBody({ auth }: { auth: Auth }) {
   const [loadingShared, setLoadingShared] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Re-evaluate "expired" every minute so an expiry crossing while
-  // the tab sits open shifts a row from Open to Expired without a
-  // hard refresh.
+  // Seed `nowMs` once on mount (avoids the SSR/client mismatch
+  // that would otherwise hit every relative-time cell), then
+  // re-evaluate "expired" every minute so an expiry crossing
+  // while the tab sits open shifts a row from Open to Expired
+  // without a hard refresh.
   useEffect(() => {
+    setNowMs(Date.now());
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
@@ -136,6 +155,18 @@ function OrdersBody({ auth }: { auth: Auth }) {
       setSharedError(null);
       try {
         const client = new SharedOrderbookClient(SHARED_URL);
+        // `getOrders` swallows transport/parse errors and returns
+        // `[]`, so a silent outage would otherwise read as "no
+        // orders" with no banner. Probe `isOnline` first and surface
+        // an explicit error before pretending the bucket is empty —
+        // mirrors what `/orders/shared` does.
+        const online = await client.isOnline();
+        if (signal?.aborted) return;
+        if (!online) {
+          setSharedError("shared orderbook unreachable");
+          setShared([]);
+          return;
+        }
         const orders = await client.getOrders(500);
         if (signal?.aborted) return;
         setShared(orders);
@@ -157,9 +188,11 @@ function OrdersBody({ auth }: { auth: Auth }) {
       try {
         const res = await adminGet<{ rows: SettlementRow[]; total: number }>(
           auth,
-          // 500 is generous for the "My orders" overview — older
-          // rows are reachable via Export CSV / the search params if
-          // we add deeper pagination later.
+          // 500 is generous for the "My orders" overview. CSV
+          // export + paginated drill-down were removed in this
+          // refactor; reintroduce a follow-up "Full history" link
+          // (or restore the paginated table on a sub-route) if
+          // operators need rows older than the most recent 500.
           `/api/admin/history?limit=500`,
           signal,
         );
@@ -175,17 +208,34 @@ function OrdersBody({ auth }: { auth: Auth }) {
     [auth],
   );
 
+  // Both data sources poll on the same cadence so a newly-routed
+  // order picks up within POLL_INTERVAL_MS of submission, and a
+  // tab left open for hours keeps showing live data. Each tick
+  // aborts its predecessor so a slow shared-orderbook response
+  // can't pile up against the next interval.
   useEffect(() => {
     const ctrl = new AbortController();
     void fetchShared(ctrl.signal);
-    return () => ctrl.abort();
+    const id = setInterval(() => {
+      void fetchShared();
+    }, POLL_INTERVAL_MS);
+    return () => {
+      ctrl.abort();
+      clearInterval(id);
+    };
   }, [fetchShared]);
 
   useEffect(() => {
     if (!auth) return;
     const ctrl = new AbortController();
     void fetchHistory(ctrl.signal);
-    return () => ctrl.abort();
+    const id = setInterval(() => {
+      void fetchHistory();
+    }, POLL_INTERVAL_MS);
+    return () => {
+      ctrl.abort();
+      clearInterval(id);
+    };
   }, [fetchHistory, auth]);
 
   const rows = useMemo(
@@ -299,7 +349,7 @@ function OrdersBody({ auth }: { auth: Auth }) {
                   {r.buyAmount ?? "—"}
                 </td>
                 <td className="px-5 py-3 text-xs text-[var(--color-text-muted)]">
-                  {formatRelative(r.createdMs)}
+                  <When unixMs={r.createdMs} nowMs={nowMs} />
                 </td>
                 <td className="px-5 py-3 text-xs text-[var(--color-text-muted)]">
                   {r.expiry !== undefined ? (
@@ -310,7 +360,7 @@ function OrdersBody({ auth }: { auth: Auth }) {
                           : ""
                       }
                     >
-                      {formatRelative(r.expiry * 1000)}
+                      <When unixMs={r.expiry * 1000} nowMs={nowMs} />
                     </span>
                   ) : (
                     "—"
@@ -360,7 +410,6 @@ function buildUnifiedRows(
   account: string | null,
   nowMs: number,
 ): UnifiedRow[] {
-  const acct = account?.toLowerCase() ?? null;
   const out: UnifiedRow[] = [];
 
   for (const o of shared) {
@@ -368,7 +417,7 @@ function buildUnifiedRows(
     // connected we keep the rows (so the page isn't empty pre-
     // connect) — the operator can still see network-wide open
     // activity, which mirrors what `/orders/shared` already shows.
-    if (acct && o.relayer.toLowerCase() !== acct) continue;
+    if (account && !eqAddr(o.relayer, account)) continue;
     const expiredMs = o.expiry * 1000;
     const status: UnifiedStatus = expiredMs <= nowMs ? "expired" : "open";
     out.push({
@@ -435,4 +484,23 @@ function shortTx(s: string): string {
 function shortAddr(s: string): string {
   if (s.length <= 14) return s;
   return `${s.slice(0, 6)}…${s.slice(-4)}`;
+}
+
+/** Hydration-safe timestamp cell. On the SSR / first-paint pass
+ *  `nowMs` is `0` (the parent seeds it in a mount effect), so we
+ *  render an absolute ISO-ish stamp — deterministic, identical on
+ *  server + client. Once `nowMs > 0` we switch to the human-friendly
+ *  relative string. Without this the table reliably mismatches on
+ *  hydration: server's `Date.now()` is always older than the
+ *  client's by the network RTT, so "5s ago" on the server becomes
+ *  "1m ago" on the client. */
+function When({ unixMs, nowMs }: { unixMs: number; nowMs: number }) {
+  if (nowMs === 0) {
+    // YYYY-MM-DD HH:mm — pre-hydration we sacrifice the relative
+    // pretty-print for a stable string. `toISOString` is timezone-
+    // independent, which keeps server + client identical.
+    const iso = new Date(unixMs).toISOString();
+    return <>{`${iso.slice(0, 10)} ${iso.slice(11, 16)}Z`}</>;
+  }
+  return <>{formatRelative(unixMs)}</>;
 }
