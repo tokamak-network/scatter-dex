@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
@@ -51,12 +51,38 @@ export function AdminConnectBar({
   const [busy, setBusy] = useState(false);
   const { signer, connect } = useWallet();
 
-  // Reflect parent-driven auth changes (route nav re-reads sessionStorage).
-  // Keep the suggestedUrl fallback so a logged-out tab still shows the
-  // on-chain endpoint instead of an empty input.
+  // Track the last-applied identity so a parent re-render that
+  // passes a fresh-but-equal `auth` object, or an async-arriving
+  // `suggestedUrl` from useOperator(), doesn't overwrite a value
+  // the user just typed into the inputs.
+  const lastAppliedAuthUrl = useRef<string | null>(auth?.url ?? null);
+  const lastAppliedSuggested = useRef<string | undefined>(suggestedUrl);
+
   useEffect(() => {
-    setUrl(auth?.url ?? suggestedUrl ?? "");
-    setKey(auth?.key ?? "");
+    const nextAuthUrl = auth?.url ?? null;
+    const authUrlChanged = nextAuthUrl !== lastAppliedAuthUrl.current;
+    const suggestedChanged = suggestedUrl !== lastAppliedSuggested.current;
+    if (!authUrlChanged && !suggestedChanged) return;
+    lastAppliedAuthUrl.current = nextAuthUrl;
+    lastAppliedSuggested.current = suggestedUrl;
+
+    if (auth?.url) {
+      // Active session: always reflect it. Wipes any stale free-text
+      // because the user has committed to this URL by signing in.
+      setUrl(auth.url);
+      setKey(auth.key ?? "");
+      return;
+    }
+
+    // No active session (initial load, logout, or expired SIWE token).
+    // Preserve a non-empty user edit so an async suggestedUrl arrival
+    // can't blow it away; otherwise fall back through the intended
+    // hierarchy: last-used persisted → on-chain registered → empty.
+    setUrl((current) =>
+      current.trim()
+        ? current
+        : readPersistedAdminUrl() ?? suggestedUrl ?? "",
+    );
   }, [auth, suggestedUrl]);
 
   const connectedAsWallet = !!auth?.token;

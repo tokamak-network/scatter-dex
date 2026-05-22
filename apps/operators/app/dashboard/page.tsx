@@ -72,7 +72,7 @@ export default function Dashboard() {
         </div>
       </section>
 
-      <PublicEndpointCard url={operator.row?.url} />
+      <PublicEndpointCard url={operator.row?.url} loading={operator.loading} />
 
       {hydrated && (
         <AdminConnectBar
@@ -106,10 +106,34 @@ export default function Dashboard() {
  *  users connect?" while the answer was already on-chain via
  *  `RelayerRegistry.operators(addr).url`; this card lifts it into
  *  plain sight with a one-click copy. */
-function PublicEndpointCard({ url }: { url: string | undefined }) {
+function PublicEndpointCard({
+  url,
+  loading,
+}: {
+  url: string | undefined;
+  loading?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
+  // Auto-clear the "Copied" pill with cleanup so navigating away
+  // mid-timeout doesn't trigger a setState on an unmounted card.
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
   const trimmed = url?.trim();
   if (!trimmed) {
+    // Skip the "Not set on-chain" call-to-action while the registry
+    // row is still in flight — flashing a "go publish a URL" prompt
+    // before the row resolves is jarring and frequently wrong.
+    if (loading) {
+      return (
+        <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
+          <div className="font-semibold text-[var(--color-text)]">Public endpoint</div>
+          <p className="mt-1">Loading on-chain endpoint…</p>
+        </section>
+      );
+    }
     return (
       <section className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
         <div className="font-semibold text-[var(--color-text)]">Public endpoint</div>
@@ -127,7 +151,6 @@ function PublicEndpointCard({ url }: { url: string | undefined }) {
     try {
       await navigator.clipboard.writeText(trimmed);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
     } catch {
       /* clipboard unavailable — surface nothing; URL is already visible */
     }
