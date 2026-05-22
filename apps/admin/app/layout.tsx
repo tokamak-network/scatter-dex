@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
+import { AdminBadge } from "./components/AdminBadge";
 import { Brand } from "./components/Brand";
+import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 
@@ -40,6 +42,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <Link href="/treasury" className="hover:text-[var(--color-text)]">Treasury</Link>
                 <Link href="/audit" className="hover:text-[var(--color-text)]">Audit</Link>
               </>
+            }
+            walletSlot={
+              <span className="flex items-center gap-2">
+                <AdminBadge />
+                <ConnectWalletPill />
+              </span>
             }
           />
           <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
