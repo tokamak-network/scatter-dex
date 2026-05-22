@@ -363,21 +363,34 @@ function statsCellTitle(status: StatsCellStatus): string {
 }
 
 function RelayerNameCell({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
+  const endpointDisplay = row.url ? row.url.replace(/^https?:\/\//, "").replace(/\/$/, "") : null;
   return (
-    <div className="flex items-center gap-2">
-      <span
-        className={`h-2 w-2 rounded-full ${row.online ? "bg-[var(--color-success)]" : "bg-[var(--color-text-subtle)]"}`}
-        title={row.online ? "API probe ok" : "API probe failed or relayer offline"}
-      />
-      <span className="font-medium">{row.displayName}</span>
-      {isMe && (
-        <span className="rounded-full bg-[var(--color-primary)] px-2 py-0.5 text-[10px] font-medium text-white">
-          you
-        </span>
-      )}
-      {row.exitRequestedAt > 0 && (
-        <span className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]">
-          exiting
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-2">
+        <span
+          className={`h-2 w-2 rounded-full ${row.online ? "bg-[var(--color-success)]" : "bg-[var(--color-text-subtle)]"}`}
+          title={row.online ? "API probe ok" : "API probe failed or relayer offline"}
+        />
+        <Link
+          href={`/relayer/${row.address}`}
+          className="font-medium text-[var(--color-text)] hover:text-[var(--color-primary)] hover:underline"
+        >
+          {row.displayName}
+        </Link>
+        {isMe && (
+          <span className="rounded-full bg-[var(--color-primary)] px-2 py-0.5 text-[10px] font-medium text-white">
+            you
+          </span>
+        )}
+        {row.exitRequestedAt > 0 && (
+          <span className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]">
+            exiting
+          </span>
+        )}
+      </div>
+      {endpointDisplay && (
+        <span className="ml-4 font-mono text-[11px] text-[var(--color-text-muted)]" title={row.url}>
+          {endpointDisplay}
         </span>
       )}
     </div>
