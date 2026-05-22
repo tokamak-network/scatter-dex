@@ -54,7 +54,12 @@ interface OrderModalProps {
    *  Page-level state (Sign & submit button, recipients list,
    *  bulk claim-from) resets here so the workbench doesn't stay
    *  on the just-submitted form after the user dismisses. */
-  onSubmitted?: () => void;
+  /** Fires after a successful submit when the user dismisses the
+   *  success modal. `intent` distinguishes the dismissal path so the
+   *  parent can branch on it — currently used by the workbench to
+   *  navigate to /orders on "navigate" while skipping the route
+   *  change on "stay" (the "Place another" affordance). */
+  onSubmitted?: (intent: "navigate" | "stay") => void;
   side: "sell" | "buy";
   pair: string;
   price: string;
@@ -343,20 +348,24 @@ export function OrderModal({
     if (open) commitmentTree.refresh();
   }, [open, commitmentTree]);
 
-  const close = useCallback(() => {
-    abortCtrlRef.current?.abort();
-    abortCtrlRef.current = null;
-    // Closing after a successful submit means the user has
-    // acknowledged the confirmation — tell the page to reset its
-    // post-order form so the workbench doesn't stay on the same
-    // pre-submit state with Sign & submit still enabled. Fire
-    // before mutating phase so the page reset and modal-close
-    // happen in the same tick.
-    const wasSuccess = phase.kind === "success";
-    setPhase({ kind: "idle" });
-    if (wasSuccess) onSubmitted?.();
-    onClose();
-  }, [onClose, onSubmitted, phase.kind]);
+  // Two dismissal paths after success:
+  //   - `close()` (× / Escape / "View my orders") → intent "navigate"
+  //   - `dismissStaying()` ("Place another")     → intent "stay"
+  // Both reset post-order form fields and close the modal — they
+  // only diverge on the route change.
+  const dismissWithIntent = useCallback(
+    (intent: "navigate" | "stay") => {
+      abortCtrlRef.current?.abort();
+      abortCtrlRef.current = null;
+      const wasSuccess = phase.kind === "success";
+      setPhase({ kind: "idle" });
+      if (wasSuccess) onSubmitted?.(intent);
+      onClose();
+    },
+    [onClose, onSubmitted, phase.kind],
+  );
+  const close = useCallback(() => dismissWithIntent("navigate"), [dismissWithIntent]);
+  const dismissStaying = useCallback(() => dismissWithIntent("stay"), [dismissWithIntent]);
 
   const submit = useCallback(async () => {
     if (!account) {
@@ -929,7 +938,7 @@ export function OrderModal({
         );
       })()}
 
-      <PhaseStatus phase={phase} onClose={close} />
+      <PhaseStatus phase={phase} onClose={close} onPlaceAnother={dismissStaying} />
 
       <div className="mt-5 flex justify-end gap-2">
         {phase.kind === "success" ? (
@@ -992,7 +1001,21 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function PhaseStatus({ phase, onClose }: { phase: Phase; onClose: () => void }) {
+function PhaseStatus({
+  phase,
+  onClose,
+  onPlaceAnother,
+}: {
+  phase: Phase;
+  /** Dismissal handler for paths that *should* trigger navigation —
+   *  the × button (via the parent's `Modal onClose`), "View my orders"
+   *  Link, and the default success acknowledgement. */
+  onClose: () => void;
+  /** Dismissal handler that resets the form but skips the workbench's
+   *  route change so the user lands back on the workbench ready to
+   *  place a fresh order. */
+  onPlaceAnother: () => void;
+}) {
   if (phase.kind === "idle") return null;
 
   if (phase.kind === "error") {
@@ -1024,7 +1047,7 @@ function PhaseStatus({ phase, onClose }: { phase: Phase; onClose: () => void }) 
           </Link>
           <button
             type="button"
-            onClick={onClose}
+            onClick={onPlaceAnother}
             className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
           >
             Place another
