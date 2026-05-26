@@ -419,39 +419,44 @@ export class SharedOrderbookClient {
     const ids = new Set<string>();
     // shared-OB caps each page at 500 (shared-orderbook/src/routes/
     // orders.ts:96). Walk `offset` in 500-sized chunks until the
-    // server returns less than a full page — at that point we've
-    // seen every row regardless of how many terminal+open rows have
-    // accumulated. Hard cap at 20 pages (10k rows) guards against a
-    // server that streams a stuck full-page response indefinitely;
-    // in production an OB with >10k tracked rows wants the older
-    // terminals purged anyway and surfacing the cap as a warning is
-    // a useful canary.
+    // server returns less than a full page. THROW on any network
+    // error or non-OK response — a partial set would look complete
+    // to `index.ts`'s sweep, which would then republish handles
+    // that actually live in an unseen page (turning into 409 noise
+    // for `open` rows, terminal-row replaces for the rest). The
+    // sweep's outer try/catch already converts a throw here into a
+    // "skip this cycle" — partial knowledge is worse than no scan.
+    //
+    // Hard cap at 20 pages (10k rows) is a different case: pages
+    // 0..19 ARE a valid scan, just truncated at the tail. Surface
+    // it as a warn canary so an OB with >10k tracked rows escalates
+    // to the operator (purge older terminals), but return the
+    // visible set rather than throwing — that's the same data the
+    // caller would get from a healthy <10k OB.
     const PAGE_SIZE = 500;
     const MAX_PAGES = 20;
-    try {
-      for (let page = 0; page < MAX_PAGES; page++) {
-        const offset = page * PAGE_SIZE;
-        const res = await fetch(
-          `${this.serverUrl}/api/orders?status=all&limit=${PAGE_SIZE}&offset=${offset}`,
-        );
-        if (!res.ok) break;
-        const data = await res.json() as { orders: Array<{ id: string }>; count?: number };
-        for (const o of data.orders) ids.add(o.id.toLowerCase());
-        // Done when the server returns less than a full page —
-        // pagination is dense (no gaps), so a short page == end-of-
-        // stream. `count` on the response is just `orders.length`,
-        // both checks agree.
-        if (data.orders.length < PAGE_SIZE) return ids;
-        if (page === MAX_PAGES - 1) {
-          log.warn("fetchAllOrderIds hit page cap — sweep may miss older rows", {
-            scannedRows: ids.size,
-            pageCap: MAX_PAGES,
-            pageSize: PAGE_SIZE,
-          });
-        }
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const offset = page * PAGE_SIZE;
+      const res = await fetch(
+        `${this.serverUrl}/api/orders?status=all&limit=${PAGE_SIZE}&offset=${offset}`,
+      );
+      if (!res.ok) {
+        throw new Error(`shared-OB GET /api/orders returned ${res.status} on page ${page}`);
       }
-    } catch {
-      // Caller treats empty set as "skip this cycle".
+      const data = await res.json() as { orders: Array<{ id: string }>; count?: number };
+      for (const o of data.orders) ids.add(o.id.toLowerCase());
+      // Done when the server returns less than a full page —
+      // pagination is dense (no gaps), so a short page == end-of-
+      // stream. `count` on the response is just `orders.length`,
+      // both checks agree.
+      if (data.orders.length < PAGE_SIZE) return ids;
+      if (page === MAX_PAGES - 1) {
+        log.warn("fetchAllOrderIds hit page cap — sweep may miss older rows", {
+          scannedRows: ids.size,
+          pageCap: MAX_PAGES,
+          pageSize: PAGE_SIZE,
+        });
+      }
     }
     return ids;
   }
