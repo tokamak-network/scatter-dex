@@ -107,6 +107,12 @@ export default function Workbench() {
   const [depositInitialToken, setDepositInitialToken] = useState<
     string | undefined
   >(undefined);
+  // Take Order also seeds the amount so the modal opens with the
+  // exact funding figure for the matched counter order — the
+  // historic "1.0" default was wrong every time for a real fill.
+  const [depositInitialAmount, setDepositInitialAmount] = useState<
+    string | undefined
+  >(undefined);
   const { notes } = useVault();
   const { orders } = useOrders();
   // Funding picker only surfaces notes that are spendable right now:
@@ -339,21 +345,25 @@ export default function Workbench() {
   // symbol to uppercase because a hand-typed `?sellSymbol=usdc`
   // would otherwise miss the registry lookup (network config uses
   // `USDC`) and skip the Deposit pop.
-  const handleTakeOrderApplied = useCallback((sellSideSymbol: string) => {
-    const normalizedSymbol = sellSideSymbol.toUpperCase();
-    const tokenAddr = DEMO_NETWORK.tokens.find(
-      (t) => t.symbol.toUpperCase() === normalizedSymbol,
-    )?.address;
-    const hasMatching = tokenAddr
-      ? fundableNotes.some(
-          (n) => n.note.token === BigInt(tokenAddr.toLowerCase()),
-        )
-      : true;
-    if (!hasMatching) {
-      setDepositInitialToken(normalizedSymbol);
-      setDepositOpen(true);
-    }
-  }, [fundableNotes]);
+  const handleTakeOrderApplied = useCallback(
+    (sellSideSymbol: string, sellSideAmount: string) => {
+      const normalizedSymbol = sellSideSymbol.toUpperCase();
+      const tokenAddr = DEMO_NETWORK.tokens.find(
+        (t) => t.symbol.toUpperCase() === normalizedSymbol,
+      )?.address;
+      const hasMatching = tokenAddr
+        ? fundableNotes.some(
+            (n) => n.note.token === BigInt(tokenAddr.toLowerCase()),
+          )
+        : true;
+      if (!hasMatching) {
+        setDepositInitialToken(normalizedSymbol);
+        setDepositInitialAmount(sellSideAmount);
+        setDepositOpen(true);
+      }
+    },
+    [fundableNotes],
+  );
 
   return (
     <div className="space-y-6">
@@ -392,9 +402,10 @@ export default function Workbench() {
           selectedOrder={selectedOrder}
           onSelectOrder={setSelectedOrder}
           onDeposit={() => {
-            // Generic "+ Deposit" — no token preference; modal keeps
-            // its historical ETH default.
+            // Generic "+ Deposit" — no token / amount preference;
+            // modal keeps its historical ETH + 1.0 defaults.
             setDepositInitialToken(undefined);
+            setDepositInitialAmount(undefined);
             setDepositOpen(true);
           }}
         />
@@ -452,8 +463,11 @@ export default function Workbench() {
               onSelect={setSelectedNoteId}
               onDeposit={(symbol) => {
                 // Inline "+ Deposit USDC|ETH" — pre-select the
-                // funding-side token on the modal.
+                // funding-side token on the modal. Amount stays at
+                // the historic "1.0" default here; the Take Order
+                // path is the only one that knows the exact size.
                 setDepositInitialToken(symbol);
+                setDepositInitialAmount(undefined);
                 setDepositOpen(true);
               }}
             />
@@ -632,6 +646,7 @@ export default function Workbench() {
         open={depositOpen}
         onClose={() => setDepositOpen(false)}
         initialTokenSymbol={depositInitialToken}
+        initialAmount={depositInitialAmount}
       />
       <CancelOrderModal
         open={!!cancelOrder}
@@ -828,12 +843,13 @@ function TakeOrderPrefill({
   setPrice: (p: string) => void;
   setSize: (s: string) => void;
   /** Called once after a successful prefill with the resolved
-   *  funding-side token symbol (the symbol the taker must spend).
-   *  Workbench uses it to seed the Deposit modal's initial token
-   *  when no fundable note matches — so a user who clicks "Take
-   *  Order" with an empty vault doesn't have to also hunt down the
-   *  right token in the deposit dropdown. */
-  onApplied: (sellSideSymbol: string) => void;
+   *  funding-side token symbol AND the human-readable amount the
+   *  taker must spend. Workbench uses these to seed the Deposit
+   *  modal's initial token + amount when no fundable note matches —
+   *  so a user who clicks "Take Order" with an empty vault doesn't
+   *  have to also hunt down the right token *or* compute the
+   *  funding figure themselves. */
+  onApplied: (sellSideSymbol: string, sellSideAmount: string) => void;
 }) {
   const search = useSearchParams();
   const applied = useRef<string | null>(null);
@@ -870,13 +886,13 @@ function TakeOrderPrefill({
       setSide("sell");
       setSize(sellAmount);
       setPrice(formatPrice(buyNum / sellNum));
-      onApplied(sellSymbol);
+      onApplied(sellSymbol, sellAmount);
     } else if (findPair(baseBuyDisplay)) {
       setPairBy(baseBuyDisplay);
       setSide("buy");
       setSize(buyAmount);
       setPrice(formatPrice(sellNum / buyNum));
-      onApplied(sellSymbol);
+      onApplied(sellSymbol, sellAmount);
     }
     applied.current = takeId;
   }, [search, setPairBy, setSide, setPrice, setSize, onApplied]);

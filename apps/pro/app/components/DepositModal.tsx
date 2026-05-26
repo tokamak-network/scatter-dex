@@ -71,9 +71,15 @@ interface DepositModalProps {
    *  (the left-panel "+ Deposit" CTA) leave this undefined and keep
    *  the historical ETH default. */
   initialTokenSymbol?: string;
+  /** Seed the Amount field on the open transition. Take Order uses
+   *  this so a user with an empty vault sees the exact funding
+   *  amount needed for the matched counter order (not the historic
+   *  "1.0" default that's wrong every time for a real fill). Generic
+   *  callers omit it and keep the "1.0" default. */
+  initialAmount?: string;
 }
 
-export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModalProps) {
+export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount }: DepositModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addNote } = useVault();
@@ -101,13 +107,21 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
   // transition, not on every render where `open === true`.
   // (Gemini-suggested ref pattern on PR #756.)
   const wasOpen = useRef(false);
-  useEffect(() => {
-    if (open && !wasOpen.current) {
-      setTokenSymbol(initialTokenSymbol ?? "ETH");
-    }
-    wasOpen.current = open;
-  }, [open, initialTokenSymbol]);
-  const [amount, setAmount] = useState("1.0");
+  const [amount, setAmount] = useState(initialAmount ?? "1.0");
+  // Seed during the render phase rather than in a post-commit effect
+  // so the modal never paints a frame with the previous session's
+  // amount / token before the fresh values arrive. React detects the
+  // setState-during-render and re-runs this same render with the new
+  // state, no flash. The `wasOpen` ref turns this into a one-shot on
+  // the closed→open transition so a re-render with `open === true`
+  // mid-session doesn't clobber the user's in-modal edits.
+  if (open && !wasOpen.current) {
+    wasOpen.current = true;
+    setTokenSymbol(initialTokenSymbol ?? "ETH");
+    setAmount(initialAmount ?? "1.0");
+  } else if (!open && wasOpen.current) {
+    wasOpen.current = false;
+  }
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
 
