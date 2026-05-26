@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { shortAddr } from "@zkscatter/sdk/react";
 import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
@@ -125,6 +126,7 @@ export default function Orders() {
               <th className="px-5 py-3 text-right">Price</th>
               <th className="px-5 py-3 text-right">Size</th>
               <th className="px-5 py-3 text-left">Status</th>
+              <th className="px-5 py-3 text-left">Relayer</th>
               <th className="px-5 py-3 text-left">Submitted</th>
               <th className="px-5 py-3 text-left">Settle by</th>
               <th className="px-5 py-3 text-right">Action</th>
@@ -157,6 +159,22 @@ export default function Orders() {
                     </span>
                   ) : (
                     <StatusBadge status={o.status} />
+                  )}
+                </td>
+                <td className="px-5 py-3">
+                  {o.relayer ? (
+                    <div className="flex flex-col">
+                      <span className="text-xs font-medium">
+                        {o.relayer.name ?? shortAddr(o.relayer.address)}
+                      </span>
+                      {o.relayer.name && (
+                        <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                          {shortAddr(o.relayer.address)}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <span className="text-xs text-[var(--color-text-subtle)]">—</span>
                   )}
                 </td>
                 <td className="px-5 py-3 text-[var(--color-text-muted)]">{formatWhen(o.createdAt)}</td>

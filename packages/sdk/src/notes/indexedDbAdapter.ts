@@ -29,6 +29,10 @@ interface WireNote {
   leafIndex: number;
   txHash?: string;
   chainId?: number;
+  /** Mirrors the folder adapter so a record migrated between the two
+   *  backends round-trips its wallet attribution. The IDB DB-name is
+   *  already per-account so reads stay isolated regardless. */
+  account?: string;
   createdAt: number;
 }
 
@@ -43,6 +47,7 @@ function serialize(n: StoredNote): WireNote {
     leafIndex: n.leafIndex,
     txHash: n.txHash,
     chainId: n.chainId,
+    account: n.account,
     createdAt: n.createdAt,
   };
 }
@@ -58,6 +63,7 @@ function deserialize(w: WireNote): StoredNote {
     leafIndex: w.leafIndex,
     txHash: w.txHash,
     chainId: w.chainId,
+    account: w.account,
     createdAt: w.createdAt,
   };
 }

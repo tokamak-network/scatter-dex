@@ -8,8 +8,10 @@ import { formatExpiry } from "@zkscatter/sdk/util";
 import {
   SharedOrderbookClient,
   type SharedOrder,
+  type SharedOrderStatus,
   type SharedRelayer,
 } from "@zkscatter/sdk/orderbook";
+import { RelayerClient } from "@zkscatter/sdk/relayer";
 import { useActiveNetwork } from "../lib/activeNetwork";
 
 const POLL_MS = 10_000;
@@ -19,6 +21,18 @@ const POLL_MS = 10_000;
 const EXPIRY_SOON_MS = 10 * 60_000;
 
 type ExpiryFilter = "all" | "active" | "soon";
+
+/** Lifecycle tabs above the table. `all` returns every status; the
+ *  others map 1:1 onto the backend's status filter. Order mirrors
+ *  My orders so the two pages read the same. */
+type StatusBucket = "all" | SharedOrderStatus;
+const STATUS_BUCKETS: Array<{ id: StatusBucket; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "open", label: "Open" },
+  { id: "matched", label: "Matched" },
+  { id: "cancelled", label: "Cancelled" },
+  { id: "expired", label: "Expired" },
+];
 
 /** Shared order book — every live order across every relayer, not
  *  just the ones the current wallet submitted. Renders as a flat
@@ -35,6 +49,7 @@ export default function SharedOrderbookPage() {
   const configured = !!url;
 
   const [orders, setOrders] = useState<SharedOrder[]>([]);
+  const [counts, setCounts] = useState<Partial<Record<SharedOrderStatus, number>>>({});
   const [relayers, setRelayers] = useState<SharedRelayer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +57,7 @@ export default function SharedOrderbookPage() {
   const [pairFilter, setPairFilter] = useState<string>("all");
   const [relayerFilter, setRelayerFilter] = useState<string>("all");
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("active");
+  const [statusBucket, setStatusBucket] = useState<StatusBucket>("open");
 
   // Mounted-flag guards setState against late callbacks after
   // unmount (e.g. user navigates away mid-fetch).
@@ -88,12 +104,18 @@ export default function SharedOrderbookPage() {
         // extra `.catch` — `Promise.all` only rejects when one
         // promise actually rejects, and a non-fatal relayer
         // fetch can't do that.
-        const [list, rels] = await Promise.all([
-          client.getOrders(),
+        // Use the new counts-aware endpoint so the bucket tab labels
+        // can show totals across all statuses. Passing the active
+        // `statusBucket` keeps server-side filtering in place; the
+        // separate `counts` map populates regardless of which bucket
+        // is selected.
+        const [payload, rels] = await Promise.all([
+          client.getOrdersWithCounts(500, statusBucket),
           client.getRelayers(),
         ]);
         if (stopped || cancelledRef.current) return;
-        setOrders(list);
+        setOrders(payload.orders);
+        setCounts(payload.counts);
         setRelayers(rels);
         setError(null);
         setLastUpdated(new Date());
@@ -111,7 +133,7 @@ export default function SharedOrderbookPage() {
       stopped = true;
       if (timerId !== null) clearTimeout(timerId);
     };
-  }, [configured, url]);
+  }, [configured, url, statusBucket]);
 
   // Build the pair-filter dropdown options from the actual order
   // set instead of the token list — that way the user only sees
@@ -129,13 +151,58 @@ export default function SharedOrderbookPage() {
   // address when the relayer hasn't registered a name (or the
   // `/api/relayers` probe just failed) so the column never collapses
   // to "—".
+  // Probed-via-/api/info names from each order's `relayerUrl`.
+  // Shared-OB's in-memory relayer registry empties on restart, so
+  // `getRelayers()` often returns []; probing each endpoint once per
+  // order set keeps the relayer column populated regardless.
+  const [probedNameByAddr, setProbedNameByAddr] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (orders.length === 0) return;
+    const seen = new Set<string>();
+    const unique: Array<{ url: string }> = [];
+    for (const o of orders) {
+      if (!o.relayerUrl) continue;
+      const key = o.relayerUrl.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push({ url: o.relayerUrl });
+    }
+    let cancelled = false;
+    Promise.all(
+      unique.map(async ({ url }) => {
+        try {
+          const info = await new RelayerClient(url).getInfo();
+          const name = info.profile?.name?.trim() || info.name?.trim();
+          if (!name || !info.address) return null;
+          return { addr: info.address.toLowerCase(), name };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setProbedNameByAddr((prev) => {
+        const next = { ...prev };
+        for (const e of entries) if (e) next[e.addr] = e.name;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orders]);
+
   const relayerNameByAddr = useMemo(() => {
-    const m: Record<string, string> = {};
+    // Registry list wins (operator-set name on shared-OB) but the
+    // probed map fills in everything the registry doesn't know about,
+    // which after a restart is usually "every relayer".
+    const m: Record<string, string> = { ...probedNameByAddr };
     for (const r of relayers) {
       if (r.name && r.name.length > 0) m[r.address.toLowerCase()] = r.name;
     }
     return m;
-  }, [relayers]);
+  }, [relayers, probedNameByAddr]);
 
   // Filter dropdown options: every relayer that has at least one
   // live order. Built from the order set rather than the full
@@ -162,14 +229,27 @@ export default function SharedOrderbookPage() {
       if (relayerFilter !== "all" && o.relayer.toLowerCase() !== relayerFilter) {
         return false;
       }
-      const remainingMs = o.expiry * 1000 - nowMs;
-      if (expiryFilter === "active" && remainingMs <= 0) return false;
-      if (expiryFilter === "soon" && (remainingMs <= 0 || remainingMs > EXPIRY_SOON_MS)) {
-        return false;
+      // The expiry-filter axis (Active / Soon / Recently expired) was
+      // designed for browsing OPEN orders only. Applying it elsewhere
+      // hides rows the status bucket already promised to show — the
+      // "All" tab with `Active` ends up empty whenever every row is
+      // terminal (the common case after a few cancels). Restrict the
+      // gate to the Open bucket so the other tabs always render
+      // whatever they fetched.
+      const expiryGateApplies = statusBucket === "open";
+      if (expiryGateApplies) {
+        const remainingMs = o.expiry * 1000 - nowMs;
+        if (expiryFilter === "active" && remainingMs <= 0) return false;
+        if (
+          expiryFilter === "soon" &&
+          (remainingMs <= 0 || remainingMs > EXPIRY_SOON_MS)
+        ) {
+          return false;
+        }
       }
       return true;
     });
-  }, [orders, pairFilter, relayerFilter, expiryFilter]);
+  }, [orders, pairFilter, relayerFilter, expiryFilter, statusBucket]);
 
   // Auto-reset the relayer filter to "all" when the currently
   // selected relayer no longer has any live orders — without this
@@ -227,6 +307,34 @@ export default function SharedOrderbookPage() {
         <StatCard label="Live orders" value={orders.length} />
         <StatCard label="Pairs" value={pairs.length} />
         <StatCard label="Status" value={loading ? "Refreshing…" : "Live"} />
+      </div>
+
+      {/* Status bucket tabs — drives the server-side filter and
+          carries per-status counts in the labels so the operator can
+          see at a glance how many cancelled / expired rows exist
+          without scrolling. Defaults to Open so the page still reads
+          as a live order ladder out of the box. */}
+      <div className="flex flex-wrap items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+        {STATUS_BUCKETS.map((b) => {
+          const active = b.id === statusBucket;
+          const count = b.id === "all"
+            ? Object.values(counts).reduce((a, c) => a + (c ?? 0), 0)
+            : counts[b.id] ?? 0;
+          return (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => setStatusBucket(b.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                active
+                  ? "bg-[var(--color-primary)] text-white"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              {b.label} <span className="text-xs opacity-80">({count})</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
@@ -313,6 +421,7 @@ export default function SharedOrderbookPage() {
           <thead className="bg-[var(--color-bg)] text-[10px] uppercase tracking-widest text-[var(--color-text-subtle)]">
             <tr>
               <th className="px-4 py-3 text-left">Pair</th>
+              <th className="px-4 py-3 text-left">Status</th>
               <th className="px-4 py-3 text-right">Price</th>
               <th className="px-4 py-3 text-right">Sell</th>
               <th className="px-4 py-3 text-right">Buy</th>
@@ -355,6 +464,9 @@ export default function SharedOrderbookPage() {
                   <tr key={o.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]">
                     <td className="px-4 py-3 font-mono">
                       {sellSym} → {buySym}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusPill status={o.status ?? "open"} />
                     </td>
                     <td className="px-4 py-3 text-right font-mono">
                       {price.toLocaleString(undefined, { maximumFractionDigits: 6 })}
@@ -407,6 +519,25 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
       </div>
       <div className="mt-0.5 font-mono text-2xl font-bold leading-none">{value}</div>
     </div>
+  );
+}
+
+/** Per-row lifecycle pill so an at-a-glance scan of the table reads
+ *  the same as the bucket-tab labels. Tone-coded: open=green, matched
+ *  /cancelled/expired=neutral with a slight hue split. Falls back to
+ *  "open" when an older shared-OB build doesn't include `status` in
+ *  the payload — that's the only state the legacy endpoint surfaced. */
+function StatusPill({ status }: { status: SharedOrderStatus }) {
+  const tone =
+    status === "open"
+      ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+      : status === "matched"
+        ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+        : "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${tone}`}>
+      {status}
+    </span>
   );
 }
 

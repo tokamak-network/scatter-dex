@@ -124,6 +124,86 @@ describe("deriveNoteStatus", () => {
     expect(info.status).toBe("locked");
     expect(info.lockedByOrder?.id).toBe("o1");
   });
+
+  it("keeps the funding note Locked even when the matching order has expired", () => {
+    // Reverting the earlier shortcut: matching+expired no longer
+    // releases the lock. The on-chain expiry check only blocks the
+    // settle path — the authorize binding (escrowNullifier) is
+    // still live, so reusing the commitment in a new order would
+    // produce two orders sharing one nullifier and a guaranteed
+    // zombie after the first cancel.
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const expired = makeOrder({
+      id: "o1",
+      noteId: "n1",
+      status: "matching",
+      // `expiry` is the unix-seconds field stored on OrderRecord.
+      expiry: 1_000n, // long past 1970
+    });
+    const info = deriveNoteStatus(note, [expired], 2_000_000);
+    expect(info.status).toBe("locked");
+    expect(info.lockedByOrder?.id).toBe("o1");
+  });
+
+  it("still locks for a matching order whose expiry hasn't hit yet", () => {
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const alive = makeOrder({
+      id: "o1",
+      noteId: "n1",
+      status: "matching",
+      expiry: 9_999_999_999n, // year 2286
+    });
+    const info = deriveNoteStatus(note, [alive], Date.now());
+    expect(info.status).toBe("locked");
+    expect(info.lockedByOrder?.id).toBe("o1");
+  });
+
+  it("ignores expiry on a claimable order (no client-side override past matching)", () => {
+    // Claimable means matched + waiting on recipient claim. The
+    // funding note is already encumbered by the matched fill —
+    // expiry on the original authorize proof is irrelevant.
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const claimable = makeOrder({
+      id: "o1",
+      noteId: "n1",
+      status: "claimable",
+      expiry: 1_000n, // long past
+    });
+    const info = deriveNoteStatus(note, [claimable], 2_000_000);
+    expect(info.status).toBe("locked");
+  });
+
+  it("classifies the change residual of an expired matching order as discarded", () => {
+    // settleAuth never ran (validateCrossSide reverts on expiry
+    // before inserting anything), so this commitment will never
+    // land in the merkle tree. Pending forever would mislead the
+    // operator into thinking funds are still in flight.
+    const note = makeNote({ id: "n1", commitment: 42n, leafIndex: -1 });
+    const expired = makeOrder({
+      id: "o1",
+      noteId: "other-note",
+      changeCommitment: 42n,
+      status: "matching",
+      expiry: 1_000n,
+    });
+    const info = deriveNoteStatus(note, [expired], 2_000_000);
+    expect(info.status).toBe("discarded");
+    expect(info.discardedFromOrder?.id).toBe("o1");
+  });
+
+  it("keeps the change residual of a still-matching order as pending", () => {
+    const note = makeNote({ id: "n1", commitment: 42n, leafIndex: -1 });
+    const alive = makeOrder({
+      id: "o1",
+      noteId: "other-note",
+      changeCommitment: 42n,
+      status: "matching",
+      expiry: 9_999_999_999n,
+    });
+    const info = deriveNoteStatus(note, [alive], Date.now());
+    expect(info.status).toBe("pending");
+    expect(info.pendingFromOrder?.id).toBe("o1");
+  });
 });
 
 describe("aggregateBySymbol", () => {
@@ -144,6 +224,28 @@ describe("aggregateBySymbol", () => {
     expect(aggregateBySymbol(notes, orders)).toEqual([
       { symbol: "ETH", available: 1.0, locked: 2.0, pending: 0.5 },
       { symbol: "USDC", available: 10000, locked: 0, pending: 0 },
+    ]);
+  });
+
+  it("excludes discarded change residuals from every bucket", () => {
+    // The discarded note would inflate `pending` by 0.5 if the
+    // aggregator naively classified everything — guard against
+    // that so the panel total matches the spendable balance.
+    const notes: VaultNote[] = [
+      makeNote({ id: "a", symbol: "ETH", amount: "1.0", leafIndex: 5 }),
+      makeNote({ id: "ghost", symbol: "ETH", amount: "0.5", commitment: 99n, leafIndex: -1 }),
+    ];
+    const orders: OrderRecord[] = [
+      makeOrder({
+        id: "expired",
+        noteId: "other",
+        changeCommitment: 99n,
+        status: "matching",
+        expiry: 1_000n,
+      }),
+    ];
+    expect(aggregateBySymbol(notes, orders, 2_000_000)).toEqual([
+      { symbol: "ETH", available: 1.0, locked: 0, pending: 0 },
     ]);
   });
 

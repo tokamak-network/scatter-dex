@@ -20,6 +20,11 @@ export interface SharedRelayer {
   lastHeartbeat: number;
 }
 
+/** Lifecycle status the shared orderbook tracks server-side. Mirrors
+ *  `@scatter-dex/types`' OrderStatus union — duplicated here so the
+ *  SDK consumer doesn't have to pull the types-only package. */
+export type SharedOrderStatus = "open" | "matched" | "cancelled" | "expired";
+
 export interface SharedOrder {
   id: string;
   relayer: string;
@@ -34,6 +39,10 @@ export interface SharedOrder {
   maxFee: number;
   expiry: number;
   createdAt: number;
+  /** Present when the API was queried with `status=<bucket>` or
+   *  `status=all`. Undefined for legacy callers reading the default
+   *  "open"-only view — those rows are always open by definition. */
+  status?: SharedOrderStatus;
 }
 
 interface ClientOpts {
@@ -68,11 +77,30 @@ export class SharedOrderbookClient {
     return result?.relayers ?? [];
   }
 
-  async getOrders(limit = 500): Promise<SharedOrder[]> {
+  async getOrders(limit = 500, status?: SharedOrderStatus | "all"): Promise<SharedOrder[]> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (status) params.set("status", status);
     const result = await this.fetchJSON<{ orders: SharedOrder[]; count: number }>(
-      `/api/orders?limit=${limit}`,
+      `/api/orders?${params.toString()}`,
     );
     return result?.orders ?? [];
+  }
+
+  /** Variant that returns the full payload including the per-status
+   *  counts the bucket-tab UI needs. Kept as a separate method so
+   *  the common `getOrders()` call site doesn't have to destructure
+   *  a wrapper every time. */
+  async getOrdersWithCounts(
+    limit = 500,
+    status?: SharedOrderStatus | "all",
+  ): Promise<{ orders: SharedOrder[]; counts: Partial<Record<SharedOrderStatus, number>> }> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (status) params.set("status", status);
+    const result = await this.fetchJSON<{
+      orders: SharedOrder[];
+      counts?: Partial<Record<SharedOrderStatus, number>>;
+    }>(`/api/orders?${params.toString()}`);
+    return { orders: result?.orders ?? [], counts: result?.counts ?? {} };
   }
 
   async getOrdersByPair(pair: string): Promise<SharedOrder[]> {

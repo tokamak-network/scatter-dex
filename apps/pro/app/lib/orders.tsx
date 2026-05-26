@@ -585,9 +585,38 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     (id: string) => {
       const target = ordersRef.current.find((o) => o.id === id);
       if (!target || target.status !== "matching") return;
-      const next: OrderRecord = { ...target, status: "cancelled" };
-      adapter.put(next);
-      setOrders((prev) => prev.map((o) => (o.id === id ? next : o)));
+      // Cascade: a cancelPrivate burns the funding note's
+      // escrowNullifier on-chain. If a previous expired-but-not-
+      // cancelled order shared the same funding note (the zombie
+      // scenario that prompted this guard), its authorize proof is
+      // now permanently un-settleable too — mark every matching
+      // sibling that points at the same noteId as cancelled in the
+      // same write so the UI doesn't keep one as "matching" while
+      // chain says dead. The cascade is a no-op in the common
+      // single-order-per-note case (just rewrites the target).
+      const siblingIds = new Set<string>();
+      siblingIds.add(target.id);
+      if (target.noteId !== undefined) {
+        for (const o of ordersRef.current) {
+          if (
+            o.id !== target.id &&
+            o.status === "matching" &&
+            o.noteId === target.noteId
+          ) {
+            siblingIds.add(o.id);
+          }
+        }
+      }
+      const nextOrders: OrderRecord[] = [];
+      for (const sid of siblingIds) {
+        const src = ordersRef.current.find((o) => o.id === sid);
+        if (!src) continue;
+        const next: OrderRecord = { ...src, status: "cancelled" };
+        nextOrders.push(next);
+        adapter.put(next);
+      }
+      const byId = new Map(nextOrders.map((o) => [o.id, o]));
+      setOrders((prev) => prev.map((o) => byId.get(o.id) ?? o));
     },
     [adapter],
   );

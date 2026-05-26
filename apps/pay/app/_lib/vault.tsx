@@ -29,7 +29,12 @@ const { VaultProvider, useVault } = createVaultProvider({
     return useMemo(
       () =>
         folderReady
-          ? createFolderNoteAdapter({ chainId })
+          // Folder adapter now stamps + filters by account, matching
+          // the per-account IDB DB-name used in the no-folder branch
+          // — without this, switching wallets while sharing a folder
+          // would surface the previous wallet's notes as if they
+          // were spendable from the current one.
+          ? createFolderNoteAdapter({ chainId, accountKey })
           : createIndexedDbNoteAdapter({
               dbName: `zkscatter-pay-notes-${chainId}-${accountKey}`,
             }),

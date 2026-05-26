@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { SharedOrderbookClient, type SharedOrder } from "@zkscatter/sdk/orderbook";
+import {
+  SharedOrderbookClient,
+  type SharedOrder,
+  type SharedOrderStatus,
+} from "@zkscatter/sdk/orderbook";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import { shortAddr } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../../components/SectionHeader";
@@ -29,13 +33,24 @@ interface RelayerNameEntry {
   address: string;  // checksum address from /api/info, used to key the map
 }
 
+type Bucket = "all" | SharedOrderStatus;
+const BUCKETS: Array<{ id: Bucket; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "open", label: "Open" },
+  { id: "matched", label: "Matched" },
+  { id: "cancelled", label: "Cancelled" },
+  { id: "expired", label: "Expired" },
+];
+
 export default function SharedOrdersPage() {
   const url = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "";
+  const [bucket, setBucket] = useState<Bucket>("open");
   const [state, setState] = useState<{
     loading: boolean;
     orders: SharedOrder[];
+    counts: Partial<Record<SharedOrderStatus, number>>;
     error: string | null;
-  }>({ loading: true, orders: [], error: null });
+  }>({ loading: true, orders: [], counts: {}, error: null });
   // Address (lowercased) → relayer display name. Resolved by probing
   // each unique relayerUrl that appears in the order list. Pre-filled
   // entries persist across order refreshes so a row doesn't flash back
@@ -44,32 +59,43 @@ export default function SharedOrdersPage() {
 
   useEffect(() => {
     if (!url) {
-      setState({ loading: false, orders: [], error: "NEXT_PUBLIC_SHARED_ORDERBOOK_URL not configured" });
+      setState({
+        loading: false,
+        orders: [],
+        counts: {},
+        error: "NEXT_PUBLIC_SHARED_ORDERBOOK_URL not configured",
+      });
       return;
     }
     let cancelled = false;
     const client = new SharedOrderbookClient(url);
-    // `SharedOrderbookClient.getOrders` swallows transport/parse errors
-    // and returns []; gate on the `isOnline` probe first so a service
-    // outage surfaces as an error instead of a misleading "no orders".
-    Promise.all([client.isOnline(), client.getOrders(500)])
-      .then(([online, orders]) => {
+    // `SharedOrderbookClient.getOrdersWithCounts` swallows transport
+    // errors and returns []/{}; gate on the `isOnline` probe first so
+    // a service outage surfaces as an error instead of a misleading
+    // "no orders". Pass `bucket` through so the server filters
+    // server-side — the counts in the response always cover every
+    // bucket so the tab labels stay accurate regardless of the active
+    // filter.
+    Promise.all([client.isOnline(), client.getOrdersWithCounts(500, bucket)])
+      .then(([online, payload]) => {
         if (cancelled) return;
         if (!online) {
           setState({
             loading: false,
             orders: [],
+            counts: {},
             error: `Shared orderbook unreachable at ${url}`,
           });
           return;
         }
-        setState({ loading: false, orders, error: null });
+        setState({ loading: false, orders: payload.orders, counts: payload.counts, error: null });
       })
       .catch((err) => {
         if (!cancelled) {
           setState({
             loading: false,
             orders: [],
+            counts: {},
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -77,7 +103,7 @@ export default function SharedOrdersPage() {
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [url, bucket]);
 
   // Resolve display names by probing each unique relayer endpoint
   // exactly once per order set. Done as a side-effect after the orders
@@ -140,9 +166,35 @@ export default function SharedOrdersPage() {
         </Link>
       </header>
 
+      <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+        {BUCKETS.map((b) => {
+          const active = b.id === bucket;
+          const count = b.id === "all"
+            ? Object.values(state.counts).reduce((a, c) => a + (c ?? 0), 0)
+            : state.counts[b.id] ?? undefined;
+          return (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => setBucket(b.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                active
+                  ? "bg-[var(--color-primary)] text-white"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              {b.label}
+              {count !== undefined && (
+                <span className="ml-1 text-xs opacity-80">({count})</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
       <section>
         <SectionHeader
-          title={`${state.orders.length} open order${state.orders.length === 1 ? "" : "s"}`}
+          title={`${state.orders.length} ${bucket === "all" ? "order" : bucket}${state.orders.length === 1 ? "" : "s"}`}
           badge={state.loading ? "loading" : "live"}
         />
         {state.error && (
@@ -161,6 +213,7 @@ export default function SharedOrdersPage() {
               <thead className="bg-[var(--color-bg)] text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
                 <tr>
                   <th className="px-3 py-2 text-left">Relayer</th>
+                  <th className="px-3 py-2 text-left">Status</th>
                   <th className="px-3 py-2 text-left">Sell</th>
                   <th className="px-3 py-2 text-left">Buy</th>
                   <th className="px-3 py-2 text-right">Max fee bps</th>
@@ -191,6 +244,12 @@ export default function SharedOrdersPage() {
                             <div className="text-[10px] text-[var(--color-text-muted)]">{o.relayerUrl}</div>
                           </>
                         )}
+                      </td>
+                      <td className="px-3 py-2">
+                        <StatusPill
+                          status={o.status ?? "open"}
+                          uiExpired={expired && (o.status ?? "open") === "open"}
+                        />
                       </td>
                       <td className="px-3 py-2 text-xs">
                         <span className="font-mono">{formatAmount(o.sellAmount, sellInfo.decimals)}</span>{" "}
@@ -223,5 +282,39 @@ export default function SharedOrdersPage() {
         relayer peer would see.
       </p>
     </div>
+  );
+}
+
+/** Per-row status pill. Background tone tracks the lifecycle so the
+ *  table scans as a status board — green/active, gray/terminal, red
+ *  for the "stuck past expiry but server still has it as open" case
+ *  that fires when the relayer hasn't run its expiry sweep yet. */
+function StatusPill({
+  status,
+  uiExpired,
+}: {
+  status: SharedOrderStatus;
+  uiExpired: boolean;
+}) {
+  if (uiExpired) {
+    return (
+      <span
+        className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]"
+        title="Server still has the row as open but its expiry has passed — relayer sweep hasn't reconciled yet."
+      >
+        Open · expired
+      </span>
+    );
+  }
+  const tone =
+    status === "open"
+      ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+      : status === "matched"
+        ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+        : "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${tone}`}>
+      {status}
+    </span>
   );
 }

@@ -35,7 +35,16 @@ export function OperatorIdentityBar() {
         </span>
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="font-semibold">Operator {shortAddr(account)}</span>
+            {/* Prefer the operator's on-chain `name` over the bare
+                address — once a name is set during registration it's
+                the canonical display string (see the leaderboard's
+                relayerDisplayName fallback chain). Operators that
+                registered before the name field existed, or that
+                haven't picked one yet, still see "Operator <addr>" so
+                the identity bar never reads blank. */}
+            <span className="font-semibold">
+              {row?.name?.trim() || `Operator ${shortAddr(account)}`}
+            </span>
             <IdentityBadge registryDeployed={registryDeployed} loading={loading} status={status} />
           </div>
           <div className="truncate text-xs text-[var(--color-text-muted)]">

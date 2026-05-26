@@ -22,6 +22,9 @@ export class OrderbookDB {
   private stmtUpdateStatus!: Database.Statement;
   private stmtDeleteOrder!: Database.Statement;
   private stmtListOpen!: Database.Statement;
+  private stmtListAll!: Database.Statement;
+  private stmtListByStatus!: Database.Statement;
+  private stmtCountByStatus!: Database.Statement;
   private stmtListByPair!: Database.Statement;
   private stmtListByRelayer!: Database.Statement;
   private stmtCountByRelayer!: Database.Statement;
@@ -142,6 +145,23 @@ export class OrderbookDB {
     this.stmtListOpen = this.db.prepare(`
       SELECT * FROM orders WHERE status = 'open' ORDER BY created_at ASC LIMIT ? OFFSET ?
     `);
+    // Status-bucket queries used by the new /api/orders?status=... view.
+    // listAll keeps the original ordering shape (open-first) so the
+    // "All" tab in the UI doesn't look randomly shuffled — terminal
+    // rows fall to the bottom by created_at DESC instead of intermixing.
+    this.stmtListAll = this.db.prepare(`
+      SELECT * FROM orders
+      ORDER BY
+        CASE status WHEN 'open' THEN 0 ELSE 1 END,
+        created_at DESC
+      LIMIT ? OFFSET ?
+    `);
+    this.stmtListByStatus = this.db.prepare(`
+      SELECT * FROM orders WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+    `);
+    this.stmtCountByStatus = this.db.prepare(`
+      SELECT status, COUNT(*) AS count FROM orders GROUP BY status
+    `);
 
     // UNION ALL instead of OR — lets SQLite use idx_orders_pair on each branch
     this.stmtListByPair = this.db.prepare(`
@@ -258,6 +278,27 @@ export class OrderbookDB {
   listOpen(limit = 100, offset = 0): StoredOrder[] {
     const rows = this.stmtListOpen.all(limit, offset) as Record<string, unknown>[];
     return rows.map(r => this.rowToStoredOrder(r));
+  }
+
+  /** Used by the status-aware /api/orders route. Empty `status` →
+   *  return every row (terminal + open) sorted open-first. A defined
+   *  status is forwarded as-is so the SDK / UI keep one query
+   *  surface for both the bucket tabs and the legacy "open" view. */
+  listAll(limit = 100, offset = 0, status?: OrderStatus): StoredOrder[] {
+    const rows = status
+      ? (this.stmtListByStatus.all(status, limit, offset) as Record<string, unknown>[])
+      : (this.stmtListAll.all(limit, offset) as Record<string, unknown>[]);
+    return rows.map(r => this.rowToStoredOrder(r));
+  }
+
+  /** Per-status counts for the UI's tab labels (`All (5) · Open (3)
+   *  · Expired (1) · …`). Returned as a partial map so a missing
+   *  bucket reads as 0 client-side. */
+  countByStatus(): Partial<Record<OrderStatus, number>> {
+    const rows = this.stmtCountByStatus.all() as Array<{ status: string; count: number }>;
+    const out: Partial<Record<OrderStatus, number>> = {};
+    for (const r of rows) out[r.status as OrderStatus] = r.count;
+    return out;
   }
 
   listByPair(tokenA: string, tokenB: string, limit = 100, offset = 0): StoredOrder[] {
