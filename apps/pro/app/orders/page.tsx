@@ -28,6 +28,54 @@ function isExpired(o: OrderRecord, nowMs: number): boolean {
   return Number(o.expiry) * 1000 <= nowMs;
 }
 
+/** Pair display is "BASE/QUOTE" (e.g. ETH/USDC). For side=sell the
+ *  user sells base, gets quote; for side=buy the user sells quote,
+ *  gets base. Below helpers project the (side, pair, price, size)
+ *  shape stored on disk into the per-token sell/buy columns the user
+ *  asked for — strings rather than bigints because the underlying
+ *  fields are display strings (already formatted at submit time). */
+function pairParts(o: OrderRecord): { base: string; quote: string } {
+  const [base = "", quote = ""] = o.pair.split("/");
+  return { base, quote };
+}
+
+function sellSymbol(o: OrderRecord): string {
+  const { base, quote } = pairParts(o);
+  return o.side === "sell" ? base : quote;
+}
+
+function buySymbol(o: OrderRecord): string {
+  const { base, quote } = pairParts(o);
+  return o.side === "sell" ? quote : base;
+}
+
+/** Multiply two decimal display strings while preserving precision
+ *  the user typed. Falls back to Number math when either side parses
+ *  as NaN — the row still renders something rather than blanking on
+ *  a malformed legacy order. */
+function mulDisplay(a: string, b: string): string {
+  const cleanA = a.replace(/,/g, "");
+  const cleanB = b.replace(/,/g, "");
+  const na = Number(cleanA);
+  const nb = Number(cleanB);
+  if (!Number.isFinite(na) || !Number.isFinite(nb)) return "—";
+  const product = na * nb;
+  // Match the orderbook page's display rounding so a user who copies
+  // a value between surfaces sees the same number.
+  return product.toLocaleString(undefined, { maximumFractionDigits: 6 });
+}
+
+function sellDisplay(o: OrderRecord): string {
+  // Sell-side: size is in base, so sell amount = size in base units.
+  // Buy-side: size is in base (what the user buys), so sell amount =
+  // size × price in quote units.
+  return o.side === "sell" ? o.size : mulDisplay(o.size, o.price);
+}
+
+function buyDisplay(o: OrderRecord): string {
+  return o.side === "sell" ? mulDisplay(o.size, o.price) : o.size;
+}
+
 export default function Orders() {
   const { orders } = useOrders();
   // Re-evaluate the Expired bucket every minute so an expiry
@@ -122,9 +170,8 @@ export default function Orders() {
             <tr>
               <th className="px-5 py-3 text-left">Order</th>
               <th className="px-5 py-3 text-left">Side</th>
-              <th className="px-5 py-3 text-left">Pair</th>
-              <th className="px-5 py-3 text-right">Price</th>
-              <th className="px-5 py-3 text-right">Size</th>
+              <th className="px-5 py-3 text-right">Sell</th>
+              <th className="px-5 py-3 text-right">Buy</th>
               <th className="px-5 py-3 text-left">Status</th>
               <th className="px-5 py-3 text-left">Relayer</th>
               <th className="px-5 py-3 text-left">Submitted</th>
@@ -149,9 +196,14 @@ export default function Orders() {
               >
                 <td className="px-5 py-3 font-mono text-xs">{o.label}</td>
                 <td className="px-5 py-3">{o.side === "sell" ? "Sell" : "Buy"}</td>
-                <td className="px-5 py-3">{o.pair}</td>
-                <td className="px-5 py-3 text-right font-mono">{o.price}</td>
-                <td className="px-5 py-3 text-right font-mono">{o.size}</td>
+                <td className="px-5 py-3 text-right font-mono">
+                  <span className="font-semibold">{sellDisplay(o)}</span>{" "}
+                  <span className="text-[var(--color-text-muted)]">{sellSymbol(o)}</span>
+                </td>
+                <td className="px-5 py-3 text-right font-mono">
+                  <span className="font-semibold">{buyDisplay(o)}</span>{" "}
+                  <span className="text-[var(--color-text-muted)]">{buySymbol(o)}</span>
+                </td>
                 <td className="px-5 py-3">
                   {isExpired(o, nowMs) ? (
                     <span className="rounded-full border border-[var(--color-danger)] bg-[var(--color-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-danger)]">
