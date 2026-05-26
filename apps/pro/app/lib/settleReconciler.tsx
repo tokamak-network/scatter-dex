@@ -95,7 +95,9 @@ export function SettleReconciler() {
                   // is on the OrderRecord; the change leaf will be
                   // picked up by the commitment indexer separately.
                   if (order.noteId) {
-                    void removeNoteRef.current(order.noteId);
+                    removeNoteRef.current(order.noteId).catch((err) => {
+                      console.warn("Settle reconciler: vault.remove failed", err);
+                    });
                   }
                 }
               } catch {
@@ -122,7 +124,18 @@ export function SettleReconciler() {
 
 /** Only `matching` orders that carry a real relayer URL + noteId are
  *  pollable. The simulated path (no relayer.url) won't settle on-
- *  chain, so polling it would 404 forever. */
+ *  chain, so polling it would 404 forever. URL must also parse to
+ *  an http(s) endpoint — a hand-edited workspace file containing
+ *  a `file:` / `javascript:` URL would otherwise be handed straight
+ *  to `fetch` and could leak local files or trigger CSP-bypass
+ *  behaviour in unusual host setups. Defense-in-depth per the
+ *  cross-PR explorer-URL safety pattern (Gemini security-medium). */
 function isPollable(o: OrderRecord): boolean {
-  return o.status === "matching" && !!o.noteId && !!o.relayer?.url;
+  if (o.status !== "matching" || !o.noteId || !o.relayer?.url) return false;
+  try {
+    const url = new URL(o.relayer.url);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
