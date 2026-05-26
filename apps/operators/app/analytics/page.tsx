@@ -182,13 +182,19 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
   }, [auth, periodCfg.ms, periodCfg.bucketMs, refreshNonce]);
 
   const totals = useMemo(() => {
-    const totalSettled = buckets?.buckets.reduce((acc, b) => acc + b.settled, 0) ?? 0;
-    const totalFailed = buckets?.buckets.reduce((acc, b) => acc + b.failed, 0) ?? 0;
-    const totalGas = buckets?.buckets.reduce(
-      (acc, b) => acc + (b.avgGasEth ?? 0) * b.settled,
-      0,
-    );
-    const avgGas = totalSettled > 0 ? (totalGas ?? 0) / totalSettled : 0;
+    // Single pass — three .reduce()s over the same array walked the
+    // bucket list three times for the same result. Each step adds an
+    // O(N) iteration that doesn't pay for itself.
+    const { totalSettled, totalFailed, totalGas } = buckets?.buckets.reduce(
+      (acc, b) => {
+        acc.totalSettled += b.settled;
+        acc.totalFailed += b.failed;
+        acc.totalGas += (b.avgGasEth ?? 0) * b.settled;
+        return acc;
+      },
+      { totalSettled: 0, totalFailed: 0, totalGas: 0 },
+    ) ?? { totalSettled: 0, totalFailed: 0, totalGas: 0 };
+    const avgGas = totalSettled > 0 ? totalGas / totalSettled : 0;
     const totalAttempts = totalSettled + totalFailed;
     const successRate = totalAttempts > 0 ? totalSettled / totalAttempts : null;
     return { totalSettled, totalFailed, avgGas, successRate };
@@ -205,12 +211,21 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
       const headers = new Headers();
       if (auth.token) headers.set("Authorization", `Bearer ${auth.token}`);
       else if (auth.key) headers.set("x-admin-key", auth.key);
-      const params = new URLSearchParams({
-        since: String(window.since),
-        until: String(window.until),
-      });
-      const url = `${auth.url.replace(/\/+$/, "")}/api/admin/history.csv?${params.toString()}`;
-      const res = await fetch(url, { headers });
+      // `auth.url` originates in sessionStorage, populated by
+      // AdminConnectBar from operator input — treat it as untrusted
+      // and build the request URL via the URL constructor instead
+      // of template-string concatenation. Allowlisting http/https
+      // blocks `javascript:` / `file:` smuggled in via a tampered
+      // sessionStorage value before they reach `fetch`.
+      const target = new URL(auth.url);
+      if (target.protocol !== "http:" && target.protocol !== "https:") {
+        throw new Error(`Unsupported relayer URL protocol: ${target.protocol}`);
+      }
+      target.pathname =
+        target.pathname.replace(/\/+$/, "") + "/api/admin/history.csv";
+      target.searchParams.set("since", String(window.since));
+      target.searchParams.set("until", String(window.until));
+      const res = await fetch(target.toString(), { headers });
       if (!res.ok) {
         throw new Error(`CSV export failed: ${res.status} ${res.statusText}`);
       }
