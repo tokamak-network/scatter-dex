@@ -22,15 +22,22 @@ function makeOrderJson(expirySecs: number): string {
 describe("PrivateOrderDB.purgeNonPendingAuthorizeOrdersDB", () => {
   let dbPath: string;
   let db: PrivateOrderDB;
+  const RETENTION_ENV_KEY = "AUTHORIZE_ORDER_RETENTION_MS";
 
   beforeEach(() => {
     dbPath = join(tmpdir(), `purge-test-${randomUUID()}.sqlite`);
     db = new PrivateOrderDB(dbPath);
+    // Default in production is "never purge"; the cases below that
+    // assert purging happens explicitly opt in to a finite window.
+    // Reset to 1h here so the original retention-behaviour tests
+    // keep their previous semantics.
+    process.env[RETENTION_ENV_KEY] = String(ONE_HOUR_MS);
   });
 
   afterEach(() => {
     db.close();
     try { rmSync(dbPath, { force: true }); } catch { /* noop */ }
+    delete process.env[RETENTION_ENV_KEY];
   });
 
   it("retains terminal rows inside the 1h grace window", () => {
@@ -86,6 +93,31 @@ describe("PrivateOrderDB.purgeNonPendingAuthorizeOrdersDB", () => {
 
     expect(removed).toBe(0);
     expect(db.getAuthorizeOrder(nullifier)?.status).toBe("accepted");
+  });
+
+  it("never purges when AUTHORIZE_ORDER_RETENTION_MS is unset / 0", () => {
+    // Default behaviour after #827: keep every terminal row
+    // indefinitely so the operator drawer can resolve any past
+    // order. The earlier "default 1h" baseline silently purged
+    // every terminal row when the env was unset; this regression
+    // case pins that behaviour change.
+    delete process.env[RETENTION_ENV_KEY];
+
+    const nullifier = "5";
+    const expiryFuture = Math.floor(Date.now() / 1000) + 3600;
+    db.insertAcceptedOrder({
+      nullifier,
+      submittedAt: Date.now(),
+      orderJson: makeOrderJson(expiryFuture),
+    });
+    db.markAuthorizeOrderFailed(nullifier, "boom");
+    // Rewind a year — the prior shape would have wiped this row.
+    (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } })
+      .db.prepare("UPDATE authorize_orders SET updated_at = ? WHERE nullifier = ?")
+      .run(Date.now() - 365 * 24 * ONE_HOUR_MS, nullifier);
+
+    expect(db.purgeNonPendingAuthorizeOrdersDB()).toBe(0);
+    expect(db.getAuthorizeOrder(nullifier)?.status).toBe("failed");
   });
 
   it("updateAuthorizeOrderStatus bumps updated_at so the grace window starts from the transition", () => {

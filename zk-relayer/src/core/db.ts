@@ -83,12 +83,18 @@ const MAX_ERR_LEN = 512;
 //
 // The env stays as an opt-in for relayers that genuinely need disk
 // pressure management. Default `0` means "never purge."
-const TERMINAL_RETENTION_MS = (() => {
+/** Read the AUTHORIZE_ORDER_RETENTION_MS env every time so tests
+ *  (and runtime reloads) can flip it without re-importing. Returns
+ *  0 for "never purge" (the default). Anything else must be a
+ *  whole-number positive ms count — non-integers / NaN collapse to
+ *  the safe-default 0. */
+function readRetentionMs(): number {
   const raw = process.env.AUTHORIZE_ORDER_RETENTION_MS;
-  const parsed = raw === undefined ? NaN : Number(raw);
-  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  if (raw === undefined) return 0;
+  const parsed = Number(raw);
+  if (Number.isInteger(parsed) && parsed > 0) return parsed;
   return 0;
-})();
+}
 function truncErr(err: string): string {
   return err.length > MAX_ERR_LEN ? err.slice(0, MAX_ERR_LEN - 1) + "…" : err;
 }
@@ -1169,13 +1175,47 @@ export class PrivateOrderDB {
     `);
 
     // Drop the old archive table from any DB that still has it
-    // (deployments that booted on the previous PR's schema). The
-    // archive's content is now redundant with the live table's
-    // forever-retention; carrying it forward would just confuse
-    // future schema drift detection. DROP IF EXISTS is idempotent.
+    // (deployments that booted on the previous PR's schema), but
+    // migrate any rows it holds back into the live table FIRST so
+    // operators don't lose the past-order history they were
+    // keeping in the archive. INSERT OR IGNORE so a row that's
+    // already present in live (re-init after partial migration)
+    // doesn't error on the PRIMARY KEY.
+    //
+    // We check `sqlite_master` before running the INSERT so this
+    // path is silent on fresh DBs (no archive table to query). A
+    // log.warn on real failure surfaces the issue without aborting
+    // startup — the operator can re-run by hand if needed.
     try {
-      this.db.exec(`DROP TABLE IF EXISTS authorize_orders_archive`);
-    } catch { /* defensive — the prior migration may have failed mid-flight */ }
+      const hasArchive = this.db
+        .prepare(
+          `SELECT name FROM sqlite_master
+            WHERE type='table' AND name='authorize_orders_archive'`,
+        )
+        .get();
+      if (hasArchive) {
+        this.db.exec(`
+          INSERT OR IGNORE INTO authorize_orders (
+            nullifier, status, submitted_at, settle_tx,
+            pub_key_ax, pub_key_ay, order_json
+          )
+          SELECT
+            nullifier, status, submitted_at, settle_tx,
+            pub_key_ax, pub_key_ay, order_json
+          FROM authorize_orders_archive
+        `);
+        this.db.exec(`DROP TABLE IF EXISTS authorize_orders_archive`);
+      }
+    } catch (err) {
+      // Surface the failure so an operator can re-run the migration
+      // by hand instead of silently losing history. Startup keeps
+      // going — the archive is informational data only.
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[db migration] failed to drain authorize_orders_archive into live table",
+        err,
+      );
+    }
 
     // Async-settlement extensions. Each column is added via idempotent
     // ALTER so existing relayer DBs upgrade on first boot.
@@ -1507,7 +1547,14 @@ export class PrivateOrderDB {
   }
 
   purgeNonPendingAuthorizeOrdersDB(): number {
-    const terminalCutoffMs = Date.now() - TERMINAL_RETENTION_MS;
+    // retention <= 0 means "never purge" — short-circuit before
+    // computing the cutoff. The previous shape (`Date.now() - 0`)
+    // resolved to `Date.now()`, which the SQL then matched against
+    // `updated_at < ?` and deleted everything, defeating the
+    // "default = forever" intent entirely.
+    const retentionMs = readRetentionMs();
+    if (retentionMs <= 0) return 0;
+    const terminalCutoffMs = Date.now() - retentionMs;
     const result = this.purgeAuthNonPending.run([terminalCutoffMs]);
     return result.changes;
   }
