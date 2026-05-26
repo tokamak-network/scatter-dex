@@ -9,7 +9,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { AdminConnectBar } from "../components/AdminConnectBar";
 import { Stat } from "../components/Stat";
 import { formatEth } from "../lib/adminUi";
-import { adminGet, readAdminAuth, type AdminAuth } from "../lib/adminApi";
+import { adminDownload, adminGet, readAdminAuth, type AdminAuth } from "../lib/adminApi";
 
 type Auth = AdminAuth | null;
 
@@ -57,11 +57,15 @@ type PeriodId = (typeof PERIODS)[number]["id"];
 // Token registry parsed from NEXT_PUBLIC_TOKENS (`addr:symbol:decimals`
 // triples). Module-level since the env value is static for the page's
 // lifetime — every call would re-parse the same string otherwise.
+// Entries are trimmed so a string with spaces after commas (the form
+// every other env parser in the repo accepts) still keys cleanly.
 const TOKEN_REGISTRY = (() => {
   const raw = process.env.NEXT_PUBLIC_TOKENS ?? "";
   const map = new Map<string, { symbol: string; decimals: number }>();
-  for (const entry of raw.split(",")) {
-    const [addr, symbol, decStr] = entry.split(":");
+  for (const rawEntry of raw.split(",")) {
+    const entry = rawEntry.trim();
+    if (!entry) continue;
+    const [addr, symbol, decStr] = entry.split(":").map((s) => s.trim());
     if (!addr || !symbol) continue;
     map.set(addr.toLowerCase(), { symbol, decimals: Number(decStr) || 0 });
   }
@@ -181,6 +185,17 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
     };
   }, [auth, periodCfg.ms, periodCfg.bucketMs, refreshNonce]);
 
+  // Tokens routed = distinct tokens that appear in either fees OR
+  // volume. Falling back to `volume?.length` alone hides fee-earning
+  // tokens whose settlements predate the sell_amount/buy_amount
+  // columns and therefore don't show up in the volume aggregate.
+  const tokensRoutedCount = useMemo(() => {
+    const set = new Set<string>();
+    for (const f of fees ?? []) set.add(f.token);
+    for (const v of volume ?? []) set.add(v.token);
+    return set.size;
+  }, [fees, volume]);
+
   const totals = useMemo(() => {
     // Single pass — three .reduce()s over the same array walked the
     // bucket list three times for the same result. Each step adds an
@@ -201,47 +216,23 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
   }, [buckets]);
 
   const downloadCsv = useCallback(async () => {
-    // The CSV endpoint sits behind admin auth (Bearer or x-admin-key)
-    // so a plain anchor would download an HTML 401 instead of the
-    // sheet. Re-use adminGet's auth header logic by calling the raw
-    // endpoint with fetch + the same headers, then trigger a Blob
-    // download client-side.
+    // The CSV endpoint sits behind admin auth, so a plain anchor would
+    // download an HTML 401 instead of the sheet. `adminDownload` owns
+    // the auth header + URL constructor + Content-Disposition filename
+    // + deferred revokeObjectURL (Safari race) — reuse it instead of
+    // re-implementing those edge cases inline.
     try {
       setError(null);
-      const headers = new Headers();
-      if (auth.token) headers.set("Authorization", `Bearer ${auth.token}`);
-      else if (auth.key) headers.set("x-admin-key", auth.key);
-      // `auth.url` originates in sessionStorage, populated by
-      // AdminConnectBar from operator input — treat it as untrusted
-      // and build the request URL via the URL constructor instead
-      // of template-string concatenation. Allowlisting http/https
-      // blocks `javascript:` / `file:` smuggled in via a tampered
-      // sessionStorage value before they reach `fetch`.
-      const target = new URL(auth.url);
-      if (target.protocol !== "http:" && target.protocol !== "https:") {
-        throw new Error(`Unsupported relayer URL protocol: ${target.protocol}`);
-      }
-      target.pathname =
-        target.pathname.replace(/\/+$/, "") + "/api/admin/history.csv";
-      target.searchParams.set("since", String(window.since));
-      target.searchParams.set("until", String(window.until));
-      const res = await fetch(target.toString(), { headers });
-      if (!res.ok) {
-        throw new Error(`CSV export failed: ${res.status} ${res.statusText}`);
-      }
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = `settlements-${new Date(window.since).toISOString().slice(0, 10)}-to-${new Date(window.until).toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objectUrl);
+      const params = new URLSearchParams({
+        since: String(window.since),
+        until: String(window.until),
+      });
+      const fallback = `settlements-${new Date(window.since).toISOString().slice(0, 10)}-to-${new Date(window.until).toISOString().slice(0, 10)}.csv`;
+      await adminDownload(auth, `/api/admin/history.csv?${params.toString()}`, fallback);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [auth.key, auth.token, auth.url, window.since, window.until]);
+  }, [auth, window.since, window.until]);
 
   return (
     <>
@@ -310,7 +301,7 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
           />
           <Stat
             label="Tokens routed"
-            value={(volume?.length ?? 0).toLocaleString()}
+            value={tokensRoutedCount.toLocaleString()}
             sub={fees ? `${fees.length} earning fees` : "—"}
           />
         </div>
@@ -320,7 +311,7 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
         <SectionHeader
           title="Per-token revenue & volume"
           badge="live"
-          hint="Volume sums both legs of confirmed trades. Fee column sums all sides (maker + taker + scatterDirect)."
+          hint="Volume sums both legs of confirmed trades. Fee column sums all sides (maker + taker + scatterDirect). Pre-migration rows lack amount data and contribute fills but no volume."
         />
         <PerTokenTable fees={fees} volume={volume} />
       </section>
@@ -370,13 +361,16 @@ function PerTokenTable({
       else map.set(v.token, { token: v.token, fees: null, vol: v });
     }
     return [...map.values()].sort((a, b) => {
-      // Sort by fee revenue desc (primary), then settle count desc
-      // — operators care most about which token paid the bills.
+      // Sort by fee revenue desc (primary), then total settle count
+      // desc — operators care most about which token paid the bills.
+      // Tie-breaker sums sell + buy fills so a token that mostly
+      // appears on the buy leg isn't under-ranked vs one that mostly
+      // sells.
       const af = a.fees ? BigInt(a.fees.totalWei) : 0n;
       const bf = b.fees ? BigInt(b.fees.totalWei) : 0n;
       if (af !== bf) return af > bf ? -1 : 1;
-      const ac = (a.fees?.count ?? 0) + (a.vol?.sellFills ?? 0);
-      const bc = (b.fees?.count ?? 0) + (b.vol?.sellFills ?? 0);
+      const ac = (a.vol?.sellFills ?? 0) + (a.vol?.buyFills ?? 0);
+      const bc = (b.vol?.sellFills ?? 0) + (b.vol?.buyFills ?? 0);
       return bc - ac;
     });
   }, [fees, volume]);
@@ -398,7 +392,7 @@ function PerTokenTable({
           <tr>
             <th className="px-5 py-3 text-left">Token</th>
             <th className="px-5 py-3 text-right">Fee revenue</th>
-            <th className="px-5 py-3 text-right">Fill rows</th>
+            <th className="px-5 py-3 text-right">Settlements</th>
             <th className="px-5 py-3 text-right">Sell volume</th>
             <th className="px-5 py-3 text-right">Buy volume</th>
           </tr>
@@ -417,7 +411,15 @@ function PerTokenTable({
                 <td className="px-5 py-3 text-right font-mono">
                   {r.fees ? formatAmount(r.fees.totalWei, info.decimals) : "—"}
                 </td>
-                <td className="px-5 py-3 text-right">{r.fees?.count ?? 0}</td>
+                {/* Prefer the per-row settlement count (vol.sellFills,
+                    one row per confirmed settle on the sell side),
+                    falling back to fee_history rows for pre-migration
+                    tokens. fee_history can have 2 rows per settle
+                    (maker + taker), so using it directly would inflate
+                    the count whenever vol is available. */}
+                <td className="px-5 py-3 text-right">
+                  {r.vol ? r.vol.sellFills : (r.fees?.count ?? 0)}
+                </td>
                 <td className="px-5 py-3 text-right font-mono">
                   {r.vol ? formatAmount(r.vol.totalSellWei, info.decimals) : "—"}
                 </td>
@@ -448,7 +450,11 @@ function ThroughputChart({ buckets }: { buckets: BucketsBody | null }) {
   const isDaily = buckets.bucketMs >= 24 * 3600_000;
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <div className="flex h-40 items-end gap-px">
+      {/* `items-stretch` lets each bucket wrapper inherit the full
+          h-40 height so percentage-height inner bars resolve. Stacking
+          the bars with `flex flex-col justify-end` grows them from the
+          bottom (matching how a column chart reads). */}
+      <div className="flex h-40 items-stretch gap-px">
         {buckets.buckets.map((b) => {
           const total = b.settled + b.failed;
           const heightPct = (total / max) * 100;
@@ -457,7 +463,7 @@ function ThroughputChart({ buckets }: { buckets: BucketsBody | null }) {
           return (
             <div
               key={b.bucketStart}
-              className="group relative flex-1"
+              className="group relative flex flex-1 flex-col justify-end"
               title={`${new Date(b.bucketStart).toLocaleString()} · settled ${b.settled} · failed ${b.failed} · p95 ${b.p95Ms ?? "—"}ms`}
             >
               <div

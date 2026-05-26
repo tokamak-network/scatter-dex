@@ -126,8 +126,15 @@ export async function adminDownload(
   path: string,
   fallbackFilename: string,
 ): Promise<void> {
-  const target = new URL(path, auth.url).toString();
-  const res = await fetch(target, { headers: authHeaders(auth) });
+  const target = new URL(path, auth.url);
+  // `auth.url` comes from sessionStorage populated by AdminConnectBar
+  // — treat as untrusted and refuse anything that isn't an HTTP(S)
+  // endpoint before `fetch` ever sees it. Blocks `javascript:` /
+  // `data:` smuggled in via a tampered storage value.
+  if (target.protocol !== "http:" && target.protocol !== "https:") {
+    throw new Error(`Unsupported relayer URL protocol: ${target.protocol}`);
+  }
+  const res = await fetch(target.toString(), { headers: authHeaders(auth) });
   if (!res.ok) {
     // Mirror adminFetch's parse-and-extract: if the server returned
     // `{error: ...}` JSON, surface just the message; otherwise the

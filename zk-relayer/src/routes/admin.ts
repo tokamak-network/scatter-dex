@@ -485,7 +485,14 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   });
 
   // Per-token fee totals by default; pass ?detail=1 for raw rows.
-  // Query params: ?token=0x…&since=<unix-ms>[&until=<unix-ms>&detail=1&limit=&offset=]
+  // Query params:
+  //   ?token=0x…&since=<unix-ms>      filter (always honored)
+  //   ?until=<unix-ms>                totals-only upper bound; ignored
+  //                                   in detail mode, which is
+  //                                   paginated by limit/offset and
+  //                                   would need a separate prepared
+  //                                   variant to bound on the upper end.
+  //   ?detail=1&limit=&offset=        switch to raw fee_history rows
   router.get("/history/fees", (req: Request, res: Response) => {
     try {
       const since = Number(req.query.since) || 0;

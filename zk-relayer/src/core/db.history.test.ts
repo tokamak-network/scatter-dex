@@ -527,3 +527,142 @@ describe("PrivateOrderDB settlement history", () => {
     expect(volume).toHaveLength(2);
   });
 });
+
+describe("PrivateOrderDB analytics aggregates", () => {
+  let dbPath: string;
+  let db: PrivateOrderDB;
+  const TOKEN_A = "0x" + "a".repeat(40);
+  const TOKEN_B = "0x" + "b".repeat(40);
+
+  beforeEach(() => {
+    dbPath = join(tmpdir(), `analytics-test-${randomUUID()}.sqlite`);
+    db = new PrivateOrderDB(dbPath);
+  });
+
+  afterEach(() => {
+    db.close();
+    try { rmSync(dbPath, { force: true }); } catch { /* noop */ }
+  });
+
+  it("getFeeTotals respects the until upper bound", async () => {
+    // Three settlements separated in time. With until = now() - 5ms,
+    // only the first two should be counted — the third lands at "now"
+    // and falls outside [since, until).
+    db.recordSettlementEvent({
+      txHash: "0x" + "1".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      fees: [{ side: "maker", token: TOKEN_A, amountWei: "100" }],
+    });
+    db.recordSettlementEvent({
+      txHash: "0x" + "2".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      fees: [{ side: "maker", token: TOKEN_A, amountWei: "200" }],
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    const cutoff = Date.now();
+    await new Promise((r) => setTimeout(r, 5));
+    db.recordSettlementEvent({
+      txHash: "0x" + "3".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      fees: [{ side: "maker", token: TOKEN_A, amountWei: "999" }],
+    });
+
+    const bounded = db.getFeeTotals(0, cutoff);
+    expect(bounded).toHaveLength(1);
+    expect(bounded[0]).toMatchObject({ token: TOKEN_A, count: 2, totalWei: "300" });
+
+    // Sanity: unbounded view includes the third row.
+    const unbounded = db.getFeeTotals(0, 0);
+    expect(unbounded[0]).toMatchObject({ count: 3, totalWei: "1299" });
+  });
+
+  it("getVolumeTotals sums sell + buy legs separately, confirmed-only", () => {
+    // Confirmed settleAuth: TOKEN_A → TOKEN_B, sell 1000, buy 2000.
+    db.recordSettlementEvent({
+      txHash: "0x" + "1".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      sellAmount: "1000", buyAmount: "2000",
+    });
+    // Confirmed scatterDirect on TOKEN_A: same token both legs.
+    db.recordSettlementEvent({
+      txHash: "0x" + "2".repeat(64), type: "scatterDirectAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_A,
+      sellAmount: "500", buyAmount: "500",
+    });
+    // Failed row must be excluded from the volume totals (failures
+    // never moved funds, so counting them inflates throughput).
+    db.recordSettlementEvent({
+      txHash: "0x" + "3".repeat(64), type: "settleAuth", status: "failed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      sellAmount: "9999", buyAmount: "9999",
+    });
+
+    const totals = db.getVolumeTotals();
+    const byToken = Object.fromEntries(totals.map((t) => [t.token, t]));
+    // TOKEN_A: sold 1000 (settleAuth) + 500 (scatter) = 1500 across
+    // 2 sell fills; bought 500 (scatter) across 1 buy fill.
+    expect(byToken[TOKEN_A]).toMatchObject({
+      sellFills: 2, buyFills: 1,
+      totalSellWei: "1500", totalBuyWei: "500",
+    });
+    // TOKEN_B: bought 2000 (settleAuth), never on the sell leg.
+    expect(byToken[TOKEN_B]).toMatchObject({
+      sellFills: 0, buyFills: 1,
+      totalSellWei: "0", totalBuyWei: "2000",
+    });
+  });
+
+  it("getVolumeTotals skips rows missing sell_amount / buy_amount", () => {
+    // Pre-migration row shape: amounts not provided. Must contribute
+    // 0 fills to the volume aggregate so the analytics page doesn't
+    // show fake throughput, while the row still exists in
+    // settlement_history (count it via getSettlementHistory).
+    db.recordSettlementEvent({
+      txHash: "0x" + "1".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      // No sellAmount / buyAmount.
+    });
+    // Newer row with amounts — should be the only one in the totals.
+    db.recordSettlementEvent({
+      txHash: "0x" + "2".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      sellAmount: "777", buyAmount: "888",
+    });
+
+    const totals = db.getVolumeTotals();
+    expect(totals).toHaveLength(2);
+    const byToken = Object.fromEntries(totals.map((t) => [t.token, t]));
+    expect(byToken[TOKEN_A]).toMatchObject({
+      sellFills: 1, totalSellWei: "777",
+    });
+    expect(byToken[TOKEN_B]).toMatchObject({
+      buyFills: 1, totalBuyWei: "888",
+    });
+
+    // Settlement history still sees both rows — the migration shim
+    // shouldn't hide pre-amount settlements from the per-row view.
+    const { total } = db.getSettlementHistory({ limit: 10, offset: 0 });
+    expect(total).toBe(2);
+  });
+
+  it("getVolumeTotals respects since / until window", async () => {
+    db.recordSettlementEvent({
+      txHash: "0x" + "1".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      sellAmount: "100", buyAmount: "200",
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    const cutoff = Date.now();
+    await new Promise((r) => setTimeout(r, 5));
+    db.recordSettlementEvent({
+      txHash: "0x" + "2".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_A, buyToken: TOKEN_B,
+      sellAmount: "999", buyAmount: "999",
+    });
+
+    const bounded = db.getVolumeTotals(0, cutoff);
+    const byToken = Object.fromEntries(bounded.map((t) => [t.token, t]));
+    expect(byToken[TOKEN_A]).toMatchObject({ totalSellWei: "100" });
+    expect(byToken[TOKEN_B]).toMatchObject({ totalBuyWei: "200" });
+  });
+});
