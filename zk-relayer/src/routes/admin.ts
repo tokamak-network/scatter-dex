@@ -485,10 +485,15 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   });
 
   // Per-token fee totals by default; pass ?detail=1 for raw rows.
-  // Query params: ?token=0x…&since=<unix-ms>[&detail=1&limit=&offset=]
+  // Query params: ?token=0x…&since=<unix-ms>[&until=<unix-ms>&detail=1&limit=&offset=]
   router.get("/history/fees", (req: Request, res: Response) => {
     try {
       const since = Number(req.query.since) || 0;
+      // `until=0` (default) means "no upper bound" — the analytics
+      // page passes an explicit upper bound so a fixed period (today,
+      // this week) reports the same total on every refresh instead of
+      // sliding forward with Date.now().
+      const until = Number(req.query.until) || 0;
       // Lowercase the address here as well as in the DB layer so a
       // checksummed query matches the lowercase storage form.
       const token =
@@ -500,12 +505,32 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
         res.json({ rows, count: rows.length, limit, offset });
         return;
       }
-      const totals = db.getFeeTotals(since);
+      const totals = db.getFeeTotals(since, until);
       const filtered = token ? totals.filter((t) => t.token === token) : totals;
       res.json({ totals: filtered });
     } catch (err) {
       log.error("history/fees failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load fee history" });
+    }
+  });
+
+  // Per-token notional totals from confirmed settlements in a window.
+  // Powers the operators /analytics throughput cards alongside the
+  // fee endpoint above — fees answer "what did we earn", volume
+  // answers "what did we route". Same since/until convention.
+  //   ?since=<unix-ms>[&until=<unix-ms>&token=0x…]
+  router.get("/history/volume", (req: Request, res: Response) => {
+    try {
+      const since = Number(req.query.since) || 0;
+      const until = Number(req.query.until) || 0;
+      const token =
+        typeof req.query.token === "string" ? req.query.token.toLowerCase() : undefined;
+      const totals = db.getVolumeTotals(since, until);
+      const filtered = token ? totals.filter((t) => t.token === token) : totals;
+      res.json({ totals: filtered });
+    } catch (err) {
+      log.error("history/volume failed", { err: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: "Failed to load volume history" });
     }
   });
 

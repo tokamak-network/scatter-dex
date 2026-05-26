@@ -145,6 +145,14 @@ export interface SettlementHistoryRow {
   gas_cost_eth: string | null;
   sell_token: string | null;
   buy_token: string | null;
+  /** Notional flowing on each leg of the trade, as decoded from the
+   *  submitted authorize public signals. Stored as decimal wei strings
+   *  so BigInt arithmetic round-trips without precision loss. Null on
+   *  rows recorded before the columns existed (pre-analytics) — those
+   *  rows still count toward fill counts but are skipped by volume
+   *  aggregates. */
+  sell_amount: string | null;
+  buy_amount: string | null;
   error_reason: string | null;
   /** Wall-clock milliseconds from worker claim to confirmation.
    *  Null on rows recorded before the column existed. */
@@ -176,6 +184,12 @@ export interface SettlementEventInput {
   gasCostEth?: string | null;
   sellToken?: string | null;
   buyToken?: string | null;
+  /** Decimal-wei notional for the maker leg of the trade. Optional —
+   *  callers that don't yet have the decoded amount handy leave it
+   *  undefined and the row stores NULL (the analytics aggregate skips
+   *  those rows in its volume sum). */
+  sellAmount?: string | null;
+  buyAmount?: string | null;
   errorReason?: string | null;
   /** Settlement duration in ms (worker claim → on-chain confirmation).
    *  Optional — recorded when known; older callers without timing
@@ -276,6 +290,7 @@ export class PrivateOrderDB {
   private selectAuthOrdersBySettleTx: ReturnType<Database.Database["prepare"]>;
   private selectSettlementBucketRows: ReturnType<Database.Database["prepare"]>;
   private sumFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
+  private sumVolumeByToken: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     // [L-8] For production with sensitive data, consider replacing better-sqlite3
@@ -547,9 +562,9 @@ export class PrivateOrderDB {
     // instead of producing dupes.
     this.insertSettlementEvent = this.db.prepare(`
       INSERT OR IGNORE INTO settlement_history
-        (tx_hash, type, status, block_number, gas_cost_eth, sell_token, buy_token, error_reason, duration_ms, created_at)
+        (tx_hash, type, status, block_number, gas_cost_eth, sell_token, buy_token, sell_amount, buy_amount, error_reason, duration_ms, created_at)
       VALUES
-        (@txHash, @type, @status, @blockNumber, @gasCostEth, @sellToken, @buyToken, @errorReason, @durationMs, @createdAt)
+        (@txHash, @type, @status, @blockNumber, @gasCostEth, @sellToken, @buyToken, @sellAmount, @buyAmount, @errorReason, @durationMs, @createdAt)
     `);
     this.insertFeeAccrual = this.db.prepare(`
       INSERT INTO fee_history (tx_hash, side, token, amount_wei, block_number, created_at)
@@ -639,7 +654,32 @@ export class PrivateOrderDB {
       SELECT token, amount_wei
         FROM fee_history
        WHERE created_at >= @since
+         AND (@until = 0 OR created_at < @until)
        ORDER BY token
+    `);
+    // Streamed per-token notional rows for the analytics aggregate.
+    // Confirmed-only so failed/reverted attempts don't inflate volume.
+    // Sell and buy legs are emitted as separate rows tagged by `leg`
+    // so getVolumeTotals can produce a per-token total that combines
+    // both sides (a USDC→TON trade contributes to USDC sell totals
+    // and TON buy totals — both are valid relayer "throughput").
+    this.sumVolumeByToken = this.db.prepare(`
+      SELECT sell_token AS token, 'sell' AS leg, sell_amount AS amount
+        FROM settlement_history
+       WHERE status = 'confirmed'
+         AND created_at >= @since
+         AND (@until = 0 OR created_at < @until)
+         AND sell_token IS NOT NULL
+         AND sell_amount IS NOT NULL
+      UNION ALL
+      SELECT buy_token AS token, 'buy' AS leg, buy_amount AS amount
+        FROM settlement_history
+       WHERE status = 'confirmed'
+         AND created_at >= @since
+         AND (@until = 0 OR created_at < @until)
+         AND buy_token IS NOT NULL
+         AND buy_amount IS NOT NULL
+       ORDER BY token, leg
     `);
   }
 
@@ -666,6 +706,8 @@ export class PrivateOrderDB {
         gasCostEth: evt.gasCostEth ?? null,
         sellToken,
         buyToken,
+        sellAmount: evt.sellAmount ?? null,
+        buyAmount: evt.buyAmount ?? null,
         errorReason: evt.errorReason ? truncErr(evt.errorReason) : null,
         durationMs: evt.durationMs ?? null,
         createdAt,
@@ -883,7 +925,10 @@ export class PrivateOrderDB {
    *  row at a time even when history runs to millions. Malformed
    *  amount_wei values are counted but excluded from the sum, so a
    *  single bad row never breaks the aggregate. */
-  getFeeTotals(since = 0): Array<{ token: string; count: number; totalWei: string }> {
+  getFeeTotals(
+    since = 0,
+    until = 0,
+  ): Array<{ token: string; count: number; totalWei: string }> {
     const result: Array<{ token: string; count: number; totalWei: string }> = [];
     let current: { token: string; count: number; total: bigint } | null = null;
     const flush = () => {
@@ -895,7 +940,7 @@ export class PrivateOrderDB {
         });
       }
     };
-    for (const row of this.sumFeeHistoryByToken.iterate({ since }) as Iterable<{
+    for (const row of this.sumFeeHistoryByToken.iterate({ since, until }) as Iterable<{
       token: string;
       amount_wei: string;
     }>) {
@@ -909,6 +954,78 @@ export class PrivateOrderDB {
         // Malformed row — count it but skip the sum contribution.
       }
       current.count++;
+    }
+    flush();
+    return result;
+  }
+
+  /** Sum per-token notional from confirmed settlements in [since, until).
+   *  `until = 0` means "no upper bound". Sell and buy legs are summed
+   *  separately so a USDC→TON trade contributes to both tokens'
+   *  throughput. Rows without amount data (pre-migration) are skipped.
+   *  Returns one entry per token actually settled in-window. */
+  getVolumeTotals(
+    since = 0,
+    until = 0,
+  ): Array<{
+    token: string;
+    sellFills: number;
+    buyFills: number;
+    totalSellWei: string;
+    totalBuyWei: string;
+  }> {
+    const result: Array<{
+      token: string;
+      sellFills: number;
+      buyFills: number;
+      totalSellWei: string;
+      totalBuyWei: string;
+    }> = [];
+    let current: {
+      token: string;
+      sellFills: number;
+      buyFills: number;
+      totalSell: bigint;
+      totalBuy: bigint;
+    } | null = null;
+    const flush = () => {
+      if (current) {
+        result.push({
+          token: current.token,
+          sellFills: current.sellFills,
+          buyFills: current.buyFills,
+          totalSellWei: current.totalSell.toString(),
+          totalBuyWei: current.totalBuy.toString(),
+        });
+      }
+    };
+    for (const row of this.sumVolumeByToken.iterate({ since, until }) as Iterable<{
+      token: string;
+      leg: "sell" | "buy";
+      amount: string;
+    }>) {
+      if (!current || current.token !== row.token) {
+        flush();
+        current = {
+          token: row.token,
+          sellFills: 0,
+          buyFills: 0,
+          totalSell: 0n,
+          totalBuy: 0n,
+        };
+      }
+      try {
+        const amt = BigInt(row.amount);
+        if (row.leg === "sell") {
+          current.totalSell += amt;
+          current.sellFills++;
+        } else {
+          current.totalBuy += amt;
+          current.buyFills++;
+        }
+      } catch {
+        // Malformed amount — count nothing for this row.
+      }
     }
     flush();
     return result;
@@ -1096,6 +1213,17 @@ export class PrivateOrderDB {
     // endpoint for p50/p95/p99 latency.
     try {
       this.db.exec(`ALTER TABLE settlement_history ADD COLUMN duration_ms INTEGER`);
+    } catch { /* column already exists */ }
+    // Migration: maker-leg notional, populated by recordSettlementEvent
+    // callers that have the decoded public signals (authorize-submitter).
+    // The /api/admin/history/volume aggregate sums these to surface
+    // per-token throughput in the operators analytics page; rows from
+    // before this column existed report fills but contribute 0 to volume.
+    try {
+      this.db.exec(`ALTER TABLE settlement_history ADD COLUMN sell_amount TEXT`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE settlement_history ADD COLUMN buy_amount TEXT`);
     } catch { /* column already exists */ }
 
     this.db.exec(`
