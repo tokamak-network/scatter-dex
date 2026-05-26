@@ -211,5 +211,54 @@ export function createOrderRoutes(
     }
   });
 
+  /**
+   * POST /api/orders/:id/matched — Flip an open row to `matched`.
+   *
+   * The relayer calls this after a successful on-chain `settleAuth`
+   * so the row no longer sits in the Open / Matching tab but isn't
+   * mis-labelled as `cancelled` (which was the prior shape — the
+   * settlement worker reused DELETE /api/orders/:id and the UI then
+   * showed every settled trade as "cancelled" in the shared book).
+   * Same auth posture as DELETE: only the posting relayer can flip
+   * its own rows, and only an `open` row is eligible — terminal
+   * rows reject 409 so a stale propagation can't rewrite history.
+   */
+  const matchedMiddleware: RequestHandler[] = [writeLimiter, relayerAuth];
+  if (relayerWriteLimiter) matchedMiddleware.push(relayerWriteLimiter);
+  router.post("/:id/matched", ...matchedMiddleware, (req, res) => {
+    try {
+      const { relayerAddress } = req as AuthenticatedRequest;
+      const { id } = req.params;
+
+      const stored = orderbook.getOrder(id);
+      if (!stored) {
+        res.status(404).json({ error: "order not found" });
+        return;
+      }
+      if (stored.order.relayer !== relayerAddress) {
+        res.status(403).json({ error: "not your order" });
+        return;
+      }
+      if (stored.status !== "open") {
+        res.status(409).json({ error: `order is ${stored.status}, cannot mark matched` });
+        return;
+      }
+
+      orderbook.updateStatus(id, "matched");
+      db.updateStatus(id, "matched");
+
+      broadcaster.broadcast({
+        type: "order:matched",
+        orderId: id,
+        relayer: relayerAddress,
+      });
+
+      res.json({ id, status: "matched" });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "unknown error";
+      res.status(500).json({ error: msg });
+    }
+  });
+
   return router;
 }

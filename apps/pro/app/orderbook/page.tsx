@@ -450,9 +450,7 @@ export default function SharedOrderbookPage() {
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg)] text-[10px] uppercase tracking-widest text-[var(--color-text-subtle)]">
             <tr>
-              <th className="px-4 py-3 text-left">Pair</th>
               <th className="px-4 py-3 text-left">Status</th>
-              <th className="px-4 py-3 text-right">Price</th>
               <th className="px-4 py-3 text-right">Sell</th>
               <th className="px-4 py-3 text-right">Buy</th>
               <th className="px-4 py-3 text-right">Max fee</th>
@@ -464,7 +462,7 @@ export default function SharedOrderbookPage() {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-sm text-[var(--color-text-muted)]">
+                <td colSpan={7} className="px-4 py-12 text-center text-sm text-[var(--color-text-muted)]">
                   {loading ? "Loading…" : "No live orders. Place one to publish to the shared book."}
                 </td>
               </tr>
@@ -477,36 +475,27 @@ export default function SharedOrderbookPage() {
                 // Raw amounts come back as decimal strings out of
                 // `formatUnits` (which itself does bigint math — no
                 // precision loss between the chain-side `BigInt` and
-                // this string). Use `Number(...)` for the display
-                // price ratio because the ratio is inherently real
-                // and is rendered with `maximumFractionDigits: 6`
-                // anyway — `parseFloat` is fine here but `Number` is
-                // stricter (rejects "1.5abc") so the row will
-                // surface a NaN price instead of silently rounding.
+                // this string).
                 const sellStr = ethers.formatUnits(o.sellAmount, sellTok?.decimals ?? 18);
                 const buyStr = ethers.formatUnits(o.buyAmount, buyTok?.decimals ?? 18);
                 const sell = Number(sellStr);
                 const buy = Number(buyStr);
-                // Quote/base ratio in the order's natural direction.
-                // Workbench prefills will need to flip this for a
-                // taker counterorder.
-                const price = sell > 0 ? buy / sell : 0;
                 return (
                   <tr key={o.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]">
-                    <td className="px-4 py-3 font-mono">
-                      {sellSym} → {buySym}
-                    </td>
                     <td className="px-4 py-3">
                       <StatusPill status={o.status ?? "open"} />
                     </td>
                     <td className="px-4 py-3 text-right font-mono">
-                      {price.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      <span className="font-semibold">
+                        {sell.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      </span>{" "}
+                      <span className="text-[var(--color-text-muted)]">{sellSym}</span>
                     </td>
                     <td className="px-4 py-3 text-right font-mono">
-                      {sell.toLocaleString(undefined, { maximumFractionDigits: 6 })} {sellSym}
-                    </td>
-                    <td className="px-4 py-3 text-right font-mono">
-                      {buy.toLocaleString(undefined, { maximumFractionDigits: 6 })} {buySym}
+                      <span className="font-semibold">
+                        {buy.toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      </span>{" "}
+                      <span className="text-[var(--color-text-muted)]">{buySym}</span>
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-[var(--color-text-muted)]">
                       {(o.maxFee / 100).toFixed(2)}%

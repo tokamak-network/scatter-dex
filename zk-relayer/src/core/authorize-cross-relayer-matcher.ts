@@ -135,10 +135,12 @@ export class AuthorizeCrossRelayerMatchService {
           this.db?.updateAuthorizeOrderStatus(nullifier, "settled", result.txHash);
           this.onSettled?.(nullifier, result.txHash);
 
-          // Cancel our own listing from the shared orderbook. Best-effort —
-          // a 404 here just means the entry was already cancelled or expired
-          // server-side, which is fine.
-          this.sharedClient.cancelOrder(nullifierToOfferHandle(nullifier)).catch(() => {});
+          // Mark our own listing `matched` on the shared orderbook —
+          // settle succeeded, the row leaves the open tab but should
+          // read as matched, not cancelled. Best-effort: a 404 / 409
+          // here means the row is already terminal server-side, which
+          // is fine.
+          this.sharedClient.markMatched(nullifierToOfferHandle(nullifier)).catch(() => {});
           return; // Only match one pair per remote-arrival tick.
         }
 
@@ -317,8 +319,9 @@ export class AuthorizeCrossRelayerMatchService {
       this.db?.updateAuthorizeOrderStatus(mapKey, "settled", txHash);
       this.onSettled?.(mapKey, txHash);
 
-      // Cancel maker's listing from shared OB.
-      this.sharedClient.cancelOrder(nullifierToOfferHandle(mapKey)).catch(() => {});
+      // Mark maker's listing `matched` in shared OB — settle just
+      // succeeded, this is a fill, not a user-initiated cancel.
+      this.sharedClient.markMatched(nullifierToOfferHandle(mapKey)).catch(() => {});
 
       log.info("Settled cross-relayer match", {
         maker: mapKey.slice(0, 18) + "...",
