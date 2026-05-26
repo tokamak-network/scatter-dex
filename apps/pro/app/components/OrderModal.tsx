@@ -482,21 +482,21 @@ export function OrderModal({
     // matcher will respect), keeping the cap as a back-stop. Either
     // way, sum(claims) ≤ buyAmount − fee (on-chain ClaimsCapExceeded
     // otherwise).
-    // Auto-derived fee cap. Was a user-facing slider in Advanced
-    // Settings (defaulted to 30 bps), removed in favour of a derived
-    // value: the relayer's currently-quoted fee + 10% headroom,
-    // clamped to MAX_RELAYER_FEE_BPS=500 (matches the on-chain cap
-    // in RelayerRegistry). Caps a hostile relayer that registers low
-    // and then bumps their on-chain fee between sign and settle,
-    // without making the operator manage a slider they almost always
-    // left at default.
+    // Sign the relayer's quoted fee exactly — no 10% buffer. This
+    // is a limit-order surface: the user wants the trade to settle
+    // at the price + fee they saw, not at a slightly-higher fee the
+    // relayer may bump to between sign and settle. The previous
+    // shape signed `ceil(quoted × 1.1)` as `maxFee` to absorb a
+    // mid-flight relayer fee bump; the failure mode (relayer raises
+    // fee → order can't settle → user cancels + resubmits) is rare
+    // and acceptable given the UX win of "what you signed is what
+    // you pay". `maxFee` still gets clamped to the registry's
+    // MAX_RELAYER_FEE_BPS=500 ceiling so a misconfigured relayer
+    // can't sneak a huge number past the on-chain check.
     const relayerFeeBps = selectedRelayer?.fee ?? 0;
     const REGISTRY_MAX_FEE_BPS = 500;
-    const autoMaxFeeBps = Math.min(
-      Math.max(Math.ceil(relayerFeeBps * 1.1), relayerFeeBps + 1),
-      REGISTRY_MAX_FEE_BPS,
-    );
-    const projectedFeeBps = Math.min(relayerFeeBps, autoMaxFeeBps);
+    const autoMaxFeeBps = Math.min(relayerFeeBps, REGISTRY_MAX_FEE_BPS);
+    const projectedFeeBps = autoMaxFeeBps;
     const { net: netReceive } = applyFeeBig(buyAmount, projectedFeeBps);
 
     // Resolve recipient distribution from the trade-form context.
