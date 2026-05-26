@@ -618,12 +618,12 @@ function statusCls(status: UnifiedStatus): string {
   }
 }
 
-/** Expanded inline detail row. Surfaces every SharedOrder /
- *  SettlementRow field that didn't fit in the table — full id,
- *  relayer endpoint, per-trade fee, block / gas for settled rows.
- *  Click on the parent row toggles it. Mirrors what Pro's
- *  OrderDetailDrawer shows for My orders, but inline (less screen
- *  real-estate, no modal lifecycle to manage). */
+/** Drawer body. Mirrors Pro's OrderDetailPanel visual layout — big
+ *  hero card up top (SEND → BUY with formatted amounts), then a
+ *  relayer / lifecycle strip, then settled extras when present.
+ *  Drops the Pro-only sections (recipients, change residual, eddsa
+ *  secrets) since operators don't have that data — those live on
+ *  the submitter side. */
 function DetailPanel({
   row,
   sellInfo,
@@ -633,104 +633,162 @@ function DetailPanel({
   sellInfo: { symbol: string; decimals: number } | null;
   buyInfo: { symbol: string; decimals: number } | null;
 }) {
-  const items: Array<{ label: string; value: React.ReactNode }> = [];
-  if (row.fullId) {
-    items.push({
-      label: "Order id",
-      value: <span className="break-all font-mono text-[11px]">{row.fullId}</span>,
-    });
-  }
-  if (row.txHash) {
-    items.push({
-      label: "Tx hash",
-      value: (
-        <span className="break-all font-mono text-[11px]">{row.txHash}</span>
-      ),
-    });
-  }
-  if (row.relayerAddress) {
-    items.push({
-      label: "Relayer address",
-      value: (
-        <span className="break-all font-mono text-[11px]">{row.relayerAddress}</span>
-      ),
-    });
-  }
-  if (row.relayerUrl) {
-    items.push({
-      label: "Relayer endpoint",
-      value: (
-        <a
-          href={row.relayerUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="break-all text-[11px] text-[var(--color-primary)] hover:underline"
-        >
-          {row.relayerUrl}
-        </a>
-      ),
-    });
-  }
-  if (row.maxFeeBps !== undefined) {
-    items.push({
-      label: "Max fee (bps / %)",
-      value: (
-        <span className="font-mono text-[11px]">
-          {row.maxFeeBps} bps · {(row.maxFeeBps / 100).toFixed(2)}%
-        </span>
-      ),
-    });
-  }
-  if (row.sellAmount && sellInfo) {
-    items.push({
-      label: `Sell (${sellInfo.symbol})`,
-      value: (
-        <span className="font-mono text-[11px]">
-          {formatAmount(row.sellAmount, sellInfo.decimals)} (raw {row.sellAmount} wei)
-        </span>
-      ),
-    });
-  }
-  if (row.buyAmount && buyInfo) {
-    items.push({
-      label: `Buy (${buyInfo.symbol})`,
-      value: (
-        <span className="font-mono text-[11px]">
-          {formatAmount(row.buyAmount, buyInfo.decimals)} (raw {row.buyAmount} wei)
-        </span>
-      ),
-    });
-  }
-  if (row.blockNumber !== undefined) {
-    items.push({
-      label: "Block",
-      value: <span className="font-mono text-[11px]">{row.blockNumber}</span>,
-    });
-  }
-  if (row.gasCostEth) {
-    items.push({
-      label: "Gas cost",
-      value: <span className="font-mono text-[11px]">{row.gasCostEth} ETH</span>,
-    });
-  }
-  if (items.length === 0) {
-    return (
-      <div className="text-[11px] text-[var(--color-text-muted)]">
-        No additional details captured for this row.
-      </div>
-    );
-  }
+  const sellAmountFmt =
+    row.sellAmount && sellInfo
+      ? formatAmount(row.sellAmount, sellInfo.decimals)
+      : null;
+  const buyAmountFmt =
+    row.buyAmount && buyInfo ? formatAmount(row.buyAmount, buyInfo.decimals) : null;
+  const feePct = row.maxFeeBps !== undefined ? (row.maxFeeBps / 100).toFixed(2) : null;
+
   return (
-    <dl className="grid grid-cols-1 gap-3 md:grid-cols-2">
-      {items.map((item) => (
-        <div key={item.label} className="flex flex-col">
-          <dt className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
-            {item.label}
-          </dt>
-          <dd className="mt-0.5">{item.value}</dd>
+    <div className="space-y-5">
+      {/* Trade hero — the same SEND/GET column layout Pro uses,
+          adapted to the operator narrative (no SEND/RECEIVE wallet
+          context here; just the two legs of the order). */}
+      {(sellAmountFmt || buyAmountFmt) && (
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+            <div className="text-left">
+              <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Send
+              </div>
+              <div className="mt-1 font-mono text-3xl font-bold text-[var(--color-danger)]">
+                −{sellAmountFmt ?? "—"}
+              </div>
+              <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                {sellInfo?.symbol ?? "—"}
+              </div>
+            </div>
+            <div className="text-2xl text-[var(--color-text-subtle)]">→</div>
+            <div className="text-right">
+              <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Receive
+              </div>
+              <div className="mt-1 font-mono text-3xl font-bold text-[var(--color-success)]">
+                +{buyAmountFmt ?? "—"}
+              </div>
+              <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+                {buyInfo?.symbol ?? "—"}
+              </div>
+            </div>
+          </div>
+          {feePct && (
+            <div className="mt-4 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
+              Max fee {row.maxFeeBps} bps ({feePct}%)
+            </div>
+          )}
         </div>
-      ))}
-    </dl>
+      )}
+
+      {/* Relayer strip */}
+      {(row.relayerAddress || row.relayerUrl) && (
+        <Section title="Relayer">
+          <KeyRow label="Address" value={row.relayerAddress} mono />
+          {row.relayerUrl && (
+            <KeyRow
+              label="Endpoint"
+              value={
+                <a
+                  href={row.relayerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="break-all text-[11px] text-[var(--color-primary)] hover:underline"
+                >
+                  {row.relayerUrl}
+                </a>
+              }
+            />
+          )}
+        </Section>
+      )}
+
+      {/* Lifecycle */}
+      <Section title="Lifecycle">
+        <KeyRow
+          label="Status"
+          value={<StatusPill status={row.status} />}
+        />
+        <KeyRow
+          label="Submitted"
+          value={<span className="text-[11px]">{new Date(row.createdMs).toLocaleString()}</span>}
+        />
+        {row.expiry !== undefined && (
+          <KeyRow
+            label="Settle by"
+            value={
+              <span className="text-[11px]">
+                {new Date(row.expiry * 1000).toLocaleString()}
+              </span>
+            }
+          />
+        )}
+      </Section>
+
+      {/* Identifiers */}
+      <Section title="Identifiers">
+        {row.fullId && <KeyRow label="Order id" value={row.fullId} mono />}
+        {row.txHash && <KeyRow label="Tx hash" value={row.txHash} mono />}
+      </Section>
+
+      {/* Settled extras — only on settled / failed paths */}
+      {(row.blockNumber !== undefined || row.gasCostEth) && (
+        <Section title="Settlement">
+          {row.blockNumber !== undefined && (
+            <KeyRow label="Block" value={String(row.blockNumber)} mono />
+          )}
+          {row.gasCostEth && (
+            <KeyRow label="Gas cost" value={`${row.gasCostEth} ETH`} mono />
+          )}
+        </Section>
+      )}
+
+      {/* Raw amounts (collapsed-by-default would be nicer but inline
+          keeps this self-contained for ops debugging). */}
+      {(row.sellAmount || row.buyAmount) && (
+        <Section title="Raw amounts (wei)">
+          {row.sellAmount && <KeyRow label="Sell" value={row.sellAmount} mono />}
+          {row.buyAmount && <KeyRow label="Buy" value={row.buyAmount} mono />}
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-subtle)]">
+        {title}
+      </h3>
+      <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function KeyRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
+  if (value === undefined || value === null) return null;
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+        {label}
+      </span>
+      <span
+        className={`flex-1 break-all text-right text-[11px] ${mono ? "font-mono" : ""}`}
+      >
+        {value}
+      </span>
+    </div>
   );
 }
 
