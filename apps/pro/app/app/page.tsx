@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { Button, EmptyState, Field } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
@@ -332,6 +332,29 @@ export default function Workbench() {
     return { canSubmit: balanced && !noClaimTime && !tooTight, reason };
   }, [recipients, netReceiveDisplay, receiveDecimals, bulkClaimFrom, nowMs]);
 
+  // Memoised so the inline-arrow identity stays stable across
+  // Workbench renders — `TakeOrderPrefill`'s useEffect lists it as
+  // a dep, and a fresh closure each render would re-run setup/
+  // teardown on every keystroke in the form. Normalises the URL
+  // symbol to uppercase because a hand-typed `?sellSymbol=usdc`
+  // would otherwise miss the registry lookup (network config uses
+  // `USDC`) and skip the Deposit pop.
+  const handleTakeOrderApplied = useCallback((sellSideSymbol: string) => {
+    const normalizedSymbol = sellSideSymbol.toUpperCase();
+    const tokenAddr = DEMO_NETWORK.tokens.find(
+      (t) => t.symbol.toUpperCase() === normalizedSymbol,
+    )?.address;
+    const hasMatching = tokenAddr
+      ? fundableNotes.some(
+          (n) => n.note.token === BigInt(tokenAddr.toLowerCase()),
+        )
+      : true;
+    if (!hasMatching) {
+      setDepositInitialToken(normalizedSymbol);
+      setDepositOpen(true);
+    }
+  }, [fundableNotes]);
+
   return (
     <div className="space-y-6">
       <Suspense fallback={null}>
@@ -340,27 +363,7 @@ export default function Workbench() {
           setSide={setSide}
           setPrice={setPrice}
           setSize={setSize}
-          onApplied={(sellSideSymbol) => {
-            // Auto-surface the Deposit modal pre-filled with the
-            // required token when the user lands on the workbench
-            // via Take Order and has no fundable note for that
-            // side. Snapshot `fundableNotes` at the moment of
-            // apply: if it changes later (deposit lands), this
-            // effect doesn't fire again because `applied.current`
-            // is now set to the takeId.
-            const tokenAddr = DEMO_NETWORK.tokens.find(
-              (t) => t.symbol === sellSideSymbol,
-            )?.address;
-            const hasMatching = tokenAddr
-              ? fundableNotes.some(
-                  (n) => n.note.token === BigInt(tokenAddr.toLowerCase()),
-                )
-              : true;
-            if (!hasMatching) {
-              setDepositInitialToken(sellSideSymbol);
-              setDepositOpen(true);
-            }
-          }}
+          onApplied={handleTakeOrderApplied}
         />
       </Suspense>
       <div className="flex items-center justify-between gap-3">
