@@ -393,6 +393,8 @@ export class AuthorizeSubmitter {
           gasCostEth: gasCheck.gasCostEth,
           sellToken,
           buyToken,
+          sellAmount: BigInt(makerPs.sellAmount).toString(),
+          buyAmount: BigInt(makerPs.buyAmount).toString(),
           durationMs: Date.now() - authSettleStart,
           fees: [
             { side: "maker", token: buyToken, amountWei: feeTokenMaker.toString() },
@@ -505,6 +507,12 @@ export class AuthorizeSubmitter {
           durationMs: Date.now() - scatterStart,
           sellToken,
           buyToken: sellToken,
+          // Same-token scatter: both legs are the same amount in the
+          // same token. Record both so the volume aggregate's UNION ALL
+          // still gets a row, instead of silently dropping these from
+          // throughput numbers.
+          sellAmount: BigInt(ps.sellAmount).toString(),
+          buyAmount: BigInt(ps.sellAmount).toString(),
           fees: [
             { side: "scatterDirect", token: sellToken, amountWei: fee.toString() },
           ],

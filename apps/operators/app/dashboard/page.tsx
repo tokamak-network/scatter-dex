@@ -55,12 +55,20 @@ export default function Dashboard() {
             Live view of fills, fee revenue, and node health.
           </p>
         </div>
-        <Link
-          href="/orders"
-          className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-        >
-          View live orders →
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href="/analytics"
+            className="rounded-lg border border-[var(--color-border-strong)] px-4 py-2 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)]"
+          >
+            Analytics →
+          </Link>
+          <Link
+            href="/orders"
+            className="rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+          >
+            View live orders →
+          </Link>
+        </div>
       </section>
 
       <section>
