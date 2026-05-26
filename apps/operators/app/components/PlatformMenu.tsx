@@ -11,7 +11,6 @@ export function PlatformMenu() {
       items={[
         { href: "/leaderboard", label: "Leaderboard" },
         { href: "/orders/shared", label: "Shared orders" },
-        { href: "/cross-relayer", label: "Cross-relayer" },
       ]}
     />
   );
