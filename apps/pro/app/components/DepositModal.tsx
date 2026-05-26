@@ -108,13 +108,20 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   // (Gemini-suggested ref pattern on PR #756.)
   const wasOpen = useRef(false);
   const [amount, setAmount] = useState(initialAmount ?? "1.0");
-  useEffect(() => {
-    if (open && !wasOpen.current) {
-      setTokenSymbol(initialTokenSymbol ?? "ETH");
-      setAmount(initialAmount ?? "1.0");
-    }
-    wasOpen.current = open;
-  }, [open, initialTokenSymbol, initialAmount]);
+  // Seed during the render phase rather than in a post-commit effect
+  // so the modal never paints a frame with the previous session's
+  // amount / token before the fresh values arrive. React detects the
+  // setState-during-render and re-runs this same render with the new
+  // state, no flash. The `wasOpen` ref turns this into a one-shot on
+  // the closed→open transition so a re-render with `open === true`
+  // mid-session doesn't clobber the user's in-modal edits.
+  if (open && !wasOpen.current) {
+    wasOpen.current = true;
+    setTokenSymbol(initialTokenSymbol ?? "ETH");
+    setAmount(initialAmount ?? "1.0");
+  } else if (!open && wasOpen.current) {
+    wasOpen.current = false;
+  }
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
 
