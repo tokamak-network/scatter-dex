@@ -21,7 +21,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
@@ -64,7 +64,21 @@ const INITIAL_STATE: PageState = {
   notRegistered: false,
 };
 
+/** `useSearchParams()` must live under a Suspense boundary for
+ *  `output: "export"` to build / render — Next bails out otherwise
+ *  with "useSearchParams() should be wrapped in a suspense
+ *  boundary." Split the page into an outer Suspense host + inner
+ *  body so the hook stays where the URL state actually needs to be
+ *  read. */
 export default function RelayerDetailPage() {
+  return (
+    <Suspense fallback={<Notice tone="info">Loading relayer detail…</Notice>}>
+      <RelayerDetailBody />
+    </Suspense>
+  );
+}
+
+function RelayerDetailBody() {
   const search = useSearchParams();
   // Query-string addresses are forwarded as-is to `loadOperatorRow`
   // + the RelayerRegistry — Solidity address args are
