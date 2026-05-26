@@ -460,7 +460,11 @@ function OrdersBody({ auth }: { auth: Auth }) {
         </table>
       </div>
 
-      <OrderDetailDrawer row={drawerRow} onClose={() => setDrawerRow(null)} />
+      <OrderDetailDrawer
+        row={drawerRow}
+        auth={auth}
+        onClose={() => setDrawerRow(null)}
+      />
     </>
   );
 }
@@ -472,14 +476,79 @@ function OrdersBody({ auth }: { auth: Auth }) {
  *  Pro-specific `OrderRecord` (claims, EdDSA secrets, vault notes)
  *  that operators don't have; sharing source would have meant
  *  pushing operator-typed unions all the way through Pro's tree. */
+interface SettlementDetail {
+  settlement: {
+    tx_hash: string;
+    type: string;
+    status: string;
+    block_number: number | null;
+    gas_cost_eth: string | null;
+    duration_ms: number | null;
+    error_reason: string | null;
+    sell_amount: string | null;
+    buy_amount: string | null;
+    sell_token: string | null;
+    buy_token: string | null;
+    created_at: number;
+  };
+  fees: Array<{
+    id: number;
+    tx_hash: string;
+    side: "maker" | "taker" | "scatterDirect";
+    token: string;
+    amount_wei: string;
+    block_number: number | null;
+    created_at: number;
+  }>;
+  processing: Array<{
+    nullifier: string;
+    status: string;
+    submitted_at: number;
+    updated_at: number;
+    pub_key_ax?: string;
+    pub_key_ay?: string;
+  }>;
+}
+
 function OrderDetailDrawer({
   row,
+  auth,
   onClose,
 }: {
   row: UnifiedRow | null;
+  auth: AdminAuth | null;
   onClose: () => void;
 }) {
   const [showTechnical, setShowTechnical] = useState(false);
+  // Fetched on drawer open for settled / failed rows — the relayer's
+  // own DB carries per-side fee accruals, settle latency, and the
+  // list of authorize_orders that contributed. Operator-only data
+  // (admin auth required), so we gate the fetch on `auth`.
+  const [detail, setDetail] = useState<SettlementDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const txHash = row?.txHash;
+  useEffect(() => {
+    if (!row || !txHash || !auth) {
+      setDetail(null);
+      setDetailError(null);
+      return;
+    }
+    let cancelled = false;
+    setDetail(null);
+    setDetailError(null);
+    adminGet<SettlementDetail>(auth, `/api/admin/history/by-tx/${txHash}`)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          setDetailError(e instanceof Error ? e.message : String(e));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, row, txHash]);
   if (!row) return null;
   const sellInfo = row.sellToken ? tokenInfo(row.sellToken) : null;
   const buyInfo = row.buyToken ? tokenInfo(row.buyToken) : null;
@@ -560,6 +629,49 @@ function OrderDetailDrawer({
             )}
           </div>
 
+          {/* Fee accruals — every per-side row from the relayer's
+              `fee_history` table for this tx. This is the operator's
+              actual realised revenue from the settle, broken down by
+              maker / taker / scatterDirect. Pulled from
+              /api/admin/history/by-tx/<tx> on drawer open. */}
+          {detail && detail.fees.length > 0 && (
+            <FeeAccrualsTable fees={detail.fees} />
+          )}
+
+          {/* Processing orders — the authorize_orders rows in the
+              relayer DB that contributed to this settle. Shows the
+              operator the authorize-side nullifier(s) tied to the
+              settle so they can cross-reference logs. */}
+          {detail && detail.processing.length > 0 && (
+            <ProcessingOrdersTable orders={detail.processing} />
+          )}
+
+          {/* Settle latency from `duration_ms` if recorded. */}
+          {detail && detail.settlement.duration_ms !== null && (
+            <div className="mx-5 mt-3 flex items-baseline gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2 text-[11px]">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Settle latency
+              </span>
+              <span className="font-mono">
+                {detail.settlement.duration_ms} ms
+              </span>
+              <span className="text-[10px] text-[var(--color-text-subtle)]">
+                worker claim → on-chain confirmation
+              </span>
+            </div>
+          )}
+
+          {/* Failure reason — only present when status=failed and
+              the submitter recorded the revert reason. */}
+          {detail && detail.settlement.error_reason && (
+            <div className="mx-5 mt-3 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-4 py-2 text-[11px] text-[var(--color-danger)]">
+              <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide">
+                Failure reason
+              </div>
+              <div className="font-mono">{detail.settlement.error_reason}</div>
+            </div>
+          )}
+
           {/* Recipients table — operator side: per-row breakdown
               isn't available because it lives behind the
               claimsRoot (Poseidon hash of recipient leaves) that
@@ -576,6 +688,15 @@ function OrderDetailDrawer({
             privacy by design. The order submitter sees them in
             Pro&apos;s drawer.
           </div>
+
+          {/* Surface the detail-fetch error when one occurs (e.g.
+              admin session expired, peer offline). Doesn't block
+              the rest of the drawer. */}
+          {detailError && (
+            <div className="mx-5 mt-3 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-2 text-[11px] text-[var(--color-warning)]">
+              Failed to load relayer-side detail: {detailError}
+            </div>
+          )}
 
           {/* Settled extras — only on settled / failed paths */}
           {(row.blockNumber !== undefined || row.gasCostEth) && (
@@ -642,6 +763,114 @@ function OrderDetailDrawer({
           )}
         </section>
       </aside>
+    </div>
+  );
+}
+
+/** Per-side fee accruals pulled from the relayer's `fee_history`
+ *  table. Each settle can emit up to two rows (maker + taker for
+ *  cross-token settleAuth) or one (scatterDirect). Operator wants
+ *  to see them broken down rather than just the totalled
+ *  /history/fees aggregate. */
+function FeeAccrualsTable({
+  fees,
+}: {
+  fees: SettlementDetail["fees"];
+}) {
+  return (
+    <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-4 py-2">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Fee accruals ({fees.length})
+        </h3>
+        <span className="text-[10px] text-[var(--color-text-subtle)]">
+          per-side rows from fee_history
+        </span>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="bg-[var(--color-surface)] text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-4 py-2 text-left">Side</th>
+            <th className="px-4 py-2 text-left">Token</th>
+            <th className="px-4 py-2 text-right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {fees.map((f) => {
+            const info = tokenInfo(f.token);
+            return (
+              <tr
+                key={f.id}
+                className="border-t border-[var(--color-border)]"
+              >
+                <td className="px-4 py-2 capitalize">{f.side}</td>
+                <td className="px-4 py-2">
+                  <span className="font-medium">{info.symbol}</span>{" "}
+                  <span className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                    {shortAddr(f.token)}
+                  </span>
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <span className="font-mono">
+                    {formatAmount(f.amount_wei, info.decimals)}
+                  </span>{" "}
+                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                    {info.symbol}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Authorize_orders rows in the relayer DB that contributed to the
+ *  settle tx. For settleAuth this surfaces both maker + taker; for
+ *  scatterDirect there's one nullifier. Lets the operator
+ *  cross-reference the proof-side nullifier with their logs. */
+function ProcessingOrdersTable({
+  orders,
+}: {
+  orders: SettlementDetail["processing"];
+}) {
+  return (
+    <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-4 py-2">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Authorize orders ({orders.length})
+        </h3>
+        <span className="text-[10px] text-[var(--color-text-subtle)]">
+          relayer-side records that contributed to this settle
+        </span>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="bg-[var(--color-surface)] text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-4 py-2 text-left">Nullifier</th>
+            <th className="px-4 py-2 text-left">Status</th>
+            <th className="px-4 py-2 text-right">Submitted</th>
+          </tr>
+        </thead>
+        <tbody>
+          {orders.map((o) => (
+            <tr key={o.nullifier} className="border-t border-[var(--color-border)]">
+              <td
+                className="px-4 py-2 font-mono text-[10px]"
+                title={o.nullifier}
+              >
+                {o.nullifier.slice(0, 12)}…{o.nullifier.slice(-8)}
+              </td>
+              <td className="px-4 py-2">{o.status}</td>
+              <td className="px-4 py-2 text-right text-[10px] text-[var(--color-text-muted)]">
+                {new Date(o.submitted_at).toLocaleString()}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
