@@ -421,7 +421,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
         res.status(400).json({ error: "nullifier required" });
         return;
       }
-      const row = db.getAuthorizeOrder(nullifier);
+      const row = db.getAuthorizeOrderOrArchive(nullifier);
       if (!row) {
         res.status(404).json({ error: "authorize order not found" });
         return;
@@ -451,6 +451,8 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
         pubKeyAx: row.pubKeyAx ?? null,
         pubKeyAy: row.pubKeyAy ?? null,
         order: parsedOrder,
+        archived: row.archived,
+        terminalAt: row.terminalAt ?? null,
       });
     } catch (err) {
       log.error("authorize-orders detail failed", { err: err instanceof Error ? err.message : String(err) });

@@ -70,7 +70,30 @@ const MAX_ERR_LEN = 512;
  *  far longer than the mobile poll cadence (max 30 s idle) plus the
  *  in-flight retry budget (~7 min), so any reasonable client has
  *  observed the transition by the time deletion fires. */
-const TERMINAL_RETENTION_MS = 60 * 60 * 1000;
+// Default grace window before a terminal-status authorize_orders row
+// is dropped from the live table. Env-tunable so an operator who
+// wants longer in-place visibility (debugging, ops review) can keep
+// rows in place without standing up an archive consumer. The archive
+// table copy below makes this knob almost moot, but it still
+// controls how long the row stays joinable to live queries.
+/** Authorize-order statuses that mean "this row is done, no more
+ *  on-chain action will mutate it." Mirrors the inverse of the
+ *  status list in purgeAuthNonPending. The archive trigger fires
+ *  every time an order's status flips into this set. */
+const TERMINAL_STATUSES = new Set([
+  "settled",
+  "cancelled",
+  "expired",
+  "failed",
+  "dead_letter",
+]);
+
+const TERMINAL_RETENTION_MS = (() => {
+  const raw = process.env.AUTHORIZE_ORDER_RETENTION_MS;
+  const parsed = raw === undefined ? NaN : Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
+  return 60 * 60 * 1000;
+})();
 function truncErr(err: string): string {
   return err.length > MAX_ERR_LEN ? err.slice(0, MAX_ERR_LEN - 1) + "…" : err;
 }
@@ -1148,6 +1171,27 @@ export class PrivateOrderDB {
         order_json    TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_ao_status ON authorize_orders(status);
+
+      -- Permanent archive of every authorize_orders row, copied at
+      -- the moment the live row goes terminal. The live table still
+      -- purges on its grace window so live matching paths stay
+      -- compact; the archive keeps the trader identifier + raw
+      -- order body indefinitely so the operator drawer's Sender +
+      -- "Submitted order body" sections can resolve any past order,
+      -- even months later. Same columns as the live table plus a
+      -- terminal_at timestamp for retention analysis.
+      CREATE TABLE IF NOT EXISTS authorize_orders_archive (
+        nullifier     TEXT PRIMARY KEY,
+        status        TEXT NOT NULL,
+        submitted_at  INTEGER NOT NULL,
+        terminal_at   INTEGER NOT NULL,
+        settle_tx     TEXT,
+        pub_key_ax    TEXT,
+        pub_key_ay    TEXT,
+        order_json    TEXT NOT NULL,
+        last_error    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_aoa_pubkey ON authorize_orders_archive(pub_key_ax);
     `);
 
     // Async-settlement extensions. Each column is added via idempotent
@@ -1467,6 +1511,56 @@ export class PrivateOrderDB {
     // call sites like the cross-relayer matcher's 'settled' write —
     // so terminal rows get their 1h grace window in purgeAuthNonPending.
     this.updateAuthStatus.run([status, settleTx ?? null, Date.now(), nullifier]);
+    // Mirror the row into the permanent archive whenever it goes
+    // terminal. The live table still purges on its grace window,
+    // but the archive keeps the trader identifier + order body
+    // queryable indefinitely so the operator drawer can resolve
+    // any past order. INSERT OR REPLACE means a retry that
+    // re-transitions (e.g. failed → retrying → failed) keeps the
+    // most recent shape.
+    if (TERMINAL_STATUSES.has(status)) {
+      this.archiveAuthorizeRow(nullifier, status, settleTx);
+    }
+  }
+
+  private archiveAuthorizeRow(
+    nullifier: string,
+    status: string,
+    settleTx?: string | null,
+  ): void {
+    const row = this.db
+      .prepare(
+        `SELECT submitted_at, pub_key_ax, pub_key_ay, order_json, last_error
+           FROM authorize_orders WHERE nullifier = ?`,
+      )
+      .get(nullifier) as
+      | {
+          submitted_at: number;
+          pub_key_ax: string | null;
+          pub_key_ay: string | null;
+          order_json: string;
+          last_error: string | null;
+        }
+      | undefined;
+    if (!row) return;
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO authorize_orders_archive
+           (nullifier, status, submitted_at, terminal_at, settle_tx,
+            pub_key_ax, pub_key_ay, order_json, last_error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run([
+        nullifier,
+        status,
+        row.submitted_at,
+        Date.now(),
+        settleTx ?? null,
+        row.pub_key_ax,
+        row.pub_key_ay,
+        row.order_json,
+        row.last_error,
+      ]);
   }
 
   deleteAuthorizeOrder(nullifier: string): void {
@@ -1487,6 +1581,33 @@ export class PrivateOrderDB {
 
   /** Full row lookup keyed by nullifier. Used by the idempotency check
    *  on POST and by the status GET endpoint. */
+  /** Live-table-or-archive lookup. Returns the live row when present,
+   *  otherwise falls back to the permanent archive. Lets the admin
+   *  drawer keep showing sender + raw body indefinitely after the
+   *  grace-window purge fires. */
+  getAuthorizeOrderOrArchive(
+    nullifier: string,
+  ):
+    | (AuthorizeOrderRow & { archived: boolean; terminalAt?: number })
+    | null {
+    const live = this.getAuthorizeOrder(nullifier);
+    if (live) return { ...live, archived: false };
+    const archived = this.db
+      .prepare(
+        `SELECT nullifier, status, submitted_at as submittedAt,
+                submitted_at as updatedAt, 0 as attempt, NULL as nextRetryAt,
+                last_error as lastError, settle_tx as settleTx,
+                pub_key_ax as pubKeyAx, pub_key_ay as pubKeyAy,
+                order_json as orderJson, terminal_at as terminalAt
+           FROM authorize_orders_archive WHERE nullifier = ?`,
+      )
+      .get(nullifier) as
+      | (AuthorizeOrderRow & { terminalAt: number })
+      | undefined;
+    if (!archived) return null;
+    return { ...archived, archived: true };
+  }
+
   getAuthorizeOrder(nullifier: string): AuthorizeOrderRow | null {
     return (this.selectAuthByNullifier.get(nullifier) as AuthorizeOrderRow | undefined) ?? null;
   }
