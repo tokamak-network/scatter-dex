@@ -265,21 +265,28 @@ export default function Workbench() {
     // BigInt-based "Allocated" parity check. Float gross would let a
     // visually-balanced split fail on-chain by sub-wei rounding.
     let gross: bigint;
-    try {
-      const cleanPrice = price.replace(/,/g, "");
-      const cleanSize = size.replace(/,/g, "");
-      if (!cleanPrice || !cleanSize) return empty;
-      const priceWei = parseUnits(cleanPrice, quoteTok.decimals);
-      const sizeWei = parseUnits(cleanSize, baseTok.decimals);
-      if (sizeWei <= 0n) return empty;
-      // Sell side: size base × price quote/base → quote.
-      // Buy side: size IS already in base (= receive token), no
-      // price multiply for the receive total.
-      gross = side === "sell"
-        ? (priceWei * sizeWei) / 10n ** BigInt(baseTok.decimals)
-        : sizeWei;
-    } catch {
-      return empty;
+    if (takeMode) {
+      // Take Order: gross = maker's signed buyAmount (= taker's
+      // receive token, before fee). Bypasses size×price so the
+      // breakdown matches the locked summary card exactly.
+      gross = takeMode.buyWei;
+    } else {
+      try {
+        const cleanPrice = price.replace(/,/g, "");
+        const cleanSize = size.replace(/,/g, "");
+        if (!cleanPrice || !cleanSize) return empty;
+        const priceWei = parseUnits(cleanPrice, quoteTok.decimals);
+        const sizeWei = parseUnits(cleanSize, baseTok.decimals);
+        if (sizeWei <= 0n) return empty;
+        // Sell side: size base × price quote/base → quote.
+        // Buy side: size IS already in base (= receive token), no
+        // price multiply for the receive total.
+        gross = side === "sell"
+          ? (priceWei * sizeWei) / 10n ** BigInt(baseTok.decimals)
+          : sizeWei;
+      } catch {
+        return empty;
+      }
     }
     const { fee, net } = applyFeeBig(gross, effectiveFeeBps);
     return {
@@ -290,7 +297,7 @@ export default function Workbench() {
         effectiveFeeBps > 0 ? formatTokenAmount(fee, decimals) : "",
       netReceiveDisplay: formatTokenAmount(net, decimals),
     };
-  }, [side, pair.base, pair.quote, price, size, effectiveFeeBps]);
+  }, [side, pair.base, pair.quote, price, size, effectiveFeeBps, takeMode]);
 
   const fillFromRow = (row: RowData) => {
     setPrice(row.price);
@@ -555,10 +562,15 @@ export default function Workbench() {
                         {netReceiveDisplay} {receiveSymbol}
                       </span>
                     </div>
-                    {side === "sell" && (
+                    {side === "sell" && !isTakeMode && (
                       <div className="text-[10px] text-[var(--color-text-subtle)]">
                         = {size || "0"} {pair.base} × {price || "0"} {pair.quote}/{pair.base}
                         {effectiveFeeBps > 0 ? ` − ${effectiveFeeBps} bps fee` : ""}
+                      </div>
+                    )}
+                    {isTakeMode && effectiveFeeBps > 0 && (
+                      <div className="text-[10px] text-[var(--color-text-subtle)]">
+                        Maker's signed amount − {effectiveFeeBps} bps relayer fee
                       </div>
                     )}
                   </div>
