@@ -33,11 +33,18 @@ export function createRelayerStatsRoutes(
       for (const o of authorizeOrders.values()) {
         if (o.status === "pending") pendingOrders++;
       }
+      // Per-token lifetime fee revenue (since = 0). Exposed publicly
+      // so the leaderboard can rank "who earned the most" without
+      // each visitor needing peer admin auth. Settled volume already
+      // ships through the same endpoint — fees are no more sensitive
+      // than that, and operators routinely benchmark against each other.
+      const feeTotals = db.getFeeTotals(0);
       res.json({
         address: submitter.getAddress(),
         ...stats,
         pendingOrders,
         settledVolume: volume,
+        feeTotals,
         metrics: getMetrics(),
       });
     } catch (err) {

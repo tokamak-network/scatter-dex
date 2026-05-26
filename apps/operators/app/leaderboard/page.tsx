@@ -30,7 +30,7 @@ interface LeaderboardState {
  *  Centralising the choices here (instead of one switch per use site)
  *  keeps the table header arrow, the segmented control, and the
  *  caption copy from drifting apart. */
-type RankCriterionId = "bond" | "fee" | "activity" | "success" | "speed";
+type RankCriterionId = "bond" | "fee" | "activity" | "revenue" | "success" | "speed";
 interface RankCriterion {
   id: RankCriterionId;
   label: string;
@@ -83,6 +83,13 @@ const RANK_CRITERIA: RankCriterion[] = [
       compareNullable(a.stats?.settledOrders, b.stats?.settledOrders, true),
   },
   {
+    id: "revenue",
+    label: "Revenue",
+    description: "Highest fee earned (top-token proxy — cross-token requires an oracle)",
+    compare: (a, b) =>
+      compareNullable(topFeeWeiNumeric(a), topFeeWeiNumeric(b), true),
+  },
+  {
     id: "success",
     label: "Success",
     description: "Highest success rate first",
@@ -100,6 +107,27 @@ const RANK_CRITERIA: RankCriterion[] = [
 
 function criterionById(id: RankCriterionId): RankCriterion {
   return RANK_CRITERIA.find((c) => c.id === id) ?? RANK_CRITERIA[0];
+}
+
+/** Pick the highest per-token fee total for sort comparisons. Cross-
+ *  token revenue can't be summed without an oracle (1 USDC of fee
+ *  ≠ 1 WETH of fee), so the comparator ranks by each relayer's top
+ *  earning token. Returns a Number — sort comparators are scalar
+ *  and BigInt isn't subtraction-safe across them. Falls back to
+ *  undefined so undefined-as-worst behavior kicks in. The Number
+ *  cast loses precision above 2^53, which is fine for ranking
+ *  (the order is preserved; the exact wei doesn't matter). */
+function topFeeWeiNumeric(r: RankedRelayer): number | undefined {
+  const totals = r.stats?.feeTotals;
+  if (!totals || totals.length === 0) return undefined;
+  let max = 0n;
+  for (const t of totals) {
+    try {
+      const v = BigInt(t.totalWei);
+      if (v > max) max = v;
+    } catch { /* malformed row — skip */ }
+  }
+  return Number(max);
 }
 
 export default function LeaderboardPage() {
@@ -374,16 +402,15 @@ function leaderboardPlaceholder(state: LeaderboardState, registryDeployed: boole
   return null;
 }
 
-const TABLE_COLUMNS = 10;
+const TABLE_COLUMNS = 11;
 
 // Map each sort criterion onto the column header it should highlight.
-// Bond + Fee already each have their own column; the stats-derived
-// criteria share one of the right-side columns. Centralised so the
-// arrow + the sort selector can't disagree.
+// Centralised so the arrow indicator + the sort selector can't drift.
 const CRITERION_TO_COLUMN: Record<RankCriterionId, string> = {
   bond: "bond",
   fee: "fee",
   activity: "settled",
+  revenue: "revenue",
   success: "success",
   speed: "speed",
 };
@@ -410,10 +437,11 @@ function RelayerTable({
             <th className="px-5 py-3 text-left">#</th>
             <th className="px-5 py-3 text-left">Relayer</th>
             <th className="px-5 py-3 text-left">Address</th>
-            <th className="px-5 py-3 text-right">Fee{arrow("fee")}</th>
+            <th className="px-5 py-3 text-right">Fee rate{arrow("fee")}</th>
             <th className="px-5 py-3 text-right">Bond{arrow("bond")}</th>
             <th className="px-5 py-3 text-right">Settled{arrow("settled")}</th>
             <th className="px-5 py-3 text-right">Volume</th>
+            <th className="px-5 py-3 text-right">Revenue{arrow("revenue")}</th>
             <th className="px-5 py-3 text-right">Success{arrow("success")}</th>
             <th className="px-5 py-3 text-right">Avg settle{arrow("speed")}</th>
             <th className="px-5 py-3 text-right">Registered</th>
@@ -457,6 +485,7 @@ function RelayerRow({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
       <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
       <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
       <VolumeCell row={row} />
+      <RevenueCell row={row} />
       <StatCell row={row} value={row.stats?.successRate} render={(n) => `${n}%`} />
       <StatCell
         row={row}
@@ -518,6 +547,48 @@ function VolumeCell({ row }: { row: RankedRelayer }) {
 
 function safeBigInt(s: string): bigint {
   try { return BigInt(s); } catch { return 0n; }
+}
+
+/** Revenue (per-token fee earned). Mirrors VolumeCell's shape — top
+ *  earning token rendered with tooltip breakdown — so the leaderboard
+ *  reads consistently across the two "what did this relayer route"
+ *  vs "what did it earn" columns. Cross-token sums aren't meaningful
+ *  without a price oracle, so we deliberately don't try to aggregate.
+ *  Falls back to the same offline `—` shape when the peer doesn't
+ *  expose feeTotals (older builds before this endpoint extension). */
+function RevenueCell({ row }: { row: RankedRelayer }) {
+  const totals = row.stats?.feeTotals ?? [];
+  const status = relayerStatsCellStatus(row, totals.length > 0 ? 1 : undefined);
+  if (totals.length === 0) {
+    const tone = status === "offline" ? "text-[var(--color-text-subtle)]" : "";
+    return (
+      <td className={`px-5 py-3 text-right font-mono ${tone}`} title={statsCellTitle(status)}>
+        —
+      </td>
+    );
+  }
+  const sorted = [...totals].sort((a, b) => {
+    const av = safeBigInt(a.totalWei);
+    const bv = safeBigInt(b.totalWei);
+    if (av === bv) return 0;
+    return av > bv ? -1 : 1;
+  });
+  const top = sorted[0];
+  const info = tokenInfo(top.token);
+  const breakdown = sorted
+    .map((t) => `${formatAmount(t.totalWei, tokenInfo(t.token).decimals)} ${tokenInfo(t.token).symbol}`)
+    .join(" · ");
+  return (
+    <td className="px-5 py-3 text-right" title={breakdown}>
+      <span className="font-mono">{formatAmount(top.totalWei, info.decimals)}</span>{" "}
+      <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
+      {sorted.length > 1 && (
+        <div className="text-[10px] text-[var(--color-text-subtle)]">
+          +{sorted.length - 1} more
+        </div>
+      )}
+    </td>
+  );
 }
 
 /** Stats-table cell that distinguishes three "no value" states:

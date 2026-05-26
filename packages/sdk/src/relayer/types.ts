@@ -93,6 +93,12 @@ export interface RelayerStatsResponse {
   uptimeSince: number | null;
   pendingOrders: number;
   settledVolume?: RelayerSettledVolume[];
+  /** Per-token fee revenue across this relayer's lifetime. Sum of
+   *  fee_history rows grouped by token, exposed publicly so the
+   *  leaderboard can rank "who earned the most" without each
+   *  visitor needing peer admin keys. Same shape as the operator
+   *  analytics page's `/history/fees` aggregate. */
+  feeTotals?: Array<{ token: string; count: number; totalWei: string }>;
   metrics?: RelayerRuntimeMetrics;
 }
 
