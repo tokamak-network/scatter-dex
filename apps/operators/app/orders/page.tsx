@@ -465,11 +465,13 @@ function OrdersBody({ auth }: { auth: Auth }) {
   );
 }
 
-/** Right slide-out drawer. Same affordance as Pro's
- *  OrderDetailDrawer (backdrop click + ESC close, stopPropagation
- *  on the aside so internal clicks don't dismiss), kept inline in
- *  this file because the surface here is smaller — one component
- *  per file would be over-decomposed for ~80 lines of UI. */
+/** Right slide-out drawer. Visually mirrors Pro's
+ *  OrderDetailPanel + OrderDetailDrawer — same header, hero card,
+ *  relayer strip, lifecycle row, raw fields toggle. Inlined here
+ *  rather than a shared component because Pro's panel takes a
+ *  Pro-specific `OrderRecord` (claims, EdDSA secrets, vault notes)
+ *  that operators don't have; sharing source would have meant
+ *  pushing operator-typed unions all the way through Pro's tree. */
 function OrderDetailDrawer({
   row,
   onClose,
@@ -477,46 +479,341 @@ function OrderDetailDrawer({
   row: UnifiedRow | null;
   onClose: () => void;
 }) {
+  const [showTechnical, setShowTechnical] = useState(false);
   if (!row) return null;
   const sellInfo = row.sellToken ? tokenInfo(row.sellToken) : null;
   const buyInfo = row.buyToken ? tokenInfo(row.buyToken) : null;
+  const headline =
+    sellInfo && buyInfo && row.sellAmount && row.buyAmount
+      ? `${row.status === "settled" ? "Settled" : "Order"} ${formatAmount(
+          row.sellAmount,
+          sellInfo.decimals,
+        )} ${sellInfo.symbol} → ${formatAmount(
+          row.buyAmount,
+          buyInfo.decimals,
+        )} ${buyInfo.symbol}`
+      : row.idLabel;
   return (
-    <div
-      className="fixed inset-0 z-40"
-      onClick={onClose}
-      aria-hidden={false}
-    >
+    <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden={false}>
       <div className="absolute inset-0 bg-black/30" />
       <aside
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
-        className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col overflow-y-auto bg-[var(--color-bg)] shadow-xl"
+        className="absolute right-0 top-0 flex h-full w-full max-w-3xl flex-col overflow-y-auto bg-[var(--color-bg)] shadow-xl"
       >
-        <header className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-              {row.status === "settled" || row.status === "failed"
-                ? "Settlement"
-                : "Order"}
+        <section className="m-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+          <header className="flex items-start justify-between gap-3 border-b border-[var(--color-border)] px-5 py-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h2 className="font-mono text-base font-semibold">{row.idLabel}</h2>
+                <StatusPill status={row.status} />
+              </div>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">{headline}</p>
             </div>
-            <div className="mt-0.5 flex items-center gap-2">
-              <span className="font-mono text-sm">{row.idLabel}</span>
-              <StatusPill status={row.status} />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowTechnical((v) => !v)}
+                className="rounded-md border border-[var(--color-border)] px-2 py-1 text-[10px] font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+                title="Toggle raw on-wire fields (full order id, tx hash, raw wei)"
+              >
+                {showTechnical ? "Hide technical" : "Show technical"}
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-[var(--color-border-strong)] px-3 py-1 text-xs font-medium text-[var(--color-text-muted)] hover:border-[var(--color-primary)] hover:text-[var(--color-primary)]"
+              >
+                Close
+              </button>
             </div>
+          </header>
+
+          {/* Trade hero — SEND −X / TRADE TOTAL +Y with breakdown
+              below. Recipients-sum slot stays "— (operator view)"
+              because operator can't decode the claimsRoot; the
+              relayer fee column is real (it's literally the
+              operator's bps). */}
+          <TradeHero row={row} sellInfo={sellInfo} buyInfo={buyInfo} />
+
+          {/* Relayer + settle deadline strip */}
+          <RelayerStrip row={row} showTechnical={showTechnical} />
+
+          {/* Lifecycle row — for operators the lifecycle is flatter
+              than Pro (no Matching → Claimable → Claimed; we have
+              Open → Matched → Settled with terminal Cancelled /
+              Expired / Failed branches). Render a single coloured
+              pill row that mirrors Pro's "Lifecycle: cancelled" UX. */}
+          <div className="mx-5 mt-3 flex flex-wrap items-baseline gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2 text-[11px]">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+              Lifecycle
+            </span>
+            <StatusPill status={row.status} />
+            <span className="text-[10px] text-[var(--color-text-subtle)]">
+              submitted {new Date(row.createdMs).toLocaleString()}
+            </span>
+            {row.expiry !== undefined && (
+              <span className="text-[10px] text-[var(--color-text-subtle)]">
+                · settle by {new Date(row.expiry * 1000).toLocaleString()}
+              </span>
+            )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md border border-[var(--color-border)] px-3 py-1 text-xs hover:bg-[var(--color-bg)]"
-          >
-            Close
-          </button>
-        </header>
-        <div className="p-5">
-          <DetailPanel row={row} sellInfo={sellInfo} buyInfo={buyInfo} />
-        </div>
+
+          {/* Recipients table — operator side: per-row breakdown
+              isn't available because it lives behind the
+              claimsRoot (Poseidon hash of recipient leaves) that
+              the relayer never decodes. Pro's drawer has it
+              because Pro persists the unhashed claims locally at
+              order-submit time. */}
+          <div className="mx-5 mt-3 rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-4 py-3 text-xs text-[var(--color-text-muted)]">
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+              Recipients
+            </div>
+            Per-recipient amounts are bound into the order&apos;s
+            <code className="mx-1 font-mono">claimsRoot</code> (Poseidon
+            hash) and are not visible to relayers / observers —
+            privacy by design. The order submitter sees them in
+            Pro&apos;s drawer.
+          </div>
+
+          {/* Settled extras — only on settled / failed paths */}
+          {(row.blockNumber !== undefined || row.gasCostEth) && (
+            <div className="mx-5 mt-3 grid grid-cols-2 gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2 text-[11px]">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                  Block
+                </div>
+                <div className="mt-0.5 font-mono">
+                  {row.blockNumber ?? "—"}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                  Gas cost
+                </div>
+                <div className="mt-0.5 font-mono">
+                  {row.gasCostEth ? `${row.gasCostEth} ETH` : "—"}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Raw on-wire fields — gated by the Show technical
+              toggle, matching Pro. */}
+          {showTechnical && (
+            <div className="mx-5 my-3 space-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 font-mono text-[11px]">
+              {row.fullId && (
+                <div>
+                  id · <span className="break-all">{row.fullId}</span>
+                </div>
+              )}
+              {row.txHash && (
+                <div>
+                  tx · <span className="break-all">{row.txHash}</span>
+                </div>
+              )}
+              {row.relayerAddress && (
+                <div>
+                  relayer · <span className="break-all">{row.relayerAddress}</span>
+                </div>
+              )}
+              {row.relayerUrl && (
+                <div>
+                  endpoint · <span className="break-all">{row.relayerUrl}</span>
+                </div>
+              )}
+              {row.maxFeeBps !== undefined && (
+                <div>
+                  max fee · {row.maxFeeBps} bps ({(row.maxFeeBps / 100).toFixed(2)}%)
+                </div>
+              )}
+              {row.sellAmount && (
+                <div>
+                  sell raw · <span className="break-all">{row.sellAmount}</span> wei
+                </div>
+              )}
+              {row.buyAmount && (
+                <div>
+                  buy raw · <span className="break-all">{row.buyAmount}</span> wei
+                </div>
+              )}
+            </div>
+          )}
+        </section>
       </aside>
+    </div>
+  );
+}
+
+/** Mirrors Pro's TradeHeroCard with the operator data shape. The
+ *  recipients-sum and net columns are blanked because operator
+ *  can't decode the claimsRoot — the slot stays so the layout
+ *  matches Pro's at-a-glance shape; copy explains the gap. */
+function TradeHero({
+  row,
+  sellInfo,
+  buyInfo,
+}: {
+  row: UnifiedRow;
+  sellInfo: { symbol: string; decimals: number } | null;
+  buyInfo: { symbol: string; decimals: number } | null;
+}) {
+  const sellAmt =
+    row.sellAmount && sellInfo
+      ? formatAmount(row.sellAmount, sellInfo.decimals)
+      : null;
+  const buyAmt =
+    row.buyAmount && buyInfo ? formatAmount(row.buyAmount, buyInfo.decimals) : null;
+  const feeBps = row.maxFeeBps ?? null;
+  const feeAmt =
+    feeBps !== null && row.buyAmount && buyInfo
+      ? formatAmount(
+          (
+            (BigInt(row.buyAmount) * BigInt(feeBps)) /
+            10000n
+          ).toString(),
+          buyInfo.decimals,
+        )
+      : null;
+  return (
+    <div className="mx-5 mt-5 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-5">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+            Send
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold text-[var(--color-danger)]">
+            − {sellAmt ?? "—"}
+          </div>
+          <div className="font-mono text-xs text-[var(--color-text-muted)]">
+            {sellInfo?.symbol ?? "—"}
+          </div>
+        </div>
+        <div className="text-2xl text-[var(--color-text-subtle)]">→</div>
+        <div className="text-right">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+            Trade total
+          </div>
+          <div className="mt-1 font-mono text-2xl font-bold text-[var(--color-success)]">
+            + {buyAmt ?? "—"}
+          </div>
+          <div className="font-mono text-xs text-[var(--color-text-muted)]">
+            {buyInfo?.symbol ?? "—"}
+          </div>
+        </div>
+      </div>
+      {/* Pro-style 3-column breakdown. Recipients-sum stays "—"
+          for operators because the hashed claimsRoot can't be
+          decoded; the fee column is real (operator's bps). */}
+      <div className="mt-3 grid grid-cols-3 gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 font-mono text-[11px]">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+            Recipients sum
+          </div>
+          <div className="mt-0.5 font-semibold">— {buyInfo?.symbol ?? ""}</div>
+          <div className="text-[10px] text-[var(--color-text-subtle)]">
+            hashed (claimsRoot)
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+            + Relayer fee
+          </div>
+          <div className="mt-0.5 font-semibold">
+            {feeAmt ?? "—"} {buyInfo?.symbol ?? ""}
+          </div>
+          <div className="text-[10px] text-[var(--color-text-subtle)]">
+            {feeBps !== null ? `${feeBps} bps cap` : "fee bps unknown"}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+            = Trade total
+          </div>
+          <div className="mt-0.5 font-semibold">
+            {buyAmt ?? "—"} {buyInfo?.symbol ?? ""}
+          </div>
+          <div className="text-[10px] text-[var(--color-text-subtle)]">
+            buy leg notional
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Pro-style Relayer + Settle-deadline strip. Operators always see
+ *  the relayer (it's themselves or a peer they're observing) plus
+ *  the on-chain expiry. */
+function RelayerStrip({
+  row,
+  showTechnical,
+}: {
+  row: UnifiedRow;
+  showTechnical: boolean;
+}) {
+  const expiryMs = row.expiry !== undefined ? row.expiry * 1000 : null;
+  const expired = expiryMs !== null && expiryMs < Date.now();
+  return (
+    <div className="mx-5 mt-3 grid grid-cols-2 gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-2 text-[11px]">
+      <div>
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Relayer
+        </div>
+        {row.relayerAddress ? (
+          <>
+            <div className="mt-0.5 font-medium text-[var(--color-text)]">
+              {shortAddr(row.relayerAddress)}
+            </div>
+            {row.maxFeeBps !== undefined && (
+              <div className="text-[10px] text-[var(--color-text-muted)]">
+                {row.maxFeeBps} bps cap
+              </div>
+            )}
+            {showTechnical && (
+              <div className="mt-0.5 break-all font-mono text-[10px] text-[var(--color-text-subtle)]">
+                {row.relayerAddress}
+              </div>
+            )}
+            {row.relayerUrl && (
+              <a
+                href={row.relayerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[10px] text-[var(--color-primary)] hover:underline"
+              >
+                {row.relayerUrl}
+              </a>
+            )}
+          </>
+        ) : (
+          <div className="mt-0.5 text-[var(--color-text-muted)]">—</div>
+        )}
+      </div>
+      <div className="text-right">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Settle deadline
+        </div>
+        {expiryMs !== null ? (
+          <>
+            <div
+              className={`mt-0.5 font-medium ${
+                expired ? "text-[var(--color-danger)]" : "text-[var(--color-text)]"
+              }`}
+            >
+              {new Date(expiryMs).toLocaleString()}
+            </div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              {expired
+                ? "Expired — order is unservable; cancel to recover funding"
+                : "Order must settle on-chain before this time"}
+            </div>
+          </>
+        ) : (
+          <div className="mt-0.5 text-[var(--color-text-muted)]">—</div>
+        )}
+      </div>
     </div>
   );
 }
