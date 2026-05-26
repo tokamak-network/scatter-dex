@@ -11,6 +11,7 @@ export function MyMenu() {
       items={[
         { href: "/dashboard", label: "Dashboard" },
         { href: "/orders", label: "Orders" },
+        { href: "/analytics", label: "Analytics" },
         { href: "/treasury", label: "Earnings" },
         { href: "/runtime", label: "Controls" },
         { href: "/profile", label: "Profile" },
