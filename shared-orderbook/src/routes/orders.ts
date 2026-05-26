@@ -235,7 +235,16 @@ export function createOrderRoutes(
         res.status(404).json({ error: "order not found" });
         return;
       }
-      if (stored.order.relayer !== relayerAddress) {
+      // EVM addresses are case-sensitive in checksummed form but
+      // semantically case-insensitive. The auth middleware doesn't
+      // guarantee a normalised form, so fold both sides to lowercase
+      // before the equality check. Short-circuit on reference
+      // equality first to dodge the toLowerCase() allocation on the
+      // common path.
+      const ownerMatches =
+        stored.order.relayer === relayerAddress ||
+        stored.order.relayer.toLowerCase() === relayerAddress.toLowerCase();
+      if (!ownerMatches) {
         res.status(403).json({ error: "not your order" });
         return;
       }

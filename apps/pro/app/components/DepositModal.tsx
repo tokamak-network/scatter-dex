@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Contract, formatUnits } from "ethers";
 import {
   generateNote,
@@ -108,20 +108,27 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   // (Gemini-suggested ref pattern on PR #756.)
   const wasOpen = useRef(false);
   const [amount, setAmount] = useState(initialAmount ?? "1.0");
-  // Seed during the render phase rather than in a post-commit effect
-  // so the modal never paints a frame with the previous session's
-  // amount / token before the fresh values arrive. React detects the
-  // setState-during-render and re-runs this same render with the new
-  // state, no flash. The `wasOpen` ref turns this into a one-shot on
-  // the closed→open transition so a re-render with `open === true`
-  // mid-session doesn't clobber the user's in-modal edits.
-  if (open && !wasOpen.current) {
-    wasOpen.current = true;
-    setTokenSymbol(initialTokenSymbol ?? "ETH");
-    setAmount(initialAmount ?? "1.0");
-  } else if (!open && wasOpen.current) {
-    wasOpen.current = false;
-  }
+  // Seed in useLayoutEffect (runs after commit, before paint) so
+  // the modal never paints a frame with stale values, but without
+  // the render-phase setState pattern — that was flagged as unsafe
+  // under React 18 concurrent / Strict Mode (a render can be
+  // aborted while the ref-mutation sticks, leaving us never seeding
+  // on the real commit). Effect deps include both prop seeds so a
+  // parent that changes them mid-cycle still flips the modal on
+  // the same closed→open transition. Setter guards skip the
+  // no-op re-render when the current state already matches the
+  // target — Copilot/Gemini follow-up on PR #833.
+  useLayoutEffect(() => {
+    if (open && !wasOpen.current) {
+      wasOpen.current = true;
+      const nextToken = initialTokenSymbol ?? "ETH";
+      const nextAmount = initialAmount ?? "1.0";
+      setTokenSymbol((prev) => (prev === nextToken ? prev : nextToken));
+      setAmount((prev) => (prev === nextAmount ? prev : nextAmount));
+    } else if (!open && wasOpen.current) {
+      wasOpen.current = false;
+    }
+  }, [open, initialTokenSymbol, initialAmount]);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
 
