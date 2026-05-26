@@ -417,11 +417,39 @@ export class SharedOrderbookClient {
    *  ids currently held by the shared-OB across all statuses. */
   async fetchAllOrderIds(): Promise<Set<string>> {
     const ids = new Set<string>();
+    // shared-OB caps each page at 500 (shared-orderbook/src/routes/
+    // orders.ts:96). Walk `offset` in 500-sized chunks until the
+    // server returns less than a full page — at that point we've
+    // seen every row regardless of how many terminal+open rows have
+    // accumulated. Hard cap at 20 pages (10k rows) guards against a
+    // server that streams a stuck full-page response indefinitely;
+    // in production an OB with >10k tracked rows wants the older
+    // terminals purged anyway and surfacing the cap as a warning is
+    // a useful canary.
+    const PAGE_SIZE = 500;
+    const MAX_PAGES = 20;
     try {
-      const res = await fetch(`${this.serverUrl}/api/orders?status=all&limit=500`);
-      if (!res.ok) return ids;
-      const data = await res.json() as { orders: Array<{ id: string }> };
-      for (const o of data.orders) ids.add(o.id.toLowerCase());
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const offset = page * PAGE_SIZE;
+        const res = await fetch(
+          `${this.serverUrl}/api/orders?status=all&limit=${PAGE_SIZE}&offset=${offset}`,
+        );
+        if (!res.ok) break;
+        const data = await res.json() as { orders: Array<{ id: string }>; count?: number };
+        for (const o of data.orders) ids.add(o.id.toLowerCase());
+        // Done when the server returns less than a full page —
+        // pagination is dense (no gaps), so a short page == end-of-
+        // stream. `count` on the response is just `orders.length`,
+        // both checks agree.
+        if (data.orders.length < PAGE_SIZE) return ids;
+        if (page === MAX_PAGES - 1) {
+          log.warn("fetchAllOrderIds hit page cap — sweep may miss older rows", {
+            scannedRows: ids.size,
+            pageCap: MAX_PAGES,
+            pageSize: PAGE_SIZE,
+          });
+        }
+      }
     } catch {
       // Caller treats empty set as "skip this cycle".
     }
