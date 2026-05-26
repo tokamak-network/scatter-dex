@@ -429,13 +429,29 @@ export class PrivateOrderDB {
     // post-migration settles to count. GROUP_CONCAT keeps the SQL
     // BigInt-safe — SUM() would coerce to JS number and lose
     // precision for >2^53 totals (16 WETH at 18 decimals overflows).
+    //
+    // Each settlement contributes to BOTH tokens' throughput: the
+    // sell-token sees `sell_amount` leave the pool, the buy-token
+    // sees `buy_amount` come in. The prior shape only grouped the
+    // sell leg, which reported `USDC totalVolume: 0` on every
+    // ETH→USDC settle even though 4500 USDC actually moved (the
+    // /api/network/totals endpoint in shared-OB already does the
+    // same UNION via sumVolumeByToken at line 695). Union both
+    // legs so the per-token total reflects the trade's full notional.
     this.statsSettledVolume = this.db.prepare(
-      `SELECT sell_token,
+      `SELECT token,
               COUNT(*) AS count,
-              COALESCE(GROUP_CONCAT(sell_amount), '') AS amounts
-         FROM settlement_history
-        WHERE status = 'confirmed' AND sell_token IS NOT NULL
-        GROUP BY sell_token`,
+              COALESCE(GROUP_CONCAT(amount), '') AS amounts
+         FROM (
+           SELECT sell_token AS token, sell_amount AS amount
+             FROM settlement_history
+            WHERE status = 'confirmed' AND sell_token IS NOT NULL AND sell_amount IS NOT NULL
+           UNION ALL
+           SELECT buy_token  AS token, buy_amount  AS amount
+             FROM settlement_history
+            WHERE status = 'confirmed' AND buy_token IS NOT NULL AND buy_amount IS NOT NULL
+         )
+        GROUP BY token`,
     );
     this.upsertMeta = this.db.prepare(
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
