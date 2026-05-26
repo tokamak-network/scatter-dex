@@ -10,6 +10,7 @@ import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { formatWhen } from "../lib/format";
 import { parseUnits } from "../lib/parseUnits";
+import { DEMO_NETWORK } from "../lib/network";
 
 // "Expired" is a UI-derived bucket: `status === "matching"` AND the
 // settle deadline already passed. Not a real OrderStatus on disk.
@@ -79,7 +80,35 @@ function mulDisplay(a: string, b: string): string {
   }
 }
 
+/** Format a wei value into the same display string the rest of
+ *  this page uses (en-US locale, ≤6 fractional digits, trailing
+ *  zeros stripped). Avoids the `Number(formatUnits(...))` cast that
+ *  drops precision above ~0.009 ETH at 18 decimals. */
+function weiToDisplay(wei: bigint, decimals: number): string {
+  const base = 10n ** BigInt(decimals);
+  const whole = wei / base;
+  const remainder = wei % base;
+  if (remainder === 0n) return whole.toLocaleString("en-US");
+  // Render up to 6 fractional digits, then trim trailing zeros so a
+  // 1.5 ETH amount displays as "1.5" not "1.500000".
+  const fracDigits = Math.min(decimals, 6);
+  const scaled = remainder * 10n ** BigInt(fracDigits) / base;
+  const fracStr = scaled.toString().padStart(fracDigits, "0").replace(/0+$/, "");
+  if (!fracStr) return whole.toLocaleString("en-US");
+  return `${whole.toLocaleString("en-US")}.${fracStr}`;
+}
+
+function tokenDecimals(symbol: string): number {
+  return DEMO_NETWORK.tokens.find((t) => t.symbol === symbol)?.decimals ?? 18;
+}
+
 function sellDisplay(o: OrderRecord): string {
+  // Prefer the on-chain truth — the signed wei was persisted at
+  // submit time (PR #840). Falls back to the legacy size×price
+  // derivation for orders persisted before the field existed.
+  if (o.signedSellWei !== undefined) {
+    return weiToDisplay(o.signedSellWei, tokenDecimals(sellSymbol(o)));
+  }
   // Sell-side: size is in base, so sell amount = size in base units.
   // Buy-side: size is in base (what the user buys), so sell amount =
   // size × price in quote units.
@@ -87,6 +116,9 @@ function sellDisplay(o: OrderRecord): string {
 }
 
 function buyDisplay(o: OrderRecord): string {
+  if (o.signedBuyWei !== undefined) {
+    return weiToDisplay(o.signedBuyWei, tokenDecimals(buySymbol(o)));
+  }
   return o.side === "sell" ? mulDisplay(o.size, o.price) : o.size;
 }
 

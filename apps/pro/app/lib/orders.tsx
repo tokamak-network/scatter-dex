@@ -118,6 +118,17 @@ export interface OrderRecord {
    *  detail panel anchor PrivateClaim history queries off this tx
    *  instead of scanning from genesis. */
   settleTxHash?: string;
+  /** Exact signed sellAmount / buyAmount in wei. Optional for
+   *  backward compatibility with rows persisted before this field
+   *  existed. Lets the My orders Sell / Buy columns display the on-
+   *  chain truth (= what shared-OB shows) instead of re-deriving
+   *  from the `size × price` display strings — the size×price
+   *  round-trip drifts off the signed amount when Take Order
+   *  produced amounts that aren't clean multiples of the user-typed
+   *  price (e.g. taker fills a maker priced 6307.5 / 1.5 → signed
+   *  buy is 1.5 ETH exact, but display math renders 1.501185 ETH). */
+  signedSellWei?: bigint;
+  signedBuyWei?: bigint;
 }
 
 interface OrdersState {
@@ -200,6 +211,9 @@ export interface WireOrder {
     maxFeeBps: number;
   };
   createdAt: number;
+  settleTxHash?: string;
+  signedSellWeiHex?: string;
+  signedBuyWeiHex?: string;
 }
 
 function serializeClaim(c: OrderClaim): WireClaim {
@@ -246,6 +260,9 @@ export function serialize(o: OrderRecord): WireOrder {
     expiryHex: o.expiry !== undefined ? bigintToHex(o.expiry) : undefined,
     relayer: o.relayer,
     createdAt: o.createdAt,
+    settleTxHash: o.settleTxHash,
+    signedSellWeiHex: o.signedSellWei !== undefined ? bigintToHex(o.signedSellWei) : undefined,
+    signedBuyWeiHex: o.signedBuyWei !== undefined ? bigintToHex(o.signedBuyWei) : undefined,
   };
 }
 
@@ -276,6 +293,9 @@ export function deserialize(w: WireOrder): OrderRecord {
     expiry: w.expiryHex !== undefined ? BigInt(w.expiryHex) : undefined,
     relayer: w.relayer,
     createdAt: w.createdAt,
+    settleTxHash: w.settleTxHash,
+    signedSellWei: w.signedSellWeiHex !== undefined ? BigInt(w.signedSellWeiHex) : undefined,
+    signedBuyWei: w.signedBuyWeiHex !== undefined ? BigInt(w.signedBuyWeiHex) : undefined,
   };
 }
 

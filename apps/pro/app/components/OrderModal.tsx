@@ -726,6 +726,14 @@ export function OrderModal({
         claim: orderClaims[0],
         claims: orderClaims,
         changeCommitment: resolvedChangeCommitment,
+        // Persist the signed wei amounts so My orders can display
+        // the on-chain truth instead of re-deriving from size×price
+        // (which drifts when Take Order produced amounts whose
+        // implied price isn't a clean multiple of what the user
+        // typed). Set on both Take Order and fresh limit submissions
+        // — same field, same code path.
+        signedSellWei: sellAmount,
+        signedBuyWei: buyAmount,
       });
       // Pre-save the change note. Fire-and-forget — the order is
       // already on the book, so a local-storage hiccup must not
