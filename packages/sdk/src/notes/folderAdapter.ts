@@ -36,6 +36,14 @@ interface FolderAdapterOpts {
    *  doesn't match are skipped. Notes without a `chainId` (older
    *  files) pass through so legacy data stays visible. */
   chainId?: number;
+  /** Restrict reads to one wallet. Notes whose serialized `account`
+   *  doesn't match are skipped — keeps the same Documents/ workspace
+   *  reusable across multiple wallets without each one seeing every
+   *  other's funds. Lowercased before compare so a checksummed env
+   *  value still matches a lowercased-on-write file. Notes without
+   *  an `account` (pre-isolation files, hand-edited drops) pass
+   *  through so legacy data stays spendable. */
+  accountKey?: string;
 }
 
 interface FileShape {
@@ -48,6 +56,9 @@ interface FileShape {
   leafIndex: number;
   txHash?: string;
   chainId?: number;
+  /** Lowercased 0x-prefixed wallet address that wrote this note.
+   *  Optional — pre-isolation files don't have it. */
+  account?: string;
   createdAt: string | number;
   /** Reuses the SDK-wide hex shape so v1 records (missing pubKeys)
    *  type-check the same way they do on the IDB side. */
@@ -67,6 +78,10 @@ interface FileShape {
  *  `remove(id)` work across apps and keeps any caller-side dedup-by-
  *  id consistent regardless of which app produced the file. */
 export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStorageAdapter {
+  // Lowercase the wallet filter once at construction. The on-disk
+  // value is already lowercased on write, but callers commonly forward
+  // the EIP-55-checksummed address from useWallet() verbatim.
+  const accountFilter = opts.accountKey?.toLowerCase();
   let readyPromise: Promise<void> | null = null;
   // Filename cache populated by `loadAll` so `remove` doesn't have
   // to re-walk and re-parse the entire directory just to find the
@@ -125,6 +140,13 @@ export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStora
         if (opts.chainId !== undefined && note.chainId !== undefined && note.chainId !== opts.chainId) {
           continue;
         }
+        // Wallet isolation: a note tagged with another wallet stays
+        // hidden, since only that wallet's secret can spend it.
+        // `account === undefined` is treated as legacy / cross-wallet
+        // and stays visible (matches the chainId branch above).
+        if (accountFilter !== undefined && note.account !== undefined && note.account !== accountFilter) {
+          continue;
+        }
         rememberFilename(note.id, f.filename);
         const key = note.commitment.toString();
         const prev = byCommitment.get(key);
@@ -153,12 +175,21 @@ export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStora
       // leafIndex (e.g. two pending deposits at -1) don't collide.
       const idSuffix = note.id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12);
       const filename = `${NOTE_PREFIX}${note.leafIndex}-${Date.now()}-${idSuffix}.json`;
+      // Stamp the depositing wallet at write time so call sites
+      // (vaultProvider.add) don't each have to remember to plumb
+      // it through. `note.account` already set wins — leaves a door
+      // open for the rare cross-wallet share without forcing every
+      // caller to pass `account` explicitly.
+      const stamped: StoredNote =
+        note.account === undefined && accountFilter !== undefined
+          ? { ...note, account: accountFilter }
+          : note;
       // Write the new file *before* deleting any prior versions so a
       // mid-call failure leaves the data intact rather than wiping
       // a record that's no longer recoverable. The folder accepts
       // duplicate-by-commitment files (loadAll dedupes); cleanup is
       // a best-effort optimisation.
-      await saveFile(filename, JSON.stringify(serialize(note), null, 2));
+      await saveFile(filename, JSON.stringify(serialize(stamped), null, 2));
       const stale = filenamesById.get(note.id);
       filenamesById.set(note.id, [filename]);
       if (stale && stale.length > 0) {
@@ -231,6 +262,15 @@ export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStora
           ) {
             continue;
           }
+          // Mirror the loadAll scope so a cross-wallet `remove(id)`
+          // can't delete a file the connected wallet doesn't own.
+          if (
+            accountFilter !== undefined &&
+            note.account !== undefined &&
+            note.account !== accountFilter
+          ) {
+            continue;
+          }
           matches.push(f.filename);
         } catch {
           /* skip malformed */
@@ -279,6 +319,11 @@ function serialize(n: StoredNote): FileShape & { warning: string } {
     leafIndex: n.leafIndex,
     txHash: n.txHash,
     chainId: n.chainId,
+    // Persist the depositing wallet so future loads can isolate per
+    // account. Lowercased on the way in — the loadAll filter does
+    // the same to its options, but normalising both sides means a
+    // hand-edited file with checksum casing still matches.
+    account: n.account?.toLowerCase(),
     createdAt: new Date(n.createdAt).toISOString(),
     note: notePreimageToHex(n.note),
     warning: "Keep this file secret. Anyone with this data can withdraw your funds.",
@@ -314,6 +359,7 @@ function deserialize(parsed: FileShape): StoredNote {
     leafIndex: parsed.leafIndex,
     txHash: parsed.txHash,
     chainId: parsed.chainId,
+    account: parsed.account?.toLowerCase(),
     createdAt,
   };
 }

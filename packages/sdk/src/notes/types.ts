@@ -30,6 +30,17 @@ export interface StoredNote {
   /** Chain id this note belongs to — apps should only show notes for
    *  the active network. */
   chainId?: number;
+  /** Wallet address (lowercased, 0x-prefixed) that deposited this
+   *  note. Used so the escrow / vault UI only shows notes whose
+   *  spendable secret the connected wallet plausibly holds — without
+   *  it, every wallet sharing a workspace folder sees every other
+   *  wallet's notes and gets misleadingly Pending / Available chips
+   *  for funds it can't actually claim.
+   *
+   *  Optional: notes written before this field existed (and notes
+   *  the user explicitly wants visible across wallets) leave it
+   *  undefined and pass through any `accountKey` filter. */
+  account?: string;
   /** When the note was added (ms epoch). */
   createdAt: number;
 }

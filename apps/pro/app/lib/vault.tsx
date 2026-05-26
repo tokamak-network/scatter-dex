@@ -37,7 +37,11 @@ const { VaultProvider, useVault } = createVaultProvider({
     const { account } = useWallet();
     const accountKey = account?.toLowerCase() ?? "anon";
     return useMemo(
-      () => createFolderNoteAdapter({ chainId }),
+      // Pass the connected wallet through so the adapter both stamps
+      // `account` on writes and filters reads by it — without this,
+      // notes written under one wallet stay visible to every other
+      // wallet sharing the same notes folder.
+      () => createFolderNoteAdapter({ chainId, accountKey }),
       [chainId, currentId, accountKey],
     );
   },
