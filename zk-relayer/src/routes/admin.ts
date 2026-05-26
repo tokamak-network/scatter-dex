@@ -405,6 +405,59 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   // off-chain — this is the on-chain tuple the verifier asserts).
   // When a settlement reverts, the operator can compare these fields
   // against `last_error` to debug nullifier/commitment issues.
+  // GET /api/admin/authorize-orders/:nullifier — operator-only
+  // detail for one authorize order. Mirrors the public
+  // /api/authorize-orders/:nullifier reply but also exposes the
+  // EdDSA pubKey columns from the row, which the public route
+  // deliberately omits (they'd leak the trader identifier to any
+  // peer). Used by the operator drawer's Sender section for orders
+  // that didn't settle (cancelled / expired) — the history/by-tx
+  // path doesn't cover those because there's no settlement row to
+  // join the authorize-side processing against.
+  router.get("/authorize-orders/:nullifier", (req: Request, res: Response) => {
+    try {
+      const { nullifier } = req.params;
+      if (typeof nullifier !== "string" || nullifier.length === 0) {
+        res.status(400).json({ error: "nullifier required" });
+        return;
+      }
+      const row = db.getAuthorizeOrder(nullifier);
+      if (!row) {
+        res.status(404).json({ error: "authorize order not found" });
+        return;
+      }
+      // The raw orderJson column carries the exact body the trader
+      // POSTed (proof + publicSignals + pubKey). Parse it back to
+      // an object so the operator drawer's Show technical can dump
+      // it nicely — falling back to the raw string when JSON.parse
+      // fails so a corrupt blob still surfaces (operator can debug
+      // from the string form).
+      let parsedOrder: unknown = row.orderJson;
+      if (typeof row.orderJson === "string") {
+        try {
+          parsedOrder = JSON.parse(row.orderJson);
+        } catch {
+          parsedOrder = row.orderJson;
+        }
+      }
+      res.json({
+        nullifier: row.nullifier,
+        status: row.status,
+        submittedAt: row.submittedAt,
+        updatedAt: row.updatedAt,
+        attempt: row.attempt,
+        settleTx: row.settleTx ?? null,
+        lastError: row.lastError ?? null,
+        pubKeyAx: row.pubKeyAx ?? null,
+        pubKeyAy: row.pubKeyAy ?? null,
+        order: parsedOrder,
+      });
+    } catch (err) {
+      log.error("authorize-orders detail failed", { err: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: "Failed to load authorize order" });
+    }
+  });
+
   router.get("/orders/by-tx/:txHash/proof", async (req: Request, res: Response) => {
     try {
       const { txHash } = req.params;

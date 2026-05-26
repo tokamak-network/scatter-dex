@@ -545,43 +545,78 @@ function OrderDetailDrawer({
   // settle. Loaded together with the by-tx detail so the
   // recipients table populates as soon as the drawer is open.
   const [claims, setClaims] = useState<ClaimsByTxResponse | null>(null);
+  // Operator-side authorize_orders row keyed by offerHandle (=
+  // nullifier). Populates the Sender section for rows that never
+  // settled (cancelled / expired / open) — those don't have a
+  // settlement_history join, so the /history/by-tx detail above
+  // returns 404 and we can't get the pubKey through it.
+  const [authorize, setAuthorize] = useState<{
+    nullifier: string;
+    status: string;
+    pubKeyAx: string | null;
+    pubKeyAy: string | null;
+    order: unknown;
+  } | null>(null);
   const txHash = row?.txHash;
+  const fullId = row?.fullId;
   useEffect(() => {
-    if (!row || !txHash || !auth) {
+    if (!row || !auth) {
       setDetail(null);
       setDetailError(null);
       setClaims(null);
+      setAuthorize(null);
       return;
     }
     let cancelled = false;
     setDetail(null);
     setDetailError(null);
     setClaims(null);
-    // Fire both in parallel — they hit independent admin routes.
-    // Per-source errors are surfaced separately (the recipients
-    // table degrades gracefully when its fetch fails) so a flaky
-    // RPC doesn't blank the whole drawer.
-    adminGet<SettlementDetail>(auth, `/api/admin/history/by-tx/${txHash}`)
-      .then((d) => {
-        if (!cancelled) setDetail(d);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setDetailError(e instanceof Error ? e.message : String(e));
-        }
-      });
-    adminGet<ClaimsByTxResponse>(auth, `/api/admin/claims/by-tx/${txHash}`)
-      .then((c) => {
-        if (!cancelled) setClaims(c);
-      })
-      .catch(() => {
-        // Recipients table is best-effort — silently leave it null
-        // so the privacy-by-design note remains the fallback copy.
-      });
+    setAuthorize(null);
+    // Tx-keyed fetches only fire when the row carries a settle tx
+    // (settled / failed paths). Cancelled / expired / open rows
+    // don't have one — the authorize-orders lookup below covers
+    // those for the Sender section.
+    if (txHash) {
+      adminGet<SettlementDetail>(auth, `/api/admin/history/by-tx/${txHash}`)
+        .then((d) => {
+          if (!cancelled) setDetail(d);
+        })
+        .catch((e: unknown) => {
+          if (!cancelled) {
+            setDetailError(e instanceof Error ? e.message : String(e));
+          }
+        });
+      adminGet<ClaimsByTxResponse>(auth, `/api/admin/claims/by-tx/${txHash}`)
+        .then((c) => {
+          if (!cancelled) setClaims(c);
+        })
+        .catch(() => {
+          /* recipients table is best-effort */
+        });
+    }
+    // Authorize-row lookup uses the offerHandle (= nullifier) so it
+    // works for every status. 404 = the row isn't in this relayer's
+    // DB (it was routed by a peer), which we just surface as "no
+    // sender" rather than an error.
+    if (fullId) {
+      adminGet<{
+        nullifier: string;
+        status: string;
+        pubKeyAx: string | null;
+        pubKeyAy: string | null;
+        order: unknown;
+      }>(auth, `/api/admin/authorize-orders/${fullId}`)
+        .then((a) => {
+          if (!cancelled) setAuthorize(a);
+        })
+        .catch(() => {
+          /* leave null — operator might be viewing a peer's order */
+        });
+    }
     return () => {
       cancelled = true;
     };
-  }, [auth, row, txHash]);
+  }, [auth, row, txHash, fullId]);
   if (!row) return null;
   const sellInfo = row.sellToken ? tokenInfo(row.sellToken) : null;
   const buyInfo = row.buyToken ? tokenInfo(row.buyToken) : null;
@@ -662,43 +697,94 @@ function OrderDetailDrawer({
             )}
           </div>
 
-          {/* Sender — the trader who submitted the authorize proof.
-              Sourced from the relayer's own authorize_orders DB row
-              (admin-gated), not from shared-OB. Shared-OB
-              deliberately doesn't carry trader identifiers; only the
-              relayer that routed the order knows the pubKey. So
-              this section populates exclusively from
-              detail.processing[*].pub_key_ax — i.e. settled rows
-              from the operator's own DB. */}
-          {detail && detail.processing.length > 0 && (
+          {/* Sender — sourced from the relayer's own
+              authorize_orders DB row (admin-gated). Works for every
+              status (open / cancelled / expired / settled / failed)
+              as long as the row hasn't been purged. NOTE: terminal
+              rows (cancelled/expired/failed/settled) are pruned by
+              purgeAuthNonPending after a ~1h grace window — beyond
+              that the pubKey is no longer queryable, and this
+              section reads "row purged". */}
+          {authorize ? (
             <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-[11px]">
               <div className="mb-1 flex items-baseline justify-between">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
-                  Senders ({detail.processing.length})
+                  Sender
                 </span>
                 <span className="text-[10px] text-[var(--color-text-subtle)]">
-                  from authorize_orders.pub_key_ax
+                  from authorize_orders
                 </span>
+              </div>
+              <div className="mb-1">
+                <span className="text-[10px] text-[var(--color-text-muted)]">EdDSA pubKey Ax · </span>
+                <span className="break-all font-mono">{authorize.pubKeyAx ?? "—"}</span>
+              </div>
+              {authorize.pubKeyAy && (
+                <div className="mb-1">
+                  <span className="text-[10px] text-[var(--color-text-muted)]">EdDSA pubKey Ay · </span>
+                  <span className="break-all font-mono">{authorize.pubKeyAy}</span>
+                </div>
+              )}
+              <div className="mb-1">
+                <span className="text-[10px] text-[var(--color-text-muted)]">Nullifier · </span>
+                <span className="break-all font-mono">{authorize.nullifier}</span>
+              </div>
+              <div className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
+                Operator-only — the ETH wallet behind the pubKey
+                isn&apos;t bound into the proof. Same pubKey across
+                orders = same trader.
+              </div>
+            </div>
+          ) : detail && detail.processing.length > 0 ? (
+            <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-[11px]">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Senders ({detail.processing.length})
               </div>
               <ul className="space-y-1.5">
                 {detail.processing.map((o) => (
                   <li key={o.nullifier} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2">
                     <div>
-                      <span className="text-[10px] text-[var(--color-text-muted)]">EdDSA pubKey · </span>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">pubKey · </span>
                       <span className="break-all font-mono">{o.pub_key_ax ?? "—"}</span>
                     </div>
                     <div className="mt-0.5">
-                      <span className="text-[10px] text-[var(--color-text-muted)]">Nullifier · </span>
+                      <span className="text-[10px] text-[var(--color-text-muted)]">nullifier · </span>
                       <span className="break-all font-mono">{o.nullifier}</span>
                     </div>
                   </li>
                 ))}
               </ul>
-              <div className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-                Operator-only — the ETH wallet address behind the
-                pubKey isn&apos;t bound into the proof. Same pubKey
-                across orders = same trader.
+            </div>
+          ) : (
+            <div className="mx-5 mt-3 rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-4 py-3 text-[11px] text-[var(--color-text-muted)]">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Sender
               </div>
+              Sender row not in this relayer&apos;s authorize_orders
+              DB. Either the order was routed by a peer (your
+              relayer never saw the trader directly), or the row was
+              purged by the terminal-status retention sweep (~1h
+              grace after status flipped terminal).
+            </div>
+          )}
+
+          {/* Raw submitted order body — the full POST body the
+              trader sent to /api/authorize-orders, dumped from the
+              orderJson column. Gated by Show technical so the
+              default drawer stays readable. */}
+          {showTechnical && authorize?.order !== undefined && (
+            <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-[11px]">
+              <div className="mb-1 flex items-baseline justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                  Submitted order body
+                </span>
+                <span className="text-[10px] text-[var(--color-text-subtle)]">
+                  raw POST to /api/authorize-orders
+                </span>
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-[var(--color-surface)] p-3 font-mono text-[10px]">
+                {JSON.stringify(authorize.order, null, 2)}
+              </pre>
             </div>
           )}
 
