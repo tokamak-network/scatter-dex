@@ -8,6 +8,7 @@ import { formatExpiry } from "@zkscatter/sdk/util";
 import {
   SharedOrderbookClient,
   type SharedOrder,
+  type SharedOrderStatus,
   type SharedRelayer,
 } from "@zkscatter/sdk/orderbook";
 import { useActiveNetwork } from "../lib/activeNetwork";
@@ -19,6 +20,18 @@ const POLL_MS = 10_000;
 const EXPIRY_SOON_MS = 10 * 60_000;
 
 type ExpiryFilter = "all" | "active" | "soon";
+
+/** Lifecycle tabs above the table. `all` returns every status; the
+ *  others map 1:1 onto the backend's status filter. Order mirrors
+ *  My orders so the two pages read the same. */
+type StatusBucket = "all" | SharedOrderStatus;
+const STATUS_BUCKETS: Array<{ id: StatusBucket; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "open", label: "Open" },
+  { id: "matched", label: "Matched" },
+  { id: "cancelled", label: "Cancelled" },
+  { id: "expired", label: "Expired" },
+];
 
 /** Shared order book — every live order across every relayer, not
  *  just the ones the current wallet submitted. Renders as a flat
@@ -35,6 +48,7 @@ export default function SharedOrderbookPage() {
   const configured = !!url;
 
   const [orders, setOrders] = useState<SharedOrder[]>([]);
+  const [counts, setCounts] = useState<Partial<Record<SharedOrderStatus, number>>>({});
   const [relayers, setRelayers] = useState<SharedRelayer[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +56,7 @@ export default function SharedOrderbookPage() {
   const [pairFilter, setPairFilter] = useState<string>("all");
   const [relayerFilter, setRelayerFilter] = useState<string>("all");
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>("active");
+  const [statusBucket, setStatusBucket] = useState<StatusBucket>("open");
 
   // Mounted-flag guards setState against late callbacks after
   // unmount (e.g. user navigates away mid-fetch).
@@ -88,12 +103,18 @@ export default function SharedOrderbookPage() {
         // extra `.catch` — `Promise.all` only rejects when one
         // promise actually rejects, and a non-fatal relayer
         // fetch can't do that.
-        const [list, rels] = await Promise.all([
-          client.getOrders(),
+        // Use the new counts-aware endpoint so the bucket tab labels
+        // can show totals across all statuses. Passing the active
+        // `statusBucket` keeps server-side filtering in place; the
+        // separate `counts` map populates regardless of which bucket
+        // is selected.
+        const [payload, rels] = await Promise.all([
+          client.getOrdersWithCounts(500, statusBucket),
           client.getRelayers(),
         ]);
         if (stopped || cancelledRef.current) return;
-        setOrders(list);
+        setOrders(payload.orders);
+        setCounts(payload.counts);
         setRelayers(rels);
         setError(null);
         setLastUpdated(new Date());
@@ -111,7 +132,7 @@ export default function SharedOrderbookPage() {
       stopped = true;
       if (timerId !== null) clearTimeout(timerId);
     };
-  }, [configured, url]);
+  }, [configured, url, statusBucket]);
 
   // Build the pair-filter dropdown options from the actual order
   // set instead of the token list — that way the user only sees
@@ -227,6 +248,34 @@ export default function SharedOrderbookPage() {
         <StatCard label="Live orders" value={orders.length} />
         <StatCard label="Pairs" value={pairs.length} />
         <StatCard label="Status" value={loading ? "Refreshing…" : "Live"} />
+      </div>
+
+      {/* Status bucket tabs — drives the server-side filter and
+          carries per-status counts in the labels so the operator can
+          see at a glance how many cancelled / expired rows exist
+          without scrolling. Defaults to Open so the page still reads
+          as a live order ladder out of the box. */}
+      <div className="flex flex-wrap items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+        {STATUS_BUCKETS.map((b) => {
+          const active = b.id === statusBucket;
+          const count = b.id === "all"
+            ? Object.values(counts).reduce((a, c) => a + (c ?? 0), 0)
+            : counts[b.id] ?? 0;
+          return (
+            <button
+              key={b.id}
+              type="button"
+              onClick={() => setStatusBucket(b.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                active
+                  ? "bg-[var(--color-primary)] text-white"
+                  : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              {b.label} <span className="text-xs opacity-80">({count})</span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
