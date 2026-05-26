@@ -438,8 +438,14 @@ export class PrivateOrderDB {
     // /api/network/totals endpoint in shared-OB already does the
     // same UNION via sumVolumeByToken at line 695). Union both
     // legs so the per-token total reflects the trade's full notional.
+    // Outer column is aliased `sell_token` (not `token`) for backward
+    // compatibility with the `getSettledVolume()` consumer below, the
+    // `/api/relayer/stats` JSON shape it produces, and the Prometheus
+    // labels that depend on the field name. The "sell" in the alias
+    // is now a misnomer — the value can be a buy-leg token — but the
+    // wire contract is the load-bearing thing, not the name.
     this.statsSettledVolume = this.db.prepare(
-      `SELECT token,
+      `SELECT token AS sell_token,
               COUNT(*) AS count,
               COALESCE(GROUP_CONCAT(amount), '') AS amounts
          FROM (
