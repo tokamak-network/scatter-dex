@@ -78,6 +78,19 @@ export default function Workbench() {
     takeMode, setTakeMode,
   } = useTradeForm();
   const isTakeMode = takeMode !== null;
+  // Auto-release the Take Order lock if the user flips PairSelector
+  // or Side off the pair/side the prefill landed on. Without this,
+  // OrderModal would sign `takeMode.{sell,buy}Wei` against the
+  // current `pair`/`side` token mapping — a mismatch that would
+  // route the wei amounts to the wrong tokens on-chain. Effect
+  // settles in the next tick so the Take card briefly remains
+  // visible during the transition without flicker.
+  useEffect(() => {
+    if (!takeMode) return;
+    if (takeMode.pair !== pair.display || takeMode.side !== side) {
+      setTakeMode(null);
+    }
+  }, [takeMode, pair.display, side, setTakeMode]);
   const [orderOpen, setOrderOpen] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   // Orderbook starts hidden so the form gets the full middle width.
@@ -885,7 +898,9 @@ function TakeOrderPrefill({
   setSide: (s: "sell" | "buy") => void;
   setPrice: (p: string) => void;
   setSize: (s: string) => void;
-  setTakeMode: (mode: { sellWei: bigint; buyWei: bigint; takeId: string } | null) => void;
+  setTakeMode: (
+    mode: { sellWei: bigint; buyWei: bigint; takeId: string; pair: string; side: "sell" | "buy" } | null,
+  ) => void;
   onApplied: (sellSideSymbol: string, sellSideAmount: string) => void;
 }) {
   const search = useSearchParams();
@@ -911,31 +926,39 @@ function TakeOrderPrefill({
     }
     const baseSellDisplay = `${sellSymbol}/${buySymbol}`;
     const baseBuyDisplay = `${buySymbol}/${sellSymbol}`;
+    let resolvedPair: string | null = null;
+    let resolvedSide: "sell" | "buy" | null = null;
     if (findPair(baseSellDisplay)) {
       setPairBy(baseSellDisplay);
       setSide("sell");
       setSize(sellAmount);
       setPrice(formatPrice(buyNum / sellNum));
       onApplied(sellSymbol, sellAmount);
+      resolvedPair = baseSellDisplay;
+      resolvedSide = "sell";
     } else if (findPair(baseBuyDisplay)) {
       setPairBy(baseBuyDisplay);
       setSide("buy");
       setSize(buyAmount);
       setPrice(formatPrice(sellNum / buyNum));
       onApplied(sellSymbol, sellAmount);
+      resolvedPair = baseBuyDisplay;
+      resolvedSide = "buy";
     }
     // Lock the workbench into "Take mode" — the submit path uses
-    // these wei values verbatim, bypassing size×price composition
-    // (which would otherwise let display-string rounding drift the
-    // taker amounts off the maker's signed values and break the
-    // on-chain matching constraint). Price / Size inputs are hidden
-    // by the surrounding UI when takeMode is non-null.
-    if (exactSellWei && exactBuyWei) {
+    // these wei values verbatim, bypassing size×price composition.
+    // Stamp the pair + side we landed on so the workbench can
+    // auto-clear takeMode when the user flips PairSelector / Side
+    // off this combination (otherwise wei amounts would sign
+    // against the wrong tokens — Copilot-flagged on PR #840).
+    if (exactSellWei && exactBuyWei && resolvedPair && resolvedSide) {
       try {
         setTakeMode({
           sellWei: BigInt(exactSellWei),
           buyWei: BigInt(exactBuyWei),
           takeId,
+          pair: resolvedPair,
+          side: resolvedSide,
         });
       } catch {
         // Malformed wei string — fall back to size×price legacy path.

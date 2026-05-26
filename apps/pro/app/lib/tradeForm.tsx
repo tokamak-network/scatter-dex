@@ -96,6 +96,11 @@ interface TradeFormState {
     sellWei: bigint;
     buyWei: bigint;
     takeId: string;
+    /** Pair the prefill landed on. Workbench auto-clears takeMode
+     *  when the user flips PairSelector / Side off this combination
+     *  so a stale lock can't sign wei against the wrong token. */
+    pair: string;
+    side: "sell" | "buy";
   } | null;
   setTakeMode(mode: TradeFormState["takeMode"]): void;
 }
