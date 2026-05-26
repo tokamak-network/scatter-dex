@@ -9,6 +9,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { formatWhen } from "../lib/format";
+import { parseUnits } from "../lib/parseUnits";
 
 // "Expired" is a UI-derived bucket: `status === "matching"` AND the
 // settle deadline already passed. Not a real OrderStatus on disk.
@@ -49,20 +50,33 @@ function buySymbol(o: OrderRecord): string {
   return o.side === "sell" ? quote : base;
 }
 
-/** Multiply two decimal display strings while preserving precision
- *  the user typed. Falls back to Number math when either side parses
- *  as NaN — the row still renders something rather than blanking on
- *  a malformed legacy order. */
+/** Multiply two decimal display strings without dropping precision.
+ *  Routes through parseUnits at 8 fractional digits so an 18-decimal
+ *  token amount stays exact through `(price × size)` even when the
+ *  user typed a 6-place price and a 4-place size. Format with a
+ *  fixed `en-US` locale so SSR / CSR agree and a comma-decimal
+ *  locale on the client doesn't render `4.205,00` (which the form's
+ *  parsers wouldn't round-trip back). Returns "—" on parse failure
+ *  so a malformed legacy row still renders a placeholder rather
+ *  than blanking the cell. */
 function mulDisplay(a: string, b: string): string {
-  const cleanA = a.replace(/,/g, "");
-  const cleanB = b.replace(/,/g, "");
-  const na = Number(cleanA);
-  const nb = Number(cleanB);
-  if (!Number.isFinite(na) || !Number.isFinite(nb)) return "—";
-  const product = na * nb;
-  // Match the orderbook page's display rounding so a user who copies
-  // a value between surfaces sees the same number.
-  return product.toLocaleString(undefined, { maximumFractionDigits: 6 });
+  try {
+    const cleanA = a.replace(/,/g, "");
+    const cleanB = b.replace(/,/g, "");
+    const aUnits = parseUnits(cleanA, 8);
+    const bUnits = parseUnits(cleanB, 8);
+    // (a × b) carries 16 fractional digits in the BigInt; trim the
+    // lowest 10 (round-toward-zero) before formatting at 6 places.
+    const product = aUnits * bUnits;
+    const trim = product / 10n ** 10n;
+    const whole = trim / 10n ** 6n;
+    const frac = trim % 10n ** 6n;
+    const wholeStr = whole.toLocaleString("en-US");
+    const fracStr = frac.toString().padStart(6, "0").replace(/0+$/, "");
+    return fracStr ? `${wholeStr}.${fracStr}` : wholeStr;
+  } catch {
+    return "—";
+  }
 }
 
 function sellDisplay(o: OrderRecord): string {
