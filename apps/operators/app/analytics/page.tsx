@@ -2,14 +2,12 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { shortAddr } from "@zkscatter/sdk/react";
-import { formatTokenAmount } from "@zkscatter/sdk/util";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { SectionHeader } from "../components/SectionHeader";
 import { AdminConnectBar } from "../components/AdminConnectBar";
 import { Stat } from "../components/Stat";
-import { formatEth } from "../lib/adminUi";
 import { adminDownload, adminGet, readAdminAuth, type AdminAuth } from "../lib/adminApi";
+import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
 type Auth = AdminAuth | null;
 
@@ -53,39 +51,6 @@ const PERIODS = [
   { id: "90d", label: "90 days", ms: 90 * 24 * 3600_000, bucketMs: 24 * 3600_000 },
 ] as const;
 type PeriodId = (typeof PERIODS)[number]["id"];
-
-// Token registry parsed from NEXT_PUBLIC_TOKENS (`addr:symbol:decimals`
-// triples). Module-level since the env value is static for the page's
-// lifetime — every call would re-parse the same string otherwise.
-// Entries are trimmed so a string with spaces after commas (the form
-// every other env parser in the repo accepts) still keys cleanly.
-const TOKEN_REGISTRY = (() => {
-  const raw = process.env.NEXT_PUBLIC_TOKENS ?? "";
-  const map = new Map<string, { symbol: string; decimals: number }>();
-  for (const rawEntry of raw.split(",")) {
-    const entry = rawEntry.trim();
-    if (!entry) continue;
-    const [addr, symbol, decStr] = entry.split(":").map((s) => s.trim());
-    if (!addr || !symbol) continue;
-    map.set(addr.toLowerCase(), { symbol, decimals: Number(decStr) || 0 });
-  }
-  return map;
-})();
-
-function tokenInfo(addr: string): { symbol: string; decimals: number } {
-  return (
-    TOKEN_REGISTRY.get(addr.toLowerCase()) ?? { symbol: shortAddr(addr), decimals: 0 }
-  );
-}
-
-function formatAmount(wei: string, decimals: number): string {
-  if (!wei || wei === "0") return "0";
-  try {
-    return formatTokenAmount(BigInt(wei), decimals);
-  } catch {
-    return wei;
-  }
-}
 
 export default function AnalyticsPage() {
   const [auth, setAuth] = useState<Auth>(null);

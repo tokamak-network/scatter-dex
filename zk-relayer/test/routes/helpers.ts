@@ -49,6 +49,7 @@ type DbStub = {
   setMeta: (k: string, v: string) => void;
   getRelayerStats: () => { totalOrders: number; settledOrders: number; successRate: number; crossRelayerSettled: number; totalTradeOffers: number; settledTradeOffers: number; avgSettleTimeMs: number | null; uptimeSince: number | null };
   getSettledVolume: () => Array<{ sellToken: string; count: number; totalVolume: string }>;
+  getFeeTotals: (since?: number, until?: number) => Array<{ token: string; count: number; totalWei: string }>;
   getTradeOffers: (limit?: number, offset?: number) => unknown[];
   getPendingTxs: () => unknown[];
   loadPendingAuthorizeOrders: () => unknown[];
@@ -69,6 +70,7 @@ export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
       avgSettleTimeMs: 0, uptimeSince: Date.now(),
     }),
     getSettledVolume: () => [],
+    getFeeTotals: () => [],
     getTradeOffers: () => [],
     getPendingTxs: () => [],
     loadPendingAuthorizeOrders: () => [],

@@ -11,6 +11,7 @@ describe("/api/relayer", () => {
         crossRelayerSettled: 2, avgSettleTimeMs: 1500, uptimeSince: 123,
       }),
       getSettledVolume: () => [{ sellToken: "0xA", count: 3, totalVolume: "1000" }],
+      getFeeTotals: () => [{ token: "0xb", count: 5, totalWei: "33750000" }],
     });
     const app = mountRouter("/api/relayer",
       createRelayerStatsRoutes(db, makeSubmitterStub()));
@@ -19,6 +20,7 @@ describe("/api/relayer", () => {
     expect(res.body.totalOrders).toBe(12);
     expect(res.body.pendingOrders).toBe(0); // no authorize orders in this test env
     expect(res.body.settledVolume).toEqual([{ sellToken: "0xA", count: 3, totalVolume: "1000" }]);
+    expect(res.body.feeTotals).toEqual([{ token: "0xb", count: 5, totalWei: "33750000" }]);
     expect(res.body.metrics).toBeDefined();
   });
 

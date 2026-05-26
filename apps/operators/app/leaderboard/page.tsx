@@ -14,6 +14,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { DEMO_NETWORK } from "../lib/network";
 import { formatEther, formatIsoDate } from "../lib/format";
 import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
+import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
@@ -21,6 +22,112 @@ interface LeaderboardState {
   loading: boolean;
   rows: RelayerInfo[];
   error: string | null;
+}
+
+/** Ranking criteria the leaderboard lets the visitor pick from.
+ *  Each entry knows its display label, its sort direction's "better"
+ *  side, and a comparator that pulls the metric off a RankedRelayer.
+ *  Centralising the choices here (instead of one switch per use site)
+ *  keeps the table header arrow, the segmented control, and the
+ *  caption copy from drifting apart. */
+type RankCriterionId = "bond" | "fee" | "activity" | "revenue" | "success" | "speed";
+interface RankCriterion {
+  id: RankCriterionId;
+  label: string;
+  description: string;
+  /** Returns +1 / -1 / 0 to feed into Array.sort. Implementations
+   *  treat undefined metrics as worse than any defined value so an
+   *  offline relayer doesn't accidentally rank above a peer just
+   *  because its missing field reads as Infinity. */
+  compare: (a: RankedRelayer, b: RankedRelayer) => number;
+}
+
+// Treat undefined as worse than any defined number — peers without a
+// stats probe fall to the bottom in any "more is better" ranking
+// instead of getting a free pass to the top.
+function compareNullable(
+  a: number | null | undefined,
+  b: number | null | undefined,
+  desc: boolean,
+): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return desc ? b - a : a - b;
+}
+
+const RANK_CRITERIA: RankCriterion[] = [
+  {
+    id: "bond",
+    label: "Bond",
+    description: "Most skin-in-the-game first",
+    compare: (a, b) => {
+      if (a.bond !== b.bond) return b.bond > a.bond ? 1 : -1;
+      return a.fee - b.fee;
+    },
+  },
+  {
+    id: "fee",
+    label: "Fee",
+    description: "Cheapest per-trade fee first",
+    compare: (a, b) => {
+      if (a.fee !== b.fee) return a.fee - b.fee;
+      return b.bond > a.bond ? 1 : -1;
+    },
+  },
+  {
+    id: "activity",
+    label: "Activity",
+    description: "Most settled orders first",
+    compare: (a, b) =>
+      compareNullable(a.stats?.settledOrders, b.stats?.settledOrders, true),
+  },
+  {
+    id: "revenue",
+    label: "Revenue",
+    description: "Highest fee earned (top-token proxy — cross-token requires an oracle)",
+    compare: (a, b) =>
+      compareNullable(topFeeWeiNumeric(a), topFeeWeiNumeric(b), true),
+  },
+  {
+    id: "success",
+    label: "Success",
+    description: "Highest success rate first",
+    compare: (a, b) =>
+      compareNullable(a.stats?.successRate, b.stats?.successRate, true),
+  },
+  {
+    id: "speed",
+    label: "Speed",
+    description: "Lowest avg settle latency first",
+    compare: (a, b) =>
+      compareNullable(a.stats?.avgSettleTimeMs, b.stats?.avgSettleTimeMs, false),
+  },
+];
+
+function criterionById(id: RankCriterionId): RankCriterion {
+  return RANK_CRITERIA.find((c) => c.id === id) ?? RANK_CRITERIA[0];
+}
+
+/** Pick the highest per-token fee total for sort comparisons. Cross-
+ *  token revenue can't be summed without an oracle (1 USDC of fee
+ *  ≠ 1 WETH of fee), so the comparator ranks by each relayer's top
+ *  earning token. Returns a Number — sort comparators are scalar
+ *  and BigInt isn't subtraction-safe across them. Falls back to
+ *  undefined so undefined-as-worst behavior kicks in. The Number
+ *  cast loses precision above 2^53, which is fine for ranking
+ *  (the order is preserved; the exact wei doesn't matter). */
+function topFeeWeiNumeric(r: RankedRelayer): number | undefined {
+  const totals = r.stats?.feeTotals;
+  if (!totals || totals.length === 0) return undefined;
+  let max = 0n;
+  for (const t of totals) {
+    try {
+      const v = BigInt(t.totalWei);
+      if (v > max) max = v;
+    } catch { /* malformed row — skip */ }
+  }
+  return Number(max);
 }
 
 export default function LeaderboardPage() {
@@ -45,8 +152,13 @@ export default function LeaderboardPage() {
     return () => { cancelled = true; };
   }, [registryDeployed, readProvider]);
 
+  const [criterionId, setCriterionId] = useState<RankCriterionId>("bond");
+  const criterion = criterionById(criterionId);
   const accountLc = account?.toLowerCase() ?? null;
-  const ranked = useMemo(() => rankRelayers(state.rows), [state.rows]);
+  const ranked = useMemo(
+    () => rankRelayers(state.rows, criterion),
+    [state.rows, criterion],
+  );
   const placeholder = leaderboardPlaceholder(state, registryDeployed);
   const me = accountLc ? ranked.find((r) => r.address.toLowerCase() === accountLc) : undefined;
   const medianFeeBps = ranked.length > 0 ? medianBps(ranked.map((r) => r.fee)) : null;
@@ -57,8 +169,8 @@ export default function LeaderboardPage() {
         <div>
           <h1 className="text-2xl font-semibold">Leaderboard</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            Network-wide relayer ranking from the on-chain registry. Ranked by
-            bond posted (descending), per-trade fee as tiebreaker. Your relayer
+            Network-wide relayer ranking from the on-chain registry. Pick a
+            criterion below to re-sort — defaults to bond posted. Your relayer
             is highlighted.
           </p>
         </div>
@@ -93,13 +205,47 @@ export default function LeaderboardPage() {
       )}
 
       <section>
-        <SectionHeader title="Ranking" badge="live" />
-        <RelayerTable ranked={ranked} placeholder={placeholder} accountLc={accountLc} />
+        <SectionHeader
+          title="Ranking"
+          badge="live"
+          hint={criterion.description}
+        />
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+            Sort by
+          </span>
+          <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
+            {RANK_CRITERIA.map((c) => {
+              const active = c.id === criterionId;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setCriterionId(c.id)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                    active
+                      ? "bg-[var(--color-primary)] text-white"
+                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <RelayerTable
+          ranked={ranked}
+          placeholder={placeholder}
+          accountLc={accountLc}
+          activeCriterion={criterionId}
+        />
         <p className="mt-2 text-xs text-[var(--color-text-subtle)]">
           Status dot reflects a live <code className="font-mono">/api/info</code> probe. Settlement
-          counters and avg-settle latency come from each peer&apos;s public{" "}
+          counters, volume, and avg-settle latency come from each peer&apos;s public{" "}
           <code className="font-mono">/api/relayer/stats</code> — older builds without the endpoint
-          fall back to <code className="font-mono">—</code>.
+          fall back to <code className="font-mono">—</code>. Cross-token sort proxies (Activity)
+          rank by settlement count since amounts can&apos;t be compared without a price oracle.
         </p>
       </section>
     </div>
@@ -213,13 +359,20 @@ interface RankedRelayer extends RelayerInfo {
   displayName: string;
 }
 
-function rankRelayers(rows: RelayerInfo[]): RankedRelayer[] {
-  return [...rows]
-    .sort((a, b) => {
-      if (a.bond !== b.bond) return b.bond > a.bond ? 1 : -1;
-      return a.fee - b.fee;
-    })
-    .map((r, i) => ({ ...r, rank: i + 1, displayName: relayerDisplayName(r) }));
+function rankRelayers(
+  rows: RelayerInfo[],
+  criterion: RankCriterion,
+): RankedRelayer[] {
+  // Two-pass: project the per-row metadata first (display name, etc.)
+  // so the comparator works against a known-shape RankedRelayer and
+  // doesn't allocate fresh objects on every comparison.
+  const projected: RankedRelayer[] = rows.map((r) => ({
+    ...r,
+    rank: 0,
+    displayName: relayerDisplayName(r),
+  }));
+  projected.sort(criterion.compare);
+  return projected.map((r, i) => ({ ...r, rank: i + 1 }));
 }
 
 function relayerDisplayName(r: RelayerInfo): string {
@@ -249,17 +402,33 @@ function leaderboardPlaceholder(state: LeaderboardState, registryDeployed: boole
   return null;
 }
 
-const TABLE_COLUMNS = 9;
+const TABLE_COLUMNS = 11;
+
+// Map each sort criterion onto the column header it should highlight.
+// Centralised so the arrow indicator + the sort selector can't drift.
+const CRITERION_TO_COLUMN: Record<RankCriterionId, string> = {
+  bond: "bond",
+  fee: "fee",
+  activity: "settled",
+  revenue: "revenue",
+  success: "success",
+  speed: "speed",
+};
 
 function RelayerTable({
   ranked,
   placeholder,
   accountLc,
+  activeCriterion,
 }: {
   ranked: RankedRelayer[];
   placeholder: Placeholder | null;
   accountLc: string | null;
+  activeCriterion: RankCriterionId;
 }) {
+  const activeColumn = CRITERION_TO_COLUMN[activeCriterion];
+  const arrow = (col: string) =>
+    col === activeColumn ? <span aria-hidden> ↓</span> : null;
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <table className="w-full text-sm">
@@ -268,11 +437,13 @@ function RelayerTable({
             <th className="px-5 py-3 text-left">#</th>
             <th className="px-5 py-3 text-left">Relayer</th>
             <th className="px-5 py-3 text-left">Address</th>
-            <th className="px-5 py-3 text-right">Fee</th>
-            <th className="px-5 py-3 text-right">Bond</th>
-            <th className="px-5 py-3 text-right">Settled</th>
-            <th className="px-5 py-3 text-right">Success</th>
-            <th className="px-5 py-3 text-right">Avg settle</th>
+            <th className="px-5 py-3 text-right">Fee rate{arrow("fee")}</th>
+            <th className="px-5 py-3 text-right">Bond{arrow("bond")}</th>
+            <th className="px-5 py-3 text-right">Settled{arrow("settled")}</th>
+            <th className="px-5 py-3 text-right">Volume</th>
+            <th className="px-5 py-3 text-right">Revenue{arrow("revenue")}</th>
+            <th className="px-5 py-3 text-right">Success{arrow("success")}</th>
+            <th className="px-5 py-3 text-right">Avg settle{arrow("speed")}</th>
             <th className="px-5 py-3 text-right">Registered</th>
           </tr>
         </thead>
@@ -313,6 +484,8 @@ function RelayerRow({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
       <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
       <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
       <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
+      <VolumeCell row={row} />
+      <RevenueCell row={row} />
       <StatCell row={row} value={row.stats?.successRate} render={(n) => `${n}%`} />
       <StatCell
         row={row}
@@ -323,6 +496,98 @@ function RelayerRow({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
         {formatIsoDate(row.registeredAt)}
       </td>
     </tr>
+  );
+}
+
+/** Volume column. Cross-token aggregation has no meaningful single
+ *  number (1 WETH + 1 USDC ≠ 2), so render the peer's top sell-side
+ *  token by notional and tuck the full per-token breakdown into a
+ *  hover tooltip. Peers without a `settledVolume` field (older builds
+ *  or registry rows pre-migration) render the same offline `—` as
+ *  the surrounding StatCell columns, so the cell pattern stays
+ *  visually consistent with Settled/Success/Avg-settle. */
+function VolumeCell({ row }: { row: RankedRelayer }) {
+  const volumes = row.stats?.settledVolume ?? [];
+  const status = relayerStatsCellStatus(row, volumes.length > 0 ? 1 : undefined);
+  if (volumes.length === 0) {
+    const tone = status === "offline" ? "text-[var(--color-text-subtle)]" : "";
+    return (
+      <td className={`px-5 py-3 text-right font-mono ${tone}`} title={statsCellTitle(status)}>
+        —
+      </td>
+    );
+  }
+  // Pick the highest-volume entry as the "primary" — sums skip the
+  // entry's `count` and rank by notional so a sparsely-filled but
+  // huge-trade token reads correctly. Falls back to the first when
+  // every totalVolume parses to 0 (pre-migration rows on the peer).
+  const sorted = [...volumes].sort((a, b) => {
+    const av = safeBigInt(a.totalVolume);
+    const bv = safeBigInt(b.totalVolume);
+    if (av === bv) return 0;
+    return av > bv ? -1 : 1;
+  });
+  const top = sorted[0];
+  const info = tokenInfo(top.sellToken);
+  const breakdown = sorted
+    .map((v) => `${formatAmount(v.totalVolume, tokenInfo(v.sellToken).decimals)} ${tokenInfo(v.sellToken).symbol}`)
+    .join(" · ");
+  return (
+    <td className="px-5 py-3 text-right" title={breakdown}>
+      <span className="font-mono">{formatAmount(top.totalVolume, info.decimals)}</span>{" "}
+      <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
+      {sorted.length > 1 && (
+        <div className="text-[10px] text-[var(--color-text-subtle)]">
+          +{sorted.length - 1} more
+        </div>
+      )}
+    </td>
+  );
+}
+
+function safeBigInt(s: string): bigint {
+  try { return BigInt(s); } catch { return 0n; }
+}
+
+/** Revenue (per-token fee earned). Mirrors VolumeCell's shape — top
+ *  earning token rendered with tooltip breakdown — so the leaderboard
+ *  reads consistently across the two "what did this relayer route"
+ *  vs "what did it earn" columns. Cross-token sums aren't meaningful
+ *  without a price oracle, so we deliberately don't try to aggregate.
+ *  Falls back to the same offline `—` shape when the peer doesn't
+ *  expose feeTotals (older builds before this endpoint extension). */
+function RevenueCell({ row }: { row: RankedRelayer }) {
+  const totals = row.stats?.feeTotals ?? [];
+  const status = relayerStatsCellStatus(row, totals.length > 0 ? 1 : undefined);
+  if (totals.length === 0) {
+    const tone = status === "offline" ? "text-[var(--color-text-subtle)]" : "";
+    return (
+      <td className={`px-5 py-3 text-right font-mono ${tone}`} title={statsCellTitle(status)}>
+        —
+      </td>
+    );
+  }
+  const sorted = [...totals].sort((a, b) => {
+    const av = safeBigInt(a.totalWei);
+    const bv = safeBigInt(b.totalWei);
+    if (av === bv) return 0;
+    return av > bv ? -1 : 1;
+  });
+  const top = sorted[0];
+  const info = tokenInfo(top.token);
+  const breakdown = sorted
+    .map((t) => `${formatAmount(t.totalWei, tokenInfo(t.token).decimals)} ${tokenInfo(t.token).symbol}`)
+    .join(" · ");
+  return (
+    <td className="px-5 py-3 text-right" title={breakdown}>
+      <span className="font-mono">{formatAmount(top.totalWei, info.decimals)}</span>{" "}
+      <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
+      {sorted.length > 1 && (
+        <div className="text-[10px] text-[var(--color-text-subtle)]">
+          +{sorted.length - 1} more
+        </div>
+      )}
+    </td>
   );
 }
 
