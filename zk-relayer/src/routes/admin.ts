@@ -432,6 +432,106 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
   });
 
+  // GET /api/admin/claims/by-tx/:txHash — claimed recipients for a
+  // settled order. Decodes the settle calldata to recover the
+  // claimsRoot(s) bound at settle time, then queryFilters every
+  // PrivateClaim event keyed on those roots. Each emitted claim
+  // reveals one recipient + token + amount, so the operator's
+  // drawer can render a recipients table covering "everyone who has
+  // already claimed against this settle." Unclaimed recipients
+  // stay invisible (privacy by design — their leaf has never been
+  // spent on chain).
+  router.get("/claims/by-tx/:txHash", async (req: Request, res: Response) => {
+    try {
+      const { txHash } = req.params;
+      if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+        res.status(400).json({ error: "txHash must be a 0x-prefixed 32-byte hex string" });
+        return;
+      }
+      const provider = submitter.getProvider();
+      const tx = await provider.getTransaction(txHash);
+      if (!tx) {
+        res.status(404).json({ error: "Transaction not found on-chain" });
+        return;
+      }
+      const decoded = decodeSettlementCalldata(tx.data);
+      if (!decoded) {
+        res.status(400).json({ error: "settle calldata not decodable (unknown selector)" });
+        return;
+      }
+      // settleAuth carries maker + taker claimsRoots; scatterDirect /
+      // cancel carry one. Build the de-duplicated set so a settleAuth
+      // doesn't double-scan the same root.
+      const roots = new Set<string>();
+      if ("maker" in decoded && "taker" in decoded) {
+        roots.add(decoded.maker.claimsRoot);
+        roots.add(decoded.taker.claimsRoot);
+      } else if ("proof" in decoded) {
+        roots.add(decoded.proof.claimsRoot);
+      }
+      const settlementAddr = config.privateSettlementAddress;
+      // PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed
+      // nullifier, address indexed recipient, address token,
+      // uint256 amount). Filter by claimsRoot only — recipient is
+      // the unknown the caller wants to learn.
+      const iface = new (await import("ethers")).ethers.Interface([
+        "event PrivateClaim(bytes32 indexed claimsRoot, bytes32 indexed nullifier, address indexed recipient, address token, uint256 amount)",
+      ]);
+      const contract = new (await import("ethers")).ethers.Contract(
+        settlementAddr,
+        iface,
+        provider,
+      );
+      // Scan from genesis on local anvil; for a long-running chain
+      // this would need a `fromBlock` hint, but for the local dev
+      // anvil + small histories the cost is bounded.
+      const claims: Array<{
+        claimsRoot: string;
+        nullifier: string;
+        recipient: string;
+        token: string;
+        amount: string;
+        blockNumber: number;
+        txHash: string;
+      }> = [];
+      for (const root of roots) {
+        try {
+          const events = await contract.queryFilter(
+            contract.filters.PrivateClaim(root),
+            0,
+            "latest",
+          );
+          for (const e of events) {
+            const args = (e as { args?: { claimsRoot?: string; nullifier?: string; recipient?: string; token?: string; amount?: bigint } }).args;
+            if (!args) continue;
+            claims.push({
+              claimsRoot: String(args.claimsRoot ?? root),
+              nullifier: String(args.nullifier ?? ""),
+              recipient: String(args.recipient ?? ""),
+              token: String(args.token ?? ""),
+              amount: (args.amount ?? 0n).toString(),
+              blockNumber: e.blockNumber,
+              txHash: e.transactionHash,
+            });
+          }
+        } catch (err) {
+          log.warn("PrivateClaim queryFilter failed for root", {
+            root,
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      res.json({
+        txHash,
+        roots: [...roots],
+        claims,
+      });
+    } catch (err) {
+      log.error("claims/by-tx failed", { err: err instanceof Error ? err.message : String(err) });
+      res.status(500).json({ error: "Failed to load claims" });
+    }
+  });
+
   // GET /api/admin/history/buckets — time-bucketed performance data
   // for the SLA dashboard. Returns one entry per bucket with settled
   // / failed counts, average gas, and p50/p95/p99 latency over the

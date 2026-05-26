@@ -476,6 +476,20 @@ function OrdersBody({ auth }: { auth: Auth }) {
  *  Pro-specific `OrderRecord` (claims, EdDSA secrets, vault notes)
  *  that operators don't have; sharing source would have meant
  *  pushing operator-typed unions all the way through Pro's tree. */
+interface ClaimsByTxResponse {
+  txHash: string;
+  roots: string[];
+  claims: Array<{
+    claimsRoot: string;
+    nullifier: string;
+    recipient: string;
+    token: string;
+    amount: string;
+    blockNumber: number;
+    txHash: string;
+  }>;
+}
+
 interface SettlementDetail {
   settlement: {
     tx_hash: string;
@@ -526,16 +540,27 @@ function OrderDetailDrawer({
   // (admin auth required), so we gate the fetch on `auth`.
   const [detail, setDetail] = useState<SettlementDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  // PrivateClaim events filtered by this settle's claimsRoot(s) —
+  // each event is one recipient who has already claimed against the
+  // settle. Loaded together with the by-tx detail so the
+  // recipients table populates as soon as the drawer is open.
+  const [claims, setClaims] = useState<ClaimsByTxResponse | null>(null);
   const txHash = row?.txHash;
   useEffect(() => {
     if (!row || !txHash || !auth) {
       setDetail(null);
       setDetailError(null);
+      setClaims(null);
       return;
     }
     let cancelled = false;
     setDetail(null);
     setDetailError(null);
+    setClaims(null);
+    // Fire both in parallel — they hit independent admin routes.
+    // Per-source errors are surfaced separately (the recipients
+    // table degrades gracefully when its fetch fails) so a flaky
+    // RPC doesn't blank the whole drawer.
     adminGet<SettlementDetail>(auth, `/api/admin/history/by-tx/${txHash}`)
       .then((d) => {
         if (!cancelled) setDetail(d);
@@ -544,6 +569,14 @@ function OrderDetailDrawer({
         if (!cancelled) {
           setDetailError(e instanceof Error ? e.message : String(e));
         }
+      });
+    adminGet<ClaimsByTxResponse>(auth, `/api/admin/claims/by-tx/${txHash}`)
+      .then((c) => {
+        if (!cancelled) setClaims(c);
+      })
+      .catch(() => {
+        // Recipients table is best-effort — silently leave it null
+        // so the privacy-by-design note remains the fallback copy.
       });
     return () => {
       cancelled = true;
@@ -672,22 +705,22 @@ function OrderDetailDrawer({
             </div>
           )}
 
-          {/* Recipients table — operator side: per-row breakdown
-              isn't available because it lives behind the
-              claimsRoot (Poseidon hash of recipient leaves) that
-              the relayer never decodes. Pro's drawer has it
-              because Pro persists the unhashed claims locally at
-              order-submit time. */}
-          <div className="mx-5 mt-3 rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-4 py-3 text-xs text-[var(--color-text-muted)]">
-            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
-              Recipients
+          {/* Recipients — live PrivateClaim event queryFilter
+              against the settle's claimsRoot. Each event is one
+              recipient who has already claimed; unclaimed leaves
+              stay invisible (privacy by design). */}
+          {claims && claims.claims.length > 0 ? (
+            <ClaimedRecipientsTable claims={claims} />
+          ) : (
+            <div className="mx-5 mt-3 rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-4 py-3 text-xs text-[var(--color-text-muted)]">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Recipients
+              </div>
+              {claims
+                ? "No PrivateClaim events recorded for this settle's claimsRoot yet — recipients haven't claimed."
+                : "Each recipient's amount is bound into the order's claimsRoot (Poseidon hash). On-chain queryFilter populates this section once they claim — unclaimed leaves stay private."}
             </div>
-            Per-recipient amounts are bound into the order&apos;s
-            <code className="mx-1 font-mono">claimsRoot</code> (Poseidon
-            hash) and are not visible to relayers / observers —
-            privacy by design. The order submitter sees them in
-            Pro&apos;s drawer.
-          </div>
+          )}
 
           {/* Surface the detail-fetch error when one occurs (e.g.
               admin session expired, peer offline). Doesn't block
@@ -763,6 +796,64 @@ function OrderDetailDrawer({
           )}
         </section>
       </aside>
+    </div>
+  );
+}
+
+/** Recipients table populated from on-chain `PrivateClaim` events
+ *  filtered by the settle's claimsRoot. Each row is one recipient
+ *  who has already claimed; the table is empty (with an explanatory
+ *  note above it) when nobody has claimed yet. No DB indexing — the
+ *  relayer's provider runs `queryFilter` live on each request. */
+function ClaimedRecipientsTable({
+  claims,
+}: {
+  claims: ClaimsByTxResponse;
+}) {
+  return (
+    <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+      <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-4 py-2">
+        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Claimed recipients ({claims.claims.length})
+        </h3>
+        <span className="text-[10px] text-[var(--color-text-subtle)]">
+          live on-chain PrivateClaim events
+        </span>
+      </div>
+      <table className="w-full text-xs">
+        <thead className="bg-[var(--color-surface)] text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-4 py-2 text-left">#</th>
+            <th className="px-4 py-2 text-left">Recipient</th>
+            <th className="px-4 py-2 text-right">Amount</th>
+            <th className="px-4 py-2 text-right">Claim block</th>
+          </tr>
+        </thead>
+        <tbody>
+          {claims.claims.map((c, i) => {
+            const info = tokenInfo(c.token);
+            return (
+              <tr key={c.nullifier} className="border-t border-[var(--color-border)]">
+                <td className="px-4 py-2 font-mono">{i + 1}</td>
+                <td className="px-4 py-2 font-mono text-[10px]" title={c.recipient}>
+                  {shortAddr(c.recipient)}
+                </td>
+                <td className="px-4 py-2 text-right">
+                  <span className="font-mono">
+                    {formatAmount(c.amount, info.decimals)}
+                  </span>{" "}
+                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                    {info.symbol}
+                  </span>
+                </td>
+                <td className="px-4 py-2 text-right text-[10px] text-[var(--color-text-muted)]">
+                  #{c.blockNumber}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
