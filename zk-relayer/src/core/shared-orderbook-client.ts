@@ -288,6 +288,12 @@ export class SharedOrderbookClient {
         body,
       });
       if (res.ok) {
+        // A successful post is evidence the server is reachable —
+        // flip serverOnline back on so the next regular publish
+        // doesn't keep routing through the empty-peer P2P fallback
+        // until heartbeat catches up. Without this the self-healing
+        // sweep silently masks a stuck offline flag.
+        this.serverOnline = true;
         const data = await res.json() as { id: string };
         return data.id;
       }
@@ -386,6 +392,40 @@ export class SharedOrderbookClient {
         err: err instanceof Error ? err.message : "unknown",
       });
     }
+  }
+
+  /** Republish a single accepted local order. Used by the periodic
+   *  self-healing sweep in index.ts when an authorize_orders row that
+   *  should be in the shared OB is missing — e.g. because the original
+   *  postOrder silently fell through to a P2P broadcast with zero
+   *  peers, or because shared-OB rejected the URL once and serverOnline
+   *  is now stuck false. Force-tries the server path even if
+   *  serverOnline is false; if the server is reachable the request
+   *  itself flips serverOnline back to true. */
+  async forcePostOrderToServer(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
+    // postOrderToServer reads serverOnline only via its parent
+    // postOrder(); calling it directly bypasses the gate. Its catch
+    // block already manages serverOnline on its own outcome.
+    const result = await this.postOrderToServer(order);
+    if (result !== null) {
+      log.info("Republished missing order", { id: order.id });
+    }
+    return result;
+  }
+
+  /** Cheap query for the periodic resync — returns the set of order
+   *  ids currently held by the shared-OB across all statuses. */
+  async fetchAllOrderIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    try {
+      const res = await fetch(`${this.serverUrl}/api/orders?status=all&limit=500`);
+      if (!res.ok) return ids;
+      const data = await res.json() as { orders: Array<{ id: string }> };
+      for (const o of data.orders) ids.add(o.id.toLowerCase());
+    } catch {
+      // Caller treats empty set as "skip this cycle".
+    }
+    return ids;
   }
 
   /** Fetch all open orders from server (initial sync or periodic refresh) */

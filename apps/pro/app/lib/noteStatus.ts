@@ -38,6 +38,15 @@ export interface NoteStatusInfo {
   /** When `status === "locked"`, the open order pinning this note.
    *  Undefined for the other states. */
   lockedByOrder?: OrderRecord;
+  /** True when the note classifies as `available` *only because* its
+   *  pinning order is matching+expired and we released the lock. The
+   *  on-chain commitment is still bound until cancelPrivate or
+   *  withdraw burns the nullifier — so the escrow page can Withdraw
+   *  it (single-use spend), but the workbench's funding picker must
+   *  refuse it (a new order would share the escrowNullifier with the
+   *  zombie one and the first cancel would burn both: the
+   *  ord-1/ord-2 regression). */
+  recoverableExpired?: boolean;
   /** When `status === "pending"` AND the note is the residual of a
    *  not-yet-settled order, the order it came from. Undefined for
    *  ordinary fresh-deposit pendings (no parent order). Surfaced
@@ -81,6 +90,10 @@ interface OrderIndex {
    *  so the locked/pending branches stay O(1) lookups without
    *  re-checking expiry per note. */
   expiredMatchingByChangeCommitment: Map<bigint, OrderRecord>;
+  /** noteIds whose locking matching order has expired. Surfaced via
+   *  `recoverableExpired` so the workbench picker can exclude them
+   *  while the escrow page still lets the user withdraw. */
+  recoverableNoteIds: Set<string>;
 }
 
 function buildOrderIndex(
@@ -90,6 +103,7 @@ function buildOrderIndex(
   const byNoteId = new Map<string, OrderRecord>();
   const byChangeCommitment = new Map<bigint, OrderRecord>();
   const expiredMatchingByChangeCommitment = new Map<bigint, OrderRecord>();
+  const recoverableNoteIds = new Set<string>();
   for (const o of orders) {
     if (!OPEN_STATUSES.has(o.status)) continue;
     // Matching orders past their expiry KEEP pinning their funding
@@ -110,30 +124,36 @@ function buildOrderIndex(
     // land — the parent can't settle past expiry). Don't `continue`:
     // the funding noteId still needs to land in `byNoteId` below
     // so it reads as Locked.
+    // Matching orders past their circuit expiry release their lock:
+    // settle is blocked on-chain (SettleVerifyLib.sol:147), so the
+    // funding note is recoverable via Withdraw and the change
+    // commitment is a phantom that will never land. Record the
+    // change under `expiredMatchingByChangeCommitment` so a
+    // `leafIndex < 0` residual classifies as `discarded` (auto-hide
+    // candidate) instead of staying as indefinite Pending. The
+    // funding note is intentionally NOT added to `byNoteId` so it
+    // falls through to `available` in classifyAgainstIndex.
     const isExpiredMatching = o.status === "matching" && isOrderExpired(o, nowMs);
-    if (isExpiredMatching && o.changeCommitment !== undefined) {
-      expiredMatchingByChangeCommitment.set(o.changeCommitment, o);
+    if (isExpiredMatching) {
+      if (o.changeCommitment !== undefined) {
+        expiredMatchingByChangeCommitment.set(o.changeCommitment, o);
+      }
+      if (o.noteId !== undefined) {
+        recoverableNoteIds.add(o.noteId);
+      }
+      continue;
     }
-    // First-writer-wins on every collision so the index preserves
-    // the linear-scan semantics callers had before this refactor
-    // (the deriveNoteStatus regression test guards against the
-    // last-writer-wins shape Map gives by default).
     if (o.noteId !== undefined && !byNoteId.has(o.noteId)) {
       byNoteId.set(o.noteId, o);
     }
-    // The change commitment goes into the OPEN byChangeCommitment
-    // only for not-yet-expired orders — expired residuals belong to
-    // the discarded index above so classifyAgainstIndex tags them
-    // accordingly instead of as still-pending.
     if (
-      !isExpiredMatching &&
       o.changeCommitment !== undefined &&
       !byChangeCommitment.has(o.changeCommitment)
     ) {
       byChangeCommitment.set(o.changeCommitment, o);
     }
   }
-  return { byNoteId, byChangeCommitment, expiredMatchingByChangeCommitment };
+  return { byNoteId, byChangeCommitment, expiredMatchingByChangeCommitment, recoverableNoteIds };
 }
 
 /** Pure classifier — no React, no side effects. One-shot calls
@@ -186,6 +206,9 @@ function classifyAgainstIndex(
   }
   const lockedBy = index.byNoteId.get(note.id);
   if (lockedBy) return { status: "locked", lockedByOrder: lockedBy };
+  if (index.recoverableNoteIds.has(note.id)) {
+    return { status: "available", recoverableExpired: true };
+  }
   return { status: "available" };
 }
 

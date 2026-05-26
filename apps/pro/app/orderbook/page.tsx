@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ethers } from "ethers";
 import { EmptyState } from "@zkscatter/ui";
 import { shortAddr } from "@zkscatter/sdk/react";
@@ -28,7 +29,7 @@ type ExpiryFilter = "all" | "active" | "soon";
 type StatusBucket = "all" | SharedOrderStatus;
 const STATUS_BUCKETS: Array<{ id: StatusBucket; label: string }> = [
   { id: "all", label: "All" },
-  { id: "open", label: "Open" },
+  { id: "open", label: "Matching" },
   { id: "matched", label: "Matched" },
   { id: "cancelled", label: "Cancelled" },
   { id: "expired", label: "Expired" },
@@ -76,6 +77,35 @@ export default function SharedOrderbookPage() {
   }, [network.tokens]);
 
   const resolveToken = (addr: string) => tokenByAddr[addr.toLowerCase()];
+
+  const router = useRouter();
+
+  /** Build a /app URL pre-filled with a counter limit order that
+   *  would match the given maker order. Mirrors the legacy
+   *  frontend/trade/orderbook Take pattern: taker flips the maker's
+   *  signed amounts 1:1 — the matcher just checks
+   *  `counterpartySell >= buyAmount` under the per-side fee model,
+   *  so a same-amount counter is always a valid fill. Workbench
+   *  reads the params via useSearchParams and seeds the form. */
+  const takeOrder = (o: SharedOrder) => {
+    const sellTok = resolveToken(o.buyToken);   // taker sells what maker buys
+    const buyTok = resolveToken(o.sellToken);   // taker buys what maker sells
+    if (!sellTok || !buyTok) {
+      window.alert("Cannot take order: one of the tokens is not in this network's token list.");
+      return;
+    }
+    const sellAmt = ethers.formatUnits(o.buyAmount, sellTok.decimals);
+    const buyAmt = ethers.formatUnits(o.sellAmount, buyTok.decimals);
+    const params = new URLSearchParams({
+      sellSymbol: sellTok.symbol,
+      buySymbol: buyTok.symbol,
+      sellAmount: sellAmt,
+      buyAmount: buyAmt,
+      maxFee: String(o.maxFee),
+      takeId: o.id,
+    });
+    router.push(`/app?${params.toString()}`);
+  };
 
   // Poll the shared backend so the page stays current without a
   // manual refresh. Use a *self-rescheduling* `setTimeout` chain
@@ -428,12 +458,13 @@ export default function SharedOrderbookPage() {
               <th className="px-4 py-3 text-right">Max fee</th>
               <th className="px-4 py-3 text-right">Expiry</th>
               <th className="px-4 py-3 text-left">Relayer</th>
+              <th className="px-4 py-3 text-right">Action</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-12 text-center text-sm text-[var(--color-text-muted)]">
+                <td colSpan={8} className="px-4 py-12 text-center text-sm text-[var(--color-text-muted)]">
                   {loading ? "Loading…" : "No live orders. Place one to publish to the shared book."}
                 </td>
               </tr>
@@ -500,6 +531,20 @@ export default function SharedOrderbookPage() {
                         return <span className="font-mono">{shortAddr(o.relayer)}</span>;
                       })()}
                     </td>
+                    <td className="px-4 py-3 text-right">
+                      {(o.status ?? "open") === "open" ? (
+                        <button
+                          type="button"
+                          onClick={() => takeOrder(o)}
+                          className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary)] hover:text-white"
+                          title="Open the workbench with a counter limit order pre-filled to match this one"
+                        >
+                          Take Order
+                        </button>
+                      ) : (
+                        <span className="text-xs text-[var(--color-text-subtle)]">—</span>
+                      )}
+                    </td>
                   </tr>
                 );
               })
@@ -536,7 +581,7 @@ function StatusPill({ status }: { status: SharedOrderStatus }) {
         : "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${tone}`}>
-      {status}
+      {status === "open" ? "matching" : status}
     </span>
   );
 }

@@ -428,6 +428,19 @@ export function createAuthorizeOrderRoutes(
           minFillAmount: ps.buyAmount,
           maxFee: Number(ps.maxFee),
           expiry: Number(ps.expiry),
+        }).then((id) => {
+          // Surface the path that was taken so a silent
+          // server→P2P fallback (which used to vanish without a
+          // trace when there were zero peers) is at least visible
+          // in the log. The periodic sweep in index.ts is the
+          // load-bearing recovery; this is the breadcrumb.
+          if (id) {
+            log.debug("shared-OB publish queued", { id, handle: offerHandle.slice(0, 18) });
+          } else {
+            log.warn("shared-OB publish returned null — periodic resync will retry", {
+              handle: offerHandle.slice(0, 18),
+            });
+          }
         }).catch((err) => {
           log.warn("shared-OB publish failed", {
             err: err instanceof Error ? err.message : String(err),

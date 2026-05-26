@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { SharedOrder } from "@zkscatter/sdk/orderbook";
 import { Button, EmptyState, Field } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
@@ -29,6 +29,7 @@ import { applyFeeBig } from "../lib/fee";
 import { parseUnits } from "../lib/parseUnits";
 import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
 import { deriveAutoSettle } from "../lib/autoSettle";
+import { findPair } from "@zkscatter/sdk";
 
 interface RowData {
   price: string;
@@ -71,7 +72,7 @@ function projectOrderbook(
 export default function Workbench() {
   const router = useRouter();
   const {
-    pair, side, setSide, price, setPrice, size, setSize,
+    pair, side, setSide, price, setPrice, size, setSize, setPairBy,
     recipients, resetRecipients, bulkClaimFrom, setBulkClaimFrom,
   } = useTradeForm();
   const [orderOpen, setOrderOpen] = useState(false);
@@ -113,7 +114,16 @@ export default function Workbench() {
   // change residual awaiting settle) are filtered out so the user
   // can't pick a note the prover would reject.
   const fundableNotes = useMemo(
-    () => notes.filter((n) => deriveNoteStatus(n, orders).status === "available"),
+    () => notes.filter((n) => {
+      const info = deriveNoteStatus(n, orders);
+      // `recoverableExpired` notes classify as `available` so the
+      // escrow page can withdraw them, but reusing one to fund a
+      // new order would share an escrowNullifier with the still-
+      // matching expired order and the first cancelPrivate would
+      // burn both (ord-1/ord-2 zombie regression). Withdraw first,
+      // re-deposit, then fund.
+      return info.status === "available" && !info.recoverableExpired;
+    }),
     [notes, orders],
   );
 
@@ -324,6 +334,14 @@ export default function Workbench() {
 
   return (
     <div className="space-y-6">
+      <Suspense fallback={null}>
+        <TakeOrderPrefill
+          setPairBy={setPairBy}
+          setSide={setSide}
+          setPrice={setPrice}
+          setSize={setSize}
+        />
+      </Suspense>
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-semibold">Workbench</h1>
@@ -766,3 +784,73 @@ function OrderbookStatus({
   return <span className="text-[var(--color-success)]">Live</span>;
 }
 
+
+/** Reads the ?sellSymbol/?buySymbol/?sellAmount/?buyAmount URL
+ *  params produced by the Shared Orderbook page's Take button and
+ *  seeds the trade form to match a taker counter-order. Resolves the
+ *  pair by checking which whitelisted display contains both symbols,
+ *  picks side="sell" when the taker's sellSymbol is the pair's base.
+ *  Runs once per `takeId` so navigating away and back to a stale URL
+ *  doesn't re-clobber edits the user has since made. */
+function TakeOrderPrefill({
+  setPairBy,
+  setSide,
+  setPrice,
+  setSize,
+}: {
+  setPairBy: (display: string) => void;
+  setSide: (s: "sell" | "buy") => void;
+  setPrice: (p: string) => void;
+  setSize: (s: string) => void;
+}) {
+  const search = useSearchParams();
+  const applied = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!search) return;
+    const takeId = search.get("takeId");
+    if (!takeId || applied.current === takeId) return;
+    const sellSymbol = search.get("sellSymbol");
+    const buySymbol = search.get("buySymbol");
+    const sellAmount = search.get("sellAmount");
+    const buyAmount = search.get("buyAmount");
+    if (!sellSymbol || !buySymbol || !sellAmount || !buyAmount) return;
+
+    // Pair display in this app is "BASE/QUOTE". Find the whitelisted
+    // entry whose base+quote set matches {sell, buy} symbols. The
+    // matched orientation tells us whether the taker is selling the
+    // pair's base (side="sell") or its quote (side="buy").
+    const sellNum = Number(sellAmount);
+    const buyNum = Number(buyAmount);
+    if (!Number.isFinite(sellNum) || !Number.isFinite(buyNum) || sellNum <= 0 || buyNum <= 0) {
+      applied.current = takeId;
+      return;
+    }
+    const baseSellDisplay = `${sellSymbol}/${buySymbol}`;
+    const baseBuyDisplay = `${buySymbol}/${sellSymbol}`;
+    if (findPair(baseSellDisplay)) {
+      setPairBy(baseSellDisplay);
+      setSide("sell");
+      setSize(sellAmount);
+      setPrice(formatPrice(buyNum / sellNum));
+    } else if (findPair(baseBuyDisplay)) {
+      setPairBy(baseBuyDisplay);
+      setSide("buy");
+      setSize(buyAmount);
+      setPrice(formatPrice(sellNum / buyNum));
+    }
+    applied.current = takeId;
+  }, [search, setPairBy, setSide, setPrice, setSize]);
+
+  return null;
+}
+
+/** Format the prefilled price into the workbench's input style
+ *  (thousands separator, up to 6 fractional digits, trim trailing
+ *  zeros). Matches the manual-entry parser used by OrderModal so a
+ *  prefill round-trips cleanly through the submit path. */
+function formatPrice(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const s = n.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  return s;
+}

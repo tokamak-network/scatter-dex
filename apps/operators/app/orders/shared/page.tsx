@@ -33,14 +33,24 @@ interface RelayerNameEntry {
   address: string;  // checksum address from /api/info, used to key the map
 }
 
-type Bucket = "all" | SharedOrderStatus;
+// Visual parity with operator My orders (`/orders`). The shared OB
+// backend only tracks the four `SharedOrderStatus` values, so
+// `settled` and `failed` are display-only stubs that always render
+// `(0)` here — they exist on My orders because those are post-
+// on-chain local-relayer states the shared book doesn't see.
+type Bucket = "all" | SharedOrderStatus | "settled" | "failed";
 const BUCKETS: Array<{ id: Bucket; label: string }> = [
   { id: "all", label: "All" },
-  { id: "open", label: "Open" },
+  { id: "open", label: "Matching" },
   { id: "matched", label: "Matched" },
   { id: "cancelled", label: "Cancelled" },
   { id: "expired", label: "Expired" },
+  { id: "settled", label: "Settled" },
+  { id: "failed", label: "Failed" },
 ];
+const BACKEND_BUCKETS: ReadonlySet<Bucket> = new Set([
+  "all", "open", "matched", "cancelled", "expired",
+]);
 
 export default function SharedOrdersPage() {
   const url = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "";
@@ -76,7 +86,11 @@ export default function SharedOrdersPage() {
     // server-side — the counts in the response always cover every
     // bucket so the tab labels stay accurate regardless of the active
     // filter.
-    Promise.all([client.isOnline(), client.getOrdersWithCounts(500, bucket)])
+    // The display-only `settled`/`failed` buckets aren't backend
+    // statuses; fetch with `all` so counts stay accurate, then the
+    // empty-state branch below renders for the local stubs.
+    const fetchBucket = BACKEND_BUCKETS.has(bucket) ? bucket : "all";
+    Promise.all([client.isOnline(), client.getOrdersWithCounts(500, fetchBucket as SharedOrderStatus | "all")])
       .then(([online, payload]) => {
         if (cancelled) return;
         if (!online) {
@@ -169,9 +183,12 @@ export default function SharedOrdersPage() {
       <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
         {BUCKETS.map((b) => {
           const active = b.id === bucket;
+          // Display-only stubs always read 0 — see BUCKETS comment.
           const count = b.id === "all"
             ? Object.values(state.counts).reduce((a, c) => a + (c ?? 0), 0)
-            : state.counts[b.id] ?? undefined;
+            : BACKEND_BUCKETS.has(b.id)
+              ? state.counts[b.id as SharedOrderStatus] ?? undefined
+              : 0;
           return (
             <button
               key={b.id}
@@ -193,21 +210,32 @@ export default function SharedOrdersPage() {
       </div>
 
       <section>
-        <SectionHeader
-          title={`${state.orders.length} ${bucket === "all" ? "order" : bucket}${state.orders.length === 1 ? "" : "s"}`}
-          badge={state.loading ? "loading" : "live"}
-        />
-        {state.error && (
-          <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-3 text-xs text-[var(--color-danger)]">
-            {state.error}
-          </div>
-        )}
-        {!state.error && state.orders.length === 0 && !state.loading && (
+        {/* Display-only buckets render an explanatory empty state
+            rather than the full table — the data behind them lives in
+            the operator's own /orders page, not in shared-OB. */}
+        {!BACKEND_BUCKETS.has(bucket) ? (
           <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
-            No open orders in the shared orderbook.
+            The shared orderbook only tracks open / matched / cancelled /
+            expired. <Link href="/orders" className="text-[var(--color-primary)] hover:underline">My orders</Link> shows {bucket} rows
+            from this relayer's local settlement records.
           </div>
-        )}
-        {state.orders.length > 0 && (
+        ) : (
+          <>
+            <SectionHeader
+              title={`${state.orders.length} ${bucket === "all" ? "order" : bucket}${state.orders.length === 1 ? "" : "s"}`}
+              badge={state.loading ? "loading" : "live"}
+            />
+            {state.error && (
+              <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-3 text-xs text-[var(--color-danger)]">
+                {state.error}
+              </div>
+            )}
+            {!state.error && state.orders.length === 0 && !state.loading && (
+              <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
+                No open orders in the shared orderbook.
+              </div>
+            )}
+            {state.orders.length > 0 && (
           <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
             <table className="w-full text-sm">
               <thead className="bg-[var(--color-bg)] text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
@@ -273,6 +301,8 @@ export default function SharedOrdersPage() {
             </table>
           </div>
         )}
+          </>
+        )}
       </section>
 
       <p className="text-xs text-[var(--color-text-subtle)]">
@@ -302,7 +332,7 @@ function StatusPill({
         className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]"
         title="Server still has the row as open but its expiry has passed — relayer sweep hasn't reconciled yet."
       >
-        Open · expired
+        Matching · expired
       </span>
     );
   }
@@ -314,7 +344,7 @@ function StatusPill({
         : "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${tone}`}>
-      {status}
+      {status === "open" ? "matching" : status}
     </span>
   );
 }
