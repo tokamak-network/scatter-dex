@@ -71,9 +71,15 @@ interface DepositModalProps {
    *  (the left-panel "+ Deposit" CTA) leave this undefined and keep
    *  the historical ETH default. */
   initialTokenSymbol?: string;
+  /** Seed the Amount field on the open transition. Take Order uses
+   *  this so a user with an empty vault sees the exact funding
+   *  amount needed for the matched counter order (not the historic
+   *  "1.0" default that's wrong every time for a real fill). Generic
+   *  callers omit it and keep the "1.0" default. */
+  initialAmount?: string;
 }
 
-export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModalProps) {
+export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount }: DepositModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addNote } = useVault();
@@ -101,13 +107,14 @@ export function DepositModal({ open, onClose, initialTokenSymbol }: DepositModal
   // transition, not on every render where `open === true`.
   // (Gemini-suggested ref pattern on PR #756.)
   const wasOpen = useRef(false);
+  const [amount, setAmount] = useState(initialAmount ?? "1.0");
   useEffect(() => {
     if (open && !wasOpen.current) {
       setTokenSymbol(initialTokenSymbol ?? "ETH");
+      setAmount(initialAmount ?? "1.0");
     }
     wasOpen.current = open;
-  }, [open, initialTokenSymbol]);
-  const [amount, setAmount] = useState("1.0");
+  }, [open, initialTokenSymbol, initialAmount]);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
 
