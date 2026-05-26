@@ -50,7 +50,7 @@ type Auth = AdminAuth | null;
 type UnifiedStatus = "open" | "expired" | "cancelled" | "matched" | "settled" | "failed";
 const FILTERS: Array<{ key: "all" | UnifiedStatus; label: string }> = [
   { key: "all", label: "All" },
-  { key: "open", label: "Open" },
+  { key: "open", label: "Matching" },
   { key: "matched", label: "Matched" },
   { key: "cancelled", label: "Cancelled" },
   { key: "expired", label: "Expired" },
@@ -1339,7 +1339,7 @@ function StatusPill({ status }: { status: UnifiedStatus }) {
     <span
       className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${cls}`}
     >
-      {status}
+      {status === "open" ? "matching" : status}
     </span>
   );
 }

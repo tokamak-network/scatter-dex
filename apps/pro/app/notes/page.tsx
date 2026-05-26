@@ -242,6 +242,16 @@ export default function EscrowPage() {
 
 function StatusPill({ info }: { info: NoteStatusInfo }) {
   if (info.status === "available") {
+    if (info.recoverableExpired) {
+      return (
+        <span
+          className="rounded-full bg-[var(--color-warning-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-warning)]"
+          title="The matching order for this note expired before settle. Withdraw to recover the funds; the note can't fund a new order (the on-chain commitment is still bound to the expired order)."
+        >
+          Recoverable · expired
+        </span>
+      );
+    }
     return (
       <span className="rounded-full bg-[var(--color-success-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]">
         Available

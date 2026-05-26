@@ -16,6 +16,7 @@ import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeCrossRelayerMatchService } from "./core/authorize-cross-relayer-matcher.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
 import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle, applyOnChainAuthorizeCancel } from "./routes/authorize-orders.js";
+import { publicSignalToAddress } from "./types/authorize-order.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createMetricsRoutes } from "./routes/metrics.js";
@@ -194,6 +195,68 @@ async function main() {
     } catch (err) {
       sharedOBLog.warn("Failed to connect", { err: err instanceof Error ? err.message : "unknown" });
     }
+
+    // ─── Self-healing republish sweep ──────────────────────────
+    // The initial postOrder fires after a 202 accept (see
+    // authorize-orders.ts). If the shared-OB client was offline at
+    // that moment — including the silent "serverOnline=false flips
+    // postOrder to a P2P broadcast that has zero peers" case — the
+    // order is accepted locally but never reaches the shared book,
+    // and there's nothing to retry it. Sweep every minute: list
+    // live local rows, compare against `GET /api/orders?status=all`,
+    // and force-republish whatever's missing. Cross-token only;
+    // same-token (scatter) orders never go to the shared OB.
+    const REPUBLISH_INTERVAL_MS = Number(process.env.SHARED_OB_REPUBLISH_INTERVAL_MS) || 60_000;
+    const sweepClient = sharedClient; // narrow non-null for setInterval closure
+    const republishTimer = setInterval(async () => {
+      let remoteIds: Set<string>;
+      try {
+        remoteIds = await sweepClient.fetchAllOrderIds();
+      } catch (err) {
+        sharedOBLog.warn("Republish sweep fetch failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+      const local = db.loadPendingAuthorizeOrders();
+      let republished = 0;
+      // Per-row try/continue so one malformed authorize_orders blob
+      // (bad JSON, non-numeric token signal) doesn't abort the rest
+      // of the cycle — a single poison row could otherwise pin every
+      // legitimate gap below it as permanently un-republished.
+      for (const row of local) {
+        if (row.status !== "accepted" && row.status !== "matched") continue;
+        try {
+          const order = JSON.parse(row.orderJson) as { publicSignals: Record<string, string> };
+          const ps = order.publicSignals;
+          if (!ps?.sellToken || !ps?.buyToken) continue;
+          if (BigInt(ps.sellToken) === BigInt(ps.buyToken)) continue;
+          const offerHandle = nullifierToOfferHandle(row.nullifier);
+          if (remoteIds.has(offerHandle.toLowerCase())) continue;
+          const id = await sweepClient.forcePostOrderToServer({
+            id: offerHandle,
+            sellToken: publicSignalToAddress(ps.sellToken),
+            buyToken: publicSignalToAddress(ps.buyToken),
+            sellAmount: ps.sellAmount,
+            buyAmount: ps.buyAmount,
+            minFillAmount: ps.buyAmount,
+            maxFee: Number(ps.maxFee),
+            expiry: Number(ps.expiry),
+          });
+          if (id) republished++;
+        } catch (err) {
+          sharedOBLog.warn("Republish skipped malformed row", {
+            nullifier: row.nullifier.slice(0, 18),
+            err: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (republished > 0) {
+        sharedOBLog.info("Republish sweep filled gaps", { republished });
+      }
+    }, REPUBLISH_INTERVAL_MS);
+    // unref so the timer doesn't block shutdown.
+    republishTimer.unref?.();
   }
 
   // ─── On-chain PrivateCancel: backfill + live listener (always-on) ───
