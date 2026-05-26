@@ -25,6 +25,11 @@ export interface OrderSummary {
   maxFee: number;        // fee in basis points
   expiry: number;        // unix timestamp (seconds)
   createdAt: number;     // unix timestamp (seconds)
+  // NOTE: trader identifier (EdDSA pubKey) is deliberately NOT here.
+  // Shared OB is a public surface; exposing it there would weaken
+  // privacy for every peer reader. Operator-side sender visibility
+  // lives behind the admin API instead (authorize_orders.pub_key_ax,
+  // joined into /api/admin/history/by-tx).
 }
 
 // ─── Shared Orderbook types ───
