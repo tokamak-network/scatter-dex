@@ -28,7 +28,7 @@
  */
 
 import Link from "next/link";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { eqAddr } from "@zkscatter/sdk";
 import { SharedOrderbookClient, type SharedOrder } from "@zkscatter/sdk/orderbook";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
@@ -278,10 +278,19 @@ function OrdersBody({ auth }: { auth: Auth }) {
     [rows, filter],
   );
 
-  // Track which row is expanded so a click toggles a detail panel
-  // beneath it. Single-key state (vs Set) — only one detail open at
-  // a time, matching Pro's drawer affordance.
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  // Click a row → slide-out drawer with the full order context.
+  // Mirrors Pro's OrderDetailDrawer affordance so an operator who
+  // hops between Pro and operators sees the same surface. Single
+  // active row at a time; ESC / backdrop click closes it.
+  const [drawerRow, setDrawerRow] = useState<UnifiedRow | null>(null);
+  useEffect(() => {
+    if (!drawerRow) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDrawerRow(null);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [drawerRow]);
 
   const loading = loadingShared || loadingHistory;
 
@@ -343,11 +352,10 @@ function OrdersBody({ auth }: { auth: Auth }) {
             {visible.map((r) => {
               const sellInfo = r.sellToken ? tokenInfo(r.sellToken) : null;
               const buyInfo = r.buyToken ? tokenInfo(r.buyToken) : null;
-              const isExpanded = expandedKey === r.key;
               return (
-              <Fragment key={r.key}>
               <tr
-                onClick={() => setExpandedKey(isExpanded ? null : r.key)}
+                key={r.key}
+                onClick={() => setDrawerRow(r)}
                 className="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]"
               >
                 <td className="px-5 py-3 font-mono text-xs">
@@ -424,14 +432,6 @@ function OrdersBody({ auth }: { auth: Auth }) {
                   )}
                 </td>
               </tr>
-              {isExpanded && (
-                <tr className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
-                  <td colSpan={7} className="px-5 py-4">
-                    <DetailPanel row={r} sellInfo={sellInfo} buyInfo={buyInfo} />
-                  </td>
-                </tr>
-              )}
-              </Fragment>
               );
             })}
             {!loading && visible.length === 0 && (
@@ -459,7 +459,65 @@ function OrdersBody({ auth }: { auth: Auth }) {
           </tbody>
         </table>
       </div>
+
+      <OrderDetailDrawer row={drawerRow} onClose={() => setDrawerRow(null)} />
     </>
+  );
+}
+
+/** Right slide-out drawer. Same affordance as Pro's
+ *  OrderDetailDrawer (backdrop click + ESC close, stopPropagation
+ *  on the aside so internal clicks don't dismiss), kept inline in
+ *  this file because the surface here is smaller — one component
+ *  per file would be over-decomposed for ~80 lines of UI. */
+function OrderDetailDrawer({
+  row,
+  onClose,
+}: {
+  row: UnifiedRow | null;
+  onClose: () => void;
+}) {
+  if (!row) return null;
+  const sellInfo = row.sellToken ? tokenInfo(row.sellToken) : null;
+  const buyInfo = row.buyToken ? tokenInfo(row.buyToken) : null;
+  return (
+    <div
+      className="fixed inset-0 z-40"
+      onClick={onClose}
+      aria-hidden={false}
+    >
+      <div className="absolute inset-0 bg-black/30" />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        className="absolute right-0 top-0 flex h-full w-full max-w-xl flex-col overflow-y-auto bg-[var(--color-bg)] shadow-xl"
+      >
+        <header className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+              {row.status === "settled" || row.status === "failed"
+                ? "Settlement"
+                : "Order"}
+            </div>
+            <div className="mt-0.5 flex items-center gap-2">
+              <span className="font-mono text-sm">{row.idLabel}</span>
+              <StatusPill status={row.status} />
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-[var(--color-border)] px-3 py-1 text-xs hover:bg-[var(--color-bg)]"
+          >
+            Close
+          </button>
+        </header>
+        <div className="p-5">
+          <DetailPanel row={row} sellInfo={sellInfo} buyInfo={buyInfo} />
+        </div>
+      </aside>
+    </div>
   );
 }
 
