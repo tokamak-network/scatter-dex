@@ -11,6 +11,7 @@ import {
   type SharedOrderStatus,
   type SharedRelayer,
 } from "@zkscatter/sdk/orderbook";
+import { RelayerClient } from "@zkscatter/sdk/relayer";
 import { useActiveNetwork } from "../lib/activeNetwork";
 
 const POLL_MS = 10_000;
@@ -150,13 +151,58 @@ export default function SharedOrderbookPage() {
   // address when the relayer hasn't registered a name (or the
   // `/api/relayers` probe just failed) so the column never collapses
   // to "—".
+  // Probed-via-/api/info names from each order's `relayerUrl`.
+  // Shared-OB's in-memory relayer registry empties on restart, so
+  // `getRelayers()` often returns []; probing each endpoint once per
+  // order set keeps the relayer column populated regardless.
+  const [probedNameByAddr, setProbedNameByAddr] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (orders.length === 0) return;
+    const seen = new Set<string>();
+    const unique: Array<{ url: string }> = [];
+    for (const o of orders) {
+      if (!o.relayerUrl) continue;
+      const key = o.relayerUrl.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push({ url: o.relayerUrl });
+    }
+    let cancelled = false;
+    Promise.all(
+      unique.map(async ({ url }) => {
+        try {
+          const info = await new RelayerClient(url).getInfo();
+          const name = info.profile?.name?.trim() || info.name?.trim();
+          if (!name || !info.address) return null;
+          return { addr: info.address.toLowerCase(), name };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) return;
+      setProbedNameByAddr((prev) => {
+        const next = { ...prev };
+        for (const e of entries) if (e) next[e.addr] = e.name;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orders]);
+
   const relayerNameByAddr = useMemo(() => {
-    const m: Record<string, string> = {};
+    // Registry list wins (operator-set name on shared-OB) but the
+    // probed map fills in everything the registry doesn't know about,
+    // which after a restart is usually "every relayer".
+    const m: Record<string, string> = { ...probedNameByAddr };
     for (const r of relayers) {
       if (r.name && r.name.length > 0) m[r.address.toLowerCase()] = r.name;
     }
     return m;
-  }, [relayers]);
+  }, [relayers, probedNameByAddr]);
 
   // Filter dropdown options: every relayer that has at least one
   // live order. Built from the order set rather than the full
@@ -183,14 +229,27 @@ export default function SharedOrderbookPage() {
       if (relayerFilter !== "all" && o.relayer.toLowerCase() !== relayerFilter) {
         return false;
       }
-      const remainingMs = o.expiry * 1000 - nowMs;
-      if (expiryFilter === "active" && remainingMs <= 0) return false;
-      if (expiryFilter === "soon" && (remainingMs <= 0 || remainingMs > EXPIRY_SOON_MS)) {
-        return false;
+      // The expiry-filter axis (Active / Soon / Recently expired) was
+      // designed for browsing OPEN orders only. Applying it elsewhere
+      // hides rows the status bucket already promised to show — the
+      // "All" tab with `Active` ends up empty whenever every row is
+      // terminal (the common case after a few cancels). Restrict the
+      // gate to the Open bucket so the other tabs always render
+      // whatever they fetched.
+      const expiryGateApplies = statusBucket === "open";
+      if (expiryGateApplies) {
+        const remainingMs = o.expiry * 1000 - nowMs;
+        if (expiryFilter === "active" && remainingMs <= 0) return false;
+        if (
+          expiryFilter === "soon" &&
+          (remainingMs <= 0 || remainingMs > EXPIRY_SOON_MS)
+        ) {
+          return false;
+        }
       }
       return true;
     });
-  }, [orders, pairFilter, relayerFilter, expiryFilter]);
+  }, [orders, pairFilter, relayerFilter, expiryFilter, statusBucket]);
 
   // Auto-reset the relayer filter to "all" when the currently
   // selected relayer no longer has any live orders — without this
