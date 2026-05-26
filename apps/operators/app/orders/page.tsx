@@ -91,6 +91,17 @@ interface UnifiedRow {
   relayerUrl?: string;
   maxFeeBps?: number;
   txHash?: string;
+  /** EdDSA pubkey X coordinate of the trader who submitted the
+   *  order (when available — shared-OB rows carry it as `pubKeyAx`).
+   *  This is the only sender identifier present in the public
+   *  protocol surface: it doesn't map to an ETH address on-chain,
+   *  but the same value across multiple orders identifies the same
+   *  trader. */
+  senderPubKeyAx?: string;
+  /** Nonce the order was submitted with — combined with the pubkey
+   *  it uniquely identifies the order in the trader's local
+   *  history. Surfaced for cross-referencing with off-chain ops. */
+  senderNonce?: string;
 }
 
 const SHARED_URL = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "";
@@ -662,6 +673,38 @@ function OrderDetailDrawer({
             )}
           </div>
 
+          {/* Sender — the trader who submitted the authorize proof.
+              We surface the EdDSA pubKeyAx as the strongest
+              identifier the public protocol exposes; the matching
+              ETH wallet address is intentionally NOT on-chain
+              (Sybil-resistance via pubkey reuse without revealing
+              the wallet). Two orders that share pubKeyAx came from
+              the same trader. */}
+          {(row.senderPubKeyAx || row.senderNonce) && (
+            <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3 text-[11px]">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                Sender
+              </div>
+              {row.senderPubKeyAx && (
+                <div className="mb-1">
+                  <span className="text-[10px] text-[var(--color-text-muted)]">EdDSA pubKey · </span>
+                  <span className="break-all font-mono">{row.senderPubKeyAx}</span>
+                </div>
+              )}
+              {row.senderNonce && (
+                <div className="mb-1">
+                  <span className="text-[10px] text-[var(--color-text-muted)]">Nonce · </span>
+                  <span className="break-all font-mono">{row.senderNonce}</span>
+                </div>
+              )}
+              <div className="mt-1 text-[10px] text-[var(--color-text-subtle)]">
+                The trader&apos;s ETH wallet address isn&apos;t bound
+                into the proof — privacy by design. Same pubKey across
+                orders = same trader.
+              </div>
+            </div>
+          )}
+
           {/* Fee accruals — every per-side row from the relayer's
               `fee_history` table for this tx. This is the operator's
               actual realised revenue from the settle, broken down by
@@ -1184,6 +1227,8 @@ function buildUnifiedRows(
       relayerAddress: o.relayer,
       relayerUrl: o.relayerUrl,
       maxFeeBps: o.maxFee,
+      senderPubKeyAx: o.pubKeyAx,
+      senderNonce: o.nonce,
     });
   }
 
