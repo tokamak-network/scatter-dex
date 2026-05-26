@@ -421,6 +421,7 @@ export default function SharedOrderbookPage() {
           <thead className="bg-[var(--color-bg)] text-[10px] uppercase tracking-widest text-[var(--color-text-subtle)]">
             <tr>
               <th className="px-4 py-3 text-left">Pair</th>
+              <th className="px-4 py-3 text-left">Status</th>
               <th className="px-4 py-3 text-right">Price</th>
               <th className="px-4 py-3 text-right">Sell</th>
               <th className="px-4 py-3 text-right">Buy</th>
@@ -463,6 +464,9 @@ export default function SharedOrderbookPage() {
                   <tr key={o.id} className="border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]">
                     <td className="px-4 py-3 font-mono">
                       {sellSym} → {buySym}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusPill status={o.status ?? "open"} />
                     </td>
                     <td className="px-4 py-3 text-right font-mono">
                       {price.toLocaleString(undefined, { maximumFractionDigits: 6 })}
@@ -515,6 +519,25 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
       </div>
       <div className="mt-0.5 font-mono text-2xl font-bold leading-none">{value}</div>
     </div>
+  );
+}
+
+/** Per-row lifecycle pill so an at-a-glance scan of the table reads
+ *  the same as the bucket-tab labels. Tone-coded: open=green, matched
+ *  /cancelled/expired=neutral with a slight hue split. Falls back to
+ *  "open" when an older shared-OB build doesn't include `status` in
+ *  the payload — that's the only state the legacy endpoint surfaced. */
+function StatusPill({ status }: { status: SharedOrderStatus }) {
+  const tone =
+    status === "open"
+      ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+      : status === "matched"
+        ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+        : "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${tone}`}>
+      {status}
+    </span>
   );
 }
 
