@@ -664,6 +664,13 @@ export default function Workbench() {
           resetRecipients();
           setBulkClaimFrom("");
           setSelectedNoteId(null);
+          // Take Order is a single-shot fill. Whether the user
+          // navigates to /orders or stays for "Place another",
+          // the lock must clear — Place another in particular
+          // is the canonical "author a fresh limit order" path
+          // and leaving takeMode set would keep the summary card
+          // locked on the maker's amounts the user just filled.
+          setTakeMode(null);
           // "Place another" stays on the workbench; every other
           // dismissal path (× / Escape / "View my orders" Link / the
           // primary "Done") routes to /orders so the user lands on
@@ -973,11 +980,14 @@ function TakeOrderSummary({
   const buySymbol = side === "sell" ? pair.quote : pair.base;
   const sellTok = DEMO_NETWORK.tokens.find((t) => t.symbol === sellSymbol);
   const buyTok = DEMO_NETWORK.tokens.find((t) => t.symbol === buySymbol);
+  // formatTokenAmount keeps full BigInt precision (no Number cast)
+  // and uses the same en-US formatter the rest of the workbench
+  // uses for token-denominated rows.
   const sellDisplay = sellTok
-    ? Number(ethers.formatUnits(takeMode.sellWei, sellTok.decimals)).toLocaleString("en-US", { maximumFractionDigits: 6 })
+    ? formatTokenAmount(takeMode.sellWei, sellTok.decimals)
     : "—";
   const buyDisplay = buyTok
-    ? Number(ethers.formatUnits(takeMode.buyWei, buyTok.decimals)).toLocaleString("en-US", { maximumFractionDigits: 6 })
+    ? formatTokenAmount(takeMode.buyWei, buyTok.decimals)
     : "—";
 
   return (
