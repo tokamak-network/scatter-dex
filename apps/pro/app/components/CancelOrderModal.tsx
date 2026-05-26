@@ -149,6 +149,22 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
       // — instant transitions read as "nothing happened".
       if (dispatch.kind === "simulated") {
         await abortableSleep(400, ctrl.signal);
+      } else if (dispatch.kind === "onchain" && signer?.provider) {
+        // Wait for the tx to actually mine before mutating local
+        // state. Without this, a reverted cancelPrivate
+        // (NullifierAlreadySpent / InvalidProof) would still flip
+        // the order to "cancelled" client-side while shared-OB and
+        // chain disagree — exactly the desync that produced the
+        // ord-1/ord-2 zombie state operators reported. A status=0
+        // receipt explicitly throws so the caller's catch lifts
+        // the modal into the error phase.
+        const receipt = await signer.provider.waitForTransaction(dispatch.txHash, 1);
+        assertNotAborted(ctrl.signal);
+        if (!receipt || receipt.status !== 1) {
+          throw new Error(
+            `cancelPrivate reverted${receipt ? ` (tx ${dispatch.txHash})` : ""}`,
+          );
+        }
       }
 
       markCancelled(order.id);

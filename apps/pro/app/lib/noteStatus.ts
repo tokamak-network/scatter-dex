@@ -92,19 +92,27 @@ function buildOrderIndex(
   const expiredMatchingByChangeCommitment = new Map<bigint, OrderRecord>();
   for (const o of orders) {
     if (!OPEN_STATUSES.has(o.status)) continue;
-    // Matching orders past their expiry no longer pin anything —
-    // the on-chain validate* helpers revert with OrderExpired before
-    // the nullifier registers (SettleVerifyLib.sol:147). Bucket them
-    // into the discarded index so a `leafIndex < 0` change note
-    // surfaces as `discarded` instead of being misclassified as
-    // pending forever. Claimable orders never expire-out (the lock
-    // there comes from the post-match on-chain encumbrance) so they
-    // skip this branch.
-    if (o.status === "matching" && isOrderExpired(o, nowMs)) {
-      if (o.changeCommitment !== undefined) {
-        expiredMatchingByChangeCommitment.set(o.changeCommitment, o);
-      }
-      continue;
+    // Matching orders past their expiry KEEP pinning their funding
+    // note. The on-chain expiry check (SettleVerifyLib.sol:147) only
+    // blocks settle — not the authorize binding the commitment is
+    // tied to. Reusing the same commitment in a new order would
+    // produce two orders that share an escrowNullifier; the next
+    // cancelPrivate burns it, leaving the other order as a zombie
+    // (status="matching" but pointing at a dead note). The earlier
+    // version of this code released the lock here, which is exactly
+    // how the ord-1/ord-2 zombie state in the regression that
+    // prompted this revert was created. Cancel is the only path
+    // that frees the commitment.
+    //
+    // Still record the order under
+    // `expiredMatchingByChangeCommitment` so a `leafIndex < 0`
+    // residual surfaces as `discarded` (the change leaf can never
+    // land — the parent can't settle past expiry). Don't `continue`:
+    // the funding noteId still needs to land in `byNoteId` below
+    // so it reads as Locked.
+    const isExpiredMatching = o.status === "matching" && isOrderExpired(o, nowMs);
+    if (isExpiredMatching && o.changeCommitment !== undefined) {
+      expiredMatchingByChangeCommitment.set(o.changeCommitment, o);
     }
     // First-writer-wins on every collision so the index preserves
     // the linear-scan semantics callers had before this refactor
@@ -113,7 +121,12 @@ function buildOrderIndex(
     if (o.noteId !== undefined && !byNoteId.has(o.noteId)) {
       byNoteId.set(o.noteId, o);
     }
+    // The change commitment goes into the OPEN byChangeCommitment
+    // only for not-yet-expired orders — expired residuals belong to
+    // the discarded index above so classifyAgainstIndex tags them
+    // accordingly instead of as still-pending.
     if (
+      !isExpiredMatching &&
       o.changeCommitment !== undefined &&
       !byChangeCommitment.has(o.changeCommitment)
     ) {

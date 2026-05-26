@@ -125,12 +125,13 @@ describe("deriveNoteStatus", () => {
     expect(info.lockedByOrder?.id).toBe("o1");
   });
 
-  it("treats an expired matching order as not locking the note", () => {
-    // Mirrors the on-chain reality: SettleVerifyLib reverts with
-    // OrderExpired before the nullifier ever lands, so a stale
-    // authorize proof can't race a fresh order using the same
-    // commitment. The escrow UI shouldn't pretend the note is
-    // still earmarked.
+  it("keeps the funding note Locked even when the matching order has expired", () => {
+    // Reverting the earlier shortcut: matching+expired no longer
+    // releases the lock. The on-chain expiry check only blocks the
+    // settle path — the authorize binding (escrowNullifier) is
+    // still live, so reusing the commitment in a new order would
+    // produce two orders sharing one nullifier and a guaranteed
+    // zombie after the first cancel.
     const note = makeNote({ id: "n1", leafIndex: 5 });
     const expired = makeOrder({
       id: "o1",
@@ -140,7 +141,8 @@ describe("deriveNoteStatus", () => {
       expiry: 1_000n, // long past 1970
     });
     const info = deriveNoteStatus(note, [expired], 2_000_000);
-    expect(info).toEqual({ status: "available" });
+    expect(info.status).toBe("locked");
+    expect(info.lockedByOrder?.id).toBe("o1");
   });
 
   it("still locks for a matching order whose expiry hasn't hit yet", () => {
