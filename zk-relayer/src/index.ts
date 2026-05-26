@@ -121,6 +121,11 @@ async function main() {
   let sharedClient: SharedOrderbookClient | null = null;
   let remoteOrderbook: RemoteOrderStore | null = null;
   let authorizeCrossRelayerService: AuthorizeCrossRelayerMatchService | null = null;
+  // Hoisted so `shutdown` below can clear it. `setInterval` returns
+  // a `NodeJS.Timeout`; an `unref()` alone is not enough because an
+  // in-flight tick can still call `db.loadPendingAuthorizeOrders()`
+  // *after* `db.close()` runs in the shutdown chain.
+  let republishTimer: NodeJS.Timeout | null = null;
 
   if (config.sharedOrderbookUrl && config.relayerPublicUrl) {
     remoteOrderbook = new RemoteOrderStore();
@@ -208,7 +213,7 @@ async function main() {
     // same-token (scatter) orders never go to the shared OB.
     const REPUBLISH_INTERVAL_MS = Number(process.env.SHARED_OB_REPUBLISH_INTERVAL_MS) || 60_000;
     const sweepClient = sharedClient; // narrow non-null for setInterval closure
-    const republishTimer = setInterval(async () => {
+    republishTimer = setInterval(async () => {
       let remoteIds: Set<string>;
       try {
         remoteIds = await sweepClient.fetchAllOrderIds();
@@ -566,6 +571,7 @@ async function main() {
     clearInterval(remoteExpireInterval);
     clearInterval(authPurgeInterval);
     clearInterval(expirySweepInterval);
+    if (republishTimer) clearInterval(republishTimer);
     // Stop the periodic probes before draining the worker so we
     // don't kick off an extra DB write (or alert) once shutdown
     // is in motion.
