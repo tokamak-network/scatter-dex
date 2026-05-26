@@ -73,6 +73,7 @@ export interface TradeOfferResponse {
 export type BroadcastEvent =
   | { type: "order:new"; order: OrderSummary }
   | { type: "order:cancelled"; orderId: string; relayer: string }
+  | { type: "order:matched"; orderId: string; relayer: string }
   | { type: "order:expired"; orderId: string }
   | { type: "relayer:registered"; relayer: string; url: string }
   | { type: "relayer:offline"; relayer: string };

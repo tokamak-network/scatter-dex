@@ -344,6 +344,34 @@ export class SharedOrderbookClient {
     }
   }
 
+  /** Flip an open row to `matched` on the shared orderbook. Called
+   *  from the settlement worker after a successful `settleAuth` so
+   *  the row leaves the Open/Matching tab without being mis-labelled
+   *  as `cancelled` (the prior shape reused `cancelOrder`, which is
+   *  semantically a user-initiated abort, not a fill). */
+  async markMatched(orderId: string): Promise<boolean> {
+    if (!this.serverOnline) return false;
+    try {
+      const path = `/api/orders/${orderId}/matched`;
+      // Pass an empty JSON body so the signature middleware's body-
+      // hash check has something to verify against. The heartbeat
+      // path above uses the same shape; sending no body lets the
+      // hash drift between client and server and rejects the call
+      // with an opaque 401.
+      const body = "{}";
+      const headers = await this.authHeaders("POST", path, body);
+      const res = await fetch(`${this.serverUrl}${path}`, {
+        method: "POST",
+        headers,
+        body,
+      });
+      return res.ok;
+    } catch {
+      this.serverOnline = false;
+      return false;
+    }
+  }
+
   /** Cancel an order on the shared orderbook */
   async cancelOrder(orderId: string): Promise<boolean> {
     if (this.serverOnline) {

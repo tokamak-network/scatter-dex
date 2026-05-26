@@ -252,8 +252,13 @@ export class SettlementWorker {
 
       if (this.deps.sharedClient) {
         const sc = this.deps.sharedClient;
-        void sc.cancelOrder(this.deps.nullifierToOfferHandle(makerN)).catch(() => {});
-        void sc.cancelOrder(this.deps.nullifierToOfferHandle(takerN)).catch(() => {});
+        // Flip both rows to `matched`, not `cancelled`. The earlier
+        // shape called `cancelOrder` here which DELETE'd the row in
+        // shared-OB and the UI then rendered every settled trade as
+        // "cancelled" in the Shared OB tab. `markMatched` is the
+        // dedicated POST /api/orders/:id/matched endpoint.
+        void sc.markMatched(this.deps.nullifierToOfferHandle(makerN)).catch(() => {});
+        void sc.markMatched(this.deps.nullifierToOfferHandle(takerN)).catch(() => {});
       }
 
       recordSettlementOutcome("settled");
