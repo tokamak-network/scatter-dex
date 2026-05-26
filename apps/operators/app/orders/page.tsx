@@ -28,13 +28,14 @@
  */
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { eqAddr } from "@zkscatter/sdk";
 import { SharedOrderbookClient, type SharedOrder } from "@zkscatter/sdk/orderbook";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { useOperator } from "../lib/useOperator";
 import { formatRelative } from "../lib/format";
+import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 import type { SettlementRow } from "../lib/adminTypes";
 
 /** Re-fetch interval for both data sources. 30s keeps the table
@@ -82,6 +83,14 @@ interface UnifiedRow {
   /** Settled-row extras (only present on settled / failed). */
   blockNumber?: number;
   gasCostEth?: string;
+  /** Extra fields surfaced in the expand-on-click detail panel. The
+   *  table itself stays compact (one row per order); the panel
+   *  unhides everything the SharedOrder / SettlementRow carried. */
+  fullId?: string;
+  relayerAddress?: string;
+  relayerUrl?: string;
+  maxFeeBps?: number;
+  txHash?: string;
 }
 
 const SHARED_URL = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "";
@@ -269,6 +278,11 @@ function OrdersBody({ auth }: { auth: Auth }) {
     [rows, filter],
   );
 
+  // Track which row is expanded so a click toggles a detail panel
+  // beneath it. Single-key state (vs Set) — only one detail open at
+  // a time, matching Pro's drawer affordance.
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
   const loading = loadingShared || loadingHistory;
 
   return (
@@ -326,15 +340,21 @@ function OrdersBody({ auth }: { auth: Auth }) {
             </tr>
           </thead>
           <tbody>
-            {visible.map((r) => (
+            {visible.map((r) => {
+              const sellInfo = r.sellToken ? tokenInfo(r.sellToken) : null;
+              const buyInfo = r.buyToken ? tokenInfo(r.buyToken) : null;
+              const isExpanded = expandedKey === r.key;
+              return (
+              <Fragment key={r.key}>
               <tr
-                key={r.key}
-                className="border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]"
+                onClick={() => setExpandedKey(isExpanded ? null : r.key)}
+                className="cursor-pointer border-t border-[var(--color-border)] hover:bg-[var(--color-primary-soft)]"
               >
                 <td className="px-5 py-3 font-mono text-xs">
                   {r.detailHref ? (
                     <Link
                       href={r.detailHref}
+                      onClick={(e) => e.stopPropagation()}
                       className="text-[var(--color-primary)] hover:underline"
                     >
                       {r.idLabel}
@@ -346,16 +366,44 @@ function OrdersBody({ auth }: { auth: Auth }) {
                 <td className="px-5 py-3">
                   <StatusPill status={r.status} />
                 </td>
-                <td className="px-5 py-3 font-mono text-xs">
-                  {r.sellToken && r.buyToken
-                    ? `${shortAddr(r.sellToken)} → ${shortAddr(r.buyToken)}`
-                    : "—"}
+                <td className="px-5 py-3 text-xs">
+                  {sellInfo && buyInfo ? (
+                    <>
+                      <span className="font-medium">{sellInfo.symbol}</span>{" "}
+                      <span className="text-[var(--color-text-muted)]">→</span>{" "}
+                      <span className="font-medium">{buyInfo.symbol}</span>
+                    </>
+                  ) : (
+                    <span className="text-[var(--color-text-subtle)]">—</span>
+                  )}
                 </td>
-                <td className="px-5 py-3 text-right font-mono text-xs">
-                  {r.sellAmount ?? "—"}
+                <td className="px-5 py-3 text-right text-xs">
+                  {r.sellAmount && sellInfo ? (
+                    <>
+                      <span className="font-mono">
+                        {formatAmount(r.sellAmount, sellInfo.decimals)}
+                      </span>{" "}
+                      <span className="text-[var(--color-text-muted)]">
+                        {sellInfo.symbol}
+                      </span>
+                    </>
+                  ) : (
+                    "—"
+                  )}
                 </td>
-                <td className="px-5 py-3 text-right font-mono text-xs">
-                  {r.buyAmount ?? "—"}
+                <td className="px-5 py-3 text-right text-xs">
+                  {r.buyAmount && buyInfo ? (
+                    <>
+                      <span className="font-mono">
+                        {formatAmount(r.buyAmount, buyInfo.decimals)}
+                      </span>{" "}
+                      <span className="text-[var(--color-text-muted)]">
+                        {buyInfo.symbol}
+                      </span>
+                    </>
+                  ) : (
+                    "—"
+                  )}
                 </td>
                 <td className="px-5 py-3 text-xs text-[var(--color-text-muted)]">
                   <When unixMs={r.createdMs} nowMs={nowMs} />
@@ -376,7 +424,16 @@ function OrdersBody({ auth }: { auth: Auth }) {
                   )}
                 </td>
               </tr>
-            ))}
+              {isExpanded && (
+                <tr className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+                  <td colSpan={7} className="px-5 py-4">
+                    <DetailPanel row={r} sellInfo={sellInfo} buyInfo={buyInfo} />
+                  </td>
+                </tr>
+              )}
+              </Fragment>
+              );
+            })}
             {!loading && visible.length === 0 && (
               <tr>
                 <td
@@ -448,6 +505,10 @@ function buildUnifiedRows(
       expiry: o.expiry,
       idLabel: shortAddr(o.id),
       createdMs: o.createdAt * 1000,
+      fullId: o.id,
+      relayerAddress: o.relayer,
+      relayerUrl: o.relayerUrl,
+      maxFeeBps: o.maxFee,
     });
   }
 
@@ -463,6 +524,7 @@ function buildUnifiedRows(
       createdMs: r.created_at,
       blockNumber: r.block_number ?? undefined,
       gasCostEth: r.gas_cost_eth ?? undefined,
+      txHash: r.tx_hash,
     });
   }
 
@@ -496,6 +558,122 @@ function statusCls(status: UnifiedStatus): string {
     case "failed":
       return "bg-[var(--color-warning-soft)] text-[var(--color-warning)]";
   }
+}
+
+/** Expanded inline detail row. Surfaces every SharedOrder /
+ *  SettlementRow field that didn't fit in the table — full id,
+ *  relayer endpoint, per-trade fee, block / gas for settled rows.
+ *  Click on the parent row toggles it. Mirrors what Pro's
+ *  OrderDetailDrawer shows for My orders, but inline (less screen
+ *  real-estate, no modal lifecycle to manage). */
+function DetailPanel({
+  row,
+  sellInfo,
+  buyInfo,
+}: {
+  row: UnifiedRow;
+  sellInfo: { symbol: string; decimals: number } | null;
+  buyInfo: { symbol: string; decimals: number } | null;
+}) {
+  const items: Array<{ label: string; value: React.ReactNode }> = [];
+  if (row.fullId) {
+    items.push({
+      label: "Order id",
+      value: <span className="break-all font-mono text-[11px]">{row.fullId}</span>,
+    });
+  }
+  if (row.txHash) {
+    items.push({
+      label: "Tx hash",
+      value: (
+        <span className="break-all font-mono text-[11px]">{row.txHash}</span>
+      ),
+    });
+  }
+  if (row.relayerAddress) {
+    items.push({
+      label: "Relayer address",
+      value: (
+        <span className="break-all font-mono text-[11px]">{row.relayerAddress}</span>
+      ),
+    });
+  }
+  if (row.relayerUrl) {
+    items.push({
+      label: "Relayer endpoint",
+      value: (
+        <a
+          href={row.relayerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="break-all text-[11px] text-[var(--color-primary)] hover:underline"
+        >
+          {row.relayerUrl}
+        </a>
+      ),
+    });
+  }
+  if (row.maxFeeBps !== undefined) {
+    items.push({
+      label: "Max fee (bps / %)",
+      value: (
+        <span className="font-mono text-[11px]">
+          {row.maxFeeBps} bps · {(row.maxFeeBps / 100).toFixed(2)}%
+        </span>
+      ),
+    });
+  }
+  if (row.sellAmount && sellInfo) {
+    items.push({
+      label: `Sell (${sellInfo.symbol})`,
+      value: (
+        <span className="font-mono text-[11px]">
+          {formatAmount(row.sellAmount, sellInfo.decimals)} (raw {row.sellAmount} wei)
+        </span>
+      ),
+    });
+  }
+  if (row.buyAmount && buyInfo) {
+    items.push({
+      label: `Buy (${buyInfo.symbol})`,
+      value: (
+        <span className="font-mono text-[11px]">
+          {formatAmount(row.buyAmount, buyInfo.decimals)} (raw {row.buyAmount} wei)
+        </span>
+      ),
+    });
+  }
+  if (row.blockNumber !== undefined) {
+    items.push({
+      label: "Block",
+      value: <span className="font-mono text-[11px]">{row.blockNumber}</span>,
+    });
+  }
+  if (row.gasCostEth) {
+    items.push({
+      label: "Gas cost",
+      value: <span className="font-mono text-[11px]">{row.gasCostEth} ETH</span>,
+    });
+  }
+  if (items.length === 0) {
+    return (
+      <div className="text-[11px] text-[var(--color-text-muted)]">
+        No additional details captured for this row.
+      </div>
+    );
+  }
+  return (
+    <dl className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      {items.map((item) => (
+        <div key={item.label} className="flex flex-col">
+          <dt className="text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
+            {item.label}
+          </dt>
+          <dd className="mt-0.5">{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 function shortTx(s: string): string {
