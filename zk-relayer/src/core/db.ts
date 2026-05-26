@@ -398,15 +398,20 @@ export class PrivateOrderDB {
     this.statsAvgSettleTime = this.db.prepare(
       "SELECT AVG(duration_ms) as avg_ms FROM settlement_history WHERE status = 'confirmed' AND duration_ms IS NOT NULL",
     );
-    // Volume stays computed from settlement_history — sell/buy token
-    // and per-row counts are available, but settlement_history doesn't
-    // record sell_amount yet (only addresses + gas). For now expose the
-    // count-by-token, leaving totalVolume as "0" (a future migration
-    // will add sell_amount to the row, see gap-analysis §2 followup).
+    // Per-token settled count plus the actual sell-leg notional sum.
+    // sell_amount was added by the analytics migration; pre-migration
+    // rows still have NULL and are skipped by the sum so a partial
+    // history doesn't underreport "0 volume" while there are real
+    // post-migration settles to count. GROUP_CONCAT keeps the SQL
+    // BigInt-safe — SUM() would coerce to JS number and lose
+    // precision for >2^53 totals (16 WETH at 18 decimals overflows).
     this.statsSettledVolume = this.db.prepare(
-      `SELECT sell_token, COUNT(*) as count, '0' as amounts
-       FROM settlement_history WHERE status = 'confirmed' AND sell_token IS NOT NULL
-       GROUP BY sell_token`,
+      `SELECT sell_token,
+              COUNT(*) AS count,
+              COALESCE(GROUP_CONCAT(sell_amount), '') AS amounts
+         FROM settlement_history
+        WHERE status = 'confirmed' AND sell_token IS NOT NULL
+        GROUP BY sell_token`,
     );
     this.upsertMeta = this.db.prepare(
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
@@ -1378,14 +1383,26 @@ export class PrivateOrderDB {
     return value;
   }
 
-  /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped). */
+  /** Get per-token settled volume breakdown (BigInt-safe, SQL-grouped).
+   *  Tokens already stored lowercased via lowerHex in recordSettlementEvent,
+   *  so the row's sell_token is returned as-is — the prior `BigInt(...)`
+   *  reformat was a leftover from when the column held checksummed
+   *  addresses and would now strip canonical lowercase to the same
+   *  string, just slower. The amounts column is a comma-joined string
+   *  of sell_amount values (NULLs skipped) — `''` means "no
+   *  post-migration rows", which `split(",").filter(Boolean)` handles
+   *  cleanly without a sentinel BigInt parse. */
   getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
     const rows = this.statsSettledVolume.all({}) as Array<{ sell_token: string; count: number; amounts: string }>;
     return rows.map((r) => {
-      const total = r.amounts.split(",").reduce((sum, a) => sum + BigInt(a), 0n);
-      const tokenBig = BigInt(r.sell_token);
+      const total = r.amounts
+        .split(",")
+        .filter(Boolean)
+        .reduce((sum, a) => {
+          try { return sum + BigInt(a); } catch { return sum; }
+        }, 0n);
       return {
-        sellToken: "0x" + tokenBig.toString(16).padStart(40, "0"),
+        sellToken: r.sell_token,
         count: r.count,
         totalVolume: total.toString(),
       };

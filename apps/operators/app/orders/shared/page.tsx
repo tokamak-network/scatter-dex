@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SharedOrderbookClient, type SharedOrder } from "@zkscatter/sdk/orderbook";
+import { RelayerClient } from "@zkscatter/sdk/relayer";
 import { shortAddr } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../../components/SectionHeader";
 import { formatRelative } from "../../lib/format";
+import { formatAmount, tokenInfo } from "../../lib/tokenRegistry";
 
 /** Build `<base>/api/orders` through the URL API so a base with a
  *  trailing slash or an unexpected scheme can't slip into the
@@ -22,6 +24,11 @@ function safeOrdersEndpoint(base: string): string | null {
   }
 }
 
+interface RelayerNameEntry {
+  name: string;     // display name to render
+  address: string;  // checksum address from /api/info, used to key the map
+}
+
 export default function SharedOrdersPage() {
   const url = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "";
   const [state, setState] = useState<{
@@ -29,6 +36,11 @@ export default function SharedOrdersPage() {
     orders: SharedOrder[];
     error: string | null;
   }>({ loading: true, orders: [], error: null });
+  // Address (lowercased) → relayer display name. Resolved by probing
+  // each unique relayerUrl that appears in the order list. Pre-filled
+  // entries persist across order refreshes so a row doesn't flash back
+  // to "0x…" while the next probe is in flight.
+  const [nameMap, setNameMap] = useState<Map<string, string>>(new Map());
 
   useEffect(() => {
     if (!url) {
@@ -66,6 +78,47 @@ export default function SharedOrdersPage() {
       cancelled = true;
     };
   }, [url]);
+
+  // Resolve display names by probing each unique relayer endpoint
+  // exactly once per order set. Done as a side-effect after the orders
+  // load so the main table renders immediately (peers behind a slow
+  // /api/info shouldn't block the list).
+  useEffect(() => {
+    if (state.orders.length === 0) return;
+    const uniqueUrls = new Set<string>();
+    for (const o of state.orders) {
+      if (o.relayerUrl) uniqueUrls.add(o.relayerUrl);
+    }
+    let cancelled = false;
+    const probes = [...uniqueUrls].map(async (endpoint): Promise<RelayerNameEntry | null> => {
+      try {
+        const info = await new RelayerClient(endpoint).getInfo();
+        // Prefer the curated profile name (operator-set), fall back
+        // to the well-known `name` field set by the relayer config —
+        // the same chain leaderboard / relayer detail use.
+        const name = info.profile?.name?.trim() || info.name?.trim();
+        if (!name || !info.address) return null;
+        return { name, address: info.address };
+      } catch {
+        return null;
+      }
+    });
+    Promise.all(probes).then((entries) => {
+      if (cancelled) return;
+      setNameMap((prev) => {
+        const next = new Map(prev);
+        for (const e of entries) {
+          if (e) next.set(e.address.toLowerCase(), e.name);
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.orders]);
+
+  const endpointHint = useMemo(() => safeOrdersEndpoint(url), [url]);
 
   return (
     <div className="space-y-8">
@@ -119,17 +172,33 @@ export default function SharedOrdersPage() {
                 {state.orders.map((o) => {
                   const expiryMs = o.expiry * 1000;
                   const expired = expiryMs < Date.now();
+                  const sellInfo = tokenInfo(o.sellToken);
+                  const buyInfo = tokenInfo(o.buyToken);
+                  const displayName = nameMap.get(o.relayer.toLowerCase());
                   return (
                     <tr key={o.id} className="border-t border-[var(--color-border)]">
                       <td className="px-3 py-2">
-                        <div className="font-mono text-xs">{shortAddr(o.relayer)}</div>
-                        <div className="text-[10px] text-[var(--color-text-muted)]">{o.relayerUrl}</div>
+                        {displayName ? (
+                          <>
+                            <div className="text-xs font-medium">{displayName}</div>
+                            <div className="font-mono text-[10px] text-[var(--color-text-muted)]">
+                              {shortAddr(o.relayer)} · {o.relayerUrl}
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="font-mono text-xs">{shortAddr(o.relayer)}</div>
+                            <div className="text-[10px] text-[var(--color-text-muted)]">{o.relayerUrl}</div>
+                          </>
+                        )}
                       </td>
-                      <td className="px-3 py-2 font-mono text-xs">
-                        {o.sellAmount} <span className="text-[var(--color-text-muted)]">{shortAddr(o.sellToken)}</span>
+                      <td className="px-3 py-2 text-xs">
+                        <span className="font-mono">{formatAmount(o.sellAmount, sellInfo.decimals)}</span>{" "}
+                        <span className="font-medium">{sellInfo.symbol}</span>
                       </td>
-                      <td className="px-3 py-2 font-mono text-xs">
-                        {o.buyAmount} <span className="text-[var(--color-text-muted)]">{shortAddr(o.buyToken)}</span>
+                      <td className="px-3 py-2 text-xs">
+                        <span className="font-mono">{formatAmount(o.buyAmount, buyInfo.decimals)}</span>{" "}
+                        <span className="font-medium">{buyInfo.symbol}</span>
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-xs">{o.maxFee}</td>
                       <td className={`px-3 py-2 text-right text-xs ${expired ? "text-[var(--color-warning)]" : ""}`}>
@@ -149,7 +218,7 @@ export default function SharedOrdersPage() {
 
       <p className="text-xs text-[var(--color-text-subtle)]">
         Data is fetched from{" "}
-        <code className="font-mono">{safeOrdersEndpoint(url) ?? "<unset>"}</code>{" "}
+        <code className="font-mono">{endpointHint ?? "<unset>"}</code>{" "}
         (up to 500 rows). No admin token required — this view is what any
         relayer peer would see.
       </p>
