@@ -80,13 +80,17 @@ export default function SharedOrderbookPage() {
 
   const router = useRouter();
 
-  /** Build a /app URL pre-filled with a counter limit order that
-   *  would match the given maker order. Mirrors the legacy
-   *  frontend/trade/orderbook Take pattern: taker flips the maker's
-   *  signed amounts 1:1 — the matcher just checks
-   *  `counterpartySell >= buyAmount` under the per-side fee model,
-   *  so a same-amount counter is always a valid fill. Workbench
-   *  reads the params via useSearchParams and seeds the form. */
+  /** Build a /app URL pre-filled with the maker's *exact* signed
+   *  amounts. Take Order is a fill, not a fresh limit order — the
+   *  workbench enters a locked "Take mode" that hides the price/size
+   *  inputs and signs `sellAmount = maker.buyAmount`, `buyAmount =
+   *  maker.sellAmount` directly, guaranteeing the on-chain matcher
+   *  accepts the pair (`counterpartySell ≥ buyAmount` holds by
+   *  equality). Amounts are passed in raw wei strings so a display-
+   *  string round-trip can't introduce rounding drift; the human-
+   *  readable forms travel as `sellAmount` / `buyAmount` separately
+   *  for the legacy code path that still uses them as size+price
+   *  fallback. */
   const takeOrder = (o: SharedOrder) => {
     const sellTok = resolveToken(o.buyToken);   // taker sells what maker buys
     const buyTok = resolveToken(o.sellToken);   // taker buys what maker sells
@@ -101,6 +105,10 @@ export default function SharedOrderbookPage() {
       buySymbol: buyTok.symbol,
       sellAmount: sellAmt,
       buyAmount: buyAmt,
+      // Raw-wei companions so the workbench / OrderModal can bypass
+      // size×price composition and sign these values exactly.
+      exactSellWei: o.buyAmount,
+      exactBuyWei: o.sellAmount,
       maxFee: String(o.maxFee),
       takeId: o.id,
     });

@@ -29,7 +29,8 @@ import { applyFeeBig } from "../lib/fee";
 import { parseUnits } from "../lib/parseUnits";
 import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
 import { deriveAutoSettle } from "../lib/autoSettle";
-import { findPair } from "@zkscatter/sdk";
+import { findPair, type WhitelistedPair } from "@zkscatter/sdk";
+import { ethers } from "ethers";
 
 interface RowData {
   price: string;
@@ -74,7 +75,9 @@ export default function Workbench() {
   const {
     pair, side, setSide, price, setPrice, size, setSize, setPairBy,
     recipients, resetRecipients, bulkClaimFrom, setBulkClaimFrom,
+    takeMode, setTakeMode,
   } = useTradeForm();
+  const isTakeMode = takeMode !== null;
   const [orderOpen, setOrderOpen] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   // Orderbook starts hidden so the form gets the full middle width.
@@ -373,6 +376,7 @@ export default function Workbench() {
           setSide={setSide}
           setPrice={setPrice}
           setSize={setSize}
+          setTakeMode={setTakeMode}
           onApplied={handleTakeOrderApplied}
         />
       </Suspense>
@@ -480,20 +484,39 @@ export default function Workbench() {
                 state, which they aren't. */}
             {selectedNote && (
               <>
-                <Field label={`Price (${pair.quote} / ${pair.base})`}>
-                  <input
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+                {isTakeMode ? (
+                  <TakeOrderSummary
+                    takeMode={takeMode!}
+                    side={side}
+                    pair={pair}
+                    onClear={() => {
+                      // "Edit as new order" — clears the lock and
+                      // surfaces the regular Price / Size inputs.
+                      // The Price / Size state still carries the
+                      // last derived values so the user has a
+                      // reasonable starting point.
+                      setTakeMode(null);
+                      router.replace("/app");
+                    }}
                   />
-                </Field>
-                <Field label={`Size (${pair.base})`}>
-                  <input
-                    value={size}
-                    onChange={(e) => setSize(e.target.value)}
-                    className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
-                  />
-                </Field>
+                ) : (
+                  <>
+                    <Field label={`Price (${pair.quote} / ${pair.base})`}>
+                      <input
+                        value={price}
+                        onChange={(e) => setPrice(e.target.value)}
+                        className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+                      />
+                    </Field>
+                    <Field label={`Size (${pair.base})`}>
+                      <input
+                        value={size}
+                        onChange={(e) => setSize(e.target.value)}
+                        className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono"
+                      />
+                    </Field>
+                  </>
+                )}
                 {/* Relayer picker BEFORE the receive breakdown —
                     the relayer's fee bps determines the net receive
                     (and the recipients budget). Operators who pick
@@ -836,19 +859,14 @@ function TakeOrderPrefill({
   setSide,
   setPrice,
   setSize,
+  setTakeMode,
   onApplied,
 }: {
   setPairBy: (display: string) => void;
   setSide: (s: "sell" | "buy") => void;
   setPrice: (p: string) => void;
   setSize: (s: string) => void;
-  /** Called once after a successful prefill with the resolved
-   *  funding-side token symbol AND the human-readable amount the
-   *  taker must spend. Workbench uses these to seed the Deposit
-   *  modal's initial token + amount when no fundable note matches —
-   *  so a user who clicks "Take Order" with an empty vault doesn't
-   *  have to also hunt down the right token *or* compute the
-   *  funding figure themselves. */
+  setTakeMode: (mode: { sellWei: bigint; buyWei: bigint; takeId: string } | null) => void;
   onApplied: (sellSideSymbol: string, sellSideAmount: string) => void;
 }) {
   const search = useSearchParams();
@@ -862,12 +880,10 @@ function TakeOrderPrefill({
     const buySymbol = search.get("buySymbol");
     const sellAmount = search.get("sellAmount");
     const buyAmount = search.get("buyAmount");
+    const exactSellWei = search.get("exactSellWei");
+    const exactBuyWei = search.get("exactBuyWei");
     if (!sellSymbol || !buySymbol || !sellAmount || !buyAmount) return;
 
-    // Pair display in this app is "BASE/QUOTE". Find the whitelisted
-    // entry whose base+quote set matches {sell, buy} symbols. The
-    // matched orientation tells us whether the taker is selling the
-    // pair's base (side="sell") or its quote (side="buy").
     const sellNum = Number(sellAmount);
     const buyNum = Number(buyAmount);
     if (!Number.isFinite(sellNum) || !Number.isFinite(buyNum) || sellNum <= 0 || buyNum <= 0) {
@@ -876,11 +892,6 @@ function TakeOrderPrefill({
     }
     const baseSellDisplay = `${sellSymbol}/${buySymbol}`;
     const baseBuyDisplay = `${buySymbol}/${sellSymbol}`;
-    // `sellSymbol` here is the taker's funding token regardless of
-    // which orientation the whitelisted pair takes — the Take
-    // button always passes `sellSymbol = maker.buyToken` (the taker
-    // sells what the maker buys), so the on-screen "sell side" of
-    // the workbench form always lands on this symbol.
     if (findPair(baseSellDisplay)) {
       setPairBy(baseSellDisplay);
       setSide("sell");
@@ -894,8 +905,25 @@ function TakeOrderPrefill({
       setPrice(formatPrice(sellNum / buyNum));
       onApplied(sellSymbol, sellAmount);
     }
+    // Lock the workbench into "Take mode" — the submit path uses
+    // these wei values verbatim, bypassing size×price composition
+    // (which would otherwise let display-string rounding drift the
+    // taker amounts off the maker's signed values and break the
+    // on-chain matching constraint). Price / Size inputs are hidden
+    // by the surrounding UI when takeMode is non-null.
+    if (exactSellWei && exactBuyWei) {
+      try {
+        setTakeMode({
+          sellWei: BigInt(exactSellWei),
+          buyWei: BigInt(exactBuyWei),
+          takeId,
+        });
+      } catch {
+        // Malformed wei string — fall back to size×price legacy path.
+      }
+    }
     applied.current = takeId;
-  }, [search, setPairBy, setSide, setPrice, setSize, onApplied]);
+  }, [search, setPairBy, setSide, setPrice, setSize, setTakeMode, onApplied]);
 
   return null;
 }
@@ -908,4 +936,74 @@ function formatPrice(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return "";
   const s = n.toLocaleString("en-US", { maximumFractionDigits: 6 });
   return s;
+}
+
+/** Locked summary card shown when the workbench is in Take Order
+ *  mode. Surfaces the maker's exact amounts as a "what moves where"
+ *  block — no Price / Size inputs, no rate composition. The Edit
+ *  button drops back to the regular limit-order form for users who
+ *  want to author a counter rather than accept the maker's terms. */
+function TakeOrderSummary({
+  takeMode,
+  side,
+  pair,
+  onClear,
+}: {
+  takeMode: { sellWei: bigint; buyWei: bigint; takeId: string };
+  side: "sell" | "buy";
+  pair: WhitelistedPair;
+  onClear: () => void;
+}) {
+  // Resolve the sell- and buy-side tokens. Sell side = the token
+  // the *taker* spends (= the maker's buyToken). Workbench's `side`
+  // tracks which orientation we landed on; resolve accordingly.
+  const sellSymbol = side === "sell" ? pair.base : pair.quote;
+  const buySymbol = side === "sell" ? pair.quote : pair.base;
+  const sellTok = DEMO_NETWORK.tokens.find((t) => t.symbol === sellSymbol);
+  const buyTok = DEMO_NETWORK.tokens.find((t) => t.symbol === buySymbol);
+  const sellDisplay = sellTok
+    ? Number(ethers.formatUnits(takeMode.sellWei, sellTok.decimals)).toLocaleString("en-US", { maximumFractionDigits: 6 })
+    : "—";
+  const buyDisplay = buyTok
+    ? Number(ethers.formatUnits(takeMode.buyWei, buyTok.decimals)).toLocaleString("en-US", { maximumFractionDigits: 6 })
+    : "—";
+
+  return (
+    <div className="space-y-3 rounded-md border border-[var(--color-primary)] bg-[var(--color-primary-soft)] p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-primary)]">
+          Take Order
+        </span>
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-[11px] text-[var(--color-text-muted)] underline hover:text-[var(--color-text)]"
+          title="Edit as a fresh limit order — exits Take mode"
+        >
+          Edit as new order
+        </button>
+      </div>
+      <div className="space-y-2 font-mono text-sm">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[var(--color-text-muted)]">You sell</span>
+          <span>
+            <span className="font-semibold">{sellDisplay}</span>{" "}
+            <span className="text-[var(--color-text-muted)]">{sellSymbol}</span>
+          </span>
+        </div>
+        <div className="text-center text-[var(--color-text-subtle)]">↓</div>
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-[var(--color-text-muted)]">You buy</span>
+          <span>
+            <span className="font-semibold">{buyDisplay}</span>{" "}
+            <span className="text-[var(--color-text-muted)]">{buySymbol}</span>
+          </span>
+        </div>
+      </div>
+      <p className="text-[10px] text-[var(--color-text-subtle)]">
+        Matches the maker's signed amounts exactly. Relayer fee is deducted
+        from your receive at settle (see breakdown below).
+      </p>
+    </div>
+  );
 }
