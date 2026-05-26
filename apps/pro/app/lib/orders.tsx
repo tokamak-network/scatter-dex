@@ -113,6 +113,11 @@ export interface OrderRecord {
   };
   /** When the order was submitted (ms epoch). */
   createdAt: number;
+  /** Settle tx hash, populated when the order leaves `matching` via
+   *  observed `PrivateSettledAuth` (the reconciler hook). Lets the
+   *  detail panel anchor PrivateClaim history queries off this tx
+   *  instead of scanning from genesis. */
+  settleTxHash?: string;
 }
 
 interface OrdersState {
@@ -129,6 +134,12 @@ interface OrdersState {
   ): OrderRecord;
   /** Mark an order as claimed. Idempotent. */
   markClaimed(id: string): void;
+  /** Promote a matching order to `claimable` once we've observed
+   *  the on-chain `PrivateSettledAuth` (or its relayer-side
+   *  reflection). Idempotent; only valid against `matching`. Stamps
+   *  the supplied `settleTxHash` so the detail / claim flow can
+   *  anchor history queries off it. */
+  markClaimable(id: string, settleTxHash: string): void;
   /** Mark an order as cancelled. Only valid for `matching` orders;
    *  no-op when the order is already filled / claimed / cancelled. */
   markCancelled(id: string): void;
@@ -567,6 +578,26 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     [adapter],
   );
 
+  const markClaimable = useCallback(
+    (id: string, settleTxHash: string) => {
+      const target = ordersRef.current.find((o) => o.id === id);
+      // Only promote from `matching` — re-firing on a row that's
+      // already claimable / claimed / cancelled is a no-op so the
+      // reconciler can fire freely without identity churn. Cancelled
+      // and expired orders deliberately stay terminal; the on-chain
+      // settle won't land for them anyway.
+      if (!target || target.status !== "matching") return;
+      const next: OrderRecord = {
+        ...target,
+        status: "claimable",
+        settleTxHash,
+      };
+      adapter.put(next);
+      setOrders((prev) => prev.map((o) => (o.id === id ? next : o)));
+    },
+    [adapter],
+  );
+
   const markClaimed = useCallback(
     (id: string) => {
       const target = ordersRef.current.find((o) => o.id === id);
@@ -635,8 +666,8 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<OrdersState>(
-    () => ({ orders, loaded, add, markClaimed, markCancelled, remove }),
-    [orders, loaded, add, markClaimed, markCancelled, remove],
+    () => ({ orders, loaded, add, markClaimed, markClaimable, markCancelled, remove }),
+    [orders, loaded, add, markClaimed, markClaimable, markCancelled, remove],
   );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;

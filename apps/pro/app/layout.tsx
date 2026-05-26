@@ -17,6 +17,7 @@ import { VaultProvider } from "./lib/vault";
 import { VaultReconciler } from "./lib/vaultReconciler";
 import { OrdersProvider } from "./lib/orders";
 import { ClaimReconciler } from "./lib/claimReconciler";
+import { SettleReconciler } from "./lib/settleReconciler";
 import { EdDSAKeyProvider } from "@zkscatter/sdk/react";
 import { RelayersProvider } from "./lib/relayers";
 import { TradeFormProvider } from "./lib/tradeForm";
@@ -53,6 +54,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       <VaultReconciler />
                       <OrdersProvider>
                         <ClaimReconciler />
+                        <SettleReconciler />
                         <TradeFormProvider>
                           <ToastProvider>
                             <AppShellHeader
