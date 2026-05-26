@@ -124,6 +124,52 @@ describe("deriveNoteStatus", () => {
     expect(info.status).toBe("locked");
     expect(info.lockedByOrder?.id).toBe("o1");
   });
+
+  it("treats an expired matching order as not locking the note", () => {
+    // Mirrors the on-chain reality: SettleVerifyLib reverts with
+    // OrderExpired before the nullifier ever lands, so a stale
+    // authorize proof can't race a fresh order using the same
+    // commitment. The escrow UI shouldn't pretend the note is
+    // still earmarked.
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const expired = makeOrder({
+      id: "o1",
+      noteId: "n1",
+      status: "matching",
+      // `expiry` is the unix-seconds field stored on OrderRecord.
+      expiry: 1_000n, // long past 1970
+    });
+    const info = deriveNoteStatus(note, [expired], 2_000_000);
+    expect(info).toEqual({ status: "available" });
+  });
+
+  it("still locks for a matching order whose expiry hasn't hit yet", () => {
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const alive = makeOrder({
+      id: "o1",
+      noteId: "n1",
+      status: "matching",
+      expiry: 9_999_999_999n, // year 2286
+    });
+    const info = deriveNoteStatus(note, [alive], Date.now());
+    expect(info.status).toBe("locked");
+    expect(info.lockedByOrder?.id).toBe("o1");
+  });
+
+  it("ignores expiry on a claimable order (no client-side override past matching)", () => {
+    // Claimable means matched + waiting on recipient claim. The
+    // funding note is already encumbered by the matched fill —
+    // expiry on the original authorize proof is irrelevant.
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const claimable = makeOrder({
+      id: "o1",
+      noteId: "n1",
+      status: "claimable",
+      expiry: 1_000n, // long past
+    });
+    const info = deriveNoteStatus(note, [claimable], 2_000_000);
+    expect(info.status).toBe("locked");
+  });
 });
 
 describe("aggregateBySymbol", () => {

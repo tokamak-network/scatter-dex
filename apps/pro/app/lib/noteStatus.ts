@@ -55,10 +55,18 @@ const OPEN_STATUSES: ReadonlySet<OrderRecord["status"]> = new Set([
  *  per note); the panel does this through `aggregateBySymbol`
  *  and a precomputed `Map<noteId, NoteStatusInfo>` in
  *  MyPositionPanel. Calling this directly is fine for one-off
- *  lookups (cancel modal, etc.). */
+ *  lookups (cancel modal, etc.).
+ *
+ *  `nowMs` defaults to `Date.now()` so existing call sites stay
+ *  source-compatible. Callers that batch-classify a vault should
+ *  pass a snapshot so every note in the pass sees the same wall
+ *  clock — otherwise two notes pinned by the same order could
+ *  classify differently if the wall clock crosses the expiry mid
+ *  iteration. */
 export function deriveNoteStatus(
   note: VaultNote,
   orders: readonly OrderRecord[],
+  nowMs: number = Date.now(),
 ): NoteStatusInfo {
   if (note.leafIndex < 0) {
     // Try to identify which open order this pending residual came
@@ -71,7 +79,11 @@ export function deriveNoteStatus(
       if (
         o.changeCommitment !== undefined &&
         o.changeCommitment === note.commitment &&
-        OPEN_STATUSES.has(o.status)
+        OPEN_STATUSES.has(o.status) &&
+        // Same matching-only expiry shortcut as the locked branch.
+        // A claimable order's residual is still inbound from chain;
+        // expiry on the original authorize proof doesn't apply.
+        !(o.status === "matching" && isOrderExpired(o, nowMs))
       ) {
         return { status: "pending", pendingFromOrder: o };
       }
@@ -80,10 +92,34 @@ export function deriveNoteStatus(
   }
   for (const o of orders) {
     if (o.noteId === note.id && OPEN_STATUSES.has(o.status)) {
+      // Expired *matching* orders can't re-claim the funding note:
+      // SettleVerifyLib reverts with OrderExpired before the
+      // nullifier ever lands (SettleVerifyLib.sol:147), so a stale
+      // authorize proof literally can't outrun a fresh order using
+      // the same commitment. Treat the note as available so the
+      // OrderModal can pick it as collateral immediately — no
+      // user-driven cancel required.
+      //
+      // The same expiry check is NOT applied to `claimable` orders.
+      // Claimable means the cross-side fill already settled and the
+      // funds are mid-flight to a recipient; the original authorize
+      // proof's expiry no longer matters. The lock here represents
+      // the on-chain encumbrance from the matched fill, not the
+      // pre-match authorize binding.
+      if (o.status === "matching" && isOrderExpired(o, nowMs)) continue;
       return { status: "locked", lockedByOrder: o };
     }
   }
   return { status: "available" };
+}
+
+/** Mirror of `apps/pro/app/orders/page.tsx`'s isExpired so the
+ *  escrow lock check and the orders-page Expired bucket can't
+ *  disagree on a single source of truth. Orders without an
+ *  `expiry` field (pre-PR records) are never expired. */
+function isOrderExpired(o: OrderRecord, nowMs: number): boolean {
+  if (o.expiry === undefined) return false;
+  return Number(o.expiry) * 1000 <= nowMs;
 }
 
 /** Per-symbol aggregation for the panel header: how much sits in
@@ -102,12 +138,16 @@ export interface SymbolBuckets {
 export function aggregateBySymbol(
   notes: readonly VaultNote[],
   orders: readonly OrderRecord[],
+  nowMs: number = Date.now(),
 ): SymbolBuckets[] {
   const by = new Map<string, SymbolBuckets>();
   for (const n of notes) {
     const amt = Number(n.amount.replace(/,/g, ""));
     if (!Number.isFinite(amt)) continue;
-    const { status } = deriveNoteStatus(n, orders);
+    // Pass the snapshot `nowMs` so this aggregation and any
+    // per-note `deriveNoteStatus` call in the same render frame
+    // agree on which orders are expired.
+    const { status } = deriveNoteStatus(n, orders, nowMs);
     let row = by.get(n.symbol);
     if (!row) {
       row = { symbol: n.symbol, available: 0, locked: 0, pending: 0 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@zkscatter/ui";
 import { useVault, type VaultNote } from "../lib/vault";
 import { useOrders } from "../lib/orders";
@@ -25,22 +25,33 @@ export default function EscrowPage() {
   const [withdrawNote, setWithdrawNote] = useState<VaultNote | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
 
+  // Re-tick once a minute so a note whose pinning order crosses its
+  // expiry mid-session flips from Locked → Available without the
+  // user having to reload. Without this the wall clock advances but
+  // the memoised aggregate / statusMap stay frozen on the snapshot
+  // captured at render time.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const symbolBuckets = useMemo(
-    () => aggregateBySymbol(notes, orders),
-    [notes, orders],
+    () => aggregateBySymbol(notes, orders, nowMs),
+    [notes, orders, nowMs],
   );
 
   // Build a `noteId → NoteStatusInfo` lookup once per (notes,
-  // orders) change so the row render below is O(1) instead of
-  // re-scanning `orders` for every row. Gated on `ordersLoaded` so
-  // pre-hydration we don't paint stale "available" pills against
+  // orders, nowMs) change so the row render below is O(1) instead
+  // of re-scanning `orders` for every row. Gated on `ordersLoaded`
+  // so pre-hydration we don't paint stale "available" pills against
   // notes that are actually locked by a yet-to-load order.
   const statusMap = useMemo(() => {
     if (!ordersLoaded) return new Map<string, NoteStatusInfo>();
     const m = new Map<string, NoteStatusInfo>();
-    for (const n of notes) m.set(n.id, deriveNoteStatus(n, orders));
+    for (const n of notes) m.set(n.id, deriveNoteStatus(n, orders, nowMs));
     return m;
-  }, [notes, orders, ordersLoaded]);
+  }, [notes, orders, ordersLoaded, nowMs]);
 
   const sorted = useMemo(
     () => notes.slice().sort((a, b) => b.createdAt - a.createdAt),
