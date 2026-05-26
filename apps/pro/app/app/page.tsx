@@ -340,6 +340,27 @@ export default function Workbench() {
           setSide={setSide}
           setPrice={setPrice}
           setSize={setSize}
+          onApplied={(sellSideSymbol) => {
+            // Auto-surface the Deposit modal pre-filled with the
+            // required token when the user lands on the workbench
+            // via Take Order and has no fundable note for that
+            // side. Snapshot `fundableNotes` at the moment of
+            // apply: if it changes later (deposit lands), this
+            // effect doesn't fire again because `applied.current`
+            // is now set to the takeId.
+            const tokenAddr = DEMO_NETWORK.tokens.find(
+              (t) => t.symbol === sellSideSymbol,
+            )?.address;
+            const hasMatching = tokenAddr
+              ? fundableNotes.some(
+                  (n) => n.note.token === BigInt(tokenAddr.toLowerCase()),
+                )
+              : true;
+            if (!hasMatching) {
+              setDepositInitialToken(sellSideSymbol);
+              setDepositOpen(true);
+            }
+          }}
         />
       </Suspense>
       <div className="flex items-center justify-between gap-3">
@@ -797,11 +818,19 @@ function TakeOrderPrefill({
   setSide,
   setPrice,
   setSize,
+  onApplied,
 }: {
   setPairBy: (display: string) => void;
   setSide: (s: "sell" | "buy") => void;
   setPrice: (p: string) => void;
   setSize: (s: string) => void;
+  /** Called once after a successful prefill with the resolved
+   *  funding-side token symbol (the symbol the taker must spend).
+   *  Workbench uses it to seed the Deposit modal's initial token
+   *  when no fundable note matches — so a user who clicks "Take
+   *  Order" with an empty vault doesn't have to also hunt down the
+   *  right token in the deposit dropdown. */
+  onApplied: (sellSideSymbol: string) => void;
 }) {
   const search = useSearchParams();
   const applied = useRef<string | null>(null);
@@ -828,19 +857,26 @@ function TakeOrderPrefill({
     }
     const baseSellDisplay = `${sellSymbol}/${buySymbol}`;
     const baseBuyDisplay = `${buySymbol}/${sellSymbol}`;
+    // `sellSymbol` here is the taker's funding token regardless of
+    // which orientation the whitelisted pair takes — the Take
+    // button always passes `sellSymbol = maker.buyToken` (the taker
+    // sells what the maker buys), so the on-screen "sell side" of
+    // the workbench form always lands on this symbol.
     if (findPair(baseSellDisplay)) {
       setPairBy(baseSellDisplay);
       setSide("sell");
       setSize(sellAmount);
       setPrice(formatPrice(buyNum / sellNum));
+      onApplied(sellSymbol);
     } else if (findPair(baseBuyDisplay)) {
       setPairBy(baseBuyDisplay);
       setSide("buy");
       setSize(buyAmount);
       setPrice(formatPrice(sellNum / buyNum));
+      onApplied(sellSymbol);
     }
     applied.current = takeId;
-  }, [search, setPairBy, setSide, setPrice, setSize]);
+  }, [search, setPairBy, setSide, setPrice, setSize, onApplied]);
 
   return null;
 }
