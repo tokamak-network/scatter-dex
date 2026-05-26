@@ -4,6 +4,7 @@ import type { SharedOrderbook } from "../core/orderbook.js";
 import type { OrderbookDB } from "../core/db.js";
 import type { OrderBroadcaster } from "../core/broadcaster.js";
 import { parseOrderSummary, pairKey, isValidPair } from "../types/order.js";
+import type { OrderStatus } from "@scatter-dex/types";
 import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { assertSafeOutboundUrl, UnsafeUrlError } from "../lib/url-guard.js";
 
@@ -51,10 +52,25 @@ export function createOrderRoutes(
 
       const order = parseOrderSummary(req.body, relayerAddress, relayerUrl);
 
-      // Duplicate check
-      if (orderbook.getOrder(order.id)) {
-        res.status(409).json({ error: "order already exists", id: order.id });
-        return;
+      // Dedup: only block when the existing row is still open. Terminal
+      // rows (cancelled / expired / matched) shouldn't lock the id —
+      // the offerHandle is derived from the funding nullifier in
+      // zk-relayer/.../authorize-orders.ts:418, so a user reusing the
+      // same commitment in a new order after cancel-on-chain naturally
+      // produces the same id. Without this branch the second post is
+      // rejected and the new order is invisible across relayers even
+      // though it's perfectly valid on-chain.
+      const existing = orderbook.getOrder(order.id);
+      if (existing) {
+        if (existing.status === "open") {
+          res.status(409).json({ error: "order already exists", id: order.id });
+          return;
+        }
+        // Replace the terminal row with the new submission. Drop the
+        // SQL row first so the PRIMARY KEY on id doesn't reject the
+        // insert below — the in-memory `addOrder` re-adds it cleanly.
+        orderbook.removeOrder(order.id);
+        db.deleteOrder(order.id);
       }
 
       const stored = orderbook.addOrder(order);
@@ -79,6 +95,16 @@ export function createOrderRoutes(
       const pairRaw = typeof req.query.pair === "string" ? req.query.pair : undefined;
       const limit = Math.min(Number(req.query.limit) || 100, 500);
       const offset = Number(req.query.offset) || 0;
+      // status=all (default for legacy callers stays open) returns
+      // every bucket; status=<one of OrderStatus> filters. Unknown
+      // values fall back to the legacy open-only view rather than
+      // 400ing, so an out-of-date client doesn't break.
+      const statusRaw = typeof req.query.status === "string" ? req.query.status : "";
+      const includeTerminal = statusRaw === "all";
+      const statusFilter: OrderStatus | undefined =
+        ["open", "cancelled", "expired", "matched"].includes(statusRaw)
+          ? (statusRaw as OrderStatus)
+          : undefined;
 
       let orders;
       if (pairRaw) {
@@ -87,15 +113,26 @@ export function createOrderRoutes(
           res.status(400).json({ error: "invalid pair format" });
           return;
         }
+        // Pair filter stays open-only for now — bucket tabs in the
+        // UI are global; per-pair status drilldown is a follow-up.
         orders = db.listByPair(tokens[0], tokens[1], limit, offset);
+      } else if (includeTerminal || statusFilter) {
+        orders = db.listAll(limit, offset, statusFilter);
       } else {
         orders = db.listOpen(limit, offset);
       }
 
+      // Include `status` on each row so the bucket-tab UI can filter
+      // client-side without re-fetching, and surface a per-status
+      // counts map so the tabs can render "All (12) · Open (5) · …"
+      // numbers without a second round trip. Legacy callers that only
+      // read `order.id` / `order.sellAmount` etc. ignore the extra
+      // field cleanly.
       res.json({
-        orders: orders.map(s => s.order),
+        orders: orders.map((s) => ({ ...s.order, status: s.status })),
         count: orders.length,
         offset,
+        counts: includeTerminal || statusFilter ? db.countByStatus() : undefined,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";
