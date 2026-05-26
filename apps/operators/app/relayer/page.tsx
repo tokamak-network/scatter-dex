@@ -21,7 +21,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
@@ -346,6 +346,7 @@ function RelayerDetailBody() {
               <TokenTotalsCard
                 title="Volume routed"
                 empty="No settlements recorded yet."
+                countLabel="fill"
                 entries={(stats?.settledVolume ?? []).map((v) => ({
                   token: v.sellToken,
                   amount: v.totalVolume,
@@ -355,6 +356,7 @@ function RelayerDetailBody() {
               <TokenTotalsCard
                 title="Fee revenue"
                 empty="No fee accruals recorded yet."
+                countLabel="accrual"
                 entries={(stats?.feeTotals ?? []).map((f) => ({
                   token: f.token,
                   amount: f.totalWei,
@@ -407,22 +409,43 @@ function HealthCheckRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastChecked, setLastChecked] = useState<number | null>(null);
+  // Unmount-safety: abort an in-flight ping and gate all setStates
+  // behind a mounted flag. Without this, navigating away mid-ping
+  // logs a React warning and (on dev mode strict-effects) double-
+  // fires; in production it's a slow drip of resources held by the
+  // resolved fetch.
+  const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
   const ping = async () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     setBusy(true);
     setError(null);
     const t0 = performance.now();
     try {
       const client = new RelayerClient(url, { timeoutMs: 4000 });
-      await client.getInfo();
+      await client.getInfo(ctrl.signal);
+      if (!mountedRef.current || ctrl.signal.aborted) return;
       setOnline(true);
       setPingMs(Math.round(performance.now() - t0));
     } catch (e) {
+      if (!mountedRef.current || ctrl.signal.aborted) return;
       setOnline(false);
       setPingMs(null);
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLastChecked(Date.now());
-      setBusy(false);
+      if (mountedRef.current && !ctrl.signal.aborted) {
+        setLastChecked(Date.now());
+        setBusy(false);
+      }
     }
   };
   return (
@@ -472,21 +495,41 @@ function TokenTotalsCard({
   title,
   empty,
   entries,
+  countLabel,
 }: {
   title: string;
   empty: string;
   entries: ReadonlyArray<{ token: string; amount: string; count: number }>;
+  /** Singular noun for the per-row "<n> <label>(s)" tally. The Volume
+   *  card uses "fill"; the Fee revenue card uses "accrual" because a
+   *  single settlement records both maker- and taker-side fees, so
+   *  fee_history row count is not 1:1 with fills. */
+  countLabel: string;
 }) {
-  const sorted = [...entries].sort((a, b) => {
+  // Pre-parse amounts to BigInt once so the comparator below is a
+  // consistent preorder. Wrapping `BigInt()` inside `.sort` and
+  // returning `0` on throw breaks transitivity: an entry that
+  // failed to parse compares equal to every other entry, including
+  // entries that are not equal to each other — V8's sort can then
+  // produce an unstable order or hit a comparator-violation in
+  // strict mode. Unparseable amounts sink to the bottom.
+  const parsed = entries.map((e) => {
+    let value: bigint;
+    let valid = true;
     try {
-      const av = BigInt(a.amount);
-      const bv = BigInt(b.amount);
-      if (av === bv) return 0;
-      return av > bv ? -1 : 1;
+      value = BigInt(e.amount);
     } catch {
-      return 0;
+      value = 0n;
+      valid = false;
     }
+    return { entry: e, value, valid };
   });
+  parsed.sort((a, b) => {
+    if (a.valid !== b.valid) return a.valid ? -1 : 1;
+    if (a.value === b.value) return 0;
+    return a.value > b.value ? -1 : 1;
+  });
+  const sorted = parsed.map((p) => p.entry);
   const top = sorted.slice(0, 3);
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -508,7 +551,7 @@ function TokenTotalsCard({
                 <span className="font-mono">
                   {formatAmount(e.amount, info.decimals)}
                   <span className="ml-1 text-[10px] text-[var(--color-text-subtle)]">
-                    {e.count} fill{e.count === 1 ? "" : "s"}
+                    {e.count} {countLabel}{e.count === 1 ? "" : "s"}
                   </span>
                 </span>
               </li>
