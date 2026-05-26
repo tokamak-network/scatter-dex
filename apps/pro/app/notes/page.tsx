@@ -53,9 +53,25 @@ export default function EscrowPage() {
     return m;
   }, [notes, orders, ordersLoaded, nowMs]);
 
+  // Hide phantom change notes from expired matching orders: their
+  // commitment was pre-computed at submit time but `settleAuth`
+  // never ran, so the merkle leaf they'd live at doesn't exist
+  // on-chain. Showing them as "Pending" indefinitely confused
+  // operators (lot-2 from the regression that prompted this fix).
+  // They stay on disk so a future "cleanup" affordance can remove
+  // them deliberately rather than the view secretly mutating
+  // storage.
+  const visibleNotes = useMemo(
+    () =>
+      notes.filter((n) => statusMap.get(n.id)?.status !== "discarded"),
+    [notes, statusMap],
+  );
+
+  const discardedCount = notes.length - visibleNotes.length;
+
   const sorted = useMemo(
-    () => notes.slice().sort((a, b) => b.createdAt - a.createdAt),
-    [notes],
+    () => visibleNotes.slice().sort((a, b) => b.createdAt - a.createdAt),
+    [visibleNotes],
   );
 
   return (
@@ -129,8 +145,16 @@ export default function EscrowPage() {
 
       {/* Notes — full table */}
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-        <div className="border-b border-[var(--color-border)] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Notes ({notes.length})
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-5 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+          <span>Notes ({visibleNotes.length})</span>
+          {discardedCount > 0 && (
+            <span
+              className="font-normal normal-case text-[11px] text-[var(--color-text-subtle)]"
+              title="Change-note commitments from matching orders that expired before settling. They never landed on-chain and are hidden from the spendable list."
+            >
+              {discardedCount} discarded · expired orders
+            </span>
+          )}
         </div>
         {sorted.length === 0 ? (
           <div className="p-5">
