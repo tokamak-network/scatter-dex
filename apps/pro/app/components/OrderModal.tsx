@@ -227,6 +227,7 @@ export function OrderModal({
     pair: activePair,
     recipients,
     activeTier,
+    takeMode,
   } = useTradeForm();
 
   // Gross buy in token-base units, computed from the form's `side` /
@@ -408,32 +409,43 @@ export function OrderModal({
 
     let sellAmount: bigint;
     let buyAmount: bigint;
-    try {
-      const cleanPrice = price.replace(/,/g, "");
-      const cleanSize = size.replace(/,/g, "");
-      // Sell-side: size is in `base` units (sellAmount), price is
-      //   `quote/base`, so buyAmount = size × price (in `quote` units).
-      // Buy-side: size is in `base` units (buyAmount), sellAmount =
-      //   size × price (in `quote` units).
-      if (side === "sell") {
-        sellAmount = parseUnits(cleanSize, baseToken.decimals);
-        const priceUnits = parseUnits(cleanPrice, quoteToken.decimals);
-        const sizeBaseUnits = parseUnits(cleanSize, baseToken.decimals);
-        buyAmount =
-          (priceUnits * sizeBaseUnits) / 10n ** BigInt(baseToken.decimals);
-      } else {
-        buyAmount = parseUnits(cleanSize, baseToken.decimals);
-        const priceUnits = parseUnits(cleanPrice, quoteToken.decimals);
-        const sizeBaseUnits = parseUnits(cleanSize, baseToken.decimals);
-        sellAmount =
-          (priceUnits * sizeBaseUnits) / 10n ** BigInt(baseToken.decimals);
+    if (takeMode) {
+      // Take Order path: sign the maker's exact wei values verbatim
+      // so the on-chain matcher accepts the pair by equality
+      // (`taker.sellAmount = maker.buyAmount`, `taker.buyAmount =
+      // maker.sellAmount`). Bypasses size×price composition entirely
+      // — a display-string round-trip would drift the amounts off
+      // the maker's signed values and break matching.
+      sellAmount = takeMode.sellWei;
+      buyAmount = takeMode.buyWei;
+    } else {
+      try {
+        const cleanPrice = price.replace(/,/g, "");
+        const cleanSize = size.replace(/,/g, "");
+        // Sell-side: size is in `base` units (sellAmount), price is
+        //   `quote/base`, so buyAmount = size × price (in `quote`).
+        // Buy-side: size is in `base` units (buyAmount), sellAmount =
+        //   size × price (in `quote`).
+        if (side === "sell") {
+          sellAmount = parseUnits(cleanSize, baseToken.decimals);
+          const priceUnits = parseUnits(cleanPrice, quoteToken.decimals);
+          const sizeBaseUnits = parseUnits(cleanSize, baseToken.decimals);
+          buyAmount =
+            (priceUnits * sizeBaseUnits) / 10n ** BigInt(baseToken.decimals);
+        } else {
+          buyAmount = parseUnits(cleanSize, baseToken.decimals);
+          const priceUnits = parseUnits(cleanPrice, quoteToken.decimals);
+          const sizeBaseUnits = parseUnits(cleanSize, baseToken.decimals);
+          sellAmount =
+            (priceUnits * sizeBaseUnits) / 10n ** BigInt(baseToken.decimals);
+        }
+      } catch (e) {
+        setPhase({
+          kind: "error",
+          message: (e as Error)?.message ?? "Invalid price or size.",
+        });
+        return;
       }
-    } catch (e) {
-      setPhase({
-        kind: "error",
-        message: (e as Error)?.message ?? "Invalid price or size.",
-      });
-      return;
     }
     if (sellAmount <= 0n || buyAmount <= 0n) {
       setPhase({ kind: "error", message: "Price and size must be positive." });
@@ -714,6 +726,14 @@ export function OrderModal({
         claim: orderClaims[0],
         claims: orderClaims,
         changeCommitment: resolvedChangeCommitment,
+        // Persist the signed wei amounts so My orders can display
+        // the on-chain truth instead of re-deriving from size×price
+        // (which drifts when Take Order produced amounts whose
+        // implied price isn't a clean multiple of what the user
+        // typed). Set on both Take Order and fresh limit submissions
+        // — same field, same code path.
+        signedSellWei: sellAmount,
+        signedBuyWei: buyAmount,
       });
       // Pre-save the change note. Fire-and-forget — the order is
       // already on the book, so a local-storage hiccup must not

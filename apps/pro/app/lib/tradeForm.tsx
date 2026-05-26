@@ -83,6 +83,26 @@ interface TradeFormState {
    *  can land *after* their intended claim time. */
   bulkClaimFrom: string;
   setBulkClaimFrom(value: string): void;
+
+  /** "Take mode" payload — populated when the user lands on the
+   *  workbench via the Shared OB Take Order button. Carries the
+   *  maker's *exact* wei-string sellAmount + buyAmount so the submit
+   *  path can sign them verbatim (no size×price composition, no
+   *  rounding drift). Workbench hides the Price / Size inputs while
+   *  this is set; clearing it restores the regular limit-order form.
+   *  `takeId` is the maker's offerHandle — kept so we can refuse a
+   *  duplicate take when the user navigates back. */
+  takeMode: {
+    sellWei: bigint;
+    buyWei: bigint;
+    takeId: string;
+    /** Pair the prefill landed on. Workbench auto-clears takeMode
+     *  when the user flips PairSelector / Side off this combination
+     *  so a stale lock can't sign wei against the wrong token. */
+    pair: string;
+    side: "sell" | "buy";
+  } | null;
+  setTakeMode(mode: TradeFormState["takeMode"]): void;
 }
 
 const TradeFormCtx = createContext<TradeFormState | null>(null);
@@ -102,6 +122,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
   const [size, setSize] = useState("2.0");
   const [recipients, setRecipientsState] = useState<RecipientRow[]>(() => [freshRow()]);
   const [bulkClaimFrom, setBulkClaimFrom] = useState("");
+  const [takeMode, setTakeMode] = useState<TradeFormState["takeMode"]>(null);
 
   const setPairBy = useCallback((display: string) => {
     const next = findPair(display);
@@ -196,6 +217,8 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       activeTier,
       bulkClaimFrom,
       setBulkClaimFrom,
+      takeMode,
+      setTakeMode,
     }),
     [
       pair, setPairBy,
@@ -203,6 +226,7 @@ export function TradeFormProvider({ children }: { children: ReactNode }) {
       recipients, addRecipient, removeRecipient, updateRecipient,
       resetRecipients, setRecipients, splitEqually, activeTier,
       bulkClaimFrom, setBulkClaimFrom,
+      takeMode,
     ],
   );
 
