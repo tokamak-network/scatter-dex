@@ -482,22 +482,13 @@ export function OrderModal({
     // matcher will respect), keeping the cap as a back-stop. Either
     // way, sum(claims) ≤ buyAmount − fee (on-chain ClaimsCapExceeded
     // otherwise).
-    // Auto-derived fee cap. Was a user-facing slider in Advanced
-    // Settings (defaulted to 30 bps), removed in favour of a derived
-    // value: the relayer's currently-quoted fee + 10% headroom,
-    // clamped to MAX_RELAYER_FEE_BPS=500 (matches the on-chain cap
-    // in RelayerRegistry). Caps a hostile relayer that registers low
-    // and then bumps their on-chain fee between sign and settle,
-    // without making the operator manage a slider they almost always
-    // left at default.
+    // Sign the relayer's quoted fee exactly — no buffer, no cap
+    // gymnastics. This is a limit-order surface: "what you signed
+    // is what you pay". The on-chain RelayerRegistry already caps
+    // the relayer's registered fee at MAX_RELAYER_FEE_BPS=500, so
+    // a re-clamp here would just shadow the registry's enforcement.
     const relayerFeeBps = selectedRelayer?.fee ?? 0;
-    const REGISTRY_MAX_FEE_BPS = 500;
-    const autoMaxFeeBps = Math.min(
-      Math.max(Math.ceil(relayerFeeBps * 1.1), relayerFeeBps + 1),
-      REGISTRY_MAX_FEE_BPS,
-    );
-    const projectedFeeBps = Math.min(relayerFeeBps, autoMaxFeeBps);
-    const { net: netReceive } = applyFeeBig(buyAmount, projectedFeeBps);
+    const { net: netReceive } = applyFeeBig(buyAmount, relayerFeeBps);
 
     // Resolve recipient distribution from the trade-form context.
     // Default (single empty row) is interpreted as "send the net
@@ -610,7 +601,7 @@ export function OrderModal({
         sellAmount,
         buyToken: buyToken.address,
         buyAmount,
-        maxFee: BigInt(autoMaxFeeBps),
+        maxFee: BigInt(relayerFeeBps),
         expiry: expirySec,
         nonce,
         relayer: relayerAddress,
@@ -713,7 +704,7 @@ export function OrderModal({
               address: selectedRelayer.address,
               url: selectedRelayer.url,
               feeBps: relayerFeeBps,
-              maxFeeBps: autoMaxFeeBps,
+              maxFeeBps: relayerFeeBps,
             }
           : undefined,
         // `claim` (singular) is the first row, kept for backward
@@ -836,15 +827,9 @@ export function OrderModal({
             critical decision point. Removed until we wire FillEstimate's
             real spot diff here (it's already computed on the trade
             form via useReferencePrice). */}
-        {/* Relayer fee row — taken from the connected relayer's
-            quoted bps, clamped to the user-signed maxFee cap. The
-            "Free (launch event)" copy referred to a *platform* fee
-            that doesn't apply here; this row is the actual amount
-            deducted from buyAmount before recipient distribution. */}
+        {/* Relayer fee row — the relayer's quoted bps, applied to
+            buyAmount, deducted before recipient distribution. */}
         {(() => {
-          // Confirm-row uses the relayer's quoted fee directly —
-          // autoMaxFeeBps is the on-chain cap, not the displayed
-          // charge. Mirrors the projection on the order form.
           const bps = selectedRelayer?.fee ?? 0;
           if (!confirmGrossBuy) {
             return <Row k="Relayer fee" v="—" />;

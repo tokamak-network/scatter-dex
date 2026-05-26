@@ -453,7 +453,7 @@ export default function SharedOrderbookPage() {
               <th className="px-4 py-3 text-left">Status</th>
               <th className="px-4 py-3 text-right">Sell</th>
               <th className="px-4 py-3 text-right">Buy</th>
-              <th className="px-4 py-3 text-right">Max fee</th>
+              <th className="px-4 py-3 text-right">Fee</th>
               <th className="px-4 py-3 text-right">Expiry</th>
               <th className="px-4 py-3 text-left">Relayer</th>
               <th className="px-4 py-3 text-right">Action</th>
@@ -497,8 +497,21 @@ export default function SharedOrderbookPage() {
                       </span>{" "}
                       <span className="text-[var(--color-text-muted)]">{buySym}</span>
                     </td>
-                    <td className="px-4 py-3 text-right font-mono text-[var(--color-text-muted)]">
-                      {(o.maxFee / 100).toFixed(2)}%
+                    <td className="px-4 py-3 text-right font-mono text-[var(--color-text-muted)]" title={`Cap: ${(o.maxFee / 100).toFixed(2)}%`}>
+                      {/* Concrete fee in buy-token units — the
+                          on-chain check applies `maxFee` bps to the
+                          buy side (the recipient's receive), so the
+                          worst-case relayer charge in absolute terms
+                          is `buyAmount × maxFee / 10000`. Display
+                          this number rather than the raw bps so the
+                          maker / taker can reason about the trade in
+                          token terms. Cap-as-percent stays on the
+                          tooltip for the rare case the user wants
+                          the bps figure. */}
+                      <span className="font-semibold">
+                        {(buy * o.maxFee / 10000).toLocaleString(undefined, { maximumFractionDigits: 6 })}
+                      </span>{" "}
+                      <span>{buySym}</span>
                     </td>
                     <td className="px-4 py-3 text-right font-mono text-[var(--color-text-muted)]">
                       {formatExpiry(o.expiry)}
