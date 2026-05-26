@@ -21,7 +21,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
@@ -37,6 +37,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { DEMO_NETWORK } from "../lib/network";
 import { formatIsoDate } from "../lib/format";
 import { safeOperatorUrl } from "../lib/operatorDisplay";
+import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
@@ -221,18 +222,7 @@ function RelayerDetailBody() {
         <>
           <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
             <div className="flex flex-wrap items-center gap-3">
-              <span
-                className={`inline-flex h-2.5 w-2.5 rounded-full ${
-                  online
-                    ? "bg-[var(--color-success)]"
-                    : "bg-[var(--color-text-subtle)]"
-                }`}
-                title={
-                  online
-                    ? "Relayer responded to /api/info"
-                    : "Relayer didn't respond — offline or unreachable"
-                }
-              />
+              <HealthDot online={online} />
               <span className="font-mono text-sm" title={targetAddress}>
                 {targetAddress}
               </span>
@@ -271,6 +261,9 @@ function RelayerDetailBody() {
                 </span>
               )}
             </div>
+            {safeUrl && (
+              <HealthCheckRow url={safeUrl} initialOnline={online} initialStats={stats} />
+            )}
           </section>
 
           <section>
@@ -338,7 +331,238 @@ function RelayerDetailBody() {
               />
             </div>
           </section>
+
+          {/* Per-token throughput (sell-leg sums) + revenue (fee
+              accruals). Cross-token totals can't be summed without a
+              price oracle, so we render top-3 rows of each — the
+              leaderboard's Volume / Revenue columns do the same. */}
+          <section>
+            <SectionHeader
+              title="Routed volume & revenue"
+              badge="live"
+              hint="Per-token sums sourced from this relayer's /api/relayer/stats."
+            />
+            <div className="grid grid-cols-2 gap-4">
+              <TokenTotalsCard
+                title="Volume routed"
+                empty="No settlements recorded yet."
+                countLabel="fill"
+                entries={(stats?.settledVolume ?? []).map((v) => ({
+                  token: v.sellToken,
+                  amount: v.totalVolume,
+                  count: v.count,
+                }))}
+              />
+              <TokenTotalsCard
+                title="Fee revenue"
+                empty="No fee accruals recorded yet."
+                countLabel="accrual"
+                entries={(stats?.feeTotals ?? []).map((f) => ({
+                  token: f.token,
+                  amount: f.totalWei,
+                  count: f.count,
+                }))}
+              />
+            </div>
+          </section>
         </>
+      )}
+    </div>
+  );
+}
+
+/** Status dot + label. Lifted out of the header so the on-mount
+ *  probe and the manual re-ping (`HealthCheckRow` below) can share
+ *  the same visual. */
+function HealthDot({ online }: { online: boolean }) {
+  return (
+    <span
+      className={`inline-flex h-2.5 w-2.5 rounded-full ${
+        online ? "bg-[var(--color-success)]" : "bg-[var(--color-text-subtle)]"
+      }`}
+      title={
+        online
+          ? "Relayer responded to /api/info"
+          : "Relayer didn't respond — offline or unreachable"
+      }
+    />
+  );
+}
+
+/** Inline health-check affordance. The initial probe at mount tells
+ *  us whether the endpoint was up at page-load; this row exposes a
+ *  manual re-ping so the operator can verify it's still live now
+ *  (and capture a round-trip latency reading). Independent of the
+ *  parent `state.online` flag — clicking re-ping doesn't mutate the
+ *  rest of the page, just this strip's badge + latency. */
+function HealthCheckRow({
+  url,
+  initialOnline,
+  initialStats,
+}: {
+  url: string;
+  initialOnline: boolean;
+  initialStats: RelayerStatsResponse | null;
+}) {
+  const [online, setOnline] = useState(initialOnline);
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastChecked, setLastChecked] = useState<number | null>(null);
+  // Unmount-safety: abort an in-flight ping and gate all setStates
+  // behind a mounted flag. Without this, navigating away mid-ping
+  // logs a React warning and (on dev mode strict-effects) double-
+  // fires; in production it's a slow drip of resources held by the
+  // resolved fetch.
+  const mountedRef = useRef(true);
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
+  const ping = async () => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setBusy(true);
+    setError(null);
+    const t0 = performance.now();
+    try {
+      const client = new RelayerClient(url, { timeoutMs: 4000 });
+      await client.getInfo(ctrl.signal);
+      if (!mountedRef.current || ctrl.signal.aborted) return;
+      setOnline(true);
+      setPingMs(Math.round(performance.now() - t0));
+    } catch (e) {
+      if (!mountedRef.current || ctrl.signal.aborted) return;
+      setOnline(false);
+      setPingMs(null);
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (mountedRef.current && !ctrl.signal.aborted) {
+        setLastChecked(Date.now());
+        setBusy(false);
+      }
+    }
+  };
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+        Health
+      </span>
+      <HealthDot online={online} />
+      <span>{online ? "online" : "offline"}</span>
+      {pingMs !== null && (
+        <span className="text-[var(--color-text-subtle)]">· {pingMs} ms /api/info</span>
+      )}
+      {initialStats?.uptimeSince && (
+        <span className="text-[var(--color-text-subtle)]">
+          · up since {formatIsoDate(Math.floor(initialStats.uptimeSince / 1000))}
+        </span>
+      )}
+      {lastChecked && (
+        <span className="text-[var(--color-text-subtle)]">
+          · checked {new Date(lastChecked).toLocaleTimeString()}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={ping}
+        disabled={busy}
+        className="ml-auto rounded-md border border-[var(--color-border)] px-2 py-0.5 text-[11px] hover:bg-[var(--color-bg)] disabled:opacity-50"
+      >
+        {busy ? "Pinging…" : "Ping now"}
+      </button>
+      {error && (
+        <span className="basis-full text-[10px] text-[var(--color-warning)]">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Top-3 per-token totals card. Drives both the Volume routed and
+ *  Fee revenue columns — they share the shape (token + wei amount +
+ *  fill count) so a single component keeps them visually paired.
+ *  Cross-token aggregation would need a price oracle; until then
+ *  the operator scans top-3 by raw wei (sorted desc as bigint to
+ *  beat Number precision loss). */
+function TokenTotalsCard({
+  title,
+  empty,
+  entries,
+  countLabel,
+}: {
+  title: string;
+  empty: string;
+  entries: ReadonlyArray<{ token: string; amount: string; count: number }>;
+  /** Singular noun for the per-row "<n> <label>(s)" tally. The Volume
+   *  card uses "fill"; the Fee revenue card uses "accrual" because a
+   *  single settlement records both maker- and taker-side fees, so
+   *  fee_history row count is not 1:1 with fills. */
+  countLabel: string;
+}) {
+  // Pre-parse amounts to BigInt once so the comparator below is a
+  // consistent preorder. Wrapping `BigInt()` inside `.sort` and
+  // returning `0` on throw breaks transitivity: an entry that
+  // failed to parse compares equal to every other entry, including
+  // entries that are not equal to each other — V8's sort can then
+  // produce an unstable order or hit a comparator-violation in
+  // strict mode. Unparseable amounts sink to the bottom.
+  const parsed = entries.map((e) => {
+    let value: bigint;
+    let valid = true;
+    try {
+      value = BigInt(e.amount);
+    } catch {
+      value = 0n;
+      valid = false;
+    }
+    return { entry: e, value, valid };
+  });
+  parsed.sort((a, b) => {
+    if (a.valid !== b.valid) return a.valid ? -1 : 1;
+    if (a.value === b.value) return 0;
+    return a.value > b.value ? -1 : 1;
+  });
+  const sorted = parsed.map((p) => p.entry);
+  const top = sorted.slice(0, 3);
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+      <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+        {title}
+      </div>
+      {top.length === 0 ? (
+        <div className="mt-2 text-sm text-[var(--color-text-muted)]">{empty}</div>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {top.map((e) => {
+            const info = tokenInfo(e.token);
+            return (
+              <li
+                key={e.token}
+                className="flex items-baseline justify-between gap-2 text-sm"
+              >
+                <span className="font-medium">{info.symbol}</span>
+                <span className="font-mono">
+                  {formatAmount(e.amount, info.decimals)}
+                  <span className="ml-1 text-[10px] text-[var(--color-text-subtle)]">
+                    {e.count} {countLabel}{e.count === 1 ? "" : "s"}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+          {sorted.length > top.length && (
+            <li className="text-[10px] text-[var(--color-text-subtle)]">
+              +{sorted.length - top.length} more
+            </li>
+          )}
+        </ul>
       )}
     </div>
   );
