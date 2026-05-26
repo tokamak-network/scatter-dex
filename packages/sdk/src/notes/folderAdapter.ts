@@ -78,10 +78,18 @@ interface FileShape {
  *  `remove(id)` work across apps and keeps any caller-side dedup-by-
  *  id consistent regardless of which app produced the file. */
 export function createFolderNoteAdapter(opts: FolderAdapterOpts = {}): NoteStorageAdapter {
-  // Lowercase the wallet filter once at construction. The on-disk
-  // value is already lowercased on write, but callers commonly forward
-  // the EIP-55-checksummed address from useWallet() verbatim.
-  const accountFilter = opts.accountKey?.toLowerCase();
+  // Lowercase the wallet filter once at construction, then validate
+  // shape. Apps commonly forward a pre-connect placeholder (the
+  // literal "anon") when no wallet is attached yet — accepting it
+  // here would (a) hide every note tagged with a real address while
+  // the wallet finishes loading, and (b) stamp `account: "anon"`
+  // onto any note written pre-connect, making it permanently
+  // invisible after connect. Treat anything that isn't a 0x +
+  // 40-hex address as "no filter" so the placeholder degrades
+  // cleanly into the legacy "show everything" behaviour.
+  const lowered = opts.accountKey?.toLowerCase();
+  const accountFilter =
+    lowered !== undefined && /^0x[0-9a-f]{40}$/.test(lowered) ? lowered : undefined;
   let readyPromise: Promise<void> | null = null;
   // Filename cache populated by `loadAll` so `remove` doesn't have
   // to re-walk and re-parse the entire directory just to find the
