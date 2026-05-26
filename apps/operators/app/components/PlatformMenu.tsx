@@ -12,7 +12,6 @@ export function PlatformMenu() {
         { href: "/leaderboard", label: "Leaderboard" },
         { href: "/orders/shared", label: "Shared orders" },
         { href: "/cross-relayer", label: "Cross-relayer" },
-        { href: "/verify-monitor", label: "Verify monitor" },
       ]}
     />
   );

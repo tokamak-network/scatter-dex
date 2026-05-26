@@ -1,31 +1,27 @@
 "use client";
 
 /**
- *  `/relayer/<address>` — public read-only profile for any registered
- *  relayer. Reads the on-chain row directly via `loadOperatorRow` and
- *  probes the target's own `/api/relayer/stats` for live counters, so
- *  visitors can inspect a peer's fee, bond, success rate, and live
- *  endpoint without needing admin auth on that peer. Lives in the
- *  operators app (rather than a separate marketing site) so the
- *  leaderboard row's link target sits one click away.
+ *  `/relayer?address=<addr>` — public read-only profile for any
+ *  registered relayer. Migrated from `/relayer/[address]` so the
+ *  Operators bundle's `output: "export"` config can build without
+ *  needing a `generateStaticParams()` over an unbounded address
+ *  space — see the convention note in `next.config.ts`.
  *
- *  Anonymous visitors: works without a connected wallet. The page
- *  treats every reader as a third party — no "you" highlight, no
- *  edit affordances. Owners discover their own row from
- *  `/dashboard` instead.
+ *  Reads the on-chain row via `loadOperatorRow` and probes the
+ *  target's `/api/info` + `/api/relayer/stats` for live counters,
+ *  so visitors can inspect a peer's fee, bond, success rate, and
+ *  live endpoint without needing admin auth on that peer. Lives in
+ *  the operators app (rather than a separate marketing site) so
+ *  the leaderboard row's link target sits one click away.
  *
- *  We use `loadOperatorRow` instead of `loadRelayersWithApiInfo` so a
- *  single detail-page view costs one row read + one stats probe,
- *  regardless of how many relayers the registry has. The previous
- *  implementation fanned out across every active relayer's endpoint
- *  on every page load, and would mis-report registered-but-not-active
- *  relayers as "not found" because `getActiveRelayers()` excludes
- *  them.
+ *  Anonymous visitors work — no "you" highlight, no edit
+ *  affordances; owners discover their own row from `/dashboard`
+ *  instead.
  */
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
@@ -36,11 +32,11 @@ import {
   type RelayerApiInfo,
   type RelayerStatsResponse,
 } from "@zkscatter/sdk/relayer";
-import { Stat } from "../../components/Stat";
-import { SectionHeader } from "../../components/SectionHeader";
-import { DEMO_NETWORK } from "../../lib/network";
-import { formatIsoDate } from "../../lib/format";
-import { safeOperatorUrl } from "../../lib/operatorDisplay";
+import { Stat } from "../components/Stat";
+import { SectionHeader } from "../components/SectionHeader";
+import { DEMO_NETWORK } from "../lib/network";
+import { formatIsoDate } from "../lib/format";
+import { safeOperatorUrl } from "../lib/operatorDisplay";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 
@@ -68,15 +64,29 @@ const INITIAL_STATE: PageState = {
   notRegistered: false,
 };
 
+/** `useSearchParams()` must live under a Suspense boundary for
+ *  `output: "export"` to build / render — Next bails out otherwise
+ *  with "useSearchParams() should be wrapped in a suspense
+ *  boundary." Split the page into an outer Suspense host + inner
+ *  body so the hook stays where the URL state actually needs to be
+ *  read. */
 export default function RelayerDetailPage() {
-  const params = useParams<{ address: string }>();
-  // Route param is forwarded as-is to `loadOperatorRow` + the
-  // RelayerRegistry — Solidity address args are case-insensitive,
-  // so no explicit normalization is needed here. Display uses the
-  // user-typed casing; an `ethers.getAddress(...)` pass would
-  // checksum it but throws on invalid input and isn't worth the
-  // try/catch for a debug surface like this one.
-  const targetAddress = (params?.address ?? "").toString();
+  return (
+    <Suspense fallback={<Notice tone="info">Loading relayer detail…</Notice>}>
+      <RelayerDetailBody />
+    </Suspense>
+  );
+}
+
+function RelayerDetailBody() {
+  const search = useSearchParams();
+  // Query-string addresses are forwarded as-is to `loadOperatorRow`
+  // + the RelayerRegistry — Solidity address args are
+  // case-insensitive, so no explicit normalization is needed. The
+  // route may be visited with no `address` param (e.g. an internal
+  // link without context), in which case we render the
+  // "no relayer selected" notice instead of erroring.
+  const targetAddress = (search?.get("address") ?? "").trim();
   const { readProvider } = useWallet();
   const registryDeployed = isConfiguredAddress(REGISTRY);
   const [state, setState] = useState<PageState>(INITIAL_STATE);
@@ -88,7 +98,7 @@ export default function RelayerDetailPage() {
     }
     let cancelled = false;
     // Reset to INITIAL_STATE on every target change so an in-flight
-    // nav between /relayer/A → /relayer/B doesn't briefly render
+    // nav between ?address=A → ?address=B doesn't briefly render
     // A's row/stats under B's URL while the new fetch is in flight.
     setState({ ...INITIAL_STATE, loading: true });
     loadOperatorRow(REGISTRY, targetAddress, readProvider)
@@ -160,9 +170,7 @@ export default function RelayerDetailPage() {
     <div className="space-y-10">
       <header className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">
-            {displayName}
-          </h1>
+          <h1 className="text-2xl font-semibold">{displayName}</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
             Public profile from{" "}
             <code className="font-mono">RelayerRegistry</code>. No admin auth
@@ -184,7 +192,17 @@ export default function RelayerDetailPage() {
         </Notice>
       )}
 
-      {registryDeployed && loading && (
+      {registryDeployed && !targetAddress && (
+        <Notice tone="info">
+          No relayer selected. Pick one from{" "}
+          <Link href="/leaderboard" className="text-[var(--color-primary)] underline">
+            the leaderboard
+          </Link>
+          .
+        </Notice>
+      )}
+
+      {registryDeployed && targetAddress && loading && (
         <Notice tone="info">Loading on-chain row + live stats…</Notice>
       )}
 

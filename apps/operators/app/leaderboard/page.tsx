@@ -637,7 +637,9 @@ function RelayerNameCell({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
           title={row.online ? "API probe ok" : "API probe failed or relayer offline"}
         />
         <Link
-          href={`/relayer/${row.address}`}
+          // Query-param route — see relayer/page.tsx and the
+          // `output: "export"` convention note in next.config.ts.
+          href={`/relayer?address=${row.address}`}
           className="font-medium text-[var(--color-text)] hover:text-[var(--color-primary)] hover:underline"
         >
           {row.displayName}
