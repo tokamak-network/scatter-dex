@@ -46,10 +46,12 @@ const POLL_INTERVAL_MS = 30_000;
 
 type Auth = AdminAuth | null;
 
-type UnifiedStatus = "open" | "expired" | "settled" | "failed";
+type UnifiedStatus = "open" | "expired" | "cancelled" | "matched" | "settled" | "failed";
 const FILTERS: Array<{ key: "all" | UnifiedStatus; label: string }> = [
   { key: "all", label: "All" },
   { key: "open", label: "Open" },
+  { key: "matched", label: "Matched" },
+  { key: "cancelled", label: "Cancelled" },
   { key: "expired", label: "Expired" },
   { key: "settled", label: "Settled" },
   { key: "failed", label: "Failed" },
@@ -167,7 +169,12 @@ function OrdersBody({ auth }: { auth: Auth }) {
           setShared([]);
           return;
         }
-        const orders = await client.getOrders(500);
+        // Pull every status (open + terminal) so a relayer-B operator
+        // sees their cancelled / expired rows here, not just the
+        // currently-active ones. The shared-OB endpoint now returns
+        // `status=all`; the per-row classifier below still buckets by
+        // expiry / status so the tabs land correctly.
+        const orders = await client.getOrders(500, "all");
         if (signal?.aborted) return;
         setShared(orders);
       } catch (e) {
@@ -248,6 +255,8 @@ function OrdersBody({ auth }: { auth: Auth }) {
       all: rows.length,
       open: 0,
       expired: 0,
+      cancelled: 0,
+      matched: 0,
       settled: 0,
       failed: 0,
     };
@@ -418,8 +427,17 @@ function buildUnifiedRows(
     // connect) — the operator can still see network-wide open
     // activity, which mirrors what `/orders/shared` already shows.
     if (account && !eqAddr(o.relayer, account)) continue;
+    // Honor the server-reported lifecycle status (cancelled / matched
+    // are terminal and shouldn't be re-labelled "expired" by the
+    // timestamp test). When the server hasn't sent a status (legacy
+    // payload), fall back to the timestamp classifier.
     const expiredMs = o.expiry * 1000;
-    const status: UnifiedStatus = expiredMs <= nowMs ? "expired" : "open";
+    const status: UnifiedStatus =
+      o.status === "cancelled" || o.status === "matched"
+        ? o.status
+        : expiredMs <= nowMs
+          ? "expired"
+          : "open";
     out.push({
       key: `open:${o.id}`,
       status,
@@ -467,8 +485,12 @@ function statusCls(status: UnifiedStatus): string {
   switch (status) {
     case "open":
       return "bg-[var(--color-primary-soft)] text-[var(--color-primary)]";
+    case "matched":
+      return "bg-[var(--color-primary-soft)] text-[var(--color-primary)]";
     case "expired":
       return "bg-[var(--color-warning-soft)] text-[var(--color-warning)]";
+    case "cancelled":
+      return "bg-[var(--color-bg)] text-[var(--color-text-muted)]";
     case "settled":
       return "bg-[var(--color-success-soft)] text-[var(--color-success)]";
     case "failed":
