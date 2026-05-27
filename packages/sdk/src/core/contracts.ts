@@ -172,7 +172,13 @@ export const FEE_VAULT_ABI = [
 export const ISSUANCE_APPROVAL_REGISTRY_ABI = [
   "function approve(address operator, string commonName, string organization, string country, uint32 validityDays, uint64 expiresAt) external",
   "function revoke(address operator, string reason) external",
-  "function approvals(address operator) external view returns (string commonName, string organization, string country, uint32 validityDays, address approvedBy, uint64 approvedAt, uint64 expiresAt, bool revoked, string revokeReason, uint64 revokedAt)",
+  // `approvals` returns the `Approval` struct as a SINGLE tuple, not
+  // a flat list of fields. Solidity's `returns (Approval memory)` ABI-
+  // encodes the result as one tuple; a flat `returns (string, string,
+  // …)` here would make ethers v6 expect 10 separate top-level values
+  // and decoding would throw `data out-of-bounds` at runtime. Keep
+  // the `tuple(...)` wrapper.
+  "function approvals(address operator) external view returns (tuple(string commonName, string organization, string country, uint32 validityDays, address approvedBy, uint64 approvedAt, uint64 expiresAt, bool revoked, string revokeReason, uint64 revokedAt))",
   "function isApproved(address operator) external view returns (bool)",
   "function owner() external view returns (address)",
   "function pendingOwner() external view returns (address)",
