@@ -42,9 +42,13 @@ export const DEMO_NETWORK: NetworkConfig = resolveNetwork();
 /** External URL where operators can request verification from the
  *  Relayer-CA — typically the zk-X509 frontend that this network's
  *  IdentityRegistry trusts. Empty string means "not configured"; the
- *  /operator-ca page renders the registration button disabled in that
- *  case rather than fabricating a link. */
+ *  /operator-ca and /register pages render the registration button
+ *  disabled in that case rather than fabricating a link.
+ *
+ *  Reads `NEXT_PUBLIC_CA_REGISTRATION_URL` first (production name)
+ *  and falls back to the legacy `NEXT_PUBLIC_ZK_X509_URL` so existing
+ *  dev-stack `.env.local` files keep working without an extra edit. */
 export const CA_REGISTRATION_URL: string = pick(
   process.env.NEXT_PUBLIC_CA_REGISTRATION_URL,
-  "",
+  pick(process.env.NEXT_PUBLIC_ZK_X509_URL, ""),
 );
