@@ -26,6 +26,7 @@ import { useIsIssuanceRegistryAdmin } from "../../lib/identity";
 import { SectionHeader } from "../../components/SectionHeader";
 import { Stat } from "../../components/Stat";
 import { formatIsoDate } from "../../lib/format";
+import { validateApproveInput } from "./validation";
 
 const ABI = [
   {
@@ -100,6 +101,7 @@ type HistoryEntry =
       expiresAt: number;
       txHash: string;
       blockNumber: number;
+      index: number;
     }
   | {
       kind: "revoked";
@@ -109,21 +111,46 @@ type HistoryEntry =
       reason: string;
       txHash: string;
       blockNumber: number;
+      index: number;
     };
 
+/** Read deployment block from env so `queryFilter` doesn't scan from
+ *  genesis on public chains (Sepolia / mainnet). Defaults to 0 for
+ *  localhost / first-boot dev where the registry was deployed at
+ *  block 0-ish anyway and full scans are cheap. */
+const DEPLOY_BLOCK_FROM_ENV: number = (() => {
+  const raw = process.env.NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_DEPLOY_BLOCK;
+  if (!raw) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+})();
+
 export default function AdminIssuancePage() {
-  const { account, signer, connect, readProvider } = useWallet();
+  const { account, signer, chainId, connect, readProvider } = useWallet();
   const isAdmin = useIsIssuanceRegistryAdmin();
   const registry = DEMO_NETWORK.contracts.issuanceApprovalRegistry;
   const deployed = !!registry && isConfiguredAddress(registry);
+  // Wallet chain mismatch — read-only RPC uses DEMO_NETWORK.rpcUrl
+  // regardless, so the history / lookup keep working. The write
+  // path (Approve / Revoke) MUST gate on this because the signer
+  // is bound to whatever chain the wallet is on; submitting an
+  // approve() to the wrong chain would either revert (no code) or
+  // land at an unrelated contract at the same address.
+  const wrongChain = chainId !== null && chainId !== DEMO_NETWORK.chainId;
 
   const readContract = useMemo(
     () => (deployed && registry ? new ethers.Contract(registry, ABI, readProvider) : null),
     [registry, deployed, readProvider],
   );
+  // `writeContract` is null when the wallet is on the wrong chain
+  // — the Approve / Revoke buttons see `null` and stay disabled,
+  // so we never accidentally fire a tx into a wrong-chain wallet.
   const writeContract = useMemo(
-    () => (deployed && registry && signer ? new ethers.Contract(registry, ABI, signer) : null),
-    [registry, deployed, signer],
+    () =>
+      deployed && registry && signer && !wrongChain
+        ? new ethers.Contract(registry, ABI, signer)
+        : null,
+    [registry, deployed, signer, wrongChain],
   );
 
   // ── Event history ────────────────────────────────────────
@@ -136,9 +163,20 @@ export default function AdminIssuancePage() {
     setHistoryLoading(true);
     setHistoryError(null);
     try {
+      // fromBlock pinned to the registry's deploy block (via env)
+      // so this query doesn't fan out into a multi-million-block
+      // scan on Sepolia / mainnet. Most public RPCs cap eth_getLogs
+      // at 10k blocks and reject full-chain queries; without this
+      // the page silently errors on any non-local deployment.
       const [approvedLogs, revokedLogs] = await Promise.all([
-        readContract.queryFilter(readContract.filters.ApprovalRecorded()),
-        readContract.queryFilter(readContract.filters.ApprovalRevoked()),
+        readContract.queryFilter(
+          readContract.filters.ApprovalRecorded(),
+          DEPLOY_BLOCK_FROM_ENV,
+        ),
+        readContract.queryFilter(
+          readContract.filters.ApprovalRevoked(),
+          DEPLOY_BLOCK_FROM_ENV,
+        ),
       ]);
       const merged: HistoryEntry[] = [];
       for (const e of approvedLogs) {
@@ -156,6 +194,7 @@ export default function AdminIssuancePage() {
           expiresAt: Number(ev.args[7]),
           txHash: ev.transactionHash,
           blockNumber: ev.blockNumber,
+          index: ev.index,
         });
       }
       for (const e of revokedLogs) {
@@ -169,10 +208,18 @@ export default function AdminIssuancePage() {
           reason: ev.args[3],
           txHash: ev.transactionHash,
           blockNumber: ev.blockNumber,
+          index: ev.index,
         });
       }
-      // Newest first by block + within block by event order.
-      merged.sort((a, b) => b.blockNumber - a.blockNumber);
+      // Newest first. Within a block, fall back to the logIndex
+      // tiebreaker so an approve+revoke in the same tx (or two
+      // approvals in a multicall) render in their actual on-chain
+      // emission order rather than insertion order.
+      merged.sort((a, b) => {
+        const blockDiff = b.blockNumber - a.blockNumber;
+        if (blockDiff !== 0) return blockDiff;
+        return b.index - a.index;
+      });
       setHistory(merged);
     } catch (err) {
       setHistoryError(err instanceof Error ? err.message : String(err));
@@ -219,6 +266,18 @@ export default function AdminIssuancePage() {
           <span className="ml-3 text-[var(--color-text-muted)]">
             to see your role + the approval history.
           </span>
+        </div>
+      )}
+
+      {deployed && account && wrongChain && (
+        <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs">
+          <div className="font-medium">Wrong network</div>
+          <div className="mt-1 text-[var(--color-text-muted)]">
+            Switch your wallet to {DEMO_NETWORK.name ?? `chain ${DEMO_NETWORK.chainId}`}.
+            Approve / Revoke buttons are disabled while the wallet is on
+            another chain — submitting a tx there would either revert or
+            land at an unrelated contract.
+          </div>
         </div>
       )}
 
@@ -300,24 +359,35 @@ function ApproveForm({
   isAdmin: boolean;
   onSuccess: () => void;
 }) {
+  const DEFAULT_VALIDITY = "365";
+  const DEFAULT_EXPIRES_AT = "0";
   const [operator, setOperator] = useState("");
   const [cn, setCn] = useState("");
   const [org, setOrg] = useState("");
   const [country, setCountry] = useState("");
-  const [validity, setValidity] = useState("365");
-  const [expiresAt, setExpiresAt] = useState("0");
+  const [validity, setValidity] = useState(DEFAULT_VALIDITY);
+  const [expiresAt, setExpiresAt] = useState(DEFAULT_EXPIRES_AT);
   const [phase, setPhase] = useState<"idle" | "submitting" | "done" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
-  const valid =
-    ethers.isAddress(operator) &&
-    cn.trim().length > 0 &&
-    org.trim().length > 0 &&
-    country.trim().length === 2 &&
-    Number(validity) > 0 &&
-    Number(validity) <= 3650 &&
-    !Number.isNaN(Number(expiresAt));
+  // Centralise input checks in a pure helper that also drives the
+  // contract-mirroring rules (e.g. past expiresAt rejected before
+  // sending tx). See `./validation.ts` + unit tests.
+  const validation = validateApproveInput(
+    { operator, commonName: cn, organization: org, country, validityDays: validity, expiresAt },
+    Math.floor(Date.now() / 1000),
+  );
+  const valid = validation.valid;
+
+  const resetForm = () => {
+    setOperator("");
+    setCn("");
+    setOrg("");
+    setCountry("");
+    setValidity(DEFAULT_VALIDITY);
+    setExpiresAt(DEFAULT_EXPIRES_AT);
+  };
 
   const submit = async () => {
     if (!writeContract || !valid) return;
@@ -331,12 +401,20 @@ function ApproveForm({
         org.trim(),
         country.trim().toUpperCase(),
         Number(validity),
-        BigInt(expiresAt),
+        BigInt(expiresAt.trim() === "" ? "0" : expiresAt.trim()),
       );
       const receipt = await tx.wait();
       setTxHash(receipt?.hash ?? tx.hash);
       setPhase("done");
       onSuccess();
+      // Clear the form after a successful approve so the next
+      // operator's metadata starts fresh — without this an admin
+      // approving a list of operators in a row would carry CN/O/C
+      // from the prior submission into the next paste of an
+      // unrelated wallet (simplify finding #848). Validity +
+      // expiresAt reset to their defaults rather than ""
+      // because those have sensible defaults.
+      resetForm();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase("error");
@@ -462,6 +540,11 @@ function LookupCard({
 }) {
   const [wallet, setWallet] = useState("");
   const [result, setResult] = useState<null | {
+    /** Snapshot of the address that was looked up. Used by `revoke`
+     *  so a typo-correction in the input box after lookup can't
+     *  divert the revoke tx to the wrong wallet (simplify finding
+     *  #848). */
+    address: string;
     approvedAt: number;
     commonName: string;
     organization: string;
@@ -477,16 +560,24 @@ function LookupCard({
   const [revokeReason, setRevokeReason] = useState("");
   const [busy, setBusy] = useState<"" | "lookup" | "revoke">("");
 
+  // Wipe a stale `result` whenever the input drifts away from the
+  // snapshot — the panel must never show metadata that doesn't
+  // match what the Revoke button would target.
+  const inputMatchesLookup =
+    !!result && wallet.trim().toLowerCase() === result.address.toLowerCase();
+
   const lookup = async () => {
-    if (!readContract || !ethers.isAddress(wallet)) {
+    const trimmed = wallet.trim();
+    if (!readContract || !ethers.isAddress(trimmed)) {
       setError("Enter a valid EVM address.");
       return;
     }
     setError(null);
     setBusy("lookup");
     try {
-      const raw = await readContract.approvals(wallet);
+      const raw = await readContract.approvals(trimmed);
       setResult({
+        address: trimmed.toLowerCase(),
         commonName: raw.commonName,
         organization: raw.organization,
         country: raw.country,
@@ -506,13 +597,19 @@ function LookupCard({
   };
 
   const revoke = async () => {
-    if (!writeContract || !ethers.isAddress(wallet)) return;
+    if (!writeContract || !result) return;
     setError(null);
     setBusy("revoke");
     try {
-      const tx = await writeContract.revoke(wallet.trim(), revokeReason.trim());
+      // Always revoke the *looked-up* address, never the live
+      // input — defends against the input drifting between lookup
+      // and revoke clicks.
+      const tx = await writeContract.revoke(result.address, revokeReason.trim());
       await tx.wait();
       setRevokeReason("");
+      // Re-lookup from the snapshot, not the live input, so the
+      // post-revoke view matches the wallet we just changed.
+      setWallet(result.address);
       await lookup();
       onSuccess();
     } catch (err) {
@@ -523,7 +620,12 @@ function LookupCard({
   };
 
   const canRevoke =
-    isAdmin && !!writeContract && !!result && result.approvedAt > 0 && !result.revoked;
+    isAdmin &&
+    !!writeContract &&
+    !!result &&
+    inputMatchesLookup &&
+    result.approvedAt > 0 &&
+    !result.revoked;
 
   return (
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
