@@ -1,19 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
   approveBondToken,
   explainRegistryError,
+  loadActiveRelayers,
   loadRegistrationStatus,
   MAX_RELAYER_FEE_BPS,
   needsBondApproval,
   registerRelayer,
   type RegistrationStatus,
 } from "@zkscatter/sdk/relayer";
-import { DEMO_NETWORK } from "../lib/network";
+import { CA_REGISTRATION_URL, DEMO_NETWORK } from "../lib/network";
+import { safeOperatorUrl } from "../lib/operatorDisplay";
+import { useOperatorIdentityRefresh } from "../lib/identity";
+
+const VERIFY_URL = safeOperatorUrl(CA_REGISTRATION_URL);
+
+/** Normalize a display name to the value we compare against existing
+ *  on-chain names: trim outer whitespace, lower-case, collapse
+ *  internal runs of whitespace to a single space. Two operators
+ *  registering "Relayer A" and "relayer  a" should collide; an empty
+ *  string after normalization counts as "no name". */
+function normalizeName(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
 
 type Phase =
   | "idle"
@@ -26,8 +40,9 @@ type Phase =
 
 export default function RegisterPage() {
   const { account, signer, chainId, readProvider, connect, connectError } = useWallet();
+  const refreshIdentity = useOperatorIdentityRefresh();
 
-  const [url, setUrl] = useState("https://relayer.example.com");
+  const [url, setUrl] = useState("");
   const [name, setName] = useState("");
   const [feeBps, setFeeBps] = useState("30");
   const [bondEth, setBondEth] = useState("0.1");
@@ -36,6 +51,14 @@ export default function RegisterPage() {
   const [status, setStatus] = useState<RegistrationStatus | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
   const [txHash, setTxHash] = useState("");
+
+  // Existing relayer names + their owner addresses. Used to gate the
+  // submit on a unique, non-empty name without depending on a chain-
+  // level guard (the contract doesn't enforce uniqueness yet).
+  // Keyed by the normalized form — `Relayer-A` and "  relayer  a  "
+  // collide. Owner address is kept so a re-registration by the same
+  // account doesn't false-positive on its own previous name.
+  const [takenNames, setTakenNames] = useState<Map<string, string>>(new Map());
 
   const wrongChain = chainId !== null && chainId !== DEMO_NETWORK.chainId;
   const deployed = isConfiguredAddress(DEMO_NETWORK.contracts.relayerRegistry);
@@ -65,6 +88,48 @@ export default function RegisterPage() {
   useEffect(() => {
     refreshStatus();
   }, [refreshStatus]);
+
+  // Pull the live active-relayer list once per page mount (plus on
+  // wallet change) so we can flag duplicate names *before* the user
+  // pays gas for a transaction that won't revert but would create a
+  // confusing dupe in every consumer (RelayerPicker, leaderboard,
+  // /api/info). This is best-effort only — a race between two
+  // concurrent registers can still produce a dupe; a true fix needs
+  // a contract-level uniqueness guard (tracked separately).
+  useEffect(() => {
+    if (!deployed || !readProvider) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await loadActiveRelayers(
+          DEMO_NETWORK.contracts.relayerRegistry,
+          readProvider,
+        );
+        if (cancelled) return;
+        const m = new Map<string, string>();
+        for (const r of list) {
+          const k = normalizeName(r.name ?? "");
+          if (k) m.set(k, r.address.toLowerCase());
+        }
+        setTakenNames(m);
+      } catch {
+        // Soft-fail — the on-chain register call still runs; we just
+        // can't pre-flight the uniqueness check.
+        if (!cancelled) setTakenNames(new Map());
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [deployed, readProvider, account]);
+
+  // Surface name validity to the submit gate + inline UI hint. An
+  // existing match owned by the connected account is *not* a
+  // conflict — they're re-registering with the same name.
+  const nameNormalized = normalizeName(name);
+  const nameTooShort = nameNormalized.length === 0;
+  const conflictAddr = nameNormalized ? takenNames.get(nameNormalized) : undefined;
+  const nameConflict =
+    !!conflictAddr && conflictAddr !== account?.toLowerCase();
+  const nameInvalid = nameTooShort || nameConflict;
 
   const onSubmit = async () => {
     if (!signer || !status) return;
@@ -139,6 +204,51 @@ export default function RegisterPage() {
               : "Required for slashing accountability"}
           />
         </ul>
+        {/* Hand the unverified operator a concrete next action.
+            Without this they have to dig through docs to find that the
+            chain-level guard is zk-X509 and that there's a verifier
+            UI behind the env-configured CA_REGISTRATION_URL. After a
+            verification round-trip Refresh re-runs the on-chain probe
+            so the row above flips to green without a full reload. */}
+        {!!status && !status.isVerified && account && !wrongChain && (
+          <div className="mt-4 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-3 text-xs">
+            <div className="font-medium">
+              Get your operator address verified before registering
+            </div>
+            <div className="mt-1 text-[var(--color-text-muted)]">
+              The on-chain <code>register()</code> call reverts unless your
+              address is recognised by the Relayer-CA IdentityRegistry. The
+              CA exposes a zk-X509 verifier UI — verify there, then click
+              Refresh to re-probe.
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {VERIFY_URL ? (
+                <a
+                  href={VERIFY_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block rounded-md border border-[var(--color-warning)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]"
+                >
+                  Open Relayer-CA verifier ↗
+                </a>
+              ) : (
+                <span
+                  className="inline-block cursor-not-allowed rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-muted)] px-2.5 py-1 text-xs text-[var(--color-text-subtle)]"
+                  title="Set NEXT_PUBLIC_CA_REGISTRATION_URL (or NEXT_PUBLIC_ZK_X509_URL) to enable this link"
+                >
+                  Verifier URL not configured
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => { refreshIdentity(); refreshStatus(); }}
+                className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
+              >
+                Refresh verification status
+              </button>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
@@ -155,14 +265,26 @@ export default function RegisterPage() {
             />
           </Field>
 
-          <Field label="Display name" hint="Shown to Pay/Pro users alongside your endpoint. Leave blank to skip.">
+          <Field
+            label="Display name"
+            hint={
+              nameConflict
+                ? `Name already taken by relayer ${conflictAddr?.slice(0, 6)}…${conflictAddr?.slice(-4)}. Pick a different one.`
+                : "Shown to Pay/Pro users alongside your endpoint. Required and must be unique across active relayers."
+            }
+          >
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Acme Relayer"
               maxLength={64}
-              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
+              aria-invalid={nameInvalid && name.length > 0 ? "true" : undefined}
+              className={`w-full rounded-lg border bg-white px-3 py-2 text-sm ${
+                nameConflict
+                  ? "border-[var(--color-danger)] focus:outline-[var(--color-danger)]"
+                  : "border-[var(--color-border-strong)]"
+              }`}
             />
           </Field>
 
@@ -229,6 +351,9 @@ export default function RegisterPage() {
           wrongChain={wrongChain}
           alreadyRegistered={!!status?.alreadyRegistered}
           notVerified={!!status && !status.isVerified}
+          nameInvalid={nameInvalid}
+          nameConflict={nameConflict}
+          nameTooShort={nameTooShort}
           onConnect={connect}
           onSubmit={onSubmit}
         />
@@ -244,10 +369,16 @@ function SubmitButton(props: {
   wrongChain: boolean;
   alreadyRegistered: boolean;
   notVerified: boolean;
+  nameInvalid: boolean;
+  nameConflict: boolean;
+  nameTooShort: boolean;
   onConnect: () => Promise<void>;
   onSubmit: () => Promise<void>;
 }) {
-  const { phase, deployed, account, wrongChain, alreadyRegistered, notVerified, onConnect, onSubmit } = props;
+  const {
+    phase, deployed, account, wrongChain, alreadyRegistered, notVerified,
+    nameInvalid, nameConflict, nameTooShort, onConnect, onSubmit,
+  } = props;
 
   if (!deployed) {
     return (
@@ -275,6 +406,7 @@ function SubmitButton(props: {
     wrongChain ||
     alreadyRegistered ||
     notVerified ||
+    nameInvalid ||
     phase === "approving" ||
     phase === "submitting" ||
     phase === "checking";
@@ -285,6 +417,8 @@ function SubmitButton(props: {
     alreadyRegistered ? "Already registered" :
     notVerified ? "Identity verification required" :
     wrongChain ? "Switch network in your wallet" :
+    nameTooShort ? "Display name required" :
+    nameConflict ? "Pick a unique display name" :
     "Register on-chain";
 
   return (
