@@ -29,6 +29,15 @@ describe("validateApproveInput", () => {
     expect(errors.operator).toMatch(/valid EVM address/i);
   });
 
+  it("rejects the zero address (contract reverts ZeroOperator)", () => {
+    const { valid, errors } = validateApproveInput(
+      input({ operator: "0x" + "0".repeat(40) }),
+      NOW,
+    );
+    expect(valid).toBe(false);
+    expect(errors.operator).toMatch(/zero address/i);
+  });
+
   it("trims whitespace before address-checking the operator", () => {
     const { valid } = validateApproveInput(
       input({ operator: "  0x70997970C51812dc3A010C7d01b50e0d17dc79C8  " }),

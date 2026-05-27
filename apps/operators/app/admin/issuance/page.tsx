@@ -101,6 +101,9 @@ type HistoryEntry =
       expiresAt: number;
       txHash: string;
       blockNumber: number;
+      /** Index of the containing tx within the block. */
+      transactionIndex: number;
+      /** Index of the log within the receipt's log array. */
       index: number;
     }
   | {
@@ -111,6 +114,7 @@ type HistoryEntry =
       reason: string;
       txHash: string;
       blockNumber: number;
+      transactionIndex: number;
       index: number;
     };
 
@@ -194,6 +198,7 @@ export default function AdminIssuancePage() {
           expiresAt: Number(ev.args[7]),
           txHash: ev.transactionHash,
           blockNumber: ev.blockNumber,
+          transactionIndex: ev.transactionIndex,
           index: ev.index,
         });
       }
@@ -208,6 +213,7 @@ export default function AdminIssuancePage() {
           reason: ev.args[3],
           txHash: ev.transactionHash,
           blockNumber: ev.blockNumber,
+          transactionIndex: ev.transactionIndex,
           index: ev.index,
         });
       }
@@ -215,9 +221,15 @@ export default function AdminIssuancePage() {
       // tiebreaker so an approve+revoke in the same tx (or two
       // approvals in a multicall) render in their actual on-chain
       // emission order rather than insertion order.
+      // Newest first by (block, txIndex, logIndex) — full lexicographic
+      // order. Without the secondary keys, two events in the same
+      // block (or one approve + one revoke in a multicall) would
+      // render in array-push order, which is "all approveds first,
+      // then all revokeds" — not actual chain order.
       merged.sort((a, b) => {
-        const blockDiff = b.blockNumber - a.blockNumber;
-        if (blockDiff !== 0) return blockDiff;
+        if (a.blockNumber !== b.blockNumber) return b.blockNumber - a.blockNumber;
+        if (a.transactionIndex !== b.transactionIndex)
+          return b.transactionIndex - a.transactionIndex;
         return b.index - a.index;
       });
       setHistory(merged);
@@ -305,7 +317,13 @@ export default function AdminIssuancePage() {
                       ? "Admin (owner)"
                       : "Read-only"
                 }
-                sub={isAdmin ? "Can approve / revoke" : "Mutations disabled"}
+                sub={
+                  isAdmin === null
+                    ? "Resolving owner from chain…"
+                    : isAdmin
+                      ? "Can approve / revoke"
+                      : "Mutations disabled"
+                }
               />
             </div>
           </section>
@@ -432,8 +450,9 @@ function ApproveForm({
       </p>
 
       <div className="grid grid-cols-2 gap-4 text-sm">
-        <Field label="Operator wallet (EVM)">
+        <Field label="Operator wallet (EVM)" htmlFor="approve-operator">
           <input
+            id="approve-operator"
             type="text"
             value={operator}
             onChange={(e) => setOperator(e.target.value)}
@@ -441,8 +460,9 @@ function ApproveForm({
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-xs"
           />
         </Field>
-        <Field label="Common name (CN)">
+        <Field label="Common name (CN)" htmlFor="approve-cn">
           <input
+            id="approve-cn"
             type="text"
             value={cn}
             onChange={(e) => setCn(e.target.value)}
@@ -451,8 +471,9 @@ function ApproveForm({
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
           />
         </Field>
-        <Field label="Organisation (O)">
+        <Field label="Organisation (O)" htmlFor="approve-org">
           <input
+            id="approve-org"
             type="text"
             value={org}
             onChange={(e) => setOrg(e.target.value)}
@@ -461,8 +482,9 @@ function ApproveForm({
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
           />
         </Field>
-        <Field label="Country (C, ISO-3166 alpha-2)">
+        <Field label="Country (C, ISO-3166 alpha-2)" htmlFor="approve-country">
           <input
+            id="approve-country"
             type="text"
             value={country}
             onChange={(e) => setCountry(e.target.value.toUpperCase())}
@@ -471,8 +493,9 @@ function ApproveForm({
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm uppercase"
           />
         </Field>
-        <Field label="Validity (days, 1..3650)">
+        <Field label="Validity (days, 1..3650)" htmlFor="approve-validity">
           <input
+            id="approve-validity"
             type="number"
             value={validity}
             onChange={(e) => setValidity(e.target.value)}
@@ -481,8 +504,9 @@ function ApproveForm({
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
           />
         </Field>
-        <Field label="Expires at (unix sec, 0 = no expiry)">
+        <Field label="Expires at (unix sec, 0 = no expiry)" htmlFor="approve-expires">
           <input
+            id="approve-expires"
             type="number"
             value={expiresAt}
             onChange={(e) => setExpiresAt(e.target.value)}
@@ -645,7 +669,7 @@ function LookupCard({
         <button
           type="button"
           onClick={() => void lookup()}
-          disabled={!readContract || !!busy || !ethers.isAddress(wallet)}
+          disabled={!readContract || !!busy || !ethers.isAddress(wallet.trim())}
           className="rounded-md border border-[var(--color-primary)] bg-white px-3 py-2 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)] disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy === "lookup" ? "Looking up…" : "Look up"}
@@ -734,7 +758,12 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
     <ul className="space-y-2">
       {entries.map((e) => (
         <li
-          key={`${e.txHash}:${e.kind}`}
+          /* `(txHash, logIndex)` uniquely identifies a log on-chain.
+             The prior `${txHash}:${kind}` would collide if a single
+             multicall tx emitted two events of the same kind for
+             different operators, producing React duplicate-key
+             warnings. */
+          key={`${e.txHash}:${e.index}`}
           className={`rounded-md border p-3 text-xs ${
             e.kind === "approved"
               ? "border-[var(--color-success)] bg-[var(--color-success-soft)]"
@@ -776,10 +805,26 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  /** When set, links the <label> to the input via for=/id= so screen
+   *  readers announce the field label on focus. Optional only because
+   *  some Field call sites wrap composite controls (radio groups,
+   *  segmented controls) where a single id wouldn't be meaningful;
+   *  every Field instance in this file passes one. */
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-[var(--color-text-subtle)]">
+      <label
+        htmlFor={htmlFor}
+        className="mb-1 block text-xs font-medium uppercase tracking-wide text-[var(--color-text-subtle)]"
+      >
         {label}
       </label>
       {children}

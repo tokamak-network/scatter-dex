@@ -29,8 +29,16 @@ export function validateApproveInput(
 ): ApproveValidation {
   const errors: Partial<Record<keyof ApproveInput, string>> = {};
 
-  if (!ethers.isAddress(input.operator.trim())) {
+  const operatorTrimmed = input.operator.trim();
+  if (!ethers.isAddress(operatorTrimmed)) {
     errors.operator = "Enter a valid EVM address.";
+  } else if (
+    // ethers.isAddress accepts `0x0000…0000` as a valid address, but
+    // the contract rejects it with ZeroOperator. Catch it here so
+    // the user sees an inline message instead of a tx revert.
+    operatorTrimmed.toLowerCase() === "0x" + "0".repeat(40)
+  ) {
+    errors.operator = "Address must not be the zero address.";
   }
   if (input.commonName.trim().length === 0) {
     errors.commonName = "CN is required.";
