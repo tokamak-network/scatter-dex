@@ -477,11 +477,13 @@ describe("PrivateOrderDB settlement history", () => {
     db.recordSettlementEvent({
       txHash: "0x" + "1".repeat(64), type: "settleAuth", status: "confirmed",
       blockNumber: 1, gasCostEth: "0.001", sellToken: TOKEN_SELL, buyToken: TOKEN_BUY,
+      sellAmount: "1000", buyAmount: "2000",
       durationMs: 1000,
     });
     db.recordSettlementEvent({
       txHash: "0x" + "2".repeat(64), type: "settleAuth", status: "confirmed",
       blockNumber: 2, gasCostEth: "0.001", sellToken: TOKEN_SELL, buyToken: TOKEN_BUY,
+      sellAmount: "1000", buyAmount: "2000",
       durationMs: 2000,
     });
     db.recordSettlementEvent({
@@ -495,36 +497,78 @@ describe("PrivateOrderDB settlement history", () => {
     expect(stats.avgSettleTimeMs).toBe(1500);
     expect(stats.uptimeSince).toBe(1700000000000);
     // Sanity-check the volume aggregate works on this fixture too —
-    // guards against re-introducing non-hex token strings here.
-    expect(db.getSettledVolume()).toHaveLength(1);
+    // guards against re-introducing non-hex token strings here. Two
+    // entries: TOKEN_SELL (sell leg) and TOKEN_BUY (buy leg of the
+    // same cross-token settleAuth).
+    expect(db.getSettledVolume()).toHaveLength(2);
   });
 
-  it("getSettledVolume groups by sell_token across confirmed settlements", () => {
+  it("getSettledVolume groups by sell_token across confirmed settleAuth fills", () => {
     const TOKEN_1 = "0x" + "11".repeat(20);
     const TOKEN_2 = "0x" + "22".repeat(20);
     const ADDR_X = "0x" + "33".repeat(20);
+    // Two TOKEN_1→ADDR_X settles, one TOKEN_2→ADDR_X settle. Each
+    // contributes to BOTH tokens since settleAuth is cross-token;
+    // the test isolates the sell-side group counts by giving
+    // distinct sell tokens but a shared buy token.
     db.recordSettlementEvent({
       txHash: "0x" + "a".repeat(64), type: "settleAuth", status: "confirmed",
       blockNumber: 1, sellToken: TOKEN_1, buyToken: ADDR_X,
+      sellAmount: "100", buyAmount: "200",
     });
     db.recordSettlementEvent({
       txHash: "0x" + "b".repeat(64), type: "settleAuth", status: "confirmed",
       blockNumber: 2, sellToken: TOKEN_1, buyToken: ADDR_X,
+      sellAmount: "100", buyAmount: "200",
     });
     db.recordSettlementEvent({
       txHash: "0x" + "c".repeat(64), type: "settleAuth", status: "confirmed",
       blockNumber: 3, sellToken: TOKEN_2, buyToken: ADDR_X,
+      sellAmount: "100", buyAmount: "200",
     });
     // Failed settlements must be excluded.
     db.recordSettlementEvent({
       txHash: "0x" + "d".repeat(64), type: "settleAuth", status: "failed",
       blockNumber: 4, sellToken: TOKEN_1, buyToken: ADDR_X,
+      sellAmount: "100", buyAmount: "200",
     });
     const volume = db.getSettledVolume();
     const byToken = Object.fromEntries(volume.map((v) => [v.sellToken, v.count]));
-    expect(byToken[TOKEN_1]).toBe(2);
-    expect(byToken[TOKEN_2]).toBe(1);
-    expect(volume).toHaveLength(2);
+    expect(byToken[TOKEN_1]).toBe(2);  // 2 sell-leg fills on TOKEN_1
+    expect(byToken[TOKEN_2]).toBe(1);  // 1 sell-leg fill on TOKEN_2
+    expect(byToken[ADDR_X]).toBe(3);   // 3 buy-leg fills, all on ADDR_X
+    expect(volume).toHaveLength(3);
+  });
+
+  it("getSettledVolume counts both legs for settleAuth, sell leg only for scatterDirectAuth", () => {
+    // settleAuth moves two different tokens — sell-token leaves the
+    // pool, buy-token enters — so the per-token throughput is the sum
+    // of both legs. scatterDirectAuth is a single-token Pay payout
+    // (sell_token == buy_token, sell_amount == buy_amount): UNION-ing
+    // both legs there doubles a single payout (PR #837 regression
+    // surfaced when an 11_200 USDC scatter rendered as 22_467.5 USDC
+    // on the operator leaderboard).
+    const USDC = "0x" + "11".repeat(20);
+    const WETH = "0x" + "22".repeat(20);
+    db.recordSettlementEvent({
+      txHash: "0x" + "a".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: USDC, buyToken: WETH,
+      sellAmount: "4500000000", buyAmount: "1000000000000000000",
+    });
+    db.recordSettlementEvent({
+      txHash: "0x" + "b".repeat(64), type: "scatterDirectAuth", status: "confirmed",
+      sellToken: USDC, buyToken: USDC,
+      sellAmount: "11200000000", buyAmount: "11200000000",
+    });
+    const volume = db.getSettledVolume();
+    const byToken = Object.fromEntries(volume.map((v) => [v.sellToken, v]));
+    // USDC: 4_500 from settleAuth sell + 11_200 from scatter sell = 15_700.
+    // The scatter's buy leg (also USDC) must NOT add another 11_200.
+    expect(byToken[USDC].totalVolume).toBe("15700000000");
+    expect(byToken[USDC].count).toBe(2);
+    // WETH: 1e18 from settleAuth buy leg only.
+    expect(byToken[WETH].totalVolume).toBe("1000000000000000000");
+    expect(byToken[WETH].count).toBe(1);
   });
 });
 

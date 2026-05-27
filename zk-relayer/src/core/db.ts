@@ -430,14 +430,21 @@ export class PrivateOrderDB {
     // BigInt-safe — SUM() would coerce to JS number and lose
     // precision for >2^53 totals (16 WETH at 18 decimals overflows).
     //
-    // Each settlement contributes to BOTH tokens' throughput: the
-    // sell-token sees `sell_amount` leave the pool, the buy-token
-    // sees `buy_amount` come in. The prior shape only grouped the
-    // sell leg, which reported `USDC totalVolume: 0` on every
-    // ETH→USDC settle even though 4500 USDC actually moved (the
-    // /api/network/totals endpoint in shared-OB already does the
-    // same UNION via sumVolumeByToken at line 695). Union both
-    // legs so the per-token total reflects the trade's full notional.
+    // Each cross-token settlement contributes to BOTH tokens'
+    // throughput: the sell-token sees `sell_amount` leave the pool,
+    // the buy-token sees `buy_amount` come in. The prior sell-only
+    // shape reported `USDC totalVolume: 0` on every ETH→USDC settle
+    // even though 4500 USDC actually moved.
+    //
+    // The buy leg is gated on `type = 'settleAuth'` because
+    // `scatterDirectAuth` (Pay-style single-token scatter) records
+    // sell_token == buy_token + sell_amount == buy_amount on the
+    // same row — UNION-ing both legs there double-counts a single
+    // payout (e.g. a 11_200 USDC scatter rendered as 22_467.5 USDC
+    // on the operator leaderboard). settleAuth is the only type
+    // whose buy leg is genuinely a separate token movement worth
+    // adding. GROUP_CONCAT keeps the SQL BigInt-safe — SUM() would
+    // coerce to JS number and lose precision for >2^53 totals.
     // Outer column is aliased `sell_token` (not `token`) for backward
     // compatibility with the `getSettledVolume()` consumer below, the
     // `/api/relayer/stats` JSON shape it produces, and the Prometheus
@@ -455,7 +462,8 @@ export class PrivateOrderDB {
            UNION ALL
            SELECT buy_token  AS token, buy_amount  AS amount
              FROM settlement_history
-            WHERE status = 'confirmed' AND buy_token IS NOT NULL AND buy_amount IS NOT NULL
+            WHERE status = 'confirmed' AND type = 'settleAuth'
+              AND buy_token IS NOT NULL AND buy_amount IS NOT NULL
          )
         GROUP BY token`,
     );
@@ -1477,10 +1485,18 @@ export class PrivateOrderDB {
    *  so the row's sell_token is returned as-is — the prior `BigInt(...)`
    *  reformat was a leftover from when the column held checksummed
    *  addresses and would now strip canonical lowercase to the same
-   *  string, just slower. The amounts column is a comma-joined string
-   *  of sell_amount values (NULLs skipped) — `''` means "no
-   *  post-migration rows", which `split(",").filter(Boolean)` handles
-   *  cleanly without a sentinel BigInt parse. */
+   *  string, just slower.
+   *
+   *  Per-token shape since the buy-leg UNION (see `statsSettledVolume`
+   *  prep): `amounts` is a comma-joined string of EITHER `sell_amount`
+   *  (always) OR `buy_amount` (only for `type='settleAuth'` rows where
+   *  the buy leg is a genuinely different token movement). NULLs are
+   *  skipped at the SQL layer. `''` means "no rows", which
+   *  `split(",").filter(Boolean)` handles cleanly without a sentinel
+   *  BigInt parse. The outer `sellToken` field name is preserved as
+   *  the wire contract — its value can be a buy-leg token but the
+   *  consumers (`/api/relayer/stats`, Prometheus labels) gate on the
+   *  field name, not the literal "sell" semantic. */
   getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
     const rows = this.statsSettledVolume.all({}) as Array<{ sell_token: string; count: number; amounts: string }>;
     return rows.map((r) => {
