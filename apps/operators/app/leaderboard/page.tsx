@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type MouseEvent, type KeyboardEvent } from "react";
+import { ethers } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import {
@@ -508,16 +509,34 @@ function RelayerRow({
   // element (Next.js Link inside RelayerNameCell, future buttons).
   // Otherwise clicking the relayer name both navigates AND opens the
   // drawer, leaving the wrong row expanded on back-navigation.
-  const handleClick = (e: React.MouseEvent<HTMLTableRowElement>) => {
+  // `e.target` is typed `EventTarget` and (per React docs) may not
+  // be an Element — e.g. a text-node target from contentEditable
+  // children. Guard with `instanceof Element` so `.closest()` is
+  // safe.
+  const handleClick = (e: MouseEvent<HTMLTableRowElement>) => {
     if (!canExpand) return;
-    if ((e.target as HTMLElement).closest("a,button,input,select,textarea")) return;
+    const t = e.target;
+    if (t instanceof Element && t.closest("a,button,input,select,textarea")) return;
+    onToggle();
+  };
+  // Keyboard parity: Enter / Space toggle when the row itself has
+  // focus. We don't preventDefault on focus-target children — those
+  // bubble through above and we'd block legitimate Link navigation.
+  const handleKeyDown = (e: KeyboardEvent<HTMLTableRowElement>) => {
+    if (!canExpand) return;
+    if (e.target !== e.currentTarget) return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
     onToggle();
   };
   return (
     <>
       <tr
-        className={`border-t border-[var(--color-border)] ${isMe ? "bg-[var(--color-primary-soft)]" : ""} ${canExpand ? "cursor-pointer hover:bg-[var(--color-bg)]" : ""}`}
+        className={`border-t border-[var(--color-border)] ${isMe ? "bg-[var(--color-primary-soft)]" : ""} ${canExpand ? "cursor-pointer hover:bg-[var(--color-bg)] focus:bg-[var(--color-bg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]" : ""}`}
         onClick={handleClick}
+        onKeyDown={canExpand ? handleKeyDown : undefined}
+        role={canExpand ? "button" : undefined}
+        tabIndex={canExpand ? 0 : undefined}
         aria-expanded={canExpand ? isExpanded : undefined}
       >
         <td className="px-5 py-3 font-semibold">
@@ -633,6 +652,21 @@ function RevenueCell({ row }: { row: RankedRelayer }) {
   );
 }
 
+/** Normalize an address string from an untrusted peer's JSON into
+ *  the lowercased hex form used as map keys here. Returns `null`
+ *  for any input that isn't a parseable address — `ethers.getAddress`
+ *  runs full checksum + length validation and throws on garbage,
+ *  which we catch so a single bad row from a buggy peer doesn't
+ *  break rendering for every other relayer. */
+function normAddr(s: unknown): string | null {
+  if (typeof s !== "string" || s.length === 0) return null;
+  try {
+    return ethers.getAddress(s).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 /** Inline expansion row — joins per-token settled volume and per-token
  *  fee earned on the token address so the operator can read both
  *  metrics on the same line per token without scanning two columns. */
@@ -641,11 +675,13 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
   const fees = row.stats?.feeTotals ?? [];
   const tokens = new Map<string, { volume?: typeof volumes[number]; fee?: typeof fees[number] }>();
   for (const v of volumes) {
-    const k = v.sellToken.toLowerCase();
+    const k = normAddr(v.sellToken);
+    if (!k) continue;
     tokens.set(k, { ...(tokens.get(k) ?? {}), volume: v });
   }
   for (const f of fees) {
-    const k = f.token.toLowerCase();
+    const k = normAddr(f.token);
+    if (!k) continue;
     tokens.set(k, { ...(tokens.get(k) ?? {}), fee: f });
   }
   // Sort by volume notional desc, then by fee notional desc — matches
