@@ -12,6 +12,35 @@ import { DOCS, type DocContent, type DocSlug } from "./docs-data";
 const renderer = new Renderer();
 renderer.html = () => "";
 
+// Build a Set of known doc slugs once so the link rewriter below
+// can validate cross-doc references in O(1). Computed at module
+// init from `DOCS` so adding a new slug + file is enough — no
+// need to update this list separately.
+const KNOWN_SLUGS: ReadonlySet<string> = new Set(DOCS.map((d) => d.slug));
+
+// Rewrite cross-doc markdown links so the same source works in two
+// readers: on GitHub (`[Local Setup](./local-setup.md)` renders as
+// a normal repo file link) and inside the in-app /docs viewer
+// (where the file is loaded via `?d=<slug>`, not a sibling URL).
+// Without this, the operator clicking a sibling link in the in-app
+// viewer would 404 on `/docs/local-setup.md`. Matches `(./)?slug.md`
+// with optional `#anchor`, rewrites href to `?d=slug#anchor`, and
+// leaves everything else (`http://`, `mailto:`, `#anchor-only`,
+// anchors into unknown md files) untouched.
+const SIBLING_MD_LINK = /^(?:\.\/)?([a-z0-9-]+)\.md(#.*)?$/i;
+const originalLink = renderer.link.bind(renderer);
+renderer.link = (link) => {
+  const match = link.href.match(SIBLING_MD_LINK);
+  if (match && KNOWN_SLUGS.has(match[1])) {
+    const anchor = match[2] ?? "";
+    // Spread to preserve every other Link token field (type, raw,
+    // text) — overriding only `href`. Bypasses the marked Link
+    // type's stricter shape that bare-object literals don't satisfy.
+    return originalLink({ ...link, href: `?d=${match[1]}${anchor}` });
+  }
+  return originalLink(link);
+};
+
 // Resolved at module load: `next build` always runs from the package
 // dir (apps/operators), so cwd + ../../docs/operations is reliable in
 // CI and local. We assert the directory exists so a misconfigured

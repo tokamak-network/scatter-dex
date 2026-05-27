@@ -4,15 +4,23 @@ End-to-end onboarding for a new relayer operator, from the
 KYC packet they send the admin to their first appearance on the
 public leaderboard.
 
-The flow has three actors:
+The flow has three actors. They are distinct roles even when the
+same person wears multiple hats in a small deployment:
 
 - **Operator** — the person / org that will run a relayer.
-- **Admin (Relayer-CA owner)** — holds the IssuanceApprovalRegistry
-  owner key (multisig in production). Reviews KYC offline and
-  records approvals on chain.
-- **zk-X509 CA** — separate system that anchors the trusted Root
-  CA on chain (`IdentityRegistry.programVKey`) and issues the
-  per-operator X.509 cert + ZK proof.
+- **Approval admin (IssuanceApprovalRegistry owner)** — holds the
+  owner key on this app's `IssuanceApprovalRegistry` (multisig in
+  production). Reviews the operator's KYC offline and records the
+  approval on chain. This is purely the UX gate that decides who
+  sees the "Get your cert" CTA on `/register`; it does NOT issue
+  certs or anchor the CA.
+- **zk-X509 CA** — separate system (separate contracts, often
+  separate operator). Anchors the trusted Root CA on chain (the
+  PROGRAM_V_KEY readable via `IdentityRegistry.effectiveProgramVKey()`)
+  and issues the per-operator X.509 cert + ZK proof. The actual
+  security gate for `register()` lives here, not in the approval
+  registry above. Governance can hand this role to a third party
+  while keeping the approval admin in-house (or vice versa).
 
 Each step says **who** does it, **where** (URL / page), and
 **what** lands on chain.
@@ -204,7 +212,7 @@ requirements:
 - The relayer's `RELAYER_PRIVATE_KEY` matches the wallet that was
   verified at step 5.
 
-See the [Local Setup](?d=local-setup) and [Deployment](?d=deployment)
+See the [Local Setup](./local-setup.md) and [Deployment](./deployment.md)
 docs for the full env reference. Minimum local-setup example
 (note the explicit `cd` so the `DB_PATH=./...` is resolved
 relative to `zk-relayer/`, not the caller's cwd — a single
