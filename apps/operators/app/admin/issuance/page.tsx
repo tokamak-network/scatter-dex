@@ -20,7 +20,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { isConfiguredAddress } from "@zkscatter/sdk";
+import { isConfiguredAddress, ISSUANCE_APPROVAL_REGISTRY_ABI } from "@zkscatter/sdk";
 import { DEMO_NETWORK } from "../../lib/network";
 import { useIsIssuanceRegistryAdmin } from "../../lib/identity";
 import { SectionHeader } from "../../components/SectionHeader";
@@ -28,65 +28,11 @@ import { Stat } from "../../components/Stat";
 import { formatIsoDate } from "../../lib/format";
 import { validateApproveInput } from "./validation";
 
-const ABI = [
-  {
-    type: "function",
-    name: "owner",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "address" }],
-  },
-  {
-    type: "function",
-    name: "approve",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "operator", type: "address" },
-      { name: "commonName", type: "string" },
-      { name: "organization", type: "string" },
-      { name: "country", type: "string" },
-      { name: "validityDays", type: "uint32" },
-      { name: "expiresAt", type: "uint64" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "revoke",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "operator", type: "address" },
-      { name: "reason", type: "string" },
-    ],
-    outputs: [],
-  },
-  {
-    type: "function",
-    name: "approvals",
-    stateMutability: "view",
-    inputs: [{ name: "operator", type: "address" }],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { name: "commonName", type: "string" },
-          { name: "organization", type: "string" },
-          { name: "country", type: "string" },
-          { name: "validityDays", type: "uint32" },
-          { name: "approvedBy", type: "address" },
-          { name: "approvedAt", type: "uint64" },
-          { name: "expiresAt", type: "uint64" },
-          { name: "revoked", type: "bool" },
-          { name: "revokeReason", type: "string" },
-          { name: "revokedAt", type: "uint64" },
-        ],
-      },
-    ],
-  },
-  // Events — surfaced in the history list.
-  "event ApprovalRecorded(address indexed operator, string commonName, string organization, string country, uint32 validityDays, address indexed approvedBy, uint64 approvedAt, uint64 expiresAt)",
-  "event ApprovalRevoked(address indexed operator, address indexed revokedBy, uint64 revokedAt, string reason)",
-] as const;
+// Full ABI (approve/revoke/approvals/owner + events + custom errors)
+// lives in @zkscatter/sdk so the operator-side `useIssuanceApproval`
+// hook and this admin console share one definition. Any contract
+// signature change is a single edit there.
+const ABI = ISSUANCE_APPROVAL_REGISTRY_ABI;
 
 type HistoryEntry =
   | {

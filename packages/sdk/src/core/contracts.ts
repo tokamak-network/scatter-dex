@@ -162,6 +162,38 @@ export const FEE_VAULT_ABI = [
   "error FeeChangeNotReady()",
 ] as const;
 
+// IssuanceApprovalRegistry — UX gate that lets operators see the
+// "Get your cert" CTA on `/register` with the right CN/O/C metadata
+// already filled. NOT a security boundary (the actual gate is the
+// zk-X509 IdentityRegistry — see docs/operations/registering-a-relayer.md).
+// Both the admin console (`/admin/issuance`) and the operator-side
+// `useIssuanceApproval` hook decode the same `approvals(address)`
+// struct shape, so the fragment lives here once.
+export const ISSUANCE_APPROVAL_REGISTRY_ABI = [
+  "function approve(address operator, string commonName, string organization, string country, uint32 validityDays, uint64 expiresAt) external",
+  "function revoke(address operator, string reason) external",
+  "function approvals(address operator) external view returns (string commonName, string organization, string country, uint32 validityDays, address approvedBy, uint64 approvedAt, uint64 expiresAt, bool revoked, string revokeReason, uint64 revokedAt)",
+  "function isApproved(address operator) external view returns (bool)",
+  "function owner() external view returns (address)",
+  "function pendingOwner() external view returns (address)",
+  "function transferOwnership(address newOwner) external",
+  "function acceptOwnership() external",
+  "event ApprovalRecorded(address indexed operator, string commonName, string organization, string country, uint32 validityDays, address indexed approvedBy, uint64 approvedAt, uint64 expiresAt)",
+  "event ApprovalRevoked(address indexed operator, address indexed revokedBy, uint64 revokedAt, string reason)",
+  // Custom-error fragments — keep in sync with contracts/src/IssuanceApprovalRegistry.sol.
+  // Needed so ethers v6 decodes reverts by name; without them the
+  // admin console shows raw selector hex on a failed approve/revoke.
+  "error ZeroOperator()",
+  "error EmptyCommonName()",
+  "error EmptyOrganization()",
+  "error CountryMustBeISO3166Alpha2()",
+  "error ValidityOutOfRange()",
+  "error ExpiresAtMustBeFutureOrZero()",
+  "error NoApprovalToRevoke()",
+  "error AlreadyRevoked()",
+  "error RenounceOwnershipDisabled()",
+] as const;
+
 // Pre-parsed Interface objects — repeated `new ethers.Interface(...)`
 // is cheap individually but adds up in tight render loops, so we
 // share these singletons across every contract call site in the SDK.

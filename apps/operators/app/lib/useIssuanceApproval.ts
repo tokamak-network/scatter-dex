@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ethers } from "ethers";
-import { isConfiguredAddress } from "@zkscatter/sdk";
+import { isConfiguredAddress, ISSUANCE_APPROVAL_REGISTRY_ABI } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "./network";
 
@@ -34,35 +34,11 @@ export interface IssuanceApprovalState {
   message?: string;
 }
 
-// Minimal ABI — only the read we need + the struct return shape.
-// Defined inline (not pulled from typechain) so the operators app
-// doesn't depend on contracts/ being built when the env doesn't
-// point at a real deployment.
-const ABI = [
-  {
-    type: "function",
-    name: "approvals",
-    stateMutability: "view",
-    inputs: [{ name: "operator", type: "address" }],
-    outputs: [
-      {
-        type: "tuple",
-        components: [
-          { name: "commonName", type: "string" },
-          { name: "organization", type: "string" },
-          { name: "country", type: "string" },
-          { name: "validityDays", type: "uint32" },
-          { name: "approvedBy", type: "address" },
-          { name: "approvedAt", type: "uint64" },
-          { name: "expiresAt", type: "uint64" },
-          { name: "revoked", type: "bool" },
-          { name: "revokeReason", type: "string" },
-          { name: "revokedAt", type: "uint64" },
-        ],
-      },
-    ],
-  },
-] as const;
+// ABI shared with the admin console (`/admin/issuance`) — see
+// `ISSUANCE_APPROVAL_REGISTRY_ABI` in @zkscatter/sdk. The hook only
+// calls `approvals(address)` but importing the full fragment keeps
+// the struct shape in one place; the contract instance below ignores
+// the write fragments we don't use.
 
 interface RawApproval {
   commonName: string;
@@ -155,7 +131,7 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
     }
     let cancelled = false;
     setState({ status: "checking" });
-    const c = new ethers.Contract(registry, ABI, readProvider);
+    const c = new ethers.Contract(registry, ISSUANCE_APPROVAL_REGISTRY_ABI, readProvider);
     (c.approvals(account) as Promise<RawApproval>)
       .then((raw) => {
         if (cancelled) return;
