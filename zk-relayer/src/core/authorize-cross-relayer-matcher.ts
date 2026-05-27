@@ -11,6 +11,7 @@ import {
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
+import { publicSignalToAddress } from "../types/authorize-order.js";
 import { decPubKeyCount, nullifierToOfferHandle } from "../routes/authorize-orders.js";
 import { eqAddr } from "../lib/address.js";
 import { assertSafeOutboundUrl, UnsafeUrlError } from "../lib/url-guard.js";
@@ -134,6 +135,35 @@ export class AuthorizeCrossRelayerMatchService {
           }
           this.db?.updateAuthorizeOrderStatus(nullifier, "settled", result.txHash);
           this.onSettled?.(nullifier, result.txHash);
+
+          // Record the counterparty side locally so the leaderboard
+          // reflects our participation in this match. The peer
+          // submitted on-chain (gas + submit-side fee accrued to
+          // them); we only persist our own leg amounts and no fee
+          // rows, so Revenue stays correctly attributed. Wrapped in
+          // try/catch so a DB hiccup here can't unwind the
+          // already-confirmed on-chain settle.
+          try {
+            // publicSignals carry circom field-element decimal strings;
+            // convert to 0x-hex addresses to match the shape every
+            // other recordSettlementEvent caller writes (and what
+            // lowerHex / the analytics query expect).
+            this.db?.recordSettlementEvent({
+              txHash: result.txHash,
+              type: "settleAuth",
+              status: "confirmed",
+              sellToken: publicSignalToAddress(ps.sellToken),
+              buyToken: publicSignalToAddress(ps.buyToken),
+              sellAmount: BigInt(ps.sellAmount).toString(),
+              buyAmount: BigInt(ps.buyAmount).toString(),
+              counterparty: true,
+            });
+          } catch (e) {
+            log.warn("Failed to persist counterparty settle row", {
+              tx: result.txHash,
+              err: e instanceof Error ? e.message : String(e),
+            });
+          }
 
           // Mark our own listing `matched` on the shared orderbook —
           // settle succeeded, the row leaves the open tab but should
