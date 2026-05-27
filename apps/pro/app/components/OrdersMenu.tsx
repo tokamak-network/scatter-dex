@@ -10,6 +10,7 @@ export function OrdersMenu() {
       items={[
         { href: "/orders", label: "My orders", subLabel: "(this workspace)" },
         { href: "/orderbook", label: "Shared order book", subLabel: "(everyone)" },
+        { href: "/claims", label: "Claims", subLabel: "(received)" },
       ]}
     />
   );
