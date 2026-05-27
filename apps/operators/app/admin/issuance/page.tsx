@@ -195,20 +195,21 @@ export default function AdminIssuancePage() {
           index: ev.index,
         });
       }
-      // Newest first. Within a block, fall back to the logIndex
-      // tiebreaker so an approve+revoke in the same tx (or two
-      // approvals in a multicall) render in their actual on-chain
-      // emission order rather than insertion order.
-      // Newest first by (block, txIndex, logIndex) — full lexicographic
-      // order. Without the secondary keys, two events in the same
-      // block (or one approve + one revoke in a multicall) would
-      // render in array-push order, which is "all approveds first,
-      // then all revokeds" — not actual chain order.
+      // Across txs: newest first (latest activity at the top).
+      // WITHIN a single tx: ASCENDING logIndex so events render in
+      // actual on-chain emission order. The contract emits
+      // `ApprovalReplaced` BEFORE `ApprovalRecorded` inside the same
+      // approve() call — with ascending logIndex the admin reads
+      // top-to-bottom as "the prior state was X" → "the new state
+      // is Y", matching the chronology inside the tx. A descending
+      // tiebreaker here would invert that pair and read backwards.
+      // Same logic applies to a multicall that does revoke + approve
+      // in one tx: revoke renders above the subsequent approve.
       merged.sort((a, b) => {
         if (a.blockNumber !== b.blockNumber) return b.blockNumber - a.blockNumber;
         if (a.transactionIndex !== b.transactionIndex)
           return b.transactionIndex - a.transactionIndex;
-        return b.index - a.index;
+        return a.index - b.index;
       });
       setHistory(merged);
     } catch (err) {
