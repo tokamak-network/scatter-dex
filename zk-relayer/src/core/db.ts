@@ -1485,10 +1485,18 @@ export class PrivateOrderDB {
    *  so the row's sell_token is returned as-is — the prior `BigInt(...)`
    *  reformat was a leftover from when the column held checksummed
    *  addresses and would now strip canonical lowercase to the same
-   *  string, just slower. The amounts column is a comma-joined string
-   *  of sell_amount values (NULLs skipped) — `''` means "no
-   *  post-migration rows", which `split(",").filter(Boolean)` handles
-   *  cleanly without a sentinel BigInt parse. */
+   *  string, just slower.
+   *
+   *  Per-token shape since the buy-leg UNION (see `statsSettledVolume`
+   *  prep): `amounts` is a comma-joined string of EITHER `sell_amount`
+   *  (always) OR `buy_amount` (only for `type='settleAuth'` rows where
+   *  the buy leg is a genuinely different token movement). NULLs are
+   *  skipped at the SQL layer. `''` means "no rows", which
+   *  `split(",").filter(Boolean)` handles cleanly without a sentinel
+   *  BigInt parse. The outer `sellToken` field name is preserved as
+   *  the wire contract — its value can be a buy-leg token but the
+   *  consumers (`/api/relayer/stats`, Prometheus labels) gate on the
+   *  field name, not the literal "sell" semantic. */
   getSettledVolume(): Array<{ sellToken: string; count: number; totalVolume: string }> {
     const rows = this.statsSettledVolume.all({}) as Array<{ sell_token: string; count: number; amounts: string }>;
     return rows.map((r) => {
