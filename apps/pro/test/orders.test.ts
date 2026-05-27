@@ -135,4 +135,27 @@ describe("orders serialize/deserialize", () => {
     expect(restored.claims).toHaveLength(1);
     expect(restored.claims![0]!.secret).toBe(legacy.claim!.secret);
   });
+
+  it("round-trips `claimedLeafIndexes` (per-recipient claim progress)", () => {
+    // Multi-recipient order with partial progress — leaves 0 and 2
+    // claimed, leaf 1 still open. The persistence layer has to
+    // preserve the list exactly so the Claim modal can render the
+    // ✓ badges back after a page reload.
+    const order = fixture({
+      claims: [
+        { secret: 1n, recipient: "0xaa", token: "0xbb", amount: 100n, releaseTime: 1000n, leafIndex: 0, claimsRoot: "0xcc" },
+        { secret: 2n, recipient: "0xdd", token: "0xbb", amount: 100n, releaseTime: 1000n, leafIndex: 1, claimsRoot: "0xcc" },
+        { secret: 3n, recipient: "0xee", token: "0xbb", amount: 100n, releaseTime: 1000n, leafIndex: 2, claimsRoot: "0xcc" },
+      ],
+      claimedLeafIndexes: [0, 2],
+    });
+    const restored = deserialize(serialize(order));
+    expect(restored.claimedLeafIndexes).toEqual([0, 2]);
+  });
+
+  it("preserves `claimedLeafIndexes: undefined` when absent (legacy / fresh orders)", () => {
+    const order = fixture({ claimedLeafIndexes: undefined });
+    const restored = deserialize(serialize(order));
+    expect(restored.claimedLeafIndexes).toBeUndefined();
+  });
 });

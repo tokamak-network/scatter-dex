@@ -2,10 +2,10 @@
 import { useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
-import { useOrders, type OrderRecord } from "../lib/orders";
+import { useOrders, type OrderClaim, type OrderRecord } from "../lib/orders";
 import { claimProver } from "../lib/claimProver";
 import { abortableSleep, isAbortError } from "../lib/abort";
 import { formatClaimAmount } from "../lib/format";
@@ -13,11 +13,13 @@ import { useActiveNetwork } from "../lib/activeNetwork";
 
 type Phase =
   | { kind: "idle" }
-  | { kind: "preparing" }
-  | { kind: "proving"; message?: string }
-  | { kind: "submitting" }
-  | { kind: "success" }
-  | { kind: "error"; message: string };
+  | {
+      kind: "claiming";
+      leafIndex: number;
+      message: string;
+    }
+  | { kind: "success"; leafIndex: number }
+  | { kind: "error"; leafIndex: number; message: string };
 
 interface ClaimModalProps {
   open: boolean;
@@ -25,17 +27,35 @@ interface ClaimModalProps {
   order: OrderRecord | null;
 }
 
+/** Expand the order's claim material into a flat list. New writes
+ *  always carry `claims` (the full per-recipient list); legacy rows
+ *  may only have the singular `claim` — wrap it as a singleton so the
+ *  downstream code paths can iterate uniformly. */
+function claimList(order: OrderRecord): OrderClaim[] {
+  if (order.claims && order.claims.length > 0) return order.claims;
+  if (order.claim) return [order.claim];
+  return [];
+}
+
 export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
-  const { markClaimed } = useOrders();
+  const { markLeafClaimed } = useOrders();
   const { network } = useActiveNetwork();
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  // Mirror the persisted `claimedLeafIndexes` into local state so the
+  // checkbox reflects each successful leaf immediately without waiting
+  // for the store to round-trip. Re-seeded on order swap.
+  const [doneLocally, setDoneLocally] = useState<Set<number>>(new Set());
   const abortCtrlRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (open) setPhase({ kind: "idle" });
-  }, [open]);
+    if (!open) return;
+    setPhase({ kind: "idle" });
+    setDoneLocally(new Set(order?.claimedLeafIndexes ?? []));
+  }, [open, order]);
+
+  const allClaims = useMemo(() => (order ? claimList(order) : []), [order]);
 
   const close = useCallback(() => {
     abortCtrlRef.current?.abort();
@@ -44,87 +64,98 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
     onClose();
   }, [onClose]);
 
-  const submit = useCallback(async () => {
-    if (!order || !order.claim) {
-      setPhase({ kind: "error", message: "This order has no claim material." });
-      return;
-    }
+  /** Claim a single recipient's leaf — prove + (stub-)submit, then
+   *  persist via markLeafClaimed. Only one claim runs at a time;
+   *  re-entrant clicks while a claim is in flight are gated by the
+   *  per-row disabled state below. */
+  const claimOne = useCallback(
+    async (c: OrderClaim) => {
+      if (!order) return;
+      // Abort any in-flight prior claim before starting a new one —
+      // covers the edge where two row buttons get tapped in quick
+      // succession before React disables the second.
+      abortCtrlRef.current?.abort();
+      const ctrl = new AbortController();
+      abortCtrlRef.current = ctrl;
 
-    const ctrl = new AbortController();
-    abortCtrlRef.current = ctrl;
-    try {
-      setPhase({ kind: "preparing" });
-
-      // The order stored a single claim entry. We send the
-      // BigInt-backed `entry` + `leafIndex` to the worker; the
-      // worker rebuilds the matching 16-leaf claims tree there so
-      // circomlibjs's Poseidon init never boots on the UI thread.
-      // When real settled orders arrive from chain events, a pre-
-      // derived `merkleProof` from the indexer replaces this.
-      const entry = {
-        secret: order.claim.secret,
-        recipient: BigInt(order.claim.recipient),
-        token: BigInt(order.claim.token),
-        amount: order.claim.amount,
-        releaseTime: order.claim.releaseTime,
-      };
-
-      setPhase({ kind: "proving", message: "Generating ZK claim proof…" });
-      await claimProver.ready();
-      await claimProver.prove(
-        {
-          circuitId: "claim",
-          input: { entry, leafIndex: order.claim.leafIndex } as unknown as Record<
-            string,
-            unknown
-          >,
-        },
-        {
-          signal: ctrl.signal,
-          onProgress: (m) => setPhase({ kind: "proving", message: m }),
-        },
-      );
-
-      setPhase({ kind: "submitting" });
-      // TODO: on-chain `claim` dispatch.
-      await abortableSleep(400, ctrl.signal);
-
-      markClaimed(order.id);
-      setPhase({ kind: "success" });
-      toast.push({
-        kind: "success",
-        title: `${order.label} claimed`,
-        description: "Proceeds released to your recipient address.",
+      setPhase({
+        kind: "claiming",
+        leafIndex: c.leafIndex,
+        message: `Generating ZK claim proof for recipient #${c.leafIndex + 1}…`,
       });
-    } catch (e) {
-      if (isAbortError(e, ctrl.signal)) return;
-      console.error("[claim]", e);
-      const msg = e instanceof Error ? e.message : "Claim failed.";
-      setPhase({ kind: "error", message: msg });
-      toast.push({ kind: "error", title: "Claim failed", description: msg });
-    } finally {
-      if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
-    }
-  }, [order, markClaimed, toast]);
+
+      try {
+        const entry = {
+          secret: c.secret,
+          recipient: BigInt(c.recipient),
+          token: BigInt(c.token),
+          amount: c.amount,
+          releaseTime: c.releaseTime,
+        };
+        await claimProver.ready();
+        await claimProver.prove(
+          {
+            circuitId: "claim",
+            input: { entry, leafIndex: c.leafIndex } as unknown as Record<
+              string,
+              unknown
+            >,
+          },
+          {
+            signal: ctrl.signal,
+            onProgress: (m) => {
+              if (ctrl.signal.aborted) return;
+              setPhase({ kind: "claiming", leafIndex: c.leafIndex, message: m });
+            },
+          },
+        );
+        // TODO: on-chain per-leaf `claim` dispatch. The brief sleep
+        // keeps the demo's progress indicator perceptible until real
+        // tx submission lands.
+        await abortableSleep(200, ctrl.signal);
+        markLeafClaimed(order.id, c.leafIndex);
+        setDoneLocally((prev) => {
+          const next = new Set(prev);
+          next.add(c.leafIndex);
+          return next;
+        });
+        setPhase({ kind: "success", leafIndex: c.leafIndex });
+        toast.push({
+          kind: "success",
+          title: `${order.label} · recipient #${c.leafIndex + 1} claimed`,
+          description: "Proceeds released to the recipient address.",
+        });
+      } catch (e) {
+        if (isAbortError(e, ctrl.signal)) return;
+        console.error("[claim]", e);
+        const msg = e instanceof Error ? e.message : "Claim failed.";
+        setPhase({ kind: "error", leafIndex: c.leafIndex, message: msg });
+        toast.push({ kind: "error", title: "Claim failed", description: msg });
+      } finally {
+        if (abortCtrlRef.current === ctrl) abortCtrlRef.current = null;
+      }
+    },
+    [order, markLeafClaimed, toast],
+  );
 
   if (!order) return null;
 
-  // Identity gate — claims require a verified wallet (the on-chain
-  // claim call is gated on the same IdentityGate). Surface the
-  // gate prompt instead of the claim flow when the wallet is
-  // unverified / expired / error.
   if (open && identityBlocking) {
-    // Wire dismissal to the local `close()` helper so the identity
-    // branch follows the same abort + phase-reset path the rest of
-    // the modal uses. Bypassing `close()` here would leave any in-
-    // flight prove running and could let a stale `phase` re-render.
     return <IdentityGateModal state={identityState} onClose={close} />;
   }
 
-  const busy =
-    phase.kind === "preparing" ||
-    phase.kind === "proving" ||
-    phase.kind === "submitting";
+  const noClaimMaterial = allClaims.length === 0;
+  // `allDone` derived against the intersection of allClaims and
+  // doneLocally so a stale leafIndex in claimedLeafIndexes (longer
+  // than current claims, e.g. after a future schema change) can't
+  // falsely flip to "all done" before every CURRENT leaf is claimed.
+  const allDone =
+    !noClaimMaterial && allClaims.every((c) => doneLocally.has(c.leafIndex));
+  const doneCount = allClaims.reduce(
+    (n, c) => (doneLocally.has(c.leafIndex) ? n + 1 : n),
+    0,
+  );
+  const busyLeaf = phase.kind === "claiming" ? phase.leafIndex : null;
 
   return (
     <Modal open={open} onClose={close} title="Claim proceeds" closeOnBackdrop={false}>
@@ -135,38 +166,79 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
         <Row k="Side" v={order.side === "sell" ? "Sell" : "Buy"} />
         <Row k="Price" v={order.price} />
         <Row k="Size" v={order.size} />
-        {order.claim && (
-          <Row
-            k="Receive"
-            v={formatClaimAmount(
-              order.claim.amount,
-              order.claim.token,
-              network.tokens,
-            )}
-          />
-        )}
+        <Row
+          k="Recipients"
+          v={
+            noClaimMaterial
+              ? "—"
+              : allClaims.length === 1
+                ? doneCount === 1 ? "1 / 1 claimed" : "1 to claim"
+                : `${doneCount} / ${allClaims.length} claimed`
+          }
+        />
       </dl>
+
+      {!noClaimMaterial && (
+        <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)]">
+          <div className="border-b border-[var(--color-border)] px-3 py-2 text-xs font-medium text-[var(--color-text-muted)]">
+            Per-recipient claim
+          </div>
+          <ul className="max-h-72 overflow-y-auto divide-y divide-[var(--color-border)]">
+            {allClaims.map((c) => {
+              const done = doneLocally.has(c.leafIndex);
+              const claiming = busyLeaf === c.leafIndex;
+              const errored =
+                phase.kind === "error" && phase.leafIndex === c.leafIndex;
+              return (
+                <li
+                  key={c.leafIndex}
+                  className={`flex items-center gap-3 px-3 py-2 text-xs ${
+                    claiming ? "bg-[var(--color-primary-soft)]" : ""
+                  }`}
+                >
+                  <span className="w-8 text-[var(--color-text-subtle)]">
+                    #{c.leafIndex + 1}
+                  </span>
+                  <span className="flex-1 truncate font-mono text-[11px]">
+                    {c.recipient.slice(0, 6)}…{c.recipient.slice(-4)}
+                  </span>
+                  <span className="font-medium">
+                    {formatClaimAmount(c.amount, c.token, network.tokens)}
+                  </span>
+                  <span className="w-24 text-right">
+                    {done ? (
+                      <span className="text-[10px] text-[var(--color-success)]">
+                        ✓ claimed
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void claimOne(c)}
+                        disabled={busyLeaf !== null}
+                        className="rounded border border-[var(--color-primary)] px-2 py-0.5 text-[11px] font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {claiming ? "Claiming…" : errored ? "Retry" : "Claim"}
+                      </button>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
 
       <PhaseStatus phase={phase} />
 
       <div className="mt-5 flex justify-end gap-2">
-        {phase.kind === "success" ? (
+        {allDone ? (
           <Button onClick={close} size="lg">
             Done
           </Button>
         ) : (
-          <>
-            <Button variant="secondary" onClick={close}>
-              {busy ? "Cancel" : "Close"}
-            </Button>
-            <Button
-              onClick={submit}
-              disabled={busy || !order.claim}
-              title={!order.claim ? "No claim material on this order" : undefined}
-            >
-              {busy ? "Working…" : "Claim"}
-            </Button>
-          </>
+          <Button variant="secondary" onClick={close}>
+            {phase.kind === "claiming" ? "Cancel" : "Close"}
+          </Button>
         )}
       </div>
     </Modal>
@@ -184,40 +256,20 @@ function Row({ k, v }: { k: string; v: string }) {
 
 function PhaseStatus({ phase }: { phase: Phase }) {
   if (phase.kind === "idle") return null;
+  if (phase.kind === "success") return null; // per-row badge carries the signal
 
   if (phase.kind === "error") {
     return (
       <div className="mt-4 rounded-md border border-[var(--color-danger)] bg-[var(--color-surface)] px-3 py-2 text-sm text-[var(--color-danger)]">
-        {phase.message}
+        Recipient #{phase.leafIndex + 1}: {phase.message}
       </div>
     );
   }
-
-  if (phase.kind === "success") {
-    return (
-      <div className="mt-4 rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-2 text-sm">
-        <div className="font-semibold text-[var(--color-success)]">
-          Proceeds claimed
-        </div>
-        <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-          Order is now marked as <span className="font-mono">claimed</span> in
-          your history.
-        </div>
-      </div>
-    );
-  }
-
-  const label =
-    phase.kind === "preparing"
-      ? "Preparing claim…"
-      : phase.kind === "proving"
-      ? phase.message ?? "Generating ZK claim proof…"
-      : "Submitting on-chain…";
 
   return (
     <div className="mt-4 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm">
       <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
-      <span>{label}</span>
+      <span className="flex-1">{phase.message}</span>
     </div>
   );
 }
