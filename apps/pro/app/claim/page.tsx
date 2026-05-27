@@ -83,9 +83,9 @@ function ClaimInner() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Claim your payout</h1>
+        <h1 className="text-2xl font-semibold">Claim your share</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Someone shared a private payment with you. The amount and details
+          Someone shared a private trade with you. The amount and details
           are decoded from the link itself — nothing was sent to the server.
         </p>
       </header>
@@ -102,7 +102,7 @@ function ClaimInner() {
       {parsed && (
         <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm">
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
-            Payment details
+            Trade share details
           </h2>
           <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-2 text-sm">
             <Row k="Amount" v={
@@ -154,7 +154,7 @@ function ClaimInner() {
             {saveState === "saved" ? "Added to your Claims inbox" : "Already in your Claims inbox"}
           </div>
           <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-            Open Claims to redeem this payout once the release time is reached.
+            Open Claims to redeem this share once the release time is reached.
           </p>
           <div className="mt-3">
             <Link
