@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useTimedRefresh } from "./useTimedRefresh";
 
 /** Render an age like "5s ago" / "3m ago" / "2h ago" from a Unix-ms
  *  timestamp. Pure for unit tests. */
@@ -56,13 +57,26 @@ export function LiveFreshness({
   // inside a useState initializer. The first useEffect tick stamps
   // it post-hydration. While null we render "—" for the age, which
   // is also what we show before the first refresh has completed.
+  // `now` is null on the server render + first client commit so
+  // SSR + hydration match. The first useEffect stamps it
+  // post-hydration. While null we render "—" (also the pre-first-
+  // refresh state), which is identical between server and client.
   const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
     setNow(Date.now());
-    if (lastRefreshedAt === null) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [lastRefreshedAt]);
+  }, []);
+  // Per-second tick uses the same visibility-aware polling hook the
+  // rest of the freshness machinery is built on — skips ticks while
+  // the tab is hidden (no point re-rendering an age label nobody
+  // can see) and catches up with an immediate refresh on focus.
+  // Disabled while `lastRefreshedAt === null` so the pill doesn't
+  // tick before it has any data to age.
+  const refresh = useCallback(() => setNow(Date.now()), []);
+  useTimedRefresh({
+    refresh,
+    intervalMs: 1000,
+    enabled: lastRefreshedAt !== null,
+  });
 
   const age =
     lastRefreshedAt !== null && now !== null ? formatAge(lastRefreshedAt, now) : "—";

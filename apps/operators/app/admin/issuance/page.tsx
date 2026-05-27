@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
-import { useWallet, shortAddr } from "@zkscatter/sdk/react";
+import { useTimedRefresh, useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { isConfiguredAddress, ISSUANCE_APPROVAL_REGISTRY_ABI } from "@zkscatter/sdk";
 import { DEMO_NETWORK } from "../../lib/network";
 import { useIsIssuanceRegistryAdmin } from "../../lib/identity";
@@ -831,24 +831,19 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
  *  Re-evaluates on its own tick so the displayed bucket can roll
  *  over from "warn" → "urgent" → "expired" without a page reload. */
 function ApprovalWindowBadge({ expiresAt }: { expiresAt: number }) {
-  // `nowSec` starts as null so the server-render + first client
-  // hydration commit produce identical markup. Without this gating,
-  // useState(() => Date.now()) reads the server clock at SSR time
-  // and the client clock at hydration time and Next.js flags the
-  // mismatch. The useEffect below sets the real timestamp post-
-  // hydration and arms the per-minute tick. Per-minute (not per-
-  // second) because the bucket changes on calendar-day boundaries —
-  // a 60s tick is sufficient to flip "expires in 8d" → "7d" the
-  // moment midnight passes.
+  // `nowSec` starts null so SSR + hydration commit match. Real
+  // timestamp lands post-hydration in the useEffect below. Bucket
+  // re-evaluates every minute via `useTimedRefresh` (which also
+  // pauses while the tab is hidden and immediately re-stamps on
+  // focus). Per-minute is enough since the bucket changes on
+  // calendar-day boundaries — "expires in 8d" → "7d" the moment
+  // midnight passes.
   const [nowSec, setNowSec] = useState<number | null>(null);
   useEffect(() => {
     setNowSec(Math.floor(Date.now() / 1000));
-    const id = window.setInterval(
-      () => setNowSec(Math.floor(Date.now() / 1000)),
-      60_000,
-    );
-    return () => window.clearInterval(id);
   }, []);
+  const refresh = useCallback(() => setNowSec(Math.floor(Date.now() / 1000)), []);
+  useTimedRefresh({ refresh, intervalMs: 60_000 });
   if (nowSec === null) return null;
   const win: ApprovalWindow = classifyApprovalWindow(expiresAt, nowSec);
   if (win.tone === "none") return null;
