@@ -116,10 +116,22 @@ export function NavDropdown({
           <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
             {items.map((item, i) => {
               if (item.disabled) {
+                // `title` covers mouse hover, but assistive tech may
+                // ignore it on a non-interactive <span>. Mirror the
+                // explanation into `aria-label` so screen readers
+                // surface the reason this entry is greyed out.
+                const labelText =
+                  typeof item.label === "string" ? item.label : undefined;
+                const ariaLabel = item.disabledTitle
+                  ? labelText
+                    ? `${labelText} — ${item.disabledTitle}`
+                    : item.disabledTitle
+                  : undefined;
                 return (
                   <span
                     key={`${i}:${item.href}`}
                     aria-disabled="true"
+                    aria-label={ariaLabel}
                     title={item.disabledTitle}
                     className="block cursor-not-allowed px-3 py-1.5 text-sm text-[var(--color-text-subtle)] opacity-50"
                   >

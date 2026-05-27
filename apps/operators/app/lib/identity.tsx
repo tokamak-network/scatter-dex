@@ -316,8 +316,19 @@ export function useIsRegisteredRelayer(): boolean | null {
   const [registered, setRegistered] = useState<boolean | null>(null);
 
   useEffect(() => {
-    if (!account || !readProvider || !registryDeployed) {
+    // No wallet → no answer to give. Distinct from the terminal cases
+    // below; `null` lets the caller render a neutral "checking" UI.
+    if (!account || !readProvider) {
       setRegistered(null);
+      return;
+    }
+    // No registry on this network → terminal `false`. Without a
+    // registry to ask, the account is by definition not a relayer;
+    // returning `null` here would keep the menu in a loading state
+    // forever (Gemini #842). The MyMenu then surfaces the
+    // (also-disabled) Register link as expected for non-relayers.
+    if (!registryDeployed) {
+      setRegistered(false);
       return;
     }
     let cancelled = false;

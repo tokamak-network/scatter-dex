@@ -35,10 +35,25 @@ export function MyMenu() {
     { href: "/profile", label: "Profile" },
   ];
 
-  // `isRelayer === null` covers loading + missing-registry; treat
-  // both as "not yet a relayer" so the gate fails closed. False
-  // positives just delay access by one RPC tick.
-  if (isRelayer !== true) {
+  // While the on-chain probe is in flight, render every item disabled
+  // with a neutral "Checking…" tooltip instead of flashing the
+  // register-only shape that we'd then immediately replace once the
+  // RPC resolves. Eliminates the CTA flicker Gemini caught on #842.
+  if (isRelayer === null) {
+    const disabledTitle = "Checking your relayer registration…";
+    const items: NavDropdownItem[] = operatorItems.map((it) => ({
+      ...it,
+      disabled: true,
+      disabledTitle,
+    }));
+    return <NavDropdown LinkComponent={Link} label="My" width="narrow" items={items} />;
+  }
+
+  // Confirmed non-relayer (probe returned false OR terminal
+  // "no registry on this network" state from useIsRegisteredRelayer).
+  // Surface Register as the one enabled action so the user has a
+  // single obvious next step instead of a dropdown of dead ends.
+  if (!isRelayer) {
     const disabledTitle = "Register a relayer first to access operator pages";
     const items: NavDropdownItem[] = [
       { href: "/register", label: "Register relayer" },
