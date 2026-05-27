@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { NavDropdown, type NavDropdownItem } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
-import { useIsRegisteredRelayer, useIsRelayerRegistryAdmin } from "../lib/identity";
+import { useIsRelayerRegistryAdmin } from "../lib/identity";
 
 /** Identity dropdown for operators. Reads `RelayerRegistry.owner()`
  *  via `useIsRelayerRegistryAdmin` to decide whether to surface the
@@ -12,23 +12,19 @@ import { useIsRegisteredRelayer, useIsRelayerRegistryAdmin } from "../lib/identi
  *  the two apps gate on different contracts, so the admin hook
  *  stays app-local even though the dropdown shell is shared.
  *
- *  Register-relayer placement: shown here once the account already
- *  is a relayer (re-registration is rare but legal). For non-relayer
- *  accounts the MyMenu surfaces "Register relayer" as the primary
- *  action so the user finds it where they naturally look. Hiding
- *  the duplicate here keeps a single source of truth per menu state. */
+ *  Register-relayer placement: the link lives solely under MyMenu
+ *  (surfaced as the primary action when the connected wallet is
+ *  not yet a registered relayer). Already-registered accounts have
+ *  no use for it — re-registration is a contract-level no-op — so
+ *  the entry is intentionally absent here too. */
 export function IdentityMenu() {
   const { account } = useWallet();
   const isAdmin = useIsRelayerRegistryAdmin();
-  const isRelayer = useIsRegisteredRelayer();
   if (!account) return null;
 
   const items: NavDropdownItem[] = [
     { href: "/operator-ca", label: "My status" },
   ];
-  if (isRelayer === true) {
-    items.push({ href: "/register", label: "Register relayer" });
-  }
   if (isAdmin) {
     items.push({
       href: "/admin/identity",
