@@ -294,14 +294,24 @@ export default function Orders() {
                       Cancel
                     </button>
                   )}
-                  {o.status === "claimable" && o.claim && (
-                    <button
-                      onClick={() => setClaimTarget(o)}
-                      className="rounded-md border border-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
-                    >
-                      Claim
-                    </button>
-                  )}
+                  {o.status === "claimable" && o.claim && (() => {
+                    // Surface multi-recipient progress on the button
+                    // itself so the operator sees "3 / 5" without
+                    // opening the drawer. Single-recipient orders
+                    // (the common case) stay as plain "Claim".
+                    const total = o.claims?.length ?? 1;
+                    const done = o.claimedLeafIndexes?.length ?? 0;
+                    const label =
+                      total > 1 ? `Claim (${done}/${total})` : "Claim";
+                    return (
+                      <button
+                        onClick={() => setClaimTarget(o)}
+                        className="rounded-md border border-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                      >
+                        {label}
+                      </button>
+                    );
+                  })()}
                 </td>
               </tr>
             ))}

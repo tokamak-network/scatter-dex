@@ -68,6 +68,12 @@ export interface OrderRecord {
    *  flow can target the right recipient without re-deriving from
    *  the recipients form. */
   claims?: OrderClaim[];
+  /** Set of `leafIndex` values whose claim flow has already completed
+   *  successfully. Lets the multi-recipient claim drawer show
+   *  per-row progress (3 / 5 claimed) and skip already-done leaves
+   *  on a batch re-run. The order's top-level `status` promotes to
+   *  `claimed` only once every leaf in `claims` is in this list. */
+  claimedLeafIndexes?: number[];
   /** Authorize-circuit nonce used at order-submit time. Required
    *  later for the cancel proof (the cancel circuit publishes
    *  `nonceNullifier(secret, nonce)` to kill *this* order
@@ -145,6 +151,12 @@ interface OrdersState {
   ): OrderRecord;
   /** Mark an order as claimed. Idempotent. */
   markClaimed(id: string): void;
+  /** Record one recipient's leaf as claimed. Appends to
+   *  `claimedLeafIndexes` (deduped). When every leaf in `claims`
+   *  has been recorded, the order's `status` also promotes to
+   *  `claimed`. Used by the multi-recipient claim drawer so per-
+   *  row progress survives reloads. */
+  markLeafClaimed(id: string, leafIndex: number): void;
   /** Promote a matching order to `claimable` once we've observed
    *  the on-chain `PrivateSettledAuth` (or its relayer-side
    *  reflection). Idempotent; only valid against `matching`. Stamps
@@ -199,6 +211,7 @@ export interface WireOrder {
   status: OrderStatus;
   claim?: WireClaim;
   claims?: WireClaim[];
+  claimedLeafIndexes?: number[];
   nonceHex?: string;
   noteId?: string;
   changeCommitmentHex?: string;
@@ -254,6 +267,7 @@ export function serialize(o: OrderRecord): WireOrder {
     // recipient list new readers should prefer.
     claim: o.claim ? serializeClaim(o.claim) : undefined,
     claims: o.claims ? o.claims.map(serializeClaim) : undefined,
+    claimedLeafIndexes: o.claimedLeafIndexes,
     nonceHex: o.nonce !== undefined ? bigintToHex(o.nonce) : undefined,
     noteId: o.noteId,
     changeCommitmentHex: o.changeCommitment !== undefined ? bigintToHex(o.changeCommitment) : undefined,
@@ -287,6 +301,7 @@ export function deserialize(w: WireOrder): OrderRecord {
     status: w.status,
     claim: w.claim ? deserializeClaim(w.claim) : claimsList?.[0],
     claims: claimsList,
+    claimedLeafIndexes: w.claimedLeafIndexes,
     nonce: w.nonceHex !== undefined ? BigInt(w.nonceHex) : undefined,
     noteId: w.noteId,
     changeCommitment: w.changeCommitmentHex !== undefined ? BigInt(w.changeCommitmentHex) : undefined,
@@ -632,6 +647,33 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     [adapter],
   );
 
+  const markLeafClaimed = useCallback(
+    (id: string, leafIndex: number) => {
+      const target = ordersRef.current.find((o) => o.id === id);
+      if (!target) return;
+      // Idempotent on (id, leafIndex). Repeat calls keep the same
+      // list and skip the persistence write so a batch claim retry
+      // doesn't churn the orders file for already-done leaves.
+      const already = target.claimedLeafIndexes ?? [];
+      if (already.includes(leafIndex)) return;
+      const claimedLeafIndexes = [...already, leafIndex].sort((a, b) => a - b);
+      // Total recipients = `claims` length when present, else the
+      // legacy singular-`claim` shape (1). Once every leaf has been
+      // claimed the order's top-level status flips to `claimed` so
+      // the orders list shows it under the My/Claimed tab.
+      const total = target.claims?.length ?? (target.claim ? 1 : 0);
+      const allDone = total > 0 && claimedLeafIndexes.length >= total;
+      const next: OrderRecord = {
+        ...target,
+        claimedLeafIndexes,
+        status: allDone ? "claimed" : target.status,
+      };
+      adapter.put(next);
+      setOrders((prev) => prev.map((o) => (o.id === id ? next : o)));
+    },
+    [adapter],
+  );
+
   const markCancelled = useCallback(
     (id: string) => {
       const target = ordersRef.current.find((o) => o.id === id);
@@ -686,8 +728,8 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<OrdersState>(
-    () => ({ orders, loaded, add, markClaimed, markClaimable, markCancelled, remove }),
-    [orders, loaded, add, markClaimed, markClaimable, markCancelled, remove],
+    () => ({ orders, loaded, add, markClaimed, markLeafClaimed, markClaimable, markCancelled, remove }),
+    [orders, loaded, add, markClaimed, markLeafClaimed, markClaimable, markCancelled, remove],
   );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;
