@@ -85,7 +85,7 @@ const RANK_CRITERIA: RankCriterion[] = [
   {
     id: "revenue",
     label: "Revenue",
-    description: "Highest fee earned (top-token proxy — cross-token requires an oracle)",
+    description: "Highest fee earned (ranked by the relayer's biggest per-token total — cross-token sums need an oracle)",
     compare: (a, b) =>
       compareNullable(topFeeWeiNumeric(a), topFeeWeiNumeric(b), true),
   },
@@ -429,6 +429,18 @@ function RelayerTable({
   const activeColumn = CRITERION_TO_COLUMN[activeCriterion];
   const arrow = (col: string) =>
     col === activeColumn ? <span aria-hidden> ↓</span> : null;
+  // Row-level expansion lives at the table so reordering or filtering
+  // doesn't have to thread it through every row. Keyed by address —
+  // the rank can shift between sorts and rank-based keys would close
+  // the wrong drawer when the user re-sorts.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (addr: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      const k = addr.toLowerCase();
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <table className="w-full text-sm">
@@ -455,6 +467,8 @@ function RelayerTable({
               key={r.address}
               row={r}
               isMe={!!accountLc && r.address.toLowerCase() === accountLc}
+              isExpanded={expanded.has(r.address.toLowerCase())}
+              onToggle={() => toggle(r.address)}
             />
           ))}
         </tbody>
@@ -473,39 +487,80 @@ function EmptyRow({ message }: { message: string }) {
   );
 }
 
-function RelayerRow({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
+function RelayerRow({
+  row,
+  isMe,
+  isExpanded,
+  onToggle,
+}: {
+  row: RankedRelayer;
+  isMe: boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  // Only allow expansion when the per-token tables would actually
+  // show something — a row whose peer's `/api/relayer/stats` returned
+  // nothing has nothing to drill into.
+  const canExpand =
+    (row.stats?.settledVolume?.length ?? 0) > 0 ||
+    (row.stats?.feeTotals?.length ?? 0) > 0;
+  // Skip toggling when the click landed on a nested interactive
+  // element (Next.js Link inside RelayerNameCell, future buttons).
+  // Otherwise clicking the relayer name both navigates AND opens the
+  // drawer, leaving the wrong row expanded on back-navigation.
+  const handleClick = (e: React.MouseEvent<HTMLTableRowElement>) => {
+    if (!canExpand) return;
+    if ((e.target as HTMLElement).closest("a,button,input,select,textarea")) return;
+    onToggle();
+  };
   return (
-    <tr className={`border-t border-[var(--color-border)] ${isMe ? "bg-[var(--color-primary-soft)]" : ""}`}>
-      <td className="px-5 py-3 font-semibold">{row.rank}</td>
-      <td className="px-5 py-3">
-        <RelayerNameCell row={row} isMe={isMe} />
-      </td>
-      <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{shortAddr(row.address)}</td>
-      <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
-      <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
-      <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
-      <VolumeCell row={row} />
-      <RevenueCell row={row} />
-      <StatCell row={row} value={row.stats?.successRate} render={(n) => `${n}%`} />
-      <StatCell
-        row={row}
-        value={row.stats?.avgSettleTimeMs}
-        render={(n) => `${Math.round(n)} ms`}
-      />
-      <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">
-        {formatIsoDate(row.registeredAt)}
-      </td>
-    </tr>
+    <>
+      <tr
+        className={`border-t border-[var(--color-border)] ${isMe ? "bg-[var(--color-primary-soft)]" : ""} ${canExpand ? "cursor-pointer hover:bg-[var(--color-bg)]" : ""}`}
+        onClick={handleClick}
+        aria-expanded={canExpand ? isExpanded : undefined}
+      >
+        <td className="px-5 py-3 font-semibold">
+          {canExpand && (
+            <span
+              aria-hidden
+              className="mr-1 inline-block text-[10px] text-[var(--color-text-subtle)]"
+            >
+              {isExpanded ? "▾" : "▸"}
+            </span>
+          )}
+          {row.rank}
+        </td>
+        <td className="px-5 py-3">
+          <RelayerNameCell row={row} isMe={isMe} />
+        </td>
+        <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{shortAddr(row.address)}</td>
+        <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
+        <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
+        <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
+        <VolumeCell row={row} />
+        <RevenueCell row={row} />
+        <StatCell row={row} value={row.stats?.successRate} render={(n) => `${n}%`} />
+        <StatCell
+          row={row}
+          value={row.stats?.avgSettleTimeMs}
+          render={(n) => `${Math.round(n)} ms`}
+        />
+        <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">
+          {formatIsoDate(row.registeredAt)}
+        </td>
+      </tr>
+      {isExpanded && canExpand && <RelayerDetailRow row={row} />}
+    </>
   );
 }
 
-/** Volume column. Cross-token aggregation has no meaningful single
- *  number (1 WETH + 1 USDC ≠ 2), so render the peer's top sell-side
- *  token by notional and tuck the full per-token breakdown into a
- *  hover tooltip. Peers without a `settledVolume` field (older builds
- *  or registry rows pre-migration) render the same offline `—` as
- *  the surrounding StatCell columns, so the cell pattern stays
- *  visually consistent with Settled/Success/Avg-settle. */
+/** Volume column. Cross-token notionals can't be summed without a
+ *  price oracle (and trade-time rates would drift from current rates
+ *  anyway), so the cell stacks every token's total vertically — one
+ *  amount + symbol per line, biggest-by-notional first. Peers without
+ *  a `settledVolume` field (older builds / pre-migration registry
+ *  rows) render the same offline `—` as Settled/Success/Avg-settle. */
 function VolumeCell({ row }: { row: RankedRelayer }) {
   const volumes = row.stats?.settledVolume ?? [];
   const status = relayerStatsCellStatus(row, volumes.length > 0 ? 1 : undefined);
@@ -517,30 +572,23 @@ function VolumeCell({ row }: { row: RankedRelayer }) {
       </td>
     );
   }
-  // Pick the highest-volume entry as the "primary" — sums skip the
-  // entry's `count` and rank by notional so a sparsely-filled but
-  // huge-trade token reads correctly. Falls back to the first when
-  // every totalVolume parses to 0 (pre-migration rows on the peer).
   const sorted = [...volumes].sort((a, b) => {
     const av = safeBigInt(a.totalVolume);
     const bv = safeBigInt(b.totalVolume);
     if (av === bv) return 0;
     return av > bv ? -1 : 1;
   });
-  const top = sorted[0];
-  const info = tokenInfo(top.sellToken);
-  const breakdown = sorted
-    .map((v) => `${formatAmount(v.totalVolume, tokenInfo(v.sellToken).decimals)} ${tokenInfo(v.sellToken).symbol}`)
-    .join(" · ");
   return (
-    <td className="px-5 py-3 text-right" title={breakdown}>
-      <span className="font-mono">{formatAmount(top.totalVolume, info.decimals)}</span>{" "}
-      <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
-      {sorted.length > 1 && (
-        <div className="text-[10px] text-[var(--color-text-subtle)]">
-          +{sorted.length - 1} more
-        </div>
-      )}
+    <td className="px-5 py-3 text-right">
+      {sorted.map((v) => {
+        const info = tokenInfo(v.sellToken);
+        return (
+          <div key={v.sellToken} className="leading-tight">
+            <span className="font-mono">{formatAmount(v.totalVolume, info.decimals)}</span>{" "}
+            <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
+          </div>
+        );
+      })}
     </td>
   );
 }
@@ -549,13 +597,10 @@ function safeBigInt(s: string): bigint {
   try { return BigInt(s); } catch { return 0n; }
 }
 
-/** Revenue (per-token fee earned). Mirrors VolumeCell's shape — top
- *  earning token rendered with tooltip breakdown — so the leaderboard
- *  reads consistently across the two "what did this relayer route"
- *  vs "what did it earn" columns. Cross-token sums aren't meaningful
- *  without a price oracle, so we deliberately don't try to aggregate.
- *  Falls back to the same offline `—` shape when the peer doesn't
- *  expose feeTotals (older builds before this endpoint extension). */
+/** Revenue (per-token fee earned). Mirrors VolumeCell — every token
+ *  stacked vertically — so the "what did this relayer route" vs
+ *  "what did it earn" columns line up token-by-token. Falls back to
+ *  the same offline `—` shape when the peer doesn't expose feeTotals. */
 function RevenueCell({ row }: { row: RankedRelayer }) {
   const totals = row.stats?.feeTotals ?? [];
   const status = relayerStatsCellStatus(row, totals.length > 0 ? 1 : undefined);
@@ -573,21 +618,98 @@ function RevenueCell({ row }: { row: RankedRelayer }) {
     if (av === bv) return 0;
     return av > bv ? -1 : 1;
   });
-  const top = sorted[0];
-  const info = tokenInfo(top.token);
-  const breakdown = sorted
-    .map((t) => `${formatAmount(t.totalWei, tokenInfo(t.token).decimals)} ${tokenInfo(t.token).symbol}`)
-    .join(" · ");
   return (
-    <td className="px-5 py-3 text-right" title={breakdown}>
-      <span className="font-mono">{formatAmount(top.totalWei, info.decimals)}</span>{" "}
-      <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
-      {sorted.length > 1 && (
-        <div className="text-[10px] text-[var(--color-text-subtle)]">
-          +{sorted.length - 1} more
-        </div>
-      )}
+    <td className="px-5 py-3 text-right">
+      {sorted.map((t) => {
+        const info = tokenInfo(t.token);
+        return (
+          <div key={t.token} className="leading-tight">
+            <span className="font-mono">{formatAmount(t.totalWei, info.decimals)}</span>{" "}
+            <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
+          </div>
+        );
+      })}
     </td>
+  );
+}
+
+/** Inline expansion row — joins per-token settled volume and per-token
+ *  fee earned on the token address so the operator can read both
+ *  metrics on the same line per token without scanning two columns. */
+function RelayerDetailRow({ row }: { row: RankedRelayer }) {
+  const volumes = row.stats?.settledVolume ?? [];
+  const fees = row.stats?.feeTotals ?? [];
+  const tokens = new Map<string, { volume?: typeof volumes[number]; fee?: typeof fees[number] }>();
+  for (const v of volumes) {
+    const k = v.sellToken.toLowerCase();
+    tokens.set(k, { ...(tokens.get(k) ?? {}), volume: v });
+  }
+  for (const f of fees) {
+    const k = f.token.toLowerCase();
+    tokens.set(k, { ...(tokens.get(k) ?? {}), fee: f });
+  }
+  // Sort by volume notional desc, then by fee notional desc — matches
+  // the order the parent cells render so the eye lands in the same place.
+  const rows = Array.from(tokens.entries()).sort(([, a], [, b]) => {
+    const av = safeBigInt(a.volume?.totalVolume ?? "0");
+    const bv = safeBigInt(b.volume?.totalVolume ?? "0");
+    if (av !== bv) return av > bv ? -1 : 1;
+    const af = safeBigInt(a.fee?.totalWei ?? "0");
+    const bf = safeBigInt(b.fee?.totalWei ?? "0");
+    return af === bf ? 0 : af > bf ? -1 : 1;
+  });
+  return (
+    <tr className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
+      <td colSpan={TABLE_COLUMNS} className="px-5 py-4">
+        <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Per-token breakdown
+        </div>
+        <table className="mt-2 w-full text-sm">
+          <thead className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+            <tr>
+              <th className="px-3 py-1 text-left">Token</th>
+              {/* "Fills" — not "Settled" — because a single cross-token
+                  settleAuth contributes one fill to BOTH tokens (sell
+                  + buy leg). Reusing the top-level "Settled" label
+                  would invite the obvious-but-wrong sum across rows.
+                  The tooltip explains the per-leg semantics. */}
+              <th
+                className="px-3 py-1 text-right"
+                title="Per-token fills: a cross-token settle contributes one fill to each side; a same-token Pay scatter contributes one fill to that token. Summing across tokens won't match the row's Settled total."
+              >
+                Fills
+              </th>
+              <th className="px-3 py-1 text-right">Volume</th>
+              <th className="px-3 py-1 text-right">Revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(([addr, { volume, fee }]) => {
+              const info = tokenInfo(addr);
+              return (
+                <tr key={addr} className="border-t border-[var(--color-border)]">
+                  <td className="px-3 py-1.5">
+                    <span className="font-medium">{info.symbol}</span>{" "}
+                    <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+                      {shortAddr(addr)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono">
+                    {volume?.count ?? 0}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono">
+                    {volume ? formatAmount(volume.totalVolume, info.decimals) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono">
+                    {fee ? formatAmount(fee.totalWei, info.decimals) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </td>
+    </tr>
   );
 }
 
