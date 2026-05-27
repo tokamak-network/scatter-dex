@@ -46,7 +46,7 @@ function rowStatusLabel(e: ClaimInboxEntry, nowSec: number | undefined): string 
  *  who uses both apps sees one combined inbox without divergent
  *  state — useful for the demo where a single user wears both
  *  hats. */
-export default function InboxPage() {
+export default function ClaimsPage() {
   const folder = useFolder();
   const { account } = useWallet();
   const [entries, setEntries] = useState<ClaimInboxEntry[]>([]);
@@ -118,7 +118,7 @@ export default function InboxPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Inbox</h1>
+        <h1 className="text-2xl font-semibold">Claims</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
           Claim packages you&apos;ve received. Paste a claim link the sender
           shared, or one will land here automatically once you open a

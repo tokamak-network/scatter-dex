@@ -19,13 +19,41 @@ function countPending(): number {
 export function createInfoRoutes(submitter: PrivateSubmitter, db: PrivateOrderDB): Router {
   const router = Router();
 
-  router.get("/", (_req: Request, res: Response) => {
+  // Cached chainId — read once from the provider on first request
+  // and reused for every subsequent `/api/info` response. Avoids an
+  // RPC roundtrip on the hot info path while still surfacing the
+  // value clients (Pay/Pro discovery, the operator-register probe)
+  // use to validate they're pointing at a relayer on the right
+  // chain.
+  let cachedChainId: number | null = null;
+  async function chainId(): Promise<number | null> {
+    if (cachedChainId !== null) return cachedChainId;
+    try {
+      const net = await submitter.getProvider().getNetwork();
+      cachedChainId = Number(net.chainId);
+      return cachedChainId;
+    } catch (err) {
+      log.warn("getNetwork() failed; chainId will be omitted from /api/info", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
+  }
+
+  router.get("/", async (_req: Request, res: Response) => {
     res.json({
       // `RELAYER_NAME` env distinguishes co-running relayers in the
       // same dev stack (Relayer-A / Relayer-B). Falls back to the
       // generic product name when the operator hasn't set one.
       name: config.relayerName ?? "ScatterDEX ZK Relayer",
       version: "0.1.0",
+      // EVM chainId of the network this relayer is wired to. Cached
+      // on first read so the hot info path doesn't fan out to RPC
+      // on every request. Pay/Pro consumers cross-check this
+      // against their own active network's chainId before routing
+      // orders to the relayer; the operators register-page probe
+      // surfaces a mismatch warning.
+      chainId: await chainId(),
       address: submitter.getAddress(),
       fee: config.relayerFee,
       // Counts *pending* authorize orders only — `Map.size` would also

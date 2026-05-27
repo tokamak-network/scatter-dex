@@ -1,12 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Button } from "@zkscatter/ui";
-import type { OrderRecord } from "../lib/orders";
+import { Button, useToast } from "@zkscatter/ui";
+import { useWallet } from "@zkscatter/sdk/react";
+import { addClaimInboxEntry } from "@zkscatter/sdk/storage";
+import type { OrderClaim, OrderRecord } from "../lib/orders";
 import { StatusBadge } from "./StatusBadge";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useVault } from "../lib/vault";
 import { formatClaimAmount, formatField, formatWhen } from "../lib/format";
+import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPackage";
 
 interface Props {
   order: OrderRecord;
@@ -545,6 +548,11 @@ function RecipientsTable({
       : order.status === "claimable"
         ? { label: "Ready", tone: "success" as const }
         : { label: "Pending settle", tone: "muted" as const };
+  // Per-recipient share actions only make sense once the order has
+  // actually settled (the claims tree is rooted on-chain). Pre-
+  // settle rows still render so the operator can preview, but the
+  // action buttons stay disabled with a tooltip explaining why.
+  const shareEnabled = order.status === "claimable" || order.status === "claimed";
   return (
     <div className="mx-5 mb-5 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
       <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-4 py-2">
@@ -557,12 +565,6 @@ function RecipientsTable({
           </span>
         )}
       </div>
-      {/* `overflow-x-auto` on the wrapping div lets the recipients
-          table scroll horizontally when the parent surface is
-          narrower than the technical-mode column set (address +
-          token + amount + leaf + secret + claims root). Without
-          this the cells would push the surrounding panel
-          horizontally on the /orders drawer. */}
       <div className="overflow-x-auto">
       <table className="w-full text-xs">
         <thead className="bg-[var(--color-surface)] text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
@@ -572,6 +574,7 @@ function RecipientsTable({
             <th className="px-4 py-2 text-right">Amount</th>
             <th className="px-4 py-2 text-right">Release</th>
             <th className="px-4 py-2 text-right">Status</th>
+            <th className="px-4 py-2 text-right">Share</th>
             {showTechnical && <th className="px-4 py-2 text-right">Leaf</th>}
             {showTechnical && <th className="px-4 py-2 text-right">Secret</th>}
           </tr>
@@ -602,6 +605,9 @@ function RecipientsTable({
                 >
                   {perRowStatus.label}
                 </span>
+              </td>
+              <td className="px-4 py-2 text-right">
+                <ShareActions order={order} target={c} enabled={shareEnabled} />
               </td>
               {showTechnical && (
                 <td className="px-4 py-2 text-right font-mono">#{c.leafIndex}</td>
@@ -862,6 +868,183 @@ function SecretCell({ value }: { value: bigint }) {
     <span className="font-mono text-[10px] text-[var(--color-warning)]">
       {formatField(value)}
     </span>
+  );
+}
+
+/** Per-recipient share actions. Builds the full ClaimPackage on
+ *  demand (heavy lift: rebuild the 16-leaf claims tree via
+ *  buildClaimsTree + pull the inclusion proof via getMerkleProof) so
+ *  the link the operator copies / emails is the same shape Pay
+ *  produces. All three actions share that one build — held in a
+ *  ref-free in-call promise rather than precomputed at mount because
+ *  most rows don't get shared and a 16-leaf Poseidon tree is wasted
+ *  work for those.
+ *
+ *  Disabled state: pre-settle rows render the buttons greyed-out
+ *  with a tooltip — the claims root isn't on-chain yet, so the
+ *  link's recipient wouldn't be able to verify the proof anyway. */
+function ShareActions({
+  order,
+  target,
+  enabled,
+}: {
+  order: OrderRecord;
+  target: OrderClaim;
+  enabled: boolean;
+}) {
+  const { network } = useActiveNetwork();
+  const { account } = useWallet();
+  const toast = useToast();
+  const [busy, setBusy] = useState<null | "copy" | "email" | "save">(null);
+  const settlement = network.contracts.privateSettlement;
+
+  const buildPkg = async () => {
+    return buildClaimPackageFromOrder({
+      order,
+      target,
+      chainId: network.chainId,
+      settlementAddress: settlement,
+      tokens: network.tokens,
+      senderLabel: account ?? undefined,
+      relayerUrl: order.relayer?.url,
+    });
+  };
+
+  const onCopy = async () => {
+    setBusy("copy");
+    try {
+      const pkg = await buildPkg();
+      const url = buildClaimLink(window.location.origin, order, pkg);
+      await navigator.clipboard.writeText(url);
+      toast.push({
+        kind: "success",
+        title: "Claim link copied",
+        description: `Share with ${target.recipient.slice(0, 6)}…${target.recipient.slice(-4)} via your channel of choice.`,
+      });
+    } catch (err) {
+      console.error("[ShareActions.copy]", err);
+      toast.push({
+        kind: "error",
+        title: "Couldn't build claim link",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onEmail = async () => {
+    setBusy("email");
+    try {
+      const pkg = await buildPkg();
+      const url = buildClaimLink(window.location.origin, order, pkg);
+      // Gmail compose URL — works for the common case where the
+      // operator already has Gmail open in another tab. Falls
+      // through to whatever handler the browser registered for
+      // `https://mail.google.com` (Gmail itself) regardless of the
+      // OS's mailto handler so an Apple-Mail-by-default user
+      // doesn't lose the draft.
+      const subject = `Your payment from ${order.label}`;
+      const body = [
+        `Hi,`,
+        ``,
+        `Your private payout is ready to claim.`,
+        ``,
+        `Open the link to claim:`,
+        url,
+        ``,
+        `The link is private to you and never expires.`,
+      ].join("\r\n");
+      const gmailUrl =
+        `https://mail.google.com/mail/?view=cm&fs=1` +
+        `&su=${encodeURIComponent(subject)}` +
+        `&body=${encodeURIComponent(body)}`;
+      const anchor = document.createElement("a");
+      anchor.href = gmailUrl;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.click();
+    } catch (err) {
+      console.error("[ShareActions.email]", err);
+      toast.push({
+        kind: "error",
+        title: "Couldn't open email draft",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSave = async () => {
+    setBusy("save");
+    try {
+      const pkg = await buildPkg();
+      // `rawInput` is the audit-trail string the inbox stores so the
+      // user can see what they pasted; here we synthesize the same
+      // URL we'd hand a recipient so the entry round-trips through
+      // re-encode if needed.
+      const rawInput = buildClaimLink(window.location.origin, order, pkg);
+      const { isNew } = await addClaimInboxEntry({ rawInput, pkg });
+      toast.push({
+        kind: isNew ? "success" : "info",
+        title: isNew ? "Saved to Claims" : "Already in Claims",
+        description: isNew
+          ? "Open the Claims page from the Orders menu to claim it."
+          : "This recipient's link is already in your Claims inbox.",
+      });
+    } catch (err) {
+      console.error("[ShareActions.save]", err);
+      toast.push({
+        kind: "error",
+        title: "Couldn't save to Claims",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disabled = !enabled || busy !== null;
+  const title = !enabled
+    ? "Available once the order settles on-chain"
+    : undefined;
+
+  return (
+    <div className="inline-flex items-center gap-1" title={title}>
+      <ShareBtn onClick={onCopy} disabled={disabled} busy={busy === "copy"}>
+        Copy link
+      </ShareBtn>
+      <ShareBtn onClick={onEmail} disabled={disabled} busy={busy === "email"}>
+        Email
+      </ShareBtn>
+      <ShareBtn onClick={onSave} disabled={disabled} busy={busy === "save"}>
+        Save
+      </ShareBtn>
+    </div>
+  );
+}
+
+function ShareBtn({
+  onClick,
+  disabled,
+  busy,
+  children,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  busy: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-0.5 text-[10px] font-medium hover:bg-[var(--color-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      {busy ? "…" : children}
+    </button>
   );
 }
 
