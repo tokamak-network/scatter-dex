@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
@@ -17,17 +17,9 @@ import {
 import { CA_REGISTRATION_URL, DEMO_NETWORK } from "../lib/network";
 import { safeOperatorUrl } from "../lib/operatorDisplay";
 import { useOperatorIdentityRefresh } from "../lib/identity";
+import { normalizeName, validateRelayerUrl } from "../lib/registerValidation";
 
 const VERIFY_URL = safeOperatorUrl(CA_REGISTRATION_URL);
-
-/** Normalize a display name to the value we compare against existing
- *  on-chain names: trim outer whitespace, lower-case, collapse
- *  internal runs of whitespace to a single space. Two operators
- *  registering "Relayer A" and "relayer  a" should collide; an empty
- *  string after normalization counts as "no name". */
-function normalizeName(s: string): string {
-  return s.trim().toLowerCase().replace(/\s+/g, " ");
-}
 
 type Phase =
   | "idle"
@@ -89,13 +81,16 @@ export default function RegisterPage() {
     refreshStatus();
   }, [refreshStatus]);
 
-  // Pull the live active-relayer list once per page mount (plus on
-  // wallet change) so we can flag duplicate names *before* the user
-  // pays gas for a transaction that won't revert but would create a
-  // confusing dupe in every consumer (RelayerPicker, leaderboard,
-  // /api/info). This is best-effort only — a race between two
-  // concurrent registers can still produce a dupe; a true fix needs
-  // a contract-level uniqueness guard (tracked separately).
+  // Pull the live active-relayer list once per page mount so we can
+  // flag duplicate names *before* the user pays gas for a transaction
+  // that won't revert but would create a confusing dupe in every
+  // consumer (RelayerPicker, leaderboard, /api/info). This is best-
+  // effort only — a race between two concurrent registers can still
+  // produce a dupe; a true fix needs a contract-level uniqueness
+  // guard (tracked separately). `account` is intentionally NOT a
+  // dep: the active-relayer set doesn't depend on which wallet is
+  // connected; the self-match filter at the conflict-check site
+  // already lives outside this effect.
   useEffect(() => {
     if (!deployed || !readProvider) return;
     let cancelled = false;
@@ -112,14 +107,19 @@ export default function RegisterPage() {
           if (k) m.set(k, r.address.toLowerCase());
         }
         setTakenNames(m);
-      } catch {
+      } catch (err) {
         // Soft-fail — the on-chain register call still runs; we just
-        // can't pre-flight the uniqueness check.
-        if (!cancelled) setTakenNames(new Map());
+        // can't pre-flight the uniqueness check. Log so the failure
+        // is visible in the browser console (helps debug RPC issues
+        // an operator might hit during a demo).
+        if (!cancelled) {
+          console.warn("[register] loadActiveRelayers failed; skipping name uniqueness pre-check", err);
+          setTakenNames(new Map());
+        }
       }
     })();
     return () => { cancelled = true; };
-  }, [deployed, readProvider, account]);
+  }, [deployed, readProvider]);
 
   // Surface name validity to the submit gate + inline UI hint. An
   // existing match owned by the connected account is *not* a
@@ -130,6 +130,12 @@ export default function RegisterPage() {
   const nameConflict =
     !!conflictAddr && conflictAddr !== account?.toLowerCase();
   const nameInvalid = nameTooShort || nameConflict;
+
+  // URL pre-flight: gate submit on a parseable http(s):// URL. Empty
+  // input is reported separately so the field doesn't render in the
+  // error state before the user has typed anything.
+  const urlValidation = validateRelayerUrl(url);
+  const urlInvalid = urlValidation.invalid || urlValidation.empty;
 
   const onSubmit = async () => {
     if (!signer || !status) return;
@@ -226,7 +232,7 @@ export default function RegisterPage() {
                 <a
                   href={VERIFY_URL}
                   target="_blank"
-                  rel="noreferrer"
+                  rel="noopener noreferrer"
                   className="inline-block rounded-md border border-[var(--color-warning)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]"
                 >
                   Open Relayer-CA verifier ↗
@@ -255,13 +261,25 @@ export default function RegisterPage() {
         <h2 className="mb-4 font-semibold">Registration</h2>
 
         <div className="space-y-5">
-          <Field label="Endpoint URL" hint="HTTPS only. Must respond at /api/info.">
+          <Field
+            label="Endpoint URL"
+            hint={
+              urlValidation.invalid
+                ? "Enter a valid http(s):// URL (e.g. https://relayer.example.com)."
+                : "http(s)://. Must respond at /api/info."
+            }
+          >
             <input
               type="url"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://relayer.example.com"
-              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-mono"
+              aria-invalid={urlValidation.invalid ? "true" : undefined}
+              className={`w-full rounded-lg border bg-white px-3 py-2 text-sm font-mono ${
+                urlValidation.invalid
+                  ? "border-[var(--color-danger)] focus:outline-[var(--color-danger)]"
+                  : "border-[var(--color-border-strong)]"
+              }`}
             />
           </Field>
 
@@ -335,7 +353,7 @@ export default function RegisterPage() {
               <a
                 href={`${DEMO_NETWORK.explorerBase}/tx/${txHash}`}
                 target="_blank"
-                rel="noreferrer"
+                rel="noopener noreferrer"
                 className="mt-1 block break-all font-mono text-[var(--color-text-muted)] hover:underline"
               >
                 {txHash}
@@ -354,6 +372,8 @@ export default function RegisterPage() {
           nameInvalid={nameInvalid}
           nameConflict={nameConflict}
           nameTooShort={nameTooShort}
+          urlInvalid={urlInvalid}
+          urlEmpty={urlValidation.empty}
           onConnect={connect}
           onSubmit={onSubmit}
         />
@@ -372,12 +392,15 @@ function SubmitButton(props: {
   nameInvalid: boolean;
   nameConflict: boolean;
   nameTooShort: boolean;
+  urlInvalid: boolean;
+  urlEmpty: boolean;
   onConnect: () => Promise<void>;
   onSubmit: () => Promise<void>;
 }) {
   const {
     phase, deployed, account, wrongChain, alreadyRegistered, notVerified,
-    nameInvalid, nameConflict, nameTooShort, onConnect, onSubmit,
+    nameInvalid, nameConflict, nameTooShort, urlInvalid, urlEmpty,
+    onConnect, onSubmit,
   } = props;
 
   if (!deployed) {
@@ -407,16 +430,23 @@ function SubmitButton(props: {
     alreadyRegistered ||
     notVerified ||
     nameInvalid ||
+    urlInvalid ||
     phase === "approving" ||
     phase === "submitting" ||
     phase === "checking";
 
+  // Surface the first blocking reason. Order mirrors the contract's
+  // own rejection priority (alreadyRegistered / notVerified would
+  // revert) plus the local-only gates (name / url) that we'd rather
+  // catch before paying gas.
   const label =
     phase === "approving" ? "Approving bond token…" :
     phase === "submitting" ? "Submitting…" :
     alreadyRegistered ? "Already registered" :
     notVerified ? "Identity verification required" :
     wrongChain ? "Switch network in your wallet" :
+    urlEmpty ? "Endpoint URL required" :
+    urlInvalid ? "Enter a valid http(s):// endpoint URL" :
     nameTooShort ? "Display name required" :
     nameConflict ? "Pick a unique display name" :
     "Register on-chain";
