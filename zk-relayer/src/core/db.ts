@@ -219,6 +219,12 @@ export interface SettlementEventInput {
    *  Optional — recorded when known; older callers without timing
    *  data leave it undefined and the row stores NULL. */
   durationMs?: number | null;
+  /** True when this row reflects the *counterparty* side of a cross-
+   *  relayer match the local node didn't submit on-chain. Without
+   *  this row the local leaderboard would credit the match entirely
+   *  to the submitting peer even though we held one of the orders.
+   *  Submitter rows leave this undefined / false. */
+  counterparty?: boolean;
   fees?: Array<{
     side: FeeAccrualRow["side"];
     token: string;
@@ -621,9 +627,9 @@ export class PrivateOrderDB {
     // instead of producing dupes.
     this.insertSettlementEvent = this.db.prepare(`
       INSERT OR IGNORE INTO settlement_history
-        (tx_hash, type, status, block_number, gas_cost_eth, sell_token, buy_token, sell_amount, buy_amount, error_reason, duration_ms, created_at)
+        (tx_hash, type, status, block_number, gas_cost_eth, sell_token, buy_token, sell_amount, buy_amount, error_reason, duration_ms, counterparty, created_at)
       VALUES
-        (@txHash, @type, @status, @blockNumber, @gasCostEth, @sellToken, @buyToken, @sellAmount, @buyAmount, @errorReason, @durationMs, @createdAt)
+        (@txHash, @type, @status, @blockNumber, @gasCostEth, @sellToken, @buyToken, @sellAmount, @buyAmount, @errorReason, @durationMs, @counterparty, @createdAt)
     `);
     this.insertFeeAccrual = this.db.prepare(`
       INSERT INTO fee_history (tx_hash, side, token, amount_wei, block_number, created_at)
@@ -769,6 +775,7 @@ export class PrivateOrderDB {
         buyAmount: evt.buyAmount ?? null,
         errorReason: evt.errorReason ? truncErr(evt.errorReason) : null,
         durationMs: evt.durationMs ?? null,
+        counterparty: evt.counterparty ? 1 : 0,
         createdAt,
       });
       if (result.changes === 0 || !evt.fees?.length) return;
@@ -1326,6 +1333,16 @@ export class PrivateOrderDB {
     } catch { /* column already exists */ }
     try {
       this.db.exec(`ALTER TABLE settlement_history ADD COLUMN buy_amount TEXT`);
+    } catch { /* column already exists */ }
+    // Migration: counterparty flag. 1 marks rows the local relayer did
+    // NOT submit on-chain but participated in as the counterparty side
+    // of a cross-relayer match (the peer submitted; we observed the
+    // settle through the trade-offer response and recorded our own
+    // leg locally so the leaderboard reflects our participation).
+    // 0 / NULL (default) = regular rows the local relayer submitted.
+    // SQLite has no BOOLEAN — INTEGER 0/1 is the conventional shape.
+    try {
+      this.db.exec(`ALTER TABLE settlement_history ADD COLUMN counterparty INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
 
     this.db.exec(`

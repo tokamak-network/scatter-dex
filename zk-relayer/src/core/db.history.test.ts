@@ -570,6 +570,28 @@ describe("PrivateOrderDB settlement history", () => {
     expect(byToken[WETH].totalVolume).toBe("1000000000000000000");
     expect(byToken[WETH].count).toBe(1);
   });
+
+  it("counterparty rows count toward volume/fills the same as submitter rows", () => {
+    // Cross-relayer settle the local node DID NOT submit: peer
+    // submitted the settleAuth tx, our cross-relayer matcher
+    // observed the confirmation and persisted our own leg locally
+    // with counterparty=true so the leaderboard reflects our
+    // participation. Volume/count aggregates must treat the row
+    // identically to a self-submitted one (otherwise the local
+    // relayer's leg of every cross-relayer match is invisible).
+    const TOKEN_X = "0x" + "11".repeat(20);
+    const TOKEN_Y = "0x" + "22".repeat(20);
+    db.recordSettlementEvent({
+      txHash: "0x" + "c".repeat(64), type: "settleAuth", status: "confirmed",
+      sellToken: TOKEN_X, buyToken: TOKEN_Y,
+      sellAmount: "1000", buyAmount: "2000",
+      counterparty: true,
+    });
+    const volume = db.getSettledVolume();
+    const byToken = Object.fromEntries(volume.map((v) => [v.sellToken, v]));
+    expect(byToken[TOKEN_X]).toMatchObject({ count: 1, totalVolume: "1000" });
+    expect(byToken[TOKEN_Y]).toMatchObject({ count: 1, totalVolume: "2000" });
+  });
 });
 
 describe("PrivateOrderDB analytics aggregates", () => {
