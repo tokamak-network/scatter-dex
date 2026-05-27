@@ -44,27 +44,33 @@ contract IssuanceApprovalRegistryTest is Test {
 
     function test_RejectsZeroOperator() public {
         vm.prank(admin);
-        vm.expectRevert(bytes("operator=0"));
+        vm.expectRevert(IssuanceApprovalRegistry.ZeroOperator.selector);
         reg.approve(address(0), "x@x", "X", "KR", 1, 0);
     }
 
     function test_RejectsEmptyCN() public {
         vm.prank(admin);
-        vm.expectRevert(bytes("CN empty"));
+        vm.expectRevert(IssuanceApprovalRegistry.EmptyCommonName.selector);
         reg.approve(operator1, "", "X", "KR", 1, 0);
+    }
+
+    function test_RejectsEmptyOrganization() public {
+        vm.prank(admin);
+        vm.expectRevert(IssuanceApprovalRegistry.EmptyOrganization.selector);
+        reg.approve(operator1, "x@x", "", "KR", 1, 0);
     }
 
     function test_RejectsBadCountryCode() public {
         vm.prank(admin);
-        vm.expectRevert(bytes("C must be ISO-3166 alpha-2"));
+        vm.expectRevert(IssuanceApprovalRegistry.CountryMustBeISO3166Alpha2.selector);
         reg.approve(operator1, "x@x", "X", "KOR", 1, 0);
     }
 
     function test_RejectsValidityOutOfRange() public {
         vm.startPrank(admin);
-        vm.expectRevert(bytes("validity out of range"));
+        vm.expectRevert(IssuanceApprovalRegistry.ValidityOutOfRange.selector);
         reg.approve(operator1, "x@x", "X", "KR", 0, 0);
-        vm.expectRevert(bytes("validity out of range"));
+        vm.expectRevert(IssuanceApprovalRegistry.ValidityOutOfRange.selector);
         reg.approve(operator1, "x@x", "X", "KR", 3651, 0);
         vm.stopPrank();
     }
@@ -72,8 +78,14 @@ contract IssuanceApprovalRegistryTest is Test {
     function test_RejectsExpiresAtInThePast() public {
         vm.warp(1_000_000);
         vm.prank(admin);
-        vm.expectRevert(bytes("expiresAt must be 0 or in the future"));
+        vm.expectRevert(IssuanceApprovalRegistry.ExpiresAtMustBeFutureOrZero.selector);
         reg.approve(operator1, "x@x", "X", "KR", 1, uint64(block.timestamp - 1));
+    }
+
+    function test_RenounceOwnershipDisabled() public {
+        vm.prank(admin);
+        vm.expectRevert(IssuanceApprovalRegistry.RenounceOwnershipDisabled.selector);
+        reg.renounceOwnership();
     }
 
     function test_AcceptsExpiresAtInTheFutureOrZero() public {
@@ -108,7 +120,7 @@ contract IssuanceApprovalRegistryTest is Test {
 
     function test_RevokeRejectsUnapprovedWallet() public {
         vm.prank(admin);
-        vm.expectRevert(bytes("no approval to revoke"));
+        vm.expectRevert(IssuanceApprovalRegistry.NoApprovalToRevoke.selector);
         reg.revoke(operator1, "");
     }
 
@@ -117,7 +129,7 @@ contract IssuanceApprovalRegistryTest is Test {
         vm.prank(admin);
         reg.revoke(operator1, "r1");
         vm.prank(admin);
-        vm.expectRevert(bytes("already revoked"));
+        vm.expectRevert(IssuanceApprovalRegistry.AlreadyRevoked.selector);
         reg.revoke(operator1, "r2");
     }
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.28;
 
 import {Ownable2Step, Ownable} from "@openzeppelin/contracts/access/Ownable2Step.sol";
@@ -77,7 +77,28 @@ contract IssuanceApprovalRegistry is Ownable2Step {
         string reason
     );
 
+    // Custom errors — repo convention (matches RelayerRegistry, FeeVault,
+    // SanctionsList). Cheaper than string reverts + caller-parseable.
+    error ZeroOperator();
+    error EmptyCommonName();
+    error EmptyOrganization();
+    error CountryMustBeISO3166Alpha2();
+    error ValidityOutOfRange();
+    error ExpiresAtMustBeFutureOrZero();
+    error NoApprovalToRevoke();
+    error AlreadyRevoked();
+    error RenounceOwnershipDisabled();
+
     constructor(address initialOwner) Ownable(initialOwner) {}
+
+    /// @dev Disable renounceOwnership to prevent accidental lockout
+    /// of admin functions — matches RelayerRegistry / FeeVault pattern.
+    /// Without this an owner who calls Ownable2Step.renounceOwnership()
+    /// would permanently brick `approve()` and `revoke()` since no
+    /// further owner can be appointed.
+    function renounceOwnership() public pure override(Ownable) {
+        revert RenounceOwnershipDisabled();
+    }
 
     /// @notice Record an approval (or re-record one that was previously
     /// revoked — the new approval overwrites the prior state). Owner-
@@ -90,15 +111,14 @@ contract IssuanceApprovalRegistry is Ownable2Step {
         uint32 validityDays,
         uint64 expiresAt
     ) external onlyOwner {
-        require(operator != address(0), "operator=0");
-        require(bytes(commonName).length > 0, "CN empty");
-        require(bytes(organization).length > 0, "O empty");
-        require(bytes(country).length == 2, "C must be ISO-3166 alpha-2");
-        require(validityDays > 0 && validityDays <= 3650, "validity out of range");
-        require(
-            expiresAt == 0 || expiresAt > block.timestamp,
-            "expiresAt must be 0 or in the future"
-        );
+        if (operator == address(0)) revert ZeroOperator();
+        if (bytes(commonName).length == 0) revert EmptyCommonName();
+        if (bytes(organization).length == 0) revert EmptyOrganization();
+        if (bytes(country).length != 2) revert CountryMustBeISO3166Alpha2();
+        if (validityDays == 0 || validityDays > 3650) revert ValidityOutOfRange();
+        if (expiresAt != 0 && expiresAt <= block.timestamp) {
+            revert ExpiresAtMustBeFutureOrZero();
+        }
 
         Approval storage a = _approvals[operator];
         a.commonName = commonName;
@@ -126,8 +146,8 @@ contract IssuanceApprovalRegistry is Ownable2Step {
     /// were revoked.
     function revoke(address operator, string calldata reason) external onlyOwner {
         Approval storage a = _approvals[operator];
-        require(a.approvedAt != 0, "no approval to revoke");
-        require(!a.revoked, "already revoked");
+        if (a.approvedAt == 0) revert NoApprovalToRevoke();
+        if (a.revoked) revert AlreadyRevoked();
         a.revoked = true;
         a.revokeReason = reason;
         a.revokedAt = uint64(block.timestamp);

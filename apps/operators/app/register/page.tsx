@@ -573,18 +573,29 @@ function ApprovalAwareCTA({
     );
   }
 
+  // `checking` gets a dedicated neutral card with a spinner so the
+  // first paint doesn't flash the warning-card copy and re-paint
+  // into approved/revoked/etc. as soon as the RPC settles (Gemini
+  // review #847).
+  if (approval.status === "checking") {
+    return (
+      <div className="mt-4 flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3 text-xs text-[var(--color-text-muted)]">
+        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
+        <span>Checking admin approval status…</span>
+      </div>
+    );
+  }
+
   // Fallback: generic "go get verified" card. Covers
   // `not-approved` (admin hasn't seen this wallet), `idle` (registry
-  // env unset), `checking`, and `error`.
+  // env unset), and `error` (RPC probe failed).
   return (
     <div className="mt-4 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-3 text-xs">
       <div className="font-medium">Get your operator address verified</div>
       <div className="mt-1 text-[var(--color-text-muted)]">
         {approval.status === "not-approved"
           ? "Submit your ID + this wallet address to the Relayer-CA admin offline. Once they approve, you'll see issuance instructions here automatically."
-          : approval.status === "checking"
-            ? "Checking admin approval status…"
-            : "Open the Relayer-CA verifier (zk-X509), complete the proof round-trip, then click Refresh below."}
+          : "Open the Relayer-CA verifier (zk-X509), complete the proof round-trip, then click Refresh below."}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {VERIFY_URL ? (
