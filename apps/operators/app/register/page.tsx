@@ -292,10 +292,23 @@ function stepStatus(done: boolean, isCurrent: boolean): StepStatus {
  *  pre-flight check ("Verified until …"). `toLocaleDateString()`
  *  is timezone-sensitive and produces a different string on the
  *  server (build machine TZ) vs the client (user TZ), tripping
- *  Next's hydration warning. ISO-date in UTC dodges that
- *  entirely while still being human-readable. */
+ *  Next's hydration warning. ISO-date in UTC dodges that entirely
+ *  while still being human-readable.
+ *
+ *  Guards against the "never expires" sentinel: some registries
+ *  encode an indefinite attestation as `verifiedUntil = uint256.max`,
+ *  which casts to `Number.POSITIVE_INFINITY` and makes
+ *  `new Date(...).toISOString()` throw RangeError. We treat any
+ *  non-finite or out-of-Date-range value as "indefinitely". */
 function formatVerifiedUntil(unixSec: number): string {
-  return new Date(unixSec * 1000).toISOString().slice(0, 10);
+  if (!Number.isFinite(unixSec) || unixSec <= 0) return "indefinitely";
+  const ms = unixSec * 1000;
+  // JS Date.prototype.toISOString throws RangeError outside
+  // ±8.64e15 ms (year ±271821).
+  if (!Number.isFinite(ms) || ms > 8.64e15 || ms < -8.64e15) {
+    return "indefinitely";
+  }
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 function step1Caption(
