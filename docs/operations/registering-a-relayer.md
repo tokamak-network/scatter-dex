@@ -60,9 +60,10 @@ Nothing on chain yet. Admin reviews via their own KYC workflow.
 
 If the Root CA isn't already anchored on chain (see Pre-flight),
 the admin sets up the CA via the zk-X509 system. The CA's
-PROGRAM_V_KEY (`0x006e7699…` style 32-byte hash) lands in
-`IdentityRegistry.programVKey`; the CA private key stays on the
-signing server.
+PROGRAM_V_KEY (`0x006e7699…` style 32-byte hash) is anchored
+inside the `IdentityRegistry` contract and is readable via
+`effectiveProgramVKey()` (the getter our scripts and operators
+app probe). The CA private key stays on the signing server.
 
 In our reference deployment this is a one-time admin task and is
 already done before any operator onboards.
@@ -76,8 +77,12 @@ every operator's `register()` call.
 ## Step 3 — Admin: approve the operator's wallet
 
 **Who**: Admin (IssuanceApprovalRegistry owner)
-**Where**: operators app → header `Identity ▾` → **Approve operators
-(admin)** → `/admin/issuance`
+**Where**: operators app → header `Identity ▾` → **Approve operators**
+(`(admin)` sub-label) → `/admin/issuance`
+
+> The header dropdown only renders this entry when the connected
+> wallet matches `IssuanceApprovalRegistry.owner()`. If you don't
+> see it, switch to the owner / multisig signer wallet first.
 
 Fill the **Approve a new operator** form using the data from
 step 1:
@@ -149,8 +154,9 @@ In the cert issuance form:
    the `.pem` and store it in your relayer's secrets vault.
 3. **Issue cert ↗** — the CA signs the cert + your browser builds
    a ZK proof that the cert binds to your operator wallet. The
-   proof is submitted to `IdentityRegistry.verify(wallet, expiry,
-   …)` on chain.
+   proof is submitted to the IdentityRegistry's verification
+   entrypoint on chain (function name lives in the external
+   zk-X509 repo — the portal handles the call for you).
 
 When this confirms, `IdentityRegistry.isVerified(yourWallet)`
 returns `true`.
@@ -199,7 +205,10 @@ requirements:
   verified at step 5.
 
 See the [Local Setup](?d=local-setup) and [Deployment](?d=deployment)
-docs for the full env reference. Minimum local-setup example:
+docs for the full env reference. Minimum local-setup example
+(note the explicit `cd` so the `DB_PATH=./...` is resolved
+relative to `zk-relayer/`, not the caller's cwd — a single
+`$(pwd)` substitution would expand before `cd` takes effect):
 
 ```bash
 cd zk-relayer
@@ -214,7 +223,7 @@ RELAYER_PRIVATE_KEY=0x… \
 RELAYER_NAME="Relayer-C" \
 RELAYER_PUBLIC_URL=http://localhost:3004 \
 PORT=3004 \
-DB_PATH=$(pwd)/zk-relayer-c.db \
+DB_PATH=./zk-relayer-c.db \
 npm run dev
 ```
 

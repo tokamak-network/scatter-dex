@@ -229,7 +229,9 @@ export default function RegisterPage() {
         </Link>
         <h1 className="mt-2 text-2xl font-semibold">Register a relayer</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          Three quick steps: verify your identity, publish your endpoint, post a bond.{" "}
+          This page covers <strong>your</strong> steps in the relayer onboarding flow
+          (4, 6, 8 below). The admin handles steps 2 + 3, the zk-X509 portal
+          handles step 5, and the leaderboard verifies step 9.{" "}
           <Link
             href="/docs?d=registering-a-relayer"
             className="underline decoration-dotted underline-offset-2 hover:text-[var(--color-text)]"
@@ -238,6 +240,8 @@ export default function RegisterPage() {
           </Link>
         </p>
       </header>
+
+      <FlowContextPanel currentWizardStep={currentStep} />
 
       {!deployed && <NotDeployedBanner />}
       {!account && <ConnectPrompt onConnect={connect} connectError={connectError} />}
@@ -682,10 +686,15 @@ function Step2Endpoint({
       {/* First-timer guidance — the URL field assumes the operator
           has a relayer process running somewhere reachable. Surface
           the setup docs explicitly so they don't have to dig through
-          the Docs dropdown to find them. Three links: the full
-          end-to-end registration walkthrough (covers steps 1-9
-          including this one), local for the tutorial / dev path,
-          deployment for the production path. */}
+          the Docs dropdown to find them. Three links, deliberate
+          visual hierarchy:
+            - "Full registration walkthrough" is the primary CTA
+              (brand-color filled button) — the entry-point doc
+              that contextualises every other step.
+            - "How to run a relayer locally" + "Production deployment"
+              are reference links (strong border, white background)
+              for operators who already know the flow and just need
+              the env reference. */}
       <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
         <div className="font-medium text-[var(--color-text)]">
           Don&apos;t have a relayer running yet?
@@ -1052,6 +1061,104 @@ function WrongChainBanner() {
         wallet on the right chain.
       </div>
     </div>
+  );
+}
+
+/** All-9-steps overview panel rendered above the wizard. Maps the
+ *  operator's three actionable steps (4, 6, 8 — Verify / Confirm /
+ *  Bond) to the three wizard cards below, and explicitly tags the
+ *  six steps that happen ELSEWHERE (admin offline review,
+ *  IssuanceApprovalRegistry approve, zk-X509 cert+proof, relayer
+ *  process spin-up, leaderboard verification) so a first-timer
+ *  doesn't think the wizard is the entire flow.
+ *
+ *  Current wizard step highlights the matching operator-side flow
+ *  row in primary color; admin / external rows stay muted. */
+const FLOW_STEPS: Array<{
+  n: number;
+  who: "operator" | "admin" | "external";
+  title: string;
+  where: string;
+  /** Maps to the wizard step (1/2/3) when the operator action here
+   *  is what one of the cards below covers. Undefined for steps
+   *  the operator does outside this page (or admin steps). */
+  wizardStep?: 1 | 2 | 3;
+}> = [
+  { n: 1, who: "operator", title: "Submit KYC + wallet to the admin", where: "off-chain (email / in-person)" },
+  { n: 2, who: "admin", title: "Anchor company Root CA on zk-X509", where: "one-time admin setup" },
+  { n: 3, who: "admin", title: "Approve your wallet for issuance", where: "/admin/issuance (admin's app)" },
+  { n: 4, who: "operator", title: "Open the Relayer-CA portal", where: "Step 1 below", wizardStep: 1 },
+  { n: 5, who: "external", title: "Issue cert + submit ZK proof", where: "zk-X509 portal (separate tab)" },
+  { n: 6, who: "operator", title: "Confirm verification went green", where: "Step 1 below — Refresh button", wizardStep: 1 },
+  { n: 7, who: "operator", title: "Spin up your relayer process", where: "your server (zk-relayer service)" },
+  { n: 8, who: "operator", title: "Register endpoint + post bond", where: "Steps 2 & 3 below", wizardStep: 2 },
+  { n: 9, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
+];
+
+function FlowContextPanel({ currentWizardStep }: { currentWizardStep: 1 | 2 | 3 }) {
+  return (
+    <details
+      // Collapsed by default so the panel doesn't push the wizard
+      // off the first viewport; returning operators usually don't
+      // need the context refresher. First-timers can open it once
+      // to see the whole arc.
+      className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm"
+    >
+      <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+        Where this page fits — the full 9-step flow
+      </summary>
+      <ol className="mt-3 space-y-1.5 text-xs">
+        {FLOW_STEPS.map((s) => {
+          const isHere = s.wizardStep === currentWizardStep;
+          const palette =
+            s.who === "operator"
+              ? isHere
+                ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-text)]"
+                : "border-[var(--color-border)] bg-[var(--color-bg)]"
+              : s.who === "admin"
+                ? "border-dashed border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+                : "border-dashed border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]";
+          const tag =
+            s.who === "operator"
+              ? "you"
+              : s.who === "admin"
+                ? "admin"
+                : "external";
+          return (
+            <li
+              key={s.n}
+              className={`flex items-center gap-3 rounded-md border px-3 py-1.5 ${palette}`}
+            >
+              <span className="w-5 font-mono text-[10px] text-[var(--color-text-subtle)]">
+                {s.n}.
+              </span>
+              <span className="flex-1">
+                <span className="font-medium">{s.title}</span>
+                <span className="ml-2 text-[10px] text-[var(--color-text-subtle)]">
+                  · {s.where}
+                </span>
+              </span>
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                  s.who === "operator"
+                    ? "bg-[var(--color-primary)] text-white"
+                    : s.who === "admin"
+                      ? "bg-[var(--color-warning)] text-white"
+                      : "bg-[var(--color-text-subtle)] text-white"
+                }`}
+              >
+                {tag}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-3 text-[10px] text-[var(--color-text-muted)]">
+        Steps 2 + 3 are admin-only and happen on the admin&apos;s instance of
+        this app (<code>/admin/issuance</code>) — not here. Step 5 happens in
+        the zk-X509 portal; steps 7 + 9 happen outside the app entirely.
+      </p>
+    </details>
   );
 }
 
