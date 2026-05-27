@@ -100,6 +100,13 @@ export interface UseIssuanceApprovalResult extends IssuanceApprovalState {
   /** Re-read approvals(wallet) from chain. No-op when wallet /
    *  registry / provider isn't set (mirrors the effect's gates). */
   refetch: () => void;
+  /** Unix-ms timestamp of the most recent SUCCESSFUL read, or
+   *  `null` before the first one settles or while in `idle`. Used
+   *  by the operator's `/register` Step 1 to drive a LiveFreshness
+   *  pill so the operator can see polling is alive. Not stamped on
+   *  RPC errors — failure leaves the prior value visibly ticking
+   *  stale instead of optimistically freezing. */
+  lastRefreshedAt: number | null;
 }
 
 /** Read `IssuanceApprovalRegistry.approvals(wallet)` for the
@@ -119,6 +126,7 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
   const { account, readProvider } = useWallet();
   const registry = DEMO_NETWORK.contracts.issuanceApprovalRegistry;
   const [state, setState] = useState<IssuanceApprovalState>({ status: "idle" });
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
   // Bumping `tick` re-fires the effect — primitive caller-driven
   // refetch handle.
   const [tick, setTick] = useState(0);
@@ -127,6 +135,12 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
   useEffect(() => {
     if (!account || !readProvider || !registry || !isConfiguredAddress(registry)) {
       setState({ status: "idle" });
+      // Reset freshness so consumers don't read a stale timestamp
+      // from a prior connected wallet — the interface contract on
+      // `UseIssuanceApprovalResult.lastRefreshedAt` documents `null`
+      // for the idle case (no wallet / no registry), and a
+      // disconnect→reconnect cycle previously leaked the old value.
+      setLastRefreshedAt(null);
       return;
     }
     let cancelled = false;
@@ -136,6 +150,7 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
       .then((raw) => {
         if (cancelled) return;
         setState(classifyApproval(raw, Math.floor(Date.now() / 1000)));
+        setLastRefreshedAt(Date.now());
       })
       .catch((err) => {
         if (cancelled) return;
@@ -173,5 +188,5 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
     enabled: livePoll,
   });
 
-  return { ...state, refetch };
+  return { ...state, refetch, lastRefreshedAt };
 }
