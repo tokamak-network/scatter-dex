@@ -181,6 +181,13 @@ export interface SettlementHistoryRow {
   /** Wall-clock milliseconds from worker claim to confirmation.
    *  Null on rows recorded before the column existed. */
   duration_ms: number | null;
+  /** 1 when this row reflects the *counterparty* side of a cross-
+   *  relayer match the local node didn't submit on-chain (the peer
+   *  submitted; we recorded our own leg locally so the leaderboard
+   *  reflects our participation). 0 for submitter rows. Backed by a
+   *  `NOT NULL DEFAULT 0` column so older rows read as `0`, not
+   *  null — the type matches the SQL shape. */
+  counterparty: 0 | 1;
   created_at: number;
 }
 
@@ -1339,7 +1346,8 @@ export class PrivateOrderDB {
     // of a cross-relayer match (the peer submitted; we observed the
     // settle through the trade-offer response and recorded our own
     // leg locally so the leaderboard reflects our participation).
-    // 0 / NULL (default) = regular rows the local relayer submitted.
+    // Column is `NOT NULL DEFAULT 0`, so pre-existing rows auto-fill
+    // as 0 (submitter side) when the ALTER runs — no NULLs ever stored.
     // SQLite has no BOOLEAN — INTEGER 0/1 is the conventional shape.
     try {
       this.db.exec(`ALTER TABLE settlement_history ADD COLUMN counterparty INTEGER NOT NULL DEFAULT 0`);
