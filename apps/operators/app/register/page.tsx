@@ -19,7 +19,7 @@ import { safeOperatorUrl } from "../lib/operatorDisplay";
 import { useOperatorIdentityRefresh } from "../lib/identity";
 import { normalizeName, validateRelayerUrl } from "../lib/registerValidation";
 import { useEndpointProbe, type EndpointProbeResult } from "../lib/useEndpointProbe";
-import { useIssuanceApproval, type IssuanceApprovalState } from "../lib/useIssuanceApproval";
+import { useIssuanceApproval, type UseIssuanceApprovalResult } from "../lib/useIssuanceApproval";
 import { Stepper, type StepStatus } from "./_Stepper";
 
 const VERIFY_URL = safeOperatorUrl(CA_REGISTRATION_URL);
@@ -444,19 +444,33 @@ function Step1Verify({
  *  - `approved` → green card with the metadata the admin recorded
  *    (CN / O / C / validity), "Open Relayer-CA portal" primary
  *    button. Communicates that the heavy lift (KYC) is done.
- *  - `revoked` → red card surfacing the reason; no cert link.
- *  - `expired` → amber card pointing back at the admin to re-approve.
+ *  - `revoked` → red card surfacing the reason; Refresh button
+ *    re-polls in case the admin reverses the revocation.
+ *  - `expired` → amber card pointing back at the admin; Refresh
+ *    in case the admin re-approves with a fresh expiry.
  *  - `not-approved` / `checking` / `idle` / `error` → the generic
  *    warning card we shipped pre-IssuanceApprovalRegistry, so
  *    deployments without the contract (or with the env unset) keep
- *    the prior UX. */
+ *    the prior UX.
+ *
+ *  Every branch carries the same Refresh control — without it the
+ *  operator is stuck after an admin re-approves or extends an
+ *  expired approval, since `useIssuanceApproval`'s effect only
+ *  re-runs on account / provider change. */
 function ApprovalAwareCTA({
   approval,
   onRefresh,
 }: {
-  approval: IssuanceApprovalState;
+  approval: UseIssuanceApprovalResult;
   onRefresh: () => void;
 }) {
+  // Wire the wizard's onRefresh AND the approval hook's refetch into
+  // one click — operators expect a single "Refresh" to update both
+  // the on-chain identity probe and the admin approval state.
+  const handleRefresh = () => {
+    onRefresh();
+    approval.refetch();
+  };
   if (approval.status === "approved" && approval.approval) {
     return (
       <div className="mt-4 rounded-lg border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-3 text-xs">
@@ -501,7 +515,7 @@ function ApprovalAwareCTA({
           )}
           <button
             type="button"
-            onClick={onRefresh}
+            onClick={handleRefresh}
             className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
           >
             Refresh verification status
@@ -521,7 +535,17 @@ function ApprovalAwareCTA({
           Reason: {approval.revokeReason}
         </div>
         <div className="mt-1 text-[var(--color-text-muted)]">
-          Contact the Relayer-CA admin offline before retrying.
+          Contact the Relayer-CA admin offline before retrying. Once they
+          re-approve, click Refresh to re-check.
+        </div>
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
+          >
+            Refresh approval status
+          </button>
         </div>
       </div>
     );
@@ -534,7 +558,16 @@ function ApprovalAwareCTA({
         <div className="mt-1 text-[var(--color-text-muted)]">
           Admin approved this wallet, but the issuance window passed
           before you completed the cert exchange. Ask the admin to
-          re-approve, then return here.
+          re-approve, then Refresh below.
+        </div>
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
+          >
+            Refresh approval status
+          </button>
         </div>
       </div>
     );
@@ -573,7 +606,7 @@ function ApprovalAwareCTA({
         )}
         <button
           type="button"
-          onClick={onRefresh}
+          onClick={handleRefresh}
           className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
         >
           Refresh verification status

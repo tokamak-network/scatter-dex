@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
@@ -77,11 +77,61 @@ interface RawApproval {
   revokedAt: bigint;
 }
 
+/** Pure classifier: turn the raw struct + optional now() into one
+ *  of the user-facing states. Extracted so unit tests can exercise
+ *  every branch (revoked, expired, approved boundary) without
+ *  standing up a contract / RPC. */
+export function classifyApproval(
+  raw: RawApproval,
+  nowSec: number,
+): IssuanceApprovalState {
+  // approvedAt == 0 ⇒ no row for this wallet (the mapping returns
+  // the zero-struct on miss).
+  if (raw.approvedAt === 0n) {
+    return { status: "not-approved" };
+  }
+  const approval = {
+    commonName: raw.commonName,
+    organization: raw.organization,
+    country: raw.country,
+    validityDays: Number(raw.validityDays),
+    approvedBy: raw.approvedBy,
+    approvedAt: Number(raw.approvedAt),
+    expiresAt: Number(raw.expiresAt),
+  };
+  if (raw.revoked) {
+    return {
+      status: "revoked",
+      approval,
+      revokeReason: raw.revokeReason || "(no reason supplied)",
+    };
+  }
+  // Mirror the contract's expiry semantics exactly: the contract
+  // accepts `expiresAt > block.timestamp` on write and considers
+  // `block.timestamp >= expiresAt` expired on read. We compare with
+  // the same `>=` so a non-zero, non-future expiry flips the UI
+  // to "expired" at the same instant the chain rejects use.
+  if (approval.expiresAt !== 0 && nowSec >= approval.expiresAt) {
+    return { status: "expired", approval };
+  }
+  return { status: "approved", approval };
+}
+
+/** Hook return shape — adds `refetch` so the CTA's Refresh button
+ *  can re-poll the registry without the user having to remount the
+ *  page. */
+export interface UseIssuanceApprovalResult extends IssuanceApprovalState {
+  /** Re-read approvals(wallet) from chain. No-op when wallet /
+   *  registry / provider isn't set (mirrors the effect's gates). */
+  refetch: () => void;
+}
+
 /** Read `IssuanceApprovalRegistry.approvals(wallet)` for the
  *  connected operator and classify the result into a state the
- *  UI can render directly. Re-fires when the account changes.
+ *  UI can render directly. Re-fires when the account changes, or
+ *  when the caller invokes the returned `refetch()`.
  *
- *  Returns `idle` when:
+ *  Returns `status: idle` when:
  *  - no wallet is connected
  *  - the registry address isn't configured for this network
  *    (NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS unset)
@@ -89,10 +139,14 @@ interface RawApproval {
  *  The CTA UI treats `idle` as "do nothing" — falls back to the
  *  pre-#846 behaviour (generic verifier link, no personalised
  *  message). */
-export function useIssuanceApproval(): IssuanceApprovalState {
+export function useIssuanceApproval(): UseIssuanceApprovalResult {
   const { account, readProvider } = useWallet();
   const registry = DEMO_NETWORK.contracts.issuanceApprovalRegistry;
   const [state, setState] = useState<IssuanceApprovalState>({ status: "idle" });
+  // Bumping `tick` re-fires the effect — primitive caller-driven
+  // refetch handle.
+  const [tick, setTick] = useState(0);
+  const refetch = useCallback(() => setTick((n) => n + 1), []);
 
   useEffect(() => {
     if (!account || !readProvider || !registry || !isConfiguredAddress(registry)) {
@@ -105,35 +159,7 @@ export function useIssuanceApproval(): IssuanceApprovalState {
     (c.approvals(account) as Promise<RawApproval>)
       .then((raw) => {
         if (cancelled) return;
-        // approvedAt == 0 ⇒ no row for this wallet (the mapping
-        // returns the zero-struct on miss).
-        if (raw.approvedAt === 0n) {
-          setState({ status: "not-approved" });
-          return;
-        }
-        const approval = {
-          commonName: raw.commonName,
-          organization: raw.organization,
-          country: raw.country,
-          validityDays: Number(raw.validityDays),
-          approvedBy: raw.approvedBy,
-          approvedAt: Number(raw.approvedAt),
-          expiresAt: Number(raw.expiresAt),
-        };
-        if (raw.revoked) {
-          setState({
-            status: "revoked",
-            approval,
-            revokeReason: raw.revokeReason || "(no reason supplied)",
-          });
-          return;
-        }
-        const nowSec = Math.floor(Date.now() / 1000);
-        if (approval.expiresAt !== 0 && nowSec >= approval.expiresAt) {
-          setState({ status: "expired", approval });
-          return;
-        }
-        setState({ status: "approved", approval });
+        setState(classifyApproval(raw, Math.floor(Date.now() / 1000)));
       })
       .catch((err) => {
         if (cancelled) return;
@@ -144,7 +170,7 @@ export function useIssuanceApproval(): IssuanceApprovalState {
         });
       });
     return () => { cancelled = true; };
-  }, [account, readProvider, registry]);
+  }, [account, readProvider, registry, tick]);
 
-  return state;
+  return { ...state, refetch };
 }

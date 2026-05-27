@@ -228,6 +228,8 @@ COMMITMENT_POOL=$(parse_addr CommitmentPool)
 PRIVATE_SETTLEMENT=$(parse_addr PrivateSettlement)
 FEE_VAULT=$(parse_addr FeeVault)
 IDENTITY_GATE=$(parse_addr IdentityGate)
+# Non-upgradeable, printed via the bare `Name: <addr>` form.
+ISSUANCE_APPROVAL_REGISTRY=$(parse_addr IssuanceApprovalRegistry)
 
 for var in RELAYER_REGISTRY WETH USDC USDT TON COMMITMENT_POOL PRIVATE_SETTLEMENT FEE_VAULT IDENTITY_GATE; do
   if [ -z "${!var}" ]; then
@@ -236,6 +238,13 @@ for var in RELAYER_REGISTRY WETH USDC USDT TON COMMITMENT_POOL PRIVATE_SETTLEMEN
     exit 1
   fi
 done
+# IssuanceApprovalRegistry is optional in deploy output (legacy
+# DeployLocal builds didn't ship it); warn rather than abort so a
+# pinned older contracts build still boots the stack. Operators app
+# falls through to the `idle` CTA state in that case.
+if [ -z "$ISSUANCE_APPROVAL_REGISTRY" ]; then
+  echo "  [warn] missing IssuanceApprovalRegistry in deploy output — operators /register approval CTA will stay idle"
+fi
 echo "  [ok] deployed (CommitmentPool=$COMMITMENT_POOL)"
 
 # Rewrite apps/pay/.env.local with the just-deployed proxy addresses.
@@ -292,6 +301,36 @@ $PRESERVED"
   else
     printf "%s\n" "$NEW_ENV" > "$PAY_ENV"
     echo "  [ok] wrote $PAY_ENV (IdentityGate=$IDENTITY_GATE)"
+  fi
+fi
+
+# Sync IssuanceApprovalRegistry into apps/operators/.env.local so
+# the new /register approval-aware CTA reads from the freshly-
+# deployed contract rather than staying in `idle`. Only this single
+# key — the rest of the file is hand-maintained by the operators-
+# app maintainer (see dual_ca_gate_model memory for why operators
+# env diverged from Pay's). Idempotent: in-place updates the line
+# when present, appends when absent, no-op when value matches.
+OPERATORS_ENV="$ROOT_DIR/apps/operators/.env.local"
+if [ -n "$ISSUANCE_APPROVAL_REGISTRY" ] && [ -f "$OPERATORS_ENV" ]; then
+  KEY="NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS"
+  EXPECTED_LINE="$KEY=$ISSUANCE_APPROVAL_REGISTRY"
+  if grep -qE "^${KEY}=" "$OPERATORS_ENV"; then
+    EXISTING=$(grep -E "^${KEY}=" "$OPERATORS_ENV" | head -1)
+    if [ "$EXISTING" = "$EXPECTED_LINE" ]; then
+      echo "  [ok] $OPERATORS_ENV already has $KEY"
+    else
+      # macOS sed needs `-i ''`; GNU sed accepts `-i`. Use a temp
+      # file to stay portable across both.
+      TMP=$(mktemp)
+      grep -vE "^${KEY}=" "$OPERATORS_ENV" > "$TMP"
+      printf "%s\n" "$EXPECTED_LINE" >> "$TMP"
+      mv "$TMP" "$OPERATORS_ENV"
+      echo "  [ok] updated $KEY in $OPERATORS_ENV"
+    fi
+  else
+    printf "%s\n" "$EXPECTED_LINE" >> "$OPERATORS_ENV"
+    echo "  [ok] appended $KEY to $OPERATORS_ENV"
   fi
 fi
 
