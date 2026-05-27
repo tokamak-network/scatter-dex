@@ -76,7 +76,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
                                   <Link href="/app" className="hover:text-[var(--color-text)]">Workbench</Link>
                                   <OrdersMenu />
-                                  <Link href="/inbox" className="hover:text-[var(--color-text)]">Inbox</Link>
+                                  <Link href="/claims" className="hover:text-[var(--color-text)]">Claims</Link>
                                   <Link href="/notes" className="hover:text-[var(--color-text)]">Escrow</Link>
                                   <Link href="/address-book" className="hover:text-[var(--color-text)]">Address book</Link>
                                   <IdentityMenu />
