@@ -7,7 +7,7 @@ import {
   RELAYER_REGISTRY_ABI,
   ISSUANCE_APPROVAL_REGISTRY_ABI,
 } from "@zkscatter/sdk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
 import { loadIdentityVerification } from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
 
@@ -94,8 +94,16 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
   // Stage 2 — probe isVerified + verifiedUntil against the resolved CA.
   // Depend on the primitive ca fields rather than the snapshot object,
   // so a no-op stage-1 refetch (same address, same error) doesn't
-  // re-fire the verification RPC. `tick` is consumed transitively via
-  // stage 1, no need to list it again here.
+  // re-fire the verification RPC.
+  //
+  // `tick` IS in the dep list. The earlier "consumed transitively via
+  // stage 1" reasoning was wrong: stage 1 re-runs on tick, but if the
+  // resolved CA address hasn't changed (the common case) stage 2's
+  // primitive deps don't change, so without listing `tick` here the
+  // verification RPC never re-runs. That defeated the whole point of
+  // `useTimedRefresh` below — operators would never see their
+  // newly-issued cert flip the status to verified without manually
+  // disconnecting + reconnecting.
   const caAddress = ca.caAddress;
   const caReady = ca.ready;
   const caError = ca.error;
@@ -149,7 +157,27 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
     return () => {
       cancelled = true;
     };
-  }, [account, registryDeployed, caAddress, caReady, caError, readProvider]);
+  }, [account, registryDeployed, caAddress, caReady, caError, readProvider, tick]);
+
+  // Live-refresh while the operator is actively waiting on their
+  // cert. `unverified` is the explicit "waiting on the zk-X509 tab"
+  // state — poll every 8s so the green ✅ flips automatically when
+  // the proof lands without making the operator click Refresh.
+  // `error` is also auto-retried so a transient RPC blip clears
+  // itself.
+  //
+  // `loading` is deliberately EXCLUDED: a probe is already in
+  // flight. Re-firing refresh() while a `loading` probe is mid-
+  // RPC would set up a cancel/retry loop on slow networks (the
+  // same trap that `useIssuanceApproval`'s `livePoll` avoids).
+  // The probe always settles to a non-loading kind, at which point
+  // this predicate decides whether to keep polling.
+  const livePoll = status.kind === "unverified" || status.kind === "error";
+  useTimedRefresh({
+    refresh,
+    intervalMs: 8_000,
+    enabled: livePoll,
+  });
 
   return <Ctx.Provider value={{ ca, status, refresh }}>{children}</Ctx.Provider>;
 }

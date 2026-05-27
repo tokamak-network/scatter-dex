@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { isConfiguredAddress, ISSUANCE_APPROVAL_REGISTRY_ABI } from "@zkscatter/sdk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "./network";
 
 /** What the operators app needs to know about a wallet's issuance
@@ -147,6 +147,31 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
       });
     return () => { cancelled = true; };
   }, [account, readProvider, registry, tick]);
+
+  // Live-refresh while waiting on the admin's decision. Once the
+  // wallet is approved we stop polling — re-approval is rare and
+  // would be caught by tab-focus visibility anyway. Stays disabled
+  // in `idle` (nothing configured / no wallet) so we don't poll a
+  // no-op forever.
+  //
+  // `checking` is deliberately EXCLUDED: a read is already in
+  // flight. If the RPC takes longer than `intervalMs` the next
+  // tick would re-arm setState({checking}) and the previous
+  // promise's `cancelled` flag would discard its result — a slow
+  // RPC ends up in an infinite cancel/retry loop and the status
+  // never resolves. The effect re-fires anyway whenever the read
+  // settles (state transitions out of `checking`), at which point
+  // the right `livePoll` value picks back up.
+  const livePoll =
+    state.status === "not-approved" ||
+    state.status === "revoked" ||
+    state.status === "expired" ||
+    state.status === "error";
+  useTimedRefresh({
+    refresh: refetch,
+    intervalMs: 10_000,
+    enabled: livePoll,
+  });
 
   return { ...state, refetch };
 }
