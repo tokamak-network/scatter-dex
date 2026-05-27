@@ -2,7 +2,11 @@
 
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { ethers } from "ethers";
-import { isConfiguredAddress, RELAYER_REGISTRY_ABI } from "@zkscatter/sdk";
+import {
+  isConfiguredAddress,
+  RELAYER_REGISTRY_ABI,
+  ISSUANCE_APPROVAL_REGISTRY_ABI,
+} from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { loadIdentityVerification } from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
@@ -310,9 +314,6 @@ export function useIsRelayerRegistryAdmin(): boolean | null {
  *  governance can transfer it independently from RelayerRegistry's
  *  (e.g. a separate KYC committee). Hence a dedicated hook rather
  *  than reusing `useIsRelayerRegistryAdmin`. */
-const ISSUANCE_OWNABLE_ABI = [
-  "function owner() view returns (address)",
-] as const;
 export function useIsIssuanceRegistryAdmin(): boolean | null {
   const { account, readProvider } = useWallet();
   const registry = DEMO_NETWORK.contracts.issuanceApprovalRegistry;
@@ -322,7 +323,7 @@ export function useIsIssuanceRegistryAdmin(): boolean | null {
   useEffect(() => {
     if (!readProvider || !deployed || !registry) return;
     let cancelled = false;
-    const c = new ethers.Contract(registry, ISSUANCE_OWNABLE_ABI, readProvider);
+    const c = new ethers.Contract(registry, ISSUANCE_APPROVAL_REGISTRY_ABI, readProvider);
     (c.owner() as Promise<string>)
       .then((o) => { if (!cancelled) setOwner(o); })
       .catch(() => { /* leave null — admin link hides until next mount */ });
