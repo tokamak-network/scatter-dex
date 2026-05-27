@@ -301,3 +301,49 @@ export function useIsRelayerRegistryAdmin(): boolean | null {
   return account.toLowerCase() === owner.toLowerCase();
 }
 
+/** Layout-level relayer-registration gate. Returns `null` while
+ *  unconnected or the RPC is in flight, `false` when the connected
+ *  account is not (yet) a registered active relayer, `true` when it
+ *  is. The MyMenu uses this to swap "Register relayer" in as the
+ *  only enabled item for non-relayer accounts — every other operator
+ *  page assumes a registered relayer and would be empty/broken
+ *  otherwise. Refetched on `account` change so wallet swaps don't
+ *  leave a stale flag. */
+export function useIsRegisteredRelayer(): boolean | null {
+  const { account, readProvider } = useWallet();
+  const registry = DEMO_NETWORK.contracts.relayerRegistry;
+  const registryDeployed = isConfiguredAddress(registry);
+  const [registered, setRegistered] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // No wallet → no answer to give. Distinct from the terminal cases
+    // below; `null` lets the caller render a neutral "checking" UI.
+    if (!account || !readProvider) {
+      setRegistered(null);
+      return;
+    }
+    // No registry on this network → terminal `false`. Without a
+    // registry to ask, the account is by definition not a relayer;
+    // returning `null` here would keep the menu in a loading state
+    // forever (Gemini #842). The MyMenu then surfaces the
+    // (also-disabled) Register link as expected for non-relayers.
+    if (!registryDeployed) {
+      setRegistered(false);
+      return;
+    }
+    let cancelled = false;
+    setRegistered(null);
+    const c = new ethers.Contract(registry, RELAYER_REGISTRY_ABI, readProvider);
+    (c.isActiveRelayer(account) as Promise<boolean>)
+      .then((b) => { if (!cancelled) setRegistered(b); })
+      .catch(() => {
+        // Treat probe failure as "not registered" — the menu falls
+        // back to the safe register-only state instead of unlocking
+        // operator pages the user can't actually use.
+        if (!cancelled) setRegistered(false);
+      });
+    return () => { cancelled = true; };
+  }, [account, readProvider, registry, registryDeployed]);
+
+  return registered;
+}

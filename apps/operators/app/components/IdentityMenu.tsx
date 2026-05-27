@@ -10,7 +10,13 @@ import { useIsRelayerRegistryAdmin } from "../lib/identity";
  *  admin entry — Pay/Pro have their own equivalent that queries
  *  `IdentityGate.owner()` instead. See `dual_ca_gate_model` memory:
  *  the two apps gate on different contracts, so the admin hook
- *  stays app-local even though the dropdown shell is shared. */
+ *  stays app-local even though the dropdown shell is shared.
+ *
+ *  Register-relayer placement: the link lives solely under MyMenu
+ *  (surfaced as the primary action when the connected wallet is
+ *  not yet a registered relayer). Already-registered accounts have
+ *  no use for it — re-registration is a contract-level no-op — so
+ *  the entry is intentionally absent here too. */
 export function IdentityMenu() {
   const { account } = useWallet();
   const isAdmin = useIsRelayerRegistryAdmin();
@@ -18,7 +24,6 @@ export function IdentityMenu() {
 
   const items: NavDropdownItem[] = [
     { href: "/operator-ca", label: "My status" },
-    { href: "/register", label: "Register relayer" },
   ];
   if (isAdmin) {
     items.push({
