@@ -233,12 +233,21 @@ export default function AdminIssuancePage() {
   // show up without the admin clicking Refresh. 15s is faster than
   // the relayer-list cadence because admin actions cluster — when
   // an admin is mid-session reviewing applications they want to see
-  // their own tx land within ~15s instead of 30s+. Disabled when
-  // the registry isn't deployed for this network.
+  // their own tx land within ~15s instead of 30s+.
+  //
+  // `enabled` ANDs in `!historyLoading` to suppress overlapping
+  // refreshes: if a queryFilter scan takes longer than 15s (slow
+  // RPC, large block range) the next tick would otherwise re-fire
+  // refreshHistory, set `loading` again, and the in-flight scan's
+  // setHistory would clobber the newer one's result. Pausing the
+  // polling while in flight avoids the cancel/retry hazard
+  // entirely. When the scan settles, `historyLoading` flips back
+  // to false and useTimedRefresh re-arms the interval for the
+  // next 15s window.
   useTimedRefresh({
     refresh: refreshHistory,
     intervalMs: 15_000,
-    enabled: !!readContract,
+    enabled: !!readContract && !historyLoading,
   });
 
   return (

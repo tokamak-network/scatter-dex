@@ -135,6 +135,12 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
   useEffect(() => {
     if (!account || !readProvider || !registry || !isConfiguredAddress(registry)) {
       setState({ status: "idle" });
+      // Reset freshness so consumers don't read a stale timestamp
+      // from a prior connected wallet — the interface contract on
+      // `UseIssuanceApprovalResult.lastRefreshedAt` documents `null`
+      // for the idle case (no wallet / no registry), and a
+      // disconnect→reconnect cycle previously leaked the old value.
+      setLastRefreshedAt(null);
       return;
     }
     let cancelled = false;
