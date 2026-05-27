@@ -12,6 +12,14 @@ import {
 import { isConfiguredAddress } from "../core/addresses";
 import { loadRelayersWithApiInfo, type RelayerInfo } from "../relayer";
 import { useWallet } from "./wallet";
+import { useTimedRefresh } from "./useTimedRefresh";
+
+/** Poll cadence for the relayer registry. 30s balances "new relayer
+ *  appears within half a minute" with "don't hammer the RPC". The
+ *  visibility-change handler in `useTimedRefresh` catches tab focus
+ *  immediately so the perceived latency is much lower whenever the
+ *  user actually switches back. */
+const RELAYERS_POLL_INTERVAL_MS = 30_000;
 
 export interface RelayersState {
   relayers: RelayerInfo[];
@@ -104,6 +112,17 @@ export function RelayersProvider({
   }, [registryAddress, readProvider, refreshTick]);
 
   const refresh = useCallback(() => setRefreshTick((n) => n + 1), []);
+
+  // Live-refresh: re-fetch the relayer list every 30s and immediately
+  // on tab-focus. Without this the UI shows stale state until the user
+  // manually triggers a refresh — operators registering new relayers
+  // would not appear on Pay/Pro/operators pages until everyone hard-
+  // refreshed.
+  useTimedRefresh({
+    refresh,
+    intervalMs: RELAYERS_POLL_INTERVAL_MS,
+    enabled: registryConfigured,
+  });
   const select = useCallback((address: string) => {
     setSelectedAddress(address);
   }, []);

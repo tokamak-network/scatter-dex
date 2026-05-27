@@ -7,7 +7,7 @@ import {
   RELAYER_REGISTRY_ABI,
   ISSUANCE_APPROVAL_REGISTRY_ABI,
 } from "@zkscatter/sdk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
 import { loadIdentityVerification } from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
 
@@ -150,6 +150,22 @@ export function OperatorIdentityProvider({ children }: { children: ReactNode }) 
       cancelled = true;
     };
   }, [account, registryDeployed, caAddress, caReady, caError, readProvider]);
+
+  // Live-refresh while the operator is actively waiting on their
+  // cert. `unverified` is the explicit "waiting on the zk-X509 tab"
+  // state — poll every 8s so the green ✅ flips automatically when
+  // the proof lands without making the operator click Refresh.
+  // `loading` is included because the very first probe happens
+  // before any state is known (cold mount, slow RPC); we stop once
+  // we've reached a terminal state (`verified`, `expired`,
+  // `no-registry`). `error` is also auto-retried so a transient
+  // RPC blip clears itself.
+  const livePoll = status.kind === "unverified" || status.kind === "error";
+  useTimedRefresh({
+    refresh,
+    intervalMs: 8_000,
+    enabled: livePoll,
+  });
 
   return <Ctx.Provider value={{ ca, status, refresh }}>{children}</Ctx.Provider>;
 }
