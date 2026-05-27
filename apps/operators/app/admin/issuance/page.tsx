@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
-import { useTimedRefresh, useWallet, shortAddr } from "@zkscatter/sdk/react";
+import { LiveFreshness, useTimedRefresh, useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { isConfiguredAddress, ISSUANCE_APPROVAL_REGISTRY_ABI } from "@zkscatter/sdk";
 import { DEMO_NETWORK } from "../../lib/network";
 import { useIsIssuanceRegistryAdmin } from "../../lib/identity";
@@ -119,6 +119,7 @@ export default function AdminIssuancePage() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyRefreshedAt, setHistoryRefreshedAt] = useState<number | null>(null);
 
   const refreshHistory = useCallback(async () => {
     if (!readContract) return;
@@ -212,6 +213,11 @@ export default function AdminIssuancePage() {
         return a.index - b.index;
       });
       setHistory(merged);
+      // Stamp only on success so a failed scan (RPC blip) leaves
+      // the prior freshness visibly ticking stale — the admin can
+      // tell from the pill that the events on screen are now older
+      // than the polling cadence.
+      setHistoryRefreshedAt(Date.now());
     } catch (err) {
       setHistoryError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -222,6 +228,18 @@ export default function AdminIssuancePage() {
   useEffect(() => {
     void refreshHistory();
   }, [refreshHistory]);
+
+  // Poll the event log so newly-recorded approvals/revokes/replaces
+  // show up without the admin clicking Refresh. 15s is faster than
+  // the relayer-list cadence because admin actions cluster — when
+  // an admin is mid-session reviewing applications they want to see
+  // their own tx land within ~15s instead of 30s+. Disabled when
+  // the registry isn't deployed for this network.
+  useTimedRefresh({
+    refresh: refreshHistory,
+    intervalMs: 15_000,
+    enabled: !!readContract,
+  });
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -329,14 +347,11 @@ export default function AdminIssuancePage() {
           <section>
             <div className="mb-3 flex items-baseline justify-between">
               <SectionHeader title="Event history" badge="live" />
-              <button
-                type="button"
-                onClick={() => void refreshHistory()}
-                disabled={historyLoading}
-                className="text-xs text-[var(--color-primary)] hover:underline disabled:opacity-50"
-              >
-                {historyLoading ? "Refreshing…" : "Refresh"}
-              </button>
+              <LiveFreshness
+                lastRefreshedAt={historyRefreshedAt}
+                loading={historyLoading}
+                onRefresh={() => void refreshHistory()}
+              />
             </div>
             {historyError && (
               <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-3 text-xs text-[var(--color-danger)]">

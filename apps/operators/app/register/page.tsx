@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { LiveFreshness, useWallet } from "@zkscatter/sdk/react";
 import {
   approveBondToken,
   explainRegistryError,
@@ -442,7 +442,25 @@ function Step1Verify({
         />
       </ul>
       {!!status && !status.isVerified && account && !wrongChain && (
-        <ApprovalAwareCTA approval={approval} onRefresh={onRefresh} />
+        <>
+          <ApprovalAwareCTA approval={approval} onRefresh={onRefresh} />
+          {/* The hook polls the IssuanceApprovalRegistry every 10s
+              while waiting on the admin's decision (see
+              `useIssuanceApproval`); surface the freshness so the
+              operator can see the page is alive. `idle` status (no
+              registry configured / no wallet) hides the pill via
+              the null `lastRefreshedAt`. */}
+          {approval.status !== "idle" && (
+            <div className="mt-2 pl-1">
+              <LiveFreshness
+                lastRefreshedAt={approval.lastRefreshedAt}
+                loading={approval.status === "checking"}
+                onRefresh={approval.refetch}
+                label="approval"
+              />
+            </div>
+          )}
+        </>
       )}
     </StepSection>
   );

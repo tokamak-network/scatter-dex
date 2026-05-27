@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { shortAddr } from "@zkscatter/sdk/react";
+import { LiveFreshness, shortAddr } from "@zkscatter/sdk/react";
 import { StatusDot } from "@zkscatter/ui";
 import { useRelayers } from "../lib/relayers";
 
@@ -22,6 +22,8 @@ export function RelayerPicker() {
     selected,
     loading,
     registryConfigured,
+    lastRefreshedAt,
+    refresh,
     select,
   } = useRelayers();
   const online = useMemo(() => relayers.filter((r) => r.online), [relayers]);
@@ -55,6 +57,11 @@ export function RelayerPicker() {
         <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
           Route via{online.length > 1 ? ` (${online.length} online)` : ""}
         </span>
+        <LiveFreshness
+          lastRefreshedAt={lastRefreshedAt}
+          loading={loading}
+          onRefresh={refresh}
+        />
       </div>
       <ul className="space-y-1">
         {relayers.map((r) => {

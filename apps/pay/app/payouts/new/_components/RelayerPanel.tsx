@@ -2,6 +2,7 @@
 
 import { Field } from "@zkscatter/ui";
 import type { RelayerInfo } from "@zkscatter/sdk/relayer";
+import { LiveFreshness, useRelayers } from "@zkscatter/sdk/react";
 
 export interface RelayerPanelProps {
   /** `registryConfigured` distinguishes "registry env not wired"
@@ -23,6 +24,12 @@ export function RelayerPanel({
   maxFeeBps,
   setMaxFeeBps,
 }: RelayerPanelProps) {
+  // Pull `lastRefreshedAt` + `refresh` directly from the provider so
+  // we can render the freshness pill without threading two extra
+  // props through FundsStep → page.tsx → here. The list/selected/
+  // select props are still consumed from above so callers retain
+  // explicit control over the picker (and tests stay stable).
+  const { lastRefreshedAt, refresh, loading } = useRelayers();
   const onlineRelayers = list.filter((r) => r.online);
   // Keep the currently-selected relayer in the dropdown even after it
   // goes offline so the controlled <select> never has a `value` that
@@ -34,7 +41,16 @@ export function RelayerPanel({
 
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-4 text-xs">
-      <h3 className="mb-2 text-sm font-semibold">Relayer</h3>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">Relayer</h3>
+        {registryConfigured ? (
+          <LiveFreshness
+            lastRefreshedAt={lastRefreshedAt}
+            loading={loading}
+            onRefresh={refresh}
+          />
+        ) : null}
+      </div>
       {!registryConfigured ? (
         <div className="text-[var(--color-warning)]">
           No relayer registry configured. Set{" "}
