@@ -182,6 +182,8 @@ describe("SettlementWorker", () => {
 
     const markMatched = vi.fn().mockResolvedValue(undefined);
     const submitter = makeSubmitter();
+    const nullifierToOfferHandle = (n: string) =>
+      `0x${BigInt(n).toString(16).padStart(64, "0")}`;
 
     const worker = new SettlementWorker({
       db,
@@ -190,7 +192,7 @@ describe("SettlementWorker", () => {
       findMatch: (s) => findMatch(s),
       decPubKeyCount: (ax, ay) => decPubKeyCount(ax, ay),
       sharedClient: { markMatched } as any,
-      nullifierToOfferHandle: (n) => `0x${BigInt(n).toString(16).padStart(64, "0")}`,
+      nullifierToOfferHandle,
       getFeeBps: () => 10n,
       pollIntervalMs: 10_000,
     });
@@ -205,12 +207,8 @@ describe("SettlementWorker", () => {
     expect(takerStored.status).toBe("settled");
     expect(decPubKeyCount).toHaveBeenCalledTimes(2);
     expect(markMatched).toHaveBeenCalledTimes(2);
-    expect(markMatched).toHaveBeenCalledWith(
-      "0x000000000000000000000000000000000000000000000000000000000000012d",
-    );
-    expect(markMatched).toHaveBeenCalledWith(
-      "0x000000000000000000000000000000000000000000000000000000000000012e",
-    );
+    expect(markMatched).toHaveBeenCalledWith(nullifierToOfferHandle("301"));
+    expect(markMatched).toHaveBeenCalledWith(nullifierToOfferHandle("302"));
   });
 
   // ─── Retry policy ──
