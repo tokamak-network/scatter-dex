@@ -32,6 +32,15 @@ export interface RelayersState {
    *  of an empty-list fallback. */
   registryConfigured: boolean;
   error: string | null;
+  /** Unix-ms timestamp of the most recent successful fetch, or
+   *  `null` until the first one completes. Surface this in UI to
+   *  show "live • Xs ago" so the polling cadence introduced by
+   *  `useTimedRefresh` is visible to the user — otherwise they
+   *  have no signal that the data isn't stale. Updated on every
+   *  successful refresh, NOT on failures (so the displayed age
+   *  stays accurate during an RPC outage rather than freezing
+   *  optimistically). */
+  lastRefreshedAt: number | null;
   refresh(): void;
   select(address: string): void;
 }
@@ -66,6 +75,7 @@ export function RelayersProvider({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedAddress, setSelectedAddress] = useState<string | null>(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
   // Bumping this triggers a re-fetch from the effect below.
   const [refreshTick, setRefreshTick] = useState(0);
 
@@ -88,6 +98,7 @@ export function RelayersProvider({
       .then((list) => {
         if (cancelled) return;
         setRelayers(list);
+        setLastRefreshedAt(Date.now());
         // Auto-select the first online relayer when nothing's
         // chosen, or when the previously-selected relayer is no
         // longer in the list.
@@ -139,10 +150,11 @@ export function RelayersProvider({
       loading,
       registryConfigured,
       error,
+      lastRefreshedAt,
       refresh,
       select,
     }),
-    [relayers, selected, loading, registryConfigured, error, refresh, select],
+    [relayers, selected, loading, registryConfigured, error, lastRefreshedAt, refresh, select],
   );
 
   return <RelayersCtx.Provider value={value}>{children}</RelayersCtx.Provider>;
