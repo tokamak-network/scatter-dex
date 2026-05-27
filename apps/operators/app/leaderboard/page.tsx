@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState, type MouseEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type KeyboardEvent } from "react";
 import { ethers } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
-import { shortAddr, useWallet } from "@zkscatter/sdk/react";
+import { LiveFreshness, shortAddr, useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
 import {
   loadRelayersWithApiInfo,
   unwrapEthersError,
@@ -135,6 +135,10 @@ export default function LeaderboardPage() {
   const { account, readProvider } = useWallet();
   const registryDeployed = isConfiguredAddress(REGISTRY);
   const [state, setState] = useState<LeaderboardState>({ loading: false, rows: [], error: null });
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null);
+  // Bump this to force an out-of-cadence refresh from the user
+  // pressing the "refresh" link on the LiveFreshness pill.
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     if (!registryDeployed) {
@@ -144,14 +148,27 @@ export default function LeaderboardPage() {
     let cancelled = false;
     setState((s) => ({ ...s, loading: true, error: null }));
     loadRelayersWithApiInfo(REGISTRY, readProvider, { withStats: true })
-      .then((rows) => { if (!cancelled) setState({ loading: false, rows, error: null }); })
+      .then((rows) => {
+        if (cancelled) return;
+        setState({ loading: false, rows, error: null });
+        // Only stamp on success; a failed fetch leaves the prior
+        // freshness so the user can see "live · 2m ago" stop ticking
+        // and reason about staleness.
+        setLastRefreshedAt(Date.now());
+      })
       .catch((e) => {
         if (cancelled) return;
         console.error("Failed to load leaderboard", e);
         setState({ loading: false, rows: [], error: unwrapEthersError(e) });
       });
     return () => { cancelled = true; };
-  }, [registryDeployed, readProvider]);
+  }, [registryDeployed, readProvider, refreshTick]);
+
+  const refresh = useCallback(() => setRefreshTick((n) => n + 1), []);
+  // Same polling cadence as the SDK's RelayersProvider so the
+  // leaderboard catches new registrations within ~30s, with a tab-
+  // focus immediate refresh on top.
+  useTimedRefresh({ refresh, intervalMs: 30_000, enabled: registryDeployed });
 
   const [criterionId, setCriterionId] = useState<RankCriterionId>("bond");
   const criterion = criterionById(criterionId);
@@ -174,6 +191,15 @@ export default function LeaderboardPage() {
             criterion below to re-sort — defaults to bond posted. Your relayer
             is highlighted.
           </p>
+          {registryDeployed ? (
+            <div className="mt-2">
+              <LiveFreshness
+                lastRefreshedAt={lastRefreshedAt}
+                loading={state.loading}
+                onRefresh={refresh}
+              />
+            </div>
+          ) : null}
         </div>
         <Link href="/dashboard" className="text-sm text-[var(--color-primary)] hover:underline">
           ← Dashboard

@@ -26,7 +26,7 @@ import { useIsIssuanceRegistryAdmin } from "../../lib/identity";
 import { SectionHeader } from "../../components/SectionHeader";
 import { Stat } from "../../components/Stat";
 import { formatIsoDate } from "../../lib/format";
-import { validateApproveInput } from "./validation";
+import { classifyApprovalWindow, validateApproveInput, type ApprovalWindow } from "./validation";
 
 // Full ABI (approve/revoke/approvals/owner + events + custom errors)
 // lives in @zkscatter/sdk so the operator-side `useIssuanceApproval`
@@ -687,7 +687,17 @@ function LookupCard({
                 <dt className="text-[var(--color-text-muted)]">Approved at</dt>
                 <dd>{formatIsoDate(result.approvedAt)}</dd>
                 <dt className="text-[var(--color-text-muted)]">Expires at</dt>
-                <dd>{result.expiresAt === 0 ? "no expiry" : formatIsoDate(result.expiresAt)}</dd>
+                <dd>
+                  {result.expiresAt === 0 ? (
+                    "no expiry"
+                  ) : (
+                    <>
+                      {formatIsoDate(result.expiresAt)}
+                      {" — "}
+                      <ApprovalWindowBadge expiresAt={result.expiresAt} />
+                    </>
+                  )}
+                </dd>
                 {result.revoked && (
                   <>
                     <dt className="text-[var(--color-danger)]">Revoked</dt>
@@ -767,7 +777,14 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
               </div>
               <div className="mt-0.5 text-[var(--color-text-muted)]">
                 by <span className="font-mono">{shortAddr(e.approvedBy)}</span> at {formatIsoDate(e.approvedAt)}
-                {e.expiresAt !== 0 && ` · expires ${formatIsoDate(e.expiresAt)}`}
+                {e.expiresAt !== 0 && (
+                  <>
+                    {" · expires "}
+                    {formatIsoDate(e.expiresAt)}
+                    {" — "}
+                    <ApprovalWindowBadge expiresAt={e.expiresAt} />
+                  </>
+                )}
               </div>
             </>
           ) : e.kind === "revoked" ? (
@@ -807,6 +824,41 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
     </ul>
   );
 }
+
+/** Inline pill that colours the days-until-expiry classification.
+ *  Wraps `classifyApprovalWindow` so the admin can scan history /
+ *  lookup at a glance and see which approvals are close to lapsing.
+ *  Re-evaluates on its own tick so the displayed bucket can roll
+ *  over from "warn" → "urgent" → "expired" without a page reload. */
+function ApprovalWindowBadge({ expiresAt }: { expiresAt: number }) {
+  // Re-render every minute so a "expires in 8d" can flip to "7d" the
+  // instant midnight passes. Cheaper than per-second and aligned
+  // with the day-granularity output.
+  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = window.setInterval(
+      () => setNowSec(Math.floor(Date.now() / 1000)),
+      60_000,
+    );
+    return () => window.clearInterval(id);
+  }, []);
+  const win: ApprovalWindow = classifyApprovalWindow(expiresAt, nowSec);
+  if (win.tone === "none") return null;
+  const toneClass = TONE_CLASSES[win.tone];
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${toneClass}`}>
+      {win.label}
+    </span>
+  );
+}
+
+const TONE_CLASSES: Record<ApprovalWindow["tone"], string> = {
+  none: "",
+  ok: "bg-[var(--color-success-soft)] text-[var(--color-success)]",
+  warn: "bg-[var(--color-warning-soft)] text-[var(--color-warning)]",
+  urgent: "bg-[var(--color-danger-soft)] text-[var(--color-danger)]",
+  expired: "bg-[var(--color-danger)] text-white",
+};
 
 function Field({
   label,

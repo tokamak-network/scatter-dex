@@ -75,3 +75,49 @@ export function validateApproveInput(
   }
   return { valid: Object.keys(errors).length === 0, errors };
 }
+
+/** Days-until-expiry classification with a per-bucket UI tone.
+ *  Pure for testability; renderer maps `tone` to colours. Day count
+ *  is calendar-day-truncated, not seconds-rounded — "expires in 0
+ *  days" means "today or already past, not 23 hours from now".
+ *
+ *  `tone`:
+ *  - `expired`: already past (negative remaining)
+ *  - `urgent`: ≤ 7 days
+ *  - `warn`: ≤ 30 days
+ *  - `ok`: > 30 days
+ *  - `none`: no expiry configured (expiresAt === 0) */
+export interface ApprovalWindow {
+  tone: "none" | "ok" | "warn" | "urgent" | "expired";
+  days: number;
+  /** Pre-rendered text suitable for inline display. */
+  label: string;
+}
+
+export function classifyApprovalWindow(
+  expiresAt: number,
+  nowSec: number,
+): ApprovalWindow {
+  if (expiresAt === 0) {
+    return { tone: "none", days: Infinity, label: "no expiry" };
+  }
+  // Calendar-day diff so the bucket boundaries (≤7, ≤30) match a
+  // human's intuition. Math.ceil so 5h-from-now reads as "1 day"
+  // not "0 days".
+  const secPerDay = 86_400;
+  const days = Math.ceil((expiresAt - nowSec) / secPerDay);
+  if (days <= 0) {
+    return {
+      tone: "expired",
+      days,
+      label: days === 0 ? "expires today" : `expired ${-days}d ago`,
+    };
+  }
+  if (days <= 7) {
+    return { tone: "urgent", days, label: `expires in ${days}d` };
+  }
+  if (days <= 30) {
+    return { tone: "warn", days, label: `expires in ${days}d` };
+  }
+  return { tone: "ok", days, label: `expires in ${days}d` };
+}

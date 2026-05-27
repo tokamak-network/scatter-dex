@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
-import { validateApproveInput, type ApproveInput } from "./validation";
+import { classifyApprovalWindow, validateApproveInput, type ApproveInput } from "./validation";
 
 function input(overrides: Partial<ApproveInput> = {}): ApproveInput {
   return {
@@ -96,5 +96,50 @@ describe("validateApproveInput", () => {
     expect(errors.commonName).toBeDefined();
     expect(errors.country).toBeDefined();
     expect(errors.validityDays).toBeDefined();
+  });
+});
+
+describe("classifyApprovalWindow", () => {
+  const NOW_SEC = 1_700_000_000;
+  const DAY = 86_400;
+
+  it("returns `none` tone when expiresAt is 0 (no expiry)", () => {
+    const w = classifyApprovalWindow(0, NOW_SEC);
+    expect(w.tone).toBe("none");
+    expect(w.label).toBe("no expiry");
+  });
+
+  it("buckets > 30 days as `ok`", () => {
+    const w = classifyApprovalWindow(NOW_SEC + 60 * DAY, NOW_SEC);
+    expect(w.tone).toBe("ok");
+    expect(w.days).toBe(60);
+    expect(w.label).toBe("expires in 60d");
+  });
+
+  it("buckets ≤ 30d > 7d as `warn`", () => {
+    expect(classifyApprovalWindow(NOW_SEC + 30 * DAY, NOW_SEC).tone).toBe("warn");
+    expect(classifyApprovalWindow(NOW_SEC + 8 * DAY, NOW_SEC).tone).toBe("warn");
+  });
+
+  it("buckets ≤ 7d as `urgent`", () => {
+    expect(classifyApprovalWindow(NOW_SEC + 7 * DAY, NOW_SEC).tone).toBe("urgent");
+    expect(classifyApprovalWindow(NOW_SEC + 1 * DAY, NOW_SEC).tone).toBe("urgent");
+  });
+
+  it("marks `expired` for past timestamps and a special label for today", () => {
+    const today = classifyApprovalWindow(NOW_SEC, NOW_SEC);
+    expect(today.tone).toBe("expired");
+    expect(today.label).toBe("expires today");
+
+    const yesterday = classifyApprovalWindow(NOW_SEC - DAY, NOW_SEC);
+    expect(yesterday.tone).toBe("expired");
+    expect(yesterday.label).toBe("expired 1d ago");
+  });
+
+  it("ceils partial days so a 5h-from-now expiry reads as `1d` not `0d`", () => {
+    const fiveHrs = NOW_SEC + 5 * 3600;
+    const w = classifyApprovalWindow(fiveHrs, NOW_SEC);
+    expect(w.days).toBe(1);
+    expect(w.tone).toBe("urgent");
   });
 });
