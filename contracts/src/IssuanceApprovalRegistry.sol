@@ -76,6 +76,21 @@ contract IssuanceApprovalRegistry is Ownable2Step {
         uint64 revokedAt,
         string reason
     );
+    /// @notice Emitted IN ADDITION TO `ApprovalRecorded` when a fresh
+    /// `approve()` overwrites an existing approval row (whether the
+    /// prior was active or revoked). The fields capture the state
+    /// that was just overwritten so audit consumers can reconstruct
+    /// the prior row without scanning every preceding event.
+    /// `ApprovalRecorded` is still emitted afterwards so consumers
+    /// that only watch the canonical "current state" event keep
+    /// working unchanged.
+    event ApprovalReplaced(
+        address indexed operator,
+        address indexed approvedBy,
+        uint64 priorApprovedAt,
+        bool priorRevoked,
+        string priorRevokeReason
+    );
 
     // Custom errors — repo convention (matches RelayerRegistry, FeeVault,
     // SanctionsList). Cheaper than string reverts + caller-parseable.
@@ -121,6 +136,14 @@ contract IssuanceApprovalRegistry is Ownable2Step {
         }
 
         Approval storage a = _approvals[operator];
+        // Replacement audit trail — emit BEFORE we overwrite so the
+        // event carries the prior values. Skipped on first-time
+        // approve (approvedAt == 0 is the sentinel).
+        if (a.approvedAt != 0) {
+            emit ApprovalReplaced(
+                operator, msg.sender, a.approvedAt, a.revoked, a.revokeReason
+            );
+        }
         a.commonName = commonName;
         a.organization = organization;
         a.country = country;

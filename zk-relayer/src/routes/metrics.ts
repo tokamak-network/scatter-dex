@@ -143,17 +143,24 @@ export function createMetricsRoutes(db: PrivateOrderDB): Router {
       // values are float64, so very large totals lose precision past ~2^53.
       // For monitoring/alerting that's fine; for accounting use the JSON
       // /api/relayer/stats endpoint which preserves the BigInt as a string.
+      //
+      // Label semantics: `token` is whichever leg the underlying row
+      // contributed — always the sell-leg for `scatterDirectAuth`,
+      // and either leg for `settleAuth` (since #837 the buy leg is
+      // unioned in too). The grouping is purely per-token, not
+      // "sell-side": "this relayer settled X wei of TOKEN" is the
+      // correct read.
       for (const v of volume) {
         samples.push({
           name: "relayer_settled_volume_wei",
-          help: "Total settled sell-side volume in wei, grouped by sell token. Float-precision; use /api/relayer/stats for exact values.",
+          help: "Total settled volume in wei grouped by token (includes both legs of settleAuth rows + the sell leg of scatterDirectAuth rows). Float-precision; use /api/relayer/stats for exact values.",
           type: "counter",
           value: Number(v.totalVolume),
           labels: { token: v.sellToken.toLowerCase() },
         });
         samples.push({
           name: "relayer_settled_volume_count",
-          help: "Settled order count grouped by sell token.",
+          help: "Settled order count grouped by token (counts a settleAuth row once per leg, scatterDirectAuth once on the sell leg).",
           type: "counter",
           value: v.count,
           labels: { token: v.sellToken.toLowerCase() },

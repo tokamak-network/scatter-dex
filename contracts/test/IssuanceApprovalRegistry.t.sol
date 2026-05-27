@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IssuanceApprovalRegistry} from "../src/IssuanceApprovalRegistry.sol";
 
@@ -156,6 +156,51 @@ contract IssuanceApprovalRegistryTest is Test {
         assertFalse(a.revoked);
         assertEq(a.revokeReason, "");
         assertEq(uint256(a.revokedAt), 0);
+    }
+
+    function test_FirstApproveDoesNotEmitReplaced() public {
+        vm.prank(admin);
+        // Record all logs; assert ApprovalReplaced is NOT among them.
+        // expectEmit's negative form doesn't exist, so we inspect the
+        // recorded log array directly.
+        vm.recordLogs();
+        reg.approve(operator1, "ops@example.com", "Example", "KR", 365, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 replacedTopic = IssuanceApprovalRegistry.ApprovalReplaced.selector;
+        for (uint256 i; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics[0] != replacedTopic,
+                "first-time approve must not emit ApprovalReplaced"
+            );
+        }
+    }
+
+    function test_ReApprovalEmitsReplacedWithPriorState() public {
+        _approve(operator1);
+        IssuanceApprovalRegistry.Approval memory prior = reg.approvals(operator1);
+        uint64 priorApprovedAt = prior.approvedAt;
+
+        vm.prank(admin);
+        // Asserting both indexed topics (operator, approvedBy) and
+        // the non-indexed payload (priorApprovedAt, priorRevoked,
+        // priorRevokeReason). The 4-bool form is `(t1, t2, t3, data)`.
+        vm.expectEmit(true, true, false, true);
+        emit IssuanceApprovalRegistry.ApprovalReplaced(operator1, admin, priorApprovedAt, false, "");
+        reg.approve(operator1, "ops2@example.com", "Example v2", "SG", 90, 0);
+    }
+
+    function test_ReApprovalAfterRevokeReplacedCarriesPriorRevokeContext() public {
+        _approve(operator1);
+        vm.prank(admin);
+        reg.revoke(operator1, "investigating identity mismatch");
+        IssuanceApprovalRegistry.Approval memory prior = reg.approvals(operator1);
+
+        vm.prank(admin);
+        vm.expectEmit(true, true, false, true);
+        emit IssuanceApprovalRegistry.ApprovalReplaced(
+            operator1, admin, prior.approvedAt, true, "investigating identity mismatch"
+        );
+        reg.approve(operator1, "ops@example.com", "Example", "KR", 365, 0);
     }
 
     function test_ZeroStructForUnknownWallet() public view {
