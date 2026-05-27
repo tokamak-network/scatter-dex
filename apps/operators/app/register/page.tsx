@@ -229,7 +229,13 @@ export default function RegisterPage() {
         </Link>
         <h1 className="mt-2 text-2xl font-semibold">Register a relayer</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-          Three quick steps: verify your identity, publish your endpoint, post a bond.
+          Three quick steps: verify your identity, publish your endpoint, post a bond.{" "}
+          <Link
+            href="/docs?d=registering-a-relayer"
+            className="underline decoration-dotted underline-offset-2 hover:text-[var(--color-text)]"
+          >
+            Full walkthrough →
+          </Link>
         </p>
       </header>
 
@@ -676,8 +682,10 @@ function Step2Endpoint({
       {/* First-timer guidance — the URL field assumes the operator
           has a relayer process running somewhere reachable. Surface
           the setup docs explicitly so they don't have to dig through
-          the Docs dropdown to find them. Two links: local for the
-          tutorial / dev path, deployment for the production path. */}
+          the Docs dropdown to find them. Three links: the full
+          end-to-end registration walkthrough (covers steps 1-9
+          including this one), local for the tutorial / dev path,
+          deployment for the production path. */}
       <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
         <div className="font-medium text-[var(--color-text)]">
           Don&apos;t have a relayer running yet?
@@ -687,6 +695,12 @@ function Step2Endpoint({
           <code>/api/info</code>.
         </div>
         <div className="mt-2 flex flex-wrap gap-3">
+          <Link
+            href="/docs?d=registering-a-relayer"
+            className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[11px] font-medium text-[var(--color-primary)] hover:opacity-90"
+          >
+            Full registration walkthrough →
+          </Link>
           <Link
             href="/docs?d=local-setup"
             className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 text-[11px] font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
