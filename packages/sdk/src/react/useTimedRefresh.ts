@@ -3,9 +3,11 @@
 import { useEffect, useRef } from "react";
 
 export interface UseTimedRefreshOptions {
-  /** Callback to invoke on each tick + on visibility change. Should
-   *  be a stable reference (wrap in `useCallback`) — the hook re-
-   *  subscribes whenever this function identity changes. */
+  /** Callback to invoke on each tick + on visibility change.
+   *  Identity-stable across renders is preferred (avoids needless
+   *  effect work), but the hook pins the latest reference in a
+   *  ref, so an inline arrow function will still see updates from
+   *  closure without re-arming the timer. */
   refresh: () => void | Promise<void>;
   /** Polling interval in milliseconds. Choose with the consumer's
    *  freshness needs in mind: a list that operators expect to see
@@ -49,16 +51,34 @@ export function startTimedRefresh(opts: StartTimedRefreshOptions): () => void {
     return document.visibilityState === "hidden";
   });
 
+  // Wrap the user's refresh so neither a synchronous throw nor an
+  // async rejection bubbles out as an unhandled exception/Promise.
+  // Consumers usually log errors inside their refresh, but a hook
+  // that polls forever can't trust that — one stray throw would
+  // crash the interval handler and stop subsequent ticks.
+  const safeRefresh = () => {
+    try {
+      const r = opts.refresh();
+      if (r && typeof (r as Promise<void>).catch === "function") {
+        (r as Promise<void>).catch((err) => {
+          console.warn("[useTimedRefresh] refresh rejected", err);
+        });
+      }
+    } catch (err) {
+      console.warn("[useTimedRefresh] refresh threw", err);
+    }
+  };
+
   const tick = () => {
     if (isHidden()) return;
-    void opts.refresh();
+    safeRefresh();
   };
   const id = setI(tick, opts.intervalMs);
 
   let removeListener: (() => void) | null = null;
   if (opts.refreshOnVisible) {
     const onVis = () => {
-      if (!isHidden()) void opts.refresh();
+      if (!isHidden()) safeRefresh();
     };
     if (opts.addVisibilityListener) {
       removeListener = opts.addVisibilityListener(onVis);

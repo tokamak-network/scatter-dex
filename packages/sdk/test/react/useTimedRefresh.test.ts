@@ -133,6 +133,60 @@ describe("startTimedRefresh", () => {
     expect(refresh).toHaveBeenCalledTimes(0);
   });
 
+  it("swallows synchronous throws from refresh without killing the timer", () => {
+    const timer = makeFakeTimer();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    let throwOn = 1;
+    let calls = 0;
+    const refresh = vi.fn(() => {
+      calls++;
+      if (calls === throwOn) throw new Error("boom");
+    });
+    startTimedRefresh({
+      refresh,
+      intervalMs: 1000,
+      refreshOnVisible: false,
+      setInterval: timer.schedule,
+      clearInterval: timer.cancel,
+      isHidden: () => false,
+    });
+
+    timer.tick(1000);   // throws
+    timer.tick(1000);   // still ticks
+    timer.tick(1000);
+    expect(refresh).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledWith(
+      "[useTimedRefresh] refresh threw",
+      expect.any(Error),
+    );
+    warn.mockRestore();
+  });
+
+  it("swallows async rejections from refresh without unhandled-promise", async () => {
+    const timer = makeFakeTimer();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const refresh = vi.fn(() => Promise.reject(new Error("rpc down")));
+    startTimedRefresh({
+      refresh,
+      intervalMs: 1000,
+      refreshOnVisible: false,
+      setInterval: timer.schedule,
+      clearInterval: timer.cancel,
+      isHidden: () => false,
+    });
+
+    timer.tick(1000);
+    // Microtask flush so the .catch() handler runs.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      "[useTimedRefresh] refresh rejected",
+      expect.any(Error),
+    );
+    warn.mockRestore();
+  });
+
   it("stop() cancels the interval and removes the visibility listener", () => {
     const timer = makeFakeTimer();
     const refresh = vi.fn();

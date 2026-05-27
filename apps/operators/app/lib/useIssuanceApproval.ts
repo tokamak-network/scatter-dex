@@ -153,8 +153,16 @@ export function useIssuanceApproval(): UseIssuanceApprovalResult {
   // would be caught by tab-focus visibility anyway. Stays disabled
   // in `idle` (nothing configured / no wallet) so we don't poll a
   // no-op forever.
+  //
+  // `checking` is deliberately EXCLUDED: a read is already in
+  // flight. If the RPC takes longer than `intervalMs` the next
+  // tick would re-arm setState({checking}) and the previous
+  // promise's `cancelled` flag would discard its result — a slow
+  // RPC ends up in an infinite cancel/retry loop and the status
+  // never resolves. The effect re-fires anyway whenever the read
+  // settles (state transitions out of `checking`), at which point
+  // the right `livePoll` value picks back up.
   const livePoll =
-    state.status === "checking" ||
     state.status === "not-approved" ||
     state.status === "revoked" ||
     state.status === "expired" ||
