@@ -349,6 +349,28 @@ function Step1Verify({
       done={verified}
       defaultOpen={defaultOpen}
     >
+      {/* Persistent verifier link — surfaced even when the operator is
+          already verified, so they can re-verify if the attestation
+          is close to expiry. Distinct from the warning-card CTA
+          below which only shows when isVerified=false. */}
+      <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-muted)]">
+        {VERIFY_URL && (
+          <a
+            href={VERIFY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
+          >
+            Open zk-X509 verifier ↗
+          </a>
+        )}
+        <Link
+          href="/operator-ca"
+          className="underline decoration-dotted underline-offset-2 hover:text-[var(--color-text)]"
+        >
+          How verification works →
+        </Link>
+      </div>
       <ul className="space-y-2 text-sm">
         <CheckItem
           label="Wallet connected"
@@ -455,6 +477,34 @@ function Step2Endpoint({
       gatedReason="Complete Verify to unlock."
       defaultOpen={defaultOpen}
     >
+      {/* First-timer guidance — the URL field assumes the operator
+          has a relayer process running somewhere reachable. Surface
+          the setup docs explicitly so they don't have to dig through
+          the Docs dropdown to find them. Two links: local for the
+          tutorial / dev path, deployment for the production path. */}
+      <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+        <div className="font-medium text-[var(--color-text)]">
+          Don&apos;t have a relayer running yet?
+        </div>
+        <div className="mt-1">
+          Spin one up first — the URL below has to actually respond at{" "}
+          <code>/api/info</code>.
+        </div>
+        <div className="mt-2 flex flex-wrap gap-3">
+          <Link
+            href="/docs?d=local-setup"
+            className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 text-[11px] font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
+          >
+            How to run a relayer locally →
+          </Link>
+          <Link
+            href="/docs?d=deployment"
+            className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 text-[11px] font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
+          >
+            Production deployment →
+          </Link>
+        </div>
+      </div>
       <div className="space-y-5">
         <Field
           label="Endpoint URL"
