@@ -10,6 +10,10 @@ export interface ContractAddresses {
   identityGate: string;
   /** RelayerRegistry: public relayer directory. */
   relayerRegistry: string;
+  /** IssuanceApprovalRegistry: admin-recorded approvals that gate
+   *  the operators app's "Get your cert" CTA. Optional — apps that
+   *  don't surface the cert-issuance flow leave this unset. */
+  issuanceApprovalRegistry?: string;
   /** FeeVault (optional in test environments). */
   feeVault?: string;
   /** WETH address on the chain (also used as the native-ETH token slot). */

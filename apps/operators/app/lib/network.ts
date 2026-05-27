@@ -30,6 +30,7 @@ function resolveNetwork(): NetworkConfig {
       commitmentPool: pick(process.env.NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS, ZERO),
       identityGate: pick(process.env.NEXT_PUBLIC_IDENTITY_GATE_ADDRESS, ZERO),
       relayerRegistry: pick(process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS, ZERO),
+      issuanceApprovalRegistry: pick(process.env.NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS) || undefined,
       feeVault: pick(process.env.NEXT_PUBLIC_FEE_VAULT_ADDRESS, ZERO),
       weth: pick(process.env.NEXT_PUBLIC_WETH_ADDRESS, ZERO),
     },
