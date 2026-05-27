@@ -652,23 +652,41 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
       const target = ordersRef.current.find((o) => o.id === id);
       if (!target) return;
       // Idempotent on (id, leafIndex). Repeat calls keep the same
-      // list and skip the persistence write so a batch claim retry
-      // doesn't churn the orders file for already-done leaves.
+      // list and skip the persistence write so a re-attempt on an
+      // already-done leaf doesn't churn the orders file.
       const already = target.claimedLeafIndexes ?? [];
       if (already.includes(leafIndex)) return;
+      // Source of truth for "which leaves count toward done" is the
+      // claims list itself, not the legacy singular `claim` count.
+      // A leafIndex outside the current claims list is rejected
+      // upfront — it would never satisfy the intersection check
+      // below and would persist as dead state (Copilot review #845).
+      const claimLeafIdxs = (target.claims && target.claims.length > 0
+        ? target.claims
+        : target.claim
+          ? [target.claim]
+          : []
+      ).map((c) => c.leafIndex);
+      if (claimLeafIdxs.length === 0) return;
+      if (!claimLeafIdxs.includes(leafIndex)) return;
       const claimedLeafIndexes = [...already, leafIndex].sort((a, b) => a - b);
-      // Total recipients = `claims` length when present, else the
-      // legacy singular-`claim` shape (1). Once every leaf has been
-      // claimed the order's top-level status flips to `claimed` so
-      // the orders list shows it under the My/Claimed tab.
-      const total = target.claims?.length ?? (target.claim ? 1 : 0);
-      const allDone = total > 0 && claimedLeafIndexes.length >= total;
+      // Promote when *every leaf in the claims list* is in the set
+      // (intersection-based, not length-based). Length-based would
+      // false-positive on a stale `claimedLeafIndexes` that carries
+      // out-of-range entries from a prior schema (Copilot review #845).
+      const claimedSet = new Set(claimedLeafIndexes);
+      const allDone = claimLeafIdxs.every((i) => claimedSet.has(i));
       const next: OrderRecord = {
         ...target,
         claimedLeafIndexes,
         status: allDone ? "claimed" : target.status,
       };
-      adapter.put(next);
+      // Persist before the in-memory commit so a folder-write
+      // failure surfaces in the console (and gets observed in tests)
+      // rather than silently leaving disk behind UI (Gemini review #845).
+      adapter.put(next).catch((err) => {
+        console.warn(`[orders.markLeafClaimed] adapter.put(${id}) failed`, err);
+      });
       setOrders((prev) => prev.map((o) => (o.id === id ? next : o)));
     },
     [adapter],

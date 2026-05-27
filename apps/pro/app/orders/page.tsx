@@ -30,6 +30,17 @@ function isExpired(o: OrderRecord, nowMs: number): boolean {
   return Number(o.expiry) * 1000 <= nowMs;
 }
 
+/** "Claim (3/5)" for multi-recipient orders with partial progress,
+ *  plain "Claim" for single-recipient (the common case). Lifted out
+ *  of the JSX rather than inlined as an IIFE so the row markup stays
+ *  declarative (Gemini review #845). */
+function claimButtonLabel(o: OrderRecord): string {
+  const total = o.claims?.length ?? 1;
+  if (total <= 1) return "Claim";
+  const done = o.claimedLeafIndexes?.length ?? 0;
+  return `Claim (${done}/${total})`;
+}
+
 /** Pair display is "BASE/QUOTE" (e.g. ETH/USDC). For side=sell the
  *  user sells base, gets quote; for side=buy the user sells quote,
  *  gets base. Below helpers project the (side, pair, price, size)
@@ -294,24 +305,14 @@ export default function Orders() {
                       Cancel
                     </button>
                   )}
-                  {o.status === "claimable" && o.claim && (() => {
-                    // Surface multi-recipient progress on the button
-                    // itself so the operator sees "3 / 5" without
-                    // opening the drawer. Single-recipient orders
-                    // (the common case) stay as plain "Claim".
-                    const total = o.claims?.length ?? 1;
-                    const done = o.claimedLeafIndexes?.length ?? 0;
-                    const label =
-                      total > 1 ? `Claim (${done}/${total})` : "Claim";
-                    return (
-                      <button
-                        onClick={() => setClaimTarget(o)}
-                        className="rounded-md border border-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
-                      >
-                        {label}
-                      </button>
-                    );
-                  })()}
+                  {o.status === "claimable" && o.claim && (
+                    <button
+                      onClick={() => setClaimTarget(o)}
+                      className="rounded-md border border-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
+                    >
+                      {claimButtonLabel(o)}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
