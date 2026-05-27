@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { NavDropdown, type NavDropdownItem } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
-import { useIsRelayerRegistryAdmin } from "../lib/identity";
+import {
+  useIsIssuanceRegistryAdmin,
+  useIsRelayerRegistryAdmin,
+} from "../lib/identity";
 
 /** Identity dropdown for operators. Reads `RelayerRegistry.owner()`
  *  via `useIsRelayerRegistryAdmin` to decide whether to surface the
@@ -20,6 +23,7 @@ import { useIsRelayerRegistryAdmin } from "../lib/identity";
 export function IdentityMenu() {
   const { account } = useWallet();
   const isAdmin = useIsRelayerRegistryAdmin();
+  const isIssuanceAdmin = useIsIssuanceRegistryAdmin();
   if (!account) return null;
 
   const items: NavDropdownItem[] = [
@@ -29,6 +33,17 @@ export function IdentityMenu() {
     items.push({
       href: "/admin/identity",
       label: "Manage authorities",
+      subLabel: "(admin)",
+    });
+  }
+  // IssuanceApprovalRegistry has its own owner (governance may
+  // delegate KYC ops to a separate multisig from RelayerRegistry),
+  // so surface its admin link independently. Visible when the
+  // connected wallet matches IssuanceApprovalRegistry.owner().
+  if (isIssuanceAdmin) {
+    items.push({
+      href: "/admin/issuance",
+      label: "Approve operators",
       subLabel: "(admin)",
     });
   }
