@@ -15,6 +15,14 @@ export interface NavDropdownItem {
   /** Small subscript shown next to the label — e.g. "(admin)" or
    *  "(this workspace)". Pass `null`/omit to hide. */
   subLabel?: ReactNode;
+  /** Render the item subdued and unclickable. Useful when the host
+   *  wants users to *see* a menu entry that will become available
+   *  later (e.g. operator pages that need a registered relayer)
+   *  without letting them navigate to a half-functional page. */
+  disabled?: boolean;
+  /** Tooltip surfaced on the disabled item — explains why it's
+   *  not yet usable. Ignored when `disabled` is falsy. */
+  disabledTitle?: string;
 }
 
 /** Minimal contract a consumer's link component must honour. Lets
@@ -106,21 +114,40 @@ export function NavDropdown({
           className={`absolute top-full z-10 pt-2 ${WIDTH_CLS[width]} ${align === "right" ? "right-0" : "left-0"}`}
         >
           <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 shadow-lg">
-            {items.map((item, i) => (
-              <LinkComponent
-                key={`${i}:${item.href}`}
-                href={item.href}
-                onClick={close}
-                className="block px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
-              >
-                {item.label}
-                {item.subLabel != null && (
-                  <span className="ml-1 text-[10px] text-[var(--color-text-subtle)]">
-                    {item.subLabel}
+            {items.map((item, i) => {
+              if (item.disabled) {
+                return (
+                  <span
+                    key={`${i}:${item.href}`}
+                    aria-disabled="true"
+                    title={item.disabledTitle}
+                    className="block cursor-not-allowed px-3 py-1.5 text-sm text-[var(--color-text-subtle)] opacity-50"
+                  >
+                    {item.label}
+                    {item.subLabel != null && (
+                      <span className="ml-1 text-[10px] text-[var(--color-text-subtle)]">
+                        {item.subLabel}
+                      </span>
+                    )}
                   </span>
-                )}
-              </LinkComponent>
-            ))}
+                );
+              }
+              return (
+                <LinkComponent
+                  key={`${i}:${item.href}`}
+                  href={item.href}
+                  onClick={close}
+                  className="block px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
+                >
+                  {item.label}
+                  {item.subLabel != null && (
+                    <span className="ml-1 text-[10px] text-[var(--color-text-subtle)]">
+                      {item.subLabel}
+                    </span>
+                  )}
+                </LinkComponent>
+              );
+            })}
           </div>
         </div>
       )}
