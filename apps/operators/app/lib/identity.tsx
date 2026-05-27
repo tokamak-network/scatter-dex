@@ -301,6 +301,39 @@ export function useIsRelayerRegistryAdmin(): boolean | null {
   return account.toLowerCase() === owner.toLowerCase();
 }
 
+/** Admin gate for the `/admin/issuance` page. Returns `null` while
+ *  the owner read is in flight or the registry env isn't configured
+ *  (treat as "no admin available"), `true` when the connected wallet
+ *  matches `IssuanceApprovalRegistry.owner()`, `false` otherwise.
+ *
+ *  The IssuanceApprovalRegistry has its own Ownable2Step owner —
+ *  governance can transfer it independently from RelayerRegistry's
+ *  (e.g. a separate KYC committee). Hence a dedicated hook rather
+ *  than reusing `useIsRelayerRegistryAdmin`. */
+const ISSUANCE_OWNABLE_ABI = [
+  "function owner() view returns (address)",
+] as const;
+export function useIsIssuanceRegistryAdmin(): boolean | null {
+  const { account, readProvider } = useWallet();
+  const registry = DEMO_NETWORK.contracts.issuanceApprovalRegistry;
+  const deployed = !!registry && isConfiguredAddress(registry);
+  const [owner, setOwner] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!readProvider || !deployed || !registry) return;
+    let cancelled = false;
+    const c = new ethers.Contract(registry, ISSUANCE_OWNABLE_ABI, readProvider);
+    (c.owner() as Promise<string>)
+      .then((o) => { if (!cancelled) setOwner(o); })
+      .catch(() => { /* leave null — admin link hides until next mount */ });
+    return () => { cancelled = true; };
+  }, [readProvider, registry, deployed]);
+
+  if (!deployed) return false; // terminal: no registry on this network
+  if (!account || !owner) return null;
+  return account.toLowerCase() === owner.toLowerCase();
+}
+
 /** Layout-level relayer-registration gate. Returns `null` while
  *  unconnected or the RPC is in flight, `false` when the connected
  *  account is not (yet) a registered active relayer, `true` when it

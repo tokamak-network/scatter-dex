@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {Script, console} from "forge-std/Script.sol";
 import {IdentityGate} from "../src/IdentityGate.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
+import {IssuanceApprovalRegistry} from "../src/IssuanceApprovalRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
@@ -101,6 +102,19 @@ contract DeployLocal is Script {
 
         // 3. Relayer registry (Relayer CA) — behind TransparentUpgradeableProxy.
         RelayerRegistry relayerRegistry = _deployRelayerRegistryProxy(deployer, relayerRegistry_);
+
+        // 3b. Issuance-approval registry — admin records "this wallet
+        //     is approved to receive a Relayer-CA cert" so the
+        //     operators app can gate the cert-issuance CTA. Non-
+        //     upgradeable + Ownable2Step; owner = deployer (in
+        //     production this is rotated to a multisig).
+        //     Inlined `address()` to keep the run() stack below the
+        //     "stack too deep" threshold — the deploy script is
+        //     already near the limit.
+        console.log(
+            "IssuanceApprovalRegistry:",
+            address(new IssuanceApprovalRegistry(deployer))
+        );
 
         // 4. Tokens — mock by default, or real mainnet addresses when
         //    USE_REAL_TOKENS is set (fork mode). Real tokens are required
