@@ -126,14 +126,32 @@ describe("classifyApprovalWindow", () => {
     expect(classifyApprovalWindow(NOW_SEC + 1 * DAY, NOW_SEC).tone).toBe("urgent");
   });
 
-  it("marks `expired` for past timestamps and a special label for today", () => {
-    const today = classifyApprovalWindow(NOW_SEC, NOW_SEC);
-    expect(today.tone).toBe("expired");
-    expect(today.label).toBe("expires today");
+  it("marks `expired` for past timestamps with past-tense labels", () => {
+    const exactNow = classifyApprovalWindow(NOW_SEC, NOW_SEC);
+    expect(exactNow.tone).toBe("expired");
+    expect(exactNow.label).toBe("expired today");
 
-    const yesterday = classifyApprovalWindow(NOW_SEC - DAY, NOW_SEC);
-    expect(yesterday.tone).toBe("expired");
-    expect(yesterday.label).toBe("expired 1d ago");
+    const oneDayAgo = classifyApprovalWindow(NOW_SEC - DAY, NOW_SEC);
+    expect(oneDayAgo.tone).toBe("expired");
+    expect(oneDayAgo.label).toBe("expired 1d ago");
+  });
+
+  it("labels a <24h-past expiry as `expired today` (not `expires today`)", () => {
+    // Regression for the Math.ceil bug: a 1h-past expiry used to
+    // classify as `days === 0` → "expires today" (future-tense),
+    // which read like the approval was still good for the rest of
+    // the day. Now it reads past-tense.
+    const oneHourAgo = classifyApprovalWindow(NOW_SEC - 3600, NOW_SEC);
+    expect(oneHourAgo.tone).toBe("expired");
+    expect(oneHourAgo.label).toBe("expired today");
+
+    const twentyThreeHoursAgo = classifyApprovalWindow(NOW_SEC - 23 * 3600, NOW_SEC);
+    expect(twentyThreeHoursAgo.tone).toBe("expired");
+    expect(twentyThreeHoursAgo.label).toBe("expired today");
+
+    // ≥ 24h ago crosses the day boundary.
+    const twentyFiveHoursAgo = classifyApprovalWindow(NOW_SEC - 25 * 3600, NOW_SEC);
+    expect(twentyFiveHoursAgo.label).toBe("expired 1d ago");
   });
 
   it("ceils partial days so a 5h-from-now expiry reads as `1d` not `0d`", () => {

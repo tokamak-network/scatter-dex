@@ -101,18 +101,26 @@ export function classifyApprovalWindow(
   if (expiresAt === 0) {
     return { tone: "none", days: Infinity, label: "no expiry" };
   }
-  // Calendar-day diff so the bucket boundaries (≤7, ≤30) match a
-  // human's intuition. Math.ceil so 5h-from-now reads as "1 day"
-  // not "0 days".
   const secPerDay = 86_400;
-  const days = Math.ceil((expiresAt - nowSec) / secPerDay);
-  if (days <= 0) {
+  const diff = expiresAt - nowSec;
+  // Past: use floor on the elapsed seconds (NOT Math.ceil on the
+  // signed diff) so a 1h-ago expiry classifies as `0d` elapsed and
+  // reads "expired today" — past-tense. The previous Math.ceil
+  // approach made any past-but-< 24h expiry render "expires today"
+  // (future-tense), which read like the approval was still good
+  // for the rest of the day.
+  if (diff <= 0) {
+    const elapsedDays = Math.floor(-diff / secPerDay);
     return {
       tone: "expired",
-      days,
-      label: days === 0 ? "expires today" : `expired ${-days}d ago`,
+      days: -elapsedDays,
+      label: elapsedDays === 0 ? "expired today" : `expired ${elapsedDays}d ago`,
     };
   }
+  // Future: Math.ceil so 5h-from-now reads as "1 day" not "0 days"
+  // — the operator should see the partial day rounded UP into the
+  // next bucket.
+  const days = Math.ceil(diff / secPerDay);
   if (days <= 7) {
     return { tone: "urgent", days, label: `expires in ${days}d` };
   }

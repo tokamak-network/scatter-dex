@@ -831,17 +831,25 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
  *  Re-evaluates on its own tick so the displayed bucket can roll
  *  over from "warn" → "urgent" → "expired" without a page reload. */
 function ApprovalWindowBadge({ expiresAt }: { expiresAt: number }) {
-  // Re-render every minute so a "expires in 8d" can flip to "7d" the
-  // instant midnight passes. Cheaper than per-second and aligned
-  // with the day-granularity output.
-  const [nowSec, setNowSec] = useState(() => Math.floor(Date.now() / 1000));
+  // `nowSec` starts as null so the server-render + first client
+  // hydration commit produce identical markup. Without this gating,
+  // useState(() => Date.now()) reads the server clock at SSR time
+  // and the client clock at hydration time and Next.js flags the
+  // mismatch. The useEffect below sets the real timestamp post-
+  // hydration and arms the per-minute tick. Per-minute (not per-
+  // second) because the bucket changes on calendar-day boundaries —
+  // a 60s tick is sufficient to flip "expires in 8d" → "7d" the
+  // moment midnight passes.
+  const [nowSec, setNowSec] = useState<number | null>(null);
   useEffect(() => {
+    setNowSec(Math.floor(Date.now() / 1000));
     const id = window.setInterval(
       () => setNowSec(Math.floor(Date.now() / 1000)),
       60_000,
     );
     return () => window.clearInterval(id);
   }, []);
+  if (nowSec === null) return null;
   const win: ApprovalWindow = classifyApprovalWindow(expiresAt, nowSec);
   if (win.tone === "none") return null;
   const toneClass = TONE_CLASSES[win.tone];

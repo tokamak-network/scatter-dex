@@ -48,14 +48,24 @@ export function LiveFreshness({
   loading,
   className,
 }: LiveFreshnessProps) {
-  const [now, setNow] = useState(() => Date.now());
+  // `now` is `null` on the server render + first client commit to
+  // avoid hydration mismatch — `Date.now()` produces a different
+  // value on the server than on the client (the server pre-renders
+  // with one timestamp; the client mounts seconds later with
+  // another), which Next.js flags as a hydration warning when used
+  // inside a useState initializer. The first useEffect tick stamps
+  // it post-hydration. While null we render "—" for the age, which
+  // is also what we show before the first refresh has completed.
+  const [now, setNow] = useState<number | null>(null);
   useEffect(() => {
+    setNow(Date.now());
     if (lastRefreshedAt === null) return;
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [lastRefreshedAt]);
 
-  const age = lastRefreshedAt !== null ? formatAge(lastRefreshedAt, now) : "—";
+  const age =
+    lastRefreshedAt !== null && now !== null ? formatAge(lastRefreshedAt, now) : "—";
   return (
     <span
       className={
