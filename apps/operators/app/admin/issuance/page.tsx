@@ -62,6 +62,18 @@ type HistoryEntry =
       blockNumber: number;
       transactionIndex: number;
       index: number;
+    }
+  | {
+      kind: "replaced";
+      operator: string;
+      approvedBy: string;
+      priorApprovedAt: number;
+      priorRevoked: boolean;
+      priorRevokeReason: string;
+      txHash: string;
+      blockNumber: number;
+      transactionIndex: number;
+      index: number;
     };
 
 /** Read deployment block from env so `queryFilter` doesn't scan from
@@ -118,13 +130,17 @@ export default function AdminIssuancePage() {
       // scan on Sepolia / mainnet. Most public RPCs cap eth_getLogs
       // at 10k blocks and reject full-chain queries; without this
       // the page silently errors on any non-local deployment.
-      const [approvedLogs, revokedLogs] = await Promise.all([
+      const [approvedLogs, revokedLogs, replacedLogs] = await Promise.all([
         readContract.queryFilter(
           readContract.filters.ApprovalRecorded(),
           DEPLOY_BLOCK_FROM_ENV,
         ),
         readContract.queryFilter(
           readContract.filters.ApprovalRevoked(),
+          DEPLOY_BLOCK_FROM_ENV,
+        ),
+        readContract.queryFilter(
+          readContract.filters.ApprovalReplaced(),
           DEPLOY_BLOCK_FROM_ENV,
         ),
       ]);
@@ -157,6 +173,22 @@ export default function AdminIssuancePage() {
           revokedBy: String(ev.args[1]).toLowerCase(),
           revokedAt: Number(ev.args[2]),
           reason: ev.args[3],
+          txHash: ev.transactionHash,
+          blockNumber: ev.blockNumber,
+          transactionIndex: ev.transactionIndex,
+          index: ev.index,
+        });
+      }
+      for (const e of replacedLogs) {
+        const ev = e as ethers.EventLog;
+        if (!ev.args) continue;
+        merged.push({
+          kind: "replaced",
+          operator: String(ev.args[0]).toLowerCase(),
+          approvedBy: String(ev.args[1]).toLowerCase(),
+          priorApprovedAt: Number(ev.args[2]),
+          priorRevoked: Boolean(ev.args[3]),
+          priorRevokeReason: ev.args[4],
           txHash: ev.transactionHash,
           blockNumber: ev.blockNumber,
           transactionIndex: ev.transactionIndex,
@@ -719,7 +751,9 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
           className={`rounded-md border p-3 text-xs ${
             e.kind === "approved"
               ? "border-[var(--color-success)] bg-[var(--color-success-soft)]"
-              : "border-[var(--color-danger)] bg-[var(--color-danger-soft)]"
+              : e.kind === "revoked"
+                ? "border-[var(--color-danger)] bg-[var(--color-danger-soft)]"
+                : "border-[var(--color-border)] bg-[var(--color-surface-2)]"
           }`}
         >
           {e.kind === "approved" ? (
@@ -735,7 +769,7 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
                 {e.expiresAt !== 0 && ` · expires ${formatIsoDate(e.expiresAt)}`}
               </div>
             </>
-          ) : (
+          ) : e.kind === "revoked" ? (
             <>
               <div className="font-medium text-[var(--color-danger)]">
                 Revoked <span className="font-mono">{shortAddr(e.operator)}</span>
@@ -745,6 +779,22 @@ function HistoryList({ entries }: { entries: HistoryEntry[] }) {
               </div>
               <div className="mt-0.5 text-[var(--color-text-muted)]">
                 by <span className="font-mono">{shortAddr(e.revokedBy)}</span> at {formatIsoDate(e.revokedAt)}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="font-medium text-[var(--color-text)]">
+                Replaced <span className="font-mono">{shortAddr(e.operator)}</span>
+              </div>
+              <div className="mt-1 text-[var(--color-text-muted)]">
+                Prior approval from {formatIsoDate(e.priorApprovedAt)}
+                {e.priorRevoked
+                  ? ` was revoked${e.priorRevokeReason ? ` (${e.priorRevokeReason})` : ""}`
+                  : " was active"}
+                ; new approval recorded in the same tx (see Approved row).
+              </div>
+              <div className="mt-0.5 text-[var(--color-text-muted)]">
+                by <span className="font-mono">{shortAddr(e.approvedBy)}</span>
               </div>
             </>
           )}

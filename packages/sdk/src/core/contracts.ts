@@ -186,6 +186,12 @@ export const ISSUANCE_APPROVAL_REGISTRY_ABI = [
   "function acceptOwnership() external",
   "event ApprovalRecorded(address indexed operator, string commonName, string organization, string country, uint32 validityDays, address indexed approvedBy, uint64 approvedAt, uint64 expiresAt)",
   "event ApprovalRevoked(address indexed operator, address indexed revokedBy, uint64 revokedAt, string reason)",
+  // Emitted alongside `ApprovalRecorded` only when `approve()` is
+  // overwriting an existing row. Carries the prior state so audit
+  // consumers don't have to walk every preceding event to find what
+  // was just replaced. `ApprovalRecorded` still follows for the
+  // canonical "current state" record.
+  "event ApprovalReplaced(address indexed operator, address indexed approvedBy, uint64 priorApprovedAt, bool priorRevoked, string priorRevokeReason)",
   // Custom-error fragments — keep in sync with contracts/src/IssuanceApprovalRegistry.sol.
   // Needed so ethers v6 decodes reverts by name; without them the
   // admin console shows raw selector hex on a failed approve/revoke.

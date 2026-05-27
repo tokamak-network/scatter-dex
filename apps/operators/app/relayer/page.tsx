@@ -332,9 +332,11 @@ function RelayerDetailBody() {
             </div>
           </section>
 
-          {/* Per-token throughput (sell-leg sums) + revenue (fee
-              accruals). Cross-token totals can't be summed without a
-              price oracle, so we render top-3 rows of each — the
+          {/* Per-token throughput (each row contributes the sell leg
+              for scatterDirectAuth and BOTH legs for settleAuth — see
+              `getSettledVolume` in zk-relayer/src/core/db.ts) + revenue
+              (fee accruals). Cross-token totals can't be summed without
+              a price oracle, so we render top-3 rows of each — the
               leaderboard's Volume / Revenue columns do the same. */}
           <section>
             <SectionHeader
