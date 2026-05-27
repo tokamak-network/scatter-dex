@@ -254,7 +254,13 @@ export default function AdminIssuancePage() {
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           Owner-controlled approval gate. Records that an operator wallet has
           passed off-chain KYC and is cleared to receive a Relayer-CA
-          certificate. Non-owners see read-only history.
+          certificate. Non-owners see read-only history.{" "}
+          <Link
+            href="/docs?d=registering-a-relayer"
+            className="underline decoration-dotted underline-offset-2 hover:text-[var(--color-text)]"
+          >
+            Where this fits in the 9-step flow →
+          </Link>
         </p>
       </header>
 
