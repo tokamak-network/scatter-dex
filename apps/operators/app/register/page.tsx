@@ -120,14 +120,19 @@ export default function RegisterPage() {
     return () => { cancelled = true; };
   }, [deployed, readProvider]);
 
-  const nameNormalized = normalizeName(name);
-  const nameTooShort = nameNormalized.length === 0;
-  const conflictAddr = nameNormalized ? takenNames.get(nameNormalized) : undefined;
-  const nameConflict =
-    !!conflictAddr && conflictAddr !== account?.toLowerCase();
-  const nameInvalid = nameTooShort || nameConflict;
+  // Derived form state — wrapped in useMemo where the result is an
+  // object so downstream useMemo deps (the stepperSteps builder) can
+  // depend on a stable reference instead of re-firing every render.
+  const nameDerived = useMemo(() => {
+    const normalized = normalizeName(name);
+    const tooShort = normalized.length === 0;
+    const conflictAddr = normalized ? takenNames.get(normalized) : undefined;
+    const conflict = !!conflictAddr && conflictAddr !== account?.toLowerCase();
+    return { normalized, tooShort, conflictAddr, conflict, invalid: tooShort || conflict };
+  }, [name, takenNames, account]);
+  const { tooShort: nameTooShort, conflictAddr, conflict: nameConflict, invalid: nameInvalid } = nameDerived;
 
-  const urlValidation = validateRelayerUrl(url);
+  const urlValidation = useMemo(() => validateRelayerUrl(url), [url]);
   const urlInvalid = urlValidation.invalid || urlValidation.empty;
 
   const probe = useEndpointProbe(url, { expectedChainId: DEMO_NETWORK.chainId });

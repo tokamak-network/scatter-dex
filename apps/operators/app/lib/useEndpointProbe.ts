@@ -90,7 +90,10 @@ export function useEndpointProbe(
   return result;
 }
 
-async function runProbe(
+/** Exported for direct unit testing of the prove → response → result
+ *  pipeline. The hook above is just the debounce + abort wrapper
+ *  around this function. */
+export async function runProbe(
   baseUrl: string,
   expectedChainId: number | undefined,
   signal: AbortSignal,
@@ -196,7 +199,8 @@ function fetchWithTimeout(
   });
 }
 
-function describeProbeError(err: unknown): string {
+/** Exported for unit-test coverage of the human-readable diagnosis. */
+export function describeProbeError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   if (/networkerror|failed to fetch|load failed/i.test(msg)) {
     return "Could not reach the endpoint — check that the relayer process is running and that CORS allows this origin.";
