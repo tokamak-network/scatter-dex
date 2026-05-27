@@ -43,6 +43,12 @@ export function Stepper({ steps, current }: { steps: StepDef[]; current: 1 | 2 |
 
 function StepChip({ step, isCurrent }: { step: StepDef; isCurrent: boolean }) {
   const styles = chipStyles(step.status, isCurrent);
+  // Honour the StepDef docstring: blocked steps render without a
+  // caption so the chip doesn't surface a reason that belongs to a
+  // later step (e.g. "Endpoint URL required" on Step 2 while the
+  // operator is still on Step 1) — that was confusing per the
+  // Copilot review on #846.
+  const showCaption = step.status !== "blocked" && !!step.caption;
   return (
     <div
       className={`flex flex-1 items-center gap-3 rounded-lg px-3 py-2 ${styles.wrap}`}
@@ -55,7 +61,7 @@ function StepChip({ step, isCurrent }: { step: StepDef; isCurrent: boolean }) {
       </span>
       <div className="min-w-0 flex-1">
         <div className={`text-sm font-medium ${styles.title}`}>{step.title}</div>
-        {step.caption && (
+        {showCaption && (
           <div className={`truncate text-[10px] ${styles.caption}`}>
             {step.caption}
           </div>

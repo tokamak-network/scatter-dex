@@ -78,7 +78,14 @@ export function useEndpointProbe(
       timerRef.current = null;
       const ctrl = new AbortController();
       ctrlRef.current = ctrl;
-      void runProbe(url, expectedChainId, ctrl.signal, setResult);
+      // .catch on the dangling promise so an unhandled rejection
+      // can't escape from a fire-and-forget runProbe. setResult
+      // itself never throws; the catch path is paranoia against
+      // future SUT regressions throwing outside the try in runProbe
+      // (Gemini review #846).
+      runProbe(url, expectedChainId, ctrl.signal, setResult).catch((err) => {
+        console.warn("[useEndpointProbe] runProbe rejected unexpectedly", err);
+      });
     }, debounceMs);
 
     return () => {
@@ -100,16 +107,31 @@ export async function runProbe(
   setResult: (r: EndpointProbeResult) => void,
 ): Promise<void> {
   setResult({ status: "probing", statsOk: false });
-  // Strip trailing slash before joining so `https://x.example/` and
-  // `https://x.example` produce the same probe URL.
-  const base = baseUrl.replace(/\/+$/, "");
+  // Build probe URLs through the `URL` constructor so an operator
+  // who pastes a base URL with a path or trailing slash (e.g.
+  // `https://host/api/info`, `https://host/api/`) doesn't get
+  // `.../api/info/api/info` via raw string concat (Copilot + Gemini
+  // review #846).
+  let infoUrl: URL;
+  let statsUrl: URL;
+  try {
+    infoUrl = joinProbePath(baseUrl, "/api/info");
+    statsUrl = joinProbePath(baseUrl, "/api/relayer/stats");
+  } catch (err) {
+    setResult({
+      status: "error",
+      statsOk: false,
+      message: `Couldn't parse URL: ${err instanceof Error ? err.message : String(err)}`,
+    });
+    return;
+  }
   const t0 = performance.now();
   let infoResp: Response | null = null;
   let statsResp: Response | null = null;
   try {
     [infoResp, statsResp] = await Promise.all([
-      fetchWithTimeout(`${base}/api/info`, signal, 6_000),
-      fetchWithTimeout(`${base}/api/relayer/stats`, signal, 6_000).catch(
+      fetchWithTimeout(infoUrl.toString(), signal, 6_000),
+      fetchWithTimeout(statsUrl.toString(), signal, 6_000).catch(
         () => null,
       ),
     ]);
@@ -179,6 +201,17 @@ export async function runProbe(
   setResult({ status: "ok", info, statsOk: true });
 }
 
+/** Marker thrown when our timeout fires (distinct from a
+ *  user-initiated abort propagated from `signal`). Lets the caller
+ *  surface a clearer message ("Endpoint did not respond within Ns")
+ *  instead of the generic "Probe failed: aborted" (Copilot #846). */
+class ProbeTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Endpoint didn't respond within ${(timeoutMs / 1000).toFixed(0)}s — the relayer process may be down or unreachable from this network.`);
+    this.name = "ProbeTimeoutError";
+  }
+}
+
 function fetchWithTimeout(
   url: string,
   signal: AbortSignal,
@@ -186,21 +219,61 @@ function fetchWithTimeout(
 ): Promise<Response> {
   // A child controller per request so the per-request timeout
   // doesn't conflate with the user-initiated abort propagated from
-  // the caller. Parent abort forwards into `inner` so cancelling
-  // the outer probe drops both /api/info and /api/relayer/stats in
-  // flight together.
+  // the caller.
   const inner = new AbortController();
-  const t = setTimeout(() => inner.abort(), timeoutMs);
+  // If the parent signal is already aborted by the time we're
+  // called, short-circuit before even kicking off fetch — the
+  // `addEventListener("abort", ..., { once: true })` below would
+  // never fire for an already-aborted signal and the fetch would
+  // race a stale request to completion (Gemini review #846).
+  if (signal.aborted) {
+    return Promise.reject(
+      new DOMException("aborted before fetch started", "AbortError"),
+    );
+  }
+  let timedOut = false;
+  const t = setTimeout(() => {
+    timedOut = true;
+    inner.abort();
+  }, timeoutMs);
   const onParentAbort = () => inner.abort();
   signal.addEventListener("abort", onParentAbort, { once: true });
-  return fetch(url, { signal: inner.signal }).finally(() => {
-    clearTimeout(t);
-    signal.removeEventListener("abort", onParentAbort);
-  });
+  return fetch(url, { signal: inner.signal })
+    .catch((err) => {
+      // Translate the inner abort into ProbeTimeoutError when WE
+      // triggered it, so the diagnosis surface reads as a timeout
+      // rather than a generic abort. Parent-initiated aborts (the
+      // user cancelled the probe) pass through unchanged.
+      if (timedOut) throw new ProbeTimeoutError(timeoutMs);
+      throw err;
+    })
+    .finally(() => {
+      clearTimeout(t);
+      signal.removeEventListener("abort", onParentAbort);
+    });
+}
+
+/** Join a base URL with `/api/...` correctly, regardless of whether
+ *  the caller passed `https://host`, `https://host/`, or
+ *  `https://host/some/path`. Uses the `URL` constructor for
+ *  whitespace-tolerant parsing + canonicalisation. */
+function joinProbePath(baseUrl: string, suffix: string): URL {
+  // `new URL(suffix, base)` resolves `suffix` against `base`'s
+  // origin when `suffix` starts with `/` — exactly the join we
+  // want. We don't preserve `base.pathname` because the operator
+  // would have to deliberately type a path-prefix endpoint
+  // (uncommon for relayers); favouring origin-relative resolution
+  // makes the common case (no prefix) work without surprise. If
+  // operators with a path prefix ever appear, swap to
+  // `new URL(base.pathname.replace(/\/+$/, "") + suffix, base)`.
+  return new URL(suffix, baseUrl);
 }
 
 /** Exported for unit-test coverage of the human-readable diagnosis. */
 export function describeProbeError(err: unknown): string {
+  // Our own timeout marker — surface the constructor's pre-built
+  // message verbatim (it already names the timeout in seconds).
+  if (err instanceof ProbeTimeoutError) return err.message;
   const msg = err instanceof Error ? err.message : String(err);
   if (/networkerror|failed to fetch|load failed/i.test(msg)) {
     return "Could not reach the endpoint — check that the relayer process is running and that CORS allows this origin.";

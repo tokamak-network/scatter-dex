@@ -59,8 +59,10 @@ export default function RegisterPage() {
   const [bondEth, setBondEth] = useState("0.1");
   // When the endpoint probe surfaces a warning the operator wants to
   // override (e.g. they're registering ahead of the relayer process
-  // coming online), they can advance with a checkbox. Persisted only
-  // in component state — re-renders fresh per page load.
+  // coming online), they can advance with a checkbox. Reset whenever
+  // the URL changes so the override doesn't silently apply to a new
+  // endpoint's warnings the operator hasn't reviewed yet (Copilot
+  // review #846).
   const [endpointOverride, setEndpointOverride] = useState(false);
 
   const [phase, setPhase] = useState<Phase>("idle");
@@ -134,6 +136,13 @@ export default function RegisterPage() {
 
   const urlValidation = useMemo(() => validateRelayerUrl(url), [url]);
   const urlInvalid = urlValidation.invalid || urlValidation.empty;
+
+  // Clear the warning-override whenever the URL changes — the user is
+  // looking at a different relayer's probe now, the previous decision
+  // shouldn't pre-confirm an unreviewed warning.
+  useEffect(() => {
+    setEndpointOverride(false);
+  }, [url]);
 
   const probe = useEndpointProbe(url, { expectedChainId: DEMO_NETWORK.chainId });
   // Probe "good enough to advance": ok always counts; warn counts
@@ -279,6 +288,16 @@ function stepStatus(done: boolean, isCurrent: boolean): StepStatus {
   return "blocked";
 }
 
+/** Stable `YYYY-MM-DD` formatter used in the wizard's caption /
+ *  pre-flight check ("Verified until …"). `toLocaleDateString()`
+ *  is timezone-sensitive and produces a different string on the
+ *  server (build machine TZ) vs the client (user TZ), tripping
+ *  Next's hydration warning. ISO-date in UTC dodges that
+ *  entirely while still being human-readable. */
+function formatVerifiedUntil(unixSec: number): string {
+  return new Date(unixSec * 1000).toISOString().slice(0, 10);
+}
+
 function step1Caption(
   status: RegistrationStatus | null,
   account: string | null,
@@ -288,7 +307,7 @@ function step1Caption(
   if (wrongChain) return `Switch to ${DEMO_NETWORK.name}`;
   if (!status) return "Reading on-chain status…";
   if (status.isVerified) {
-    return `Verified until ${new Date(status.verifiedUntil * 1000).toLocaleDateString()}`;
+    return `Verified until ${formatVerifiedUntil(status.verifiedUntil)}`;
   }
   return "Not verified yet";
 }
@@ -387,7 +406,7 @@ function Step1Verify({
           ok={verified}
           hint={
             verified
-              ? `Verified until ${new Date(status!.verifiedUntil * 1000).toLocaleDateString()}`
+              ? `Verified until ${formatVerifiedUntil(status!.verifiedUntil)}`
               : "Required for slashing accountability"
           }
         />
