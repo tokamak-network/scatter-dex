@@ -171,7 +171,7 @@ describe("SettlementWorker", () => {
     expect(decPubKeyCount).not.toHaveBeenCalled();
   });
 
-  it("cross-token match settles both ends and cancels shared-OB listings", async () => {
+  it("cross-token match settles both ends and marks shared-OB listings matched", async () => {
     const makerOrder = makeOrder({ nullifier: "301", sellToken: "1", buyToken: "2" });
     const takerOrder = makeOrder({ nullifier: "302", sellToken: "2", buyToken: "1" });
     seed(makerOrder);
@@ -180,8 +180,10 @@ describe("SettlementWorker", () => {
     const takerStored = authorizeOrders.get("302")!;
     findMatch.mockReturnValue({ maker: makerStored, taker: takerStored });
 
-    const cancelOrder = vi.fn().mockResolvedValue(undefined);
+    const markMatched = vi.fn().mockResolvedValue(undefined);
     const submitter = makeSubmitter();
+    const nullifierToOfferHandle = (n: string) =>
+      `0x${BigInt(n).toString(16).padStart(64, "0")}`;
 
     const worker = new SettlementWorker({
       db,
@@ -189,8 +191,8 @@ describe("SettlementWorker", () => {
       authorizeOrders,
       findMatch: (s) => findMatch(s),
       decPubKeyCount: (ax, ay) => decPubKeyCount(ax, ay),
-      sharedClient: { cancelOrder } as any,
-      nullifierToOfferHandle: (n) => `0x${BigInt(n).toString(16).padStart(64, "0")}`,
+      sharedClient: { markMatched } as any,
+      nullifierToOfferHandle,
       getFeeBps: () => 10n,
       pollIntervalMs: 10_000,
     });
@@ -204,7 +206,9 @@ describe("SettlementWorker", () => {
     expect(makerStored.status).toBe("settled");
     expect(takerStored.status).toBe("settled");
     expect(decPubKeyCount).toHaveBeenCalledTimes(2);
-    expect(cancelOrder).toHaveBeenCalledTimes(2);
+    expect(markMatched).toHaveBeenCalledTimes(2);
+    expect(markMatched).toHaveBeenCalledWith(nullifierToOfferHandle("301"));
+    expect(markMatched).toHaveBeenCalledWith(nullifierToOfferHandle("302"));
   });
 
   // ─── Retry policy ──
