@@ -1364,10 +1364,27 @@ function openClaimMailDraftAndConfirm(
   if (!row.email) return;
   const url = buildClaimUrl(window.location.origin, record.id, row);
   const subject = `Your payment from ${record.label}`;
+  // Recipients hit one of three states when the operator emails them:
+  // already claimed (link still valid but spent), locked-until-future
+  // (clicking now shows the locked banner; useful to warn upfront),
+  // or available right now. Surface the state in the mail so the
+  // recipient doesn't open the link only to be told to wait.
+  const tokenLabel = formatTokenLabel(record.tokenSymbol);
+  let statusLine: string;
+  if (row.status === "claimed") {
+    const when = row.claimedAt ? formatLocalStampSec(row.claimedAt) : "";
+    statusLine =
+      `This payment of ${row.amount} ${tokenLabel} has already been claimed${when ? ` on ${when}` : ""}.`;
+  } else if (row.status === "locked" && row.claimFrom) {
+    statusLine =
+      `Your payment of ${row.amount} ${tokenLabel} will be claimable from ${formatLocalStampSec(row.claimFrom)}.`;
+  } else {
+    statusLine = `Your payment of ${row.amount} ${tokenLabel} is ready to claim now.`;
+  }
   const body = [
     `Hi ${row.name || ""},`,
     ``,
-    `Your payment of ${row.amount} ${formatTokenLabel(record.tokenSymbol)} is ready.`,
+    statusLine,
     ``,
     `Claim it here:`,
     url,
