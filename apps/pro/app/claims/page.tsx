@@ -139,14 +139,20 @@ export default function ClaimsPage() {
     (async () => {
       // Parallel probe: each entry's nullifier check is an
       // independent `eth_call`, so the previous serial loop spent
-      // (N × ~50ms) round-trip time waiting on the chain. Bundle
-      // them into one `Promise.all` so the whole reconciliation
-      // finishes in one round-trip's worth of latency regardless
-      // of inbox size. `markClaimInboxEntryClaimed` is sequenced
-      // afterwards (a single fs write per flipped row) because the
-      // inbox file is `withLock`-serialized inside the SDK helper
-      // anyway — parallelising writes would just queue inside the
-      // lock without speeding anything up.
+      // (N × ~50ms) round-trip time waiting on the chain.
+      // `Promise.all` fires all N calls in the same microtask;
+      // ethers v6's JsonRpcProvider then auto-batches them into a
+      // SINGLE HTTP POST with N JSON-RPC sub-requests (defaults:
+      // batchStallTime=10ms, batchMaxCount=100 — see
+      // node_modules/ethers/lib.commonjs/providers/provider-jsonrpc.js).
+      // So a 20-entry reconciliation costs exactly 1 RPC round-trip,
+      // not 20. Equivalent to a Multicall3 aggregation at the network
+      // level without the on-chain helper contract.
+      // `markClaimInboxEntryClaimed` is sequenced afterwards (a
+      // single fs write per flipped row) because the inbox file is
+      // `withLock`-serialized inside the SDK helper anyway —
+      // parallelising writes would just queue inside the lock
+      // without speeding anything up.
       const probes = await Promise.allSettled(
         pending.map(async (e) => {
           const nullifier = await computeClaimNullifier(

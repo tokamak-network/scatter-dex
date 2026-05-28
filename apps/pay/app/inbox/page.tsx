@@ -113,8 +113,14 @@ export default function ClaimInbox() {
     if (pending.length === 0) return;
     let cancelled = false;
     (async () => {
-      // Parallel probe — see the matching note in Pro /claims for
-      // why writes stay serial after the probes resolve.
+      // Parallel probe: `Promise.all` fires all eth_calls in the
+      // same microtask; ethers v6's JsonRpcProvider auto-batches
+      // them into a single HTTP POST (defaults: batchStallTime=10ms,
+      // batchMaxCount=100) so a 20-entry reconciliation costs 1 RPC
+      // round-trip, not 20. Equivalent to a Multicall3 aggregation
+      // at the network level without the on-chain helper contract.
+      // Writes stay serial — see the matching note in Pro /claims
+      // for why parallelising the fs writes wouldn't help.
       const probes = await Promise.allSettled(
         pending.map(async (e) => {
           const nullifier = await computeClaimNullifier(
