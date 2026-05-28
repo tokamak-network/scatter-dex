@@ -176,27 +176,34 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           readerFn="treasury"
           setterFn="setTreasury"
         />
-        <SetAddressCard
-          title="Set identity registry (Operator CA)"
-          description="RelayerRegistry.setIdentityRegistry(address) — the contract RelayerRegistry asks isVerified() against."
-          submitLabel="Set identity registry"
-          contractAddress={address}
-          contractAbi={ABI}
-          readerFn="identityRegistry"
-          setterFn="setIdentityRegistry"
-        />
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-          <h3 className="text-sm font-semibold">Issue operator X.509</h3>
+        {/* Identity-registry swap + operator X.509 issuance moved out
+            of the RelayerRegistry tab so this surface stays focused on
+            bond / treasury / counts. Identity is split into two sibling
+            sub-routes — /protocol/identity-user (user-side IdentityGate
+            trusted set) and /protocol/identity-relayer (operator CA
+            swap). The link below points at the relayer-side route since
+            that's the op this card was previously hosting. */}
+        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 md:col-span-2">
+          <h3 className="text-sm font-semibold">Identity (CA) management</h3>
           <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-            After pointing <code className="font-mono">setIdentityRegistry()</code> at the right
-            CA, issue an operator's X.509 cert and attest them on-chain.
+            Swap the operator CA that <code className="font-mono">register()</code>{" "}
+            verifies against, or manage the user-side trusted set, from the dedicated
+            Identity tab.
           </p>
-          <Link
-            href="/operator-ca"
-            className="mt-3 inline-block rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
-          >
-            Open Operator CA →
-          </Link>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link
+              href="/protocol/identity-relayer"
+              className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)]"
+            >
+              Open Relayer Identity tab →
+            </Link>
+            <Link
+              href="/operator-ca"
+              className="inline-block rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:opacity-90"
+            >
+              Issue operator X.509 →
+            </Link>
+          </div>
         </div>
       </div>
     </section>
