@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Contract, type Signer } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
@@ -8,13 +8,25 @@ import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
 import { explainError } from "../lib/format";
 import { DEMO_NETWORK, SANCTIONS_LIST_ADDRESS } from "../lib/network";
-import { isValidEvmAddress } from "../lib/x509";
+import { isValidEvmAddress, normalizeEvmAddress } from "../lib/x509";
 import { SetAddressCard } from "../protocol/_components/SetAddressCard";
 import { BatchEditor } from "./_components/BatchEditor";
+import { CurrentSetTable } from "./_components/CurrentSetTable";
 import { HistoryView } from "./_components/HistoryView";
+import { OracleHealthProbe } from "./_components/OracleHealthProbe";
+import { SanctionsProvider, useSanctions } from "./_components/SanctionsContext";
+
+type TabKey = "self" | "oracle" | "history";
+
+const TABS: Array<{ key: TabKey; label: string; sub: string }> = [
+  { key: "self", label: "Self-managed", sub: "Multisig add/remove + batch" },
+  { key: "oracle", label: "External oracle", sub: "Chainalysis / OFAC fallback" },
+  { key: "history", label: "History", sub: "On-chain events" },
+];
 
 const SANCTIONS_ABI = [
   "function isSanctioned(address addr) external view returns (bool)",
+  "function sanctioned(address addr) external view returns (bool)",
   "function addSanction(address addr) external",
   "function removeSanction(address addr) external",
   "function externalOracle() external view returns (address)",
@@ -38,37 +50,128 @@ export default function SanctionsPage() {
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
           Self-multisig sanction entries: KoFIU and emergency holds. The Chainalysis OFAC
           oracle plugs in via <code className="font-mono">externalOracle</code> — managed
-          below alongside the self-list.
+          below alongside the self-list. Owner-only writes are routed through the admin
+          multisig.
         </p>
       </header>
 
       {!configured ? (
         <ConfigBanner />
       ) : (
-        <>
+        <SanctionsProvider address={SANCTIONS_LIST_ADDRESS}>
           <ContractInfo />
           <LookupPanel />
-          <WritePanel />
-          <section>
-            <SectionHeader title="Batch operations" badge="live" />
-            <BatchEditor address={SANCTIONS_LIST_ADDRESS} />
-          </section>
-          <section>
-            <SectionHeader title="External oracle" badge="live" />
-            <SetAddressCard
-              title="Set external oracle"
-              description="SanctionsList.setExternalOracle(address). Typically the Chainalysis SDN oracle. Pass 0x0 to disable the OR-combine fallback and rely only on the self-managed list."
-              contractAddress={SANCTIONS_LIST_ADDRESS}
-              contractAbi={SANCTIONS_ABI}
-              readerFn="externalOracle"
-              setterFn="setExternalOracle"
-              submitLabel="Update oracle"
-              allowZeroAddress
-            />
-          </section>
-          <HistoryView address={SANCTIONS_LIST_ADDRESS} />
-        </>
+          <TabbedSurface />
+        </SanctionsProvider>
       )}
+    </div>
+  );
+}
+
+function TabbedSurface() {
+  const [active, setActive] = useState<TabKey>("self");
+  // Refs for roving-tabIndex focus management — arrow/Home/End keys
+  // move focus to the next tab without leaving the tablist scope,
+  // matching the WAI-ARIA Authoring Practices and the AuditViewer
+  // pattern elsewhere in this app.
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, idx: number) => {
+    if (
+      e.key !== "ArrowLeft" &&
+      e.key !== "ArrowRight" &&
+      e.key !== "Home" &&
+      e.key !== "End"
+    ) {
+      return;
+    }
+    e.preventDefault();
+    let next = idx;
+    if (e.key === "ArrowLeft") next = (idx - 1 + TABS.length) % TABS.length;
+    if (e.key === "ArrowRight") next = (idx + 1) % TABS.length;
+    if (e.key === "Home") next = 0;
+    if (e.key === "End") next = TABS.length - 1;
+    setActive(TABS[next].key);
+    tabRefs.current[next]?.focus();
+  };
+
+  return (
+    <div className="space-y-6">
+      <div
+        role="tablist"
+        aria-label="Sanctions management sections"
+        className="flex flex-wrap gap-1 border-b border-[var(--color-border)]"
+      >
+        {TABS.map((tab, idx) => {
+          const isActive = active === tab.key;
+          return (
+            <button
+              key={tab.key}
+              ref={(el) => {
+                tabRefs.current[idx] = el;
+              }}
+              role="tab"
+              id={`sanctions-tab-${tab.key}`}
+              aria-selected={isActive}
+              aria-controls={`sanctions-panel-${tab.key}`}
+              tabIndex={isActive ? 0 : -1}
+              type="button"
+              onClick={() => setActive(tab.key)}
+              onKeyDown={(e) => onTabKey(e, idx)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                isActive
+                  ? "border-[var(--color-primary)] text-[var(--color-primary)]"
+                  : "border-transparent text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+              }`}
+            >
+              <div>{tab.label}</div>
+              <div className="text-[10px] font-normal text-[var(--color-text-subtle)]">
+                {tab.sub}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <TabPanel tabKey="self" show={active === "self"}>
+        <CurrentSetTable address={SANCTIONS_LIST_ADDRESS} />
+        <WritePanel />
+        <section>
+          <SectionHeader title="Batch operations" badge="live" />
+          <BatchEditor address={SANCTIONS_LIST_ADDRESS} />
+        </section>
+      </TabPanel>
+      <TabPanel tabKey="oracle" show={active === "oracle"}>
+        <ExternalOracleSection />
+      </TabPanel>
+      <TabPanel tabKey="history" show={active === "history"}>
+        <HistoryView />
+      </TabPanel>
+    </div>
+  );
+}
+
+/** Render with `display: none` instead of unmounting so the shared
+ *  <SanctionsProvider> queryFilter result isn't refetched every time
+ *  the operator flicks between tabs. aria-labelledby + matching id
+ *  on the tab button complete the WAI-ARIA tab relationship. */
+function TabPanel({
+  tabKey,
+  show,
+  children,
+}: {
+  tabKey: TabKey;
+  show: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      role="tabpanel"
+      id={`sanctions-panel-${tabKey}`}
+      aria-labelledby={`sanctions-tab-${tabKey}`}
+      hidden={!show}
+      className={show ? "space-y-10" : ""}
+    >
+      {children}
     </div>
   );
 }
@@ -78,7 +181,7 @@ function ConfigBanner() {
     <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
       <p>
         Set <code className="font-mono">NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS</code> in this
-        app's environment to enable the sanctions admin actions on{" "}
+        app&apos;s environment to enable the sanctions admin actions on{" "}
         <strong>{DEMO_NETWORK.name}</strong>.
       </p>
     </div>
@@ -86,94 +189,125 @@ function ConfigBanner() {
 }
 
 function ContractInfo() {
-  const { readProvider } = useWallet();
-  const [info, setInfo] = useState<{
-    owner: string | null;
-    externalOracle: string | null;
-    error: string | null;
-  }>({ owner: null, externalOracle: null, error: null });
+  const { currentSet, loading: eventsLoading, owner, externalOracle } = useSanctions();
 
-  useEffect(() => {
-    let cancelled = false;
-    const contract = new Contract(SANCTIONS_LIST_ADDRESS, SANCTIONS_ABI, readProvider);
-    void Promise.all([
-      contract.owner().catch(() => null),
-      contract.externalOracle().catch(() => null),
-    ]).then(([owner, oracle]) => {
-      if (cancelled) return;
-      setInfo({
-        owner: owner as string | null,
-        externalOracle: oracle as string | null,
-        error: null,
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [readProvider]);
+  // `null` means two different things depending on phase:
+  //   - while loading: "not fetched yet" → render "…"
+  //   - after loading: "RPC read failed" → render "Unavailable" so the
+  //     operator doesn't mistake a transient failure for the legitimate
+  //     on-chain value (e.g. address(0) for an explicitly disabled oracle).
+  const ownerLabel = owner ? shortAddr(owner) : eventsLoading ? "…" : "Unavailable";
+  const oracleLabel = isConfiguredAddress(externalOracle)
+    ? shortAddr(externalOracle)
+    : externalOracle === null
+      ? eventsLoading
+        ? "…"
+        : "Unavailable"
+      : "Disabled";
+  const oracleSub = isConfiguredAddress(externalOracle)
+    ? "Chainalysis OFAC fallback"
+    : externalOracle === null && !eventsLoading
+      ? "externalOracle() read failed"
+      : externalOracle === null
+        ? "Reading on-chain"
+        : "Self-list only";
 
   return (
     <section>
       <SectionHeader title="Contract" badge="live" />
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           label="Network"
           value={DEMO_NETWORK.name ?? "—"}
           sub={`Chain ID ${DEMO_NETWORK.chainId}`}
+          compact
         />
         <Stat
           label="Owner (multisig)"
-          value={info.owner ? shortAddr(info.owner) : "…"}
-          sub={info.owner ? "Holds add/remove rights" : "Reading on-chain"}
-        />
-        <Stat
-          label="External oracle"
-          value={
-            isConfiguredAddress(info.externalOracle) ? shortAddr(info.externalOracle) : "Disabled"
-          }
+          value={ownerLabel}
           sub={
-            isConfiguredAddress(info.externalOracle)
-              ? "Chainalysis OFAC fallback"
-              : "Self-list only"
+            owner
+              ? "Holds add/remove rights"
+              : eventsLoading
+                ? "Reading on-chain"
+                : "owner() read failed"
           }
+          compact
+        />
+        <Stat label="External oracle" value={oracleLabel} sub={oracleSub} compact />
+        <Stat
+          label="Self-list size"
+          value={eventsLoading ? "…" : `${currentSet.size}`}
+          sub="From event replay (current scan window)"
+          compact
         />
       </div>
     </section>
   );
 }
 
+interface LookupResult {
+  selfList: boolean;
+  /** Tri-state: `true` if the configured oracle reports the address,
+   *  `false` if it doesn't, `null` if no oracle is configured (or its
+   *  call reverted — treated as "no information" rather than guessing
+   *  from the combined `isSanctioned()` flag, which would silently
+   *  hide an oracle hit whenever the self-list also matches). */
+  oracle: boolean | null;
+}
+
+const ORACLE_ABI = ["function isSanctioned(address) external view returns (bool)"];
+
 function LookupPanel() {
   const { readProvider } = useWallet();
+  const { externalOracle } = useSanctions();
   const [addr, setAddr] = useState("");
   const [result, setResult] = useState<
     | { kind: "idle" }
     | { kind: "loading" }
-    | { kind: "ok"; sanctioned: boolean }
+    | { kind: "ok"; data: LookupResult }
     | { kind: "error"; msg: string }
   >({ kind: "idle" });
 
   const lookup = useCallback(async () => {
-    if (!isValidEvmAddress(addr.trim())) {
-      setResult({ kind: "error", msg: "Must be a 0x-prefixed 20-byte address" });
+    // Reject mixed-case typos via EIP-55 checksum. All-lower/upper
+    // inputs pass straight through (no checksum to verify).
+    const normalized = normalizeEvmAddress(addr.trim());
+    if (!normalized) {
+      setResult({
+        kind: "error",
+        msg: "Must be a 0x-prefixed 20-byte address (mixed-case must satisfy EIP-55 checksum)",
+      });
       return;
     }
     setResult({ kind: "loading" });
     try {
       const contract = new Contract(SANCTIONS_LIST_ADDRESS, SANCTIONS_ABI, readProvider);
-      const flagged = (await contract.isSanctioned(addr.trim())) as boolean;
-      setResult({ kind: "ok", sanctioned: flagged });
+      // Read the self-list directly via the raw mapping getter. The
+      // oracle is queried independently so a hit on BOTH lists shows
+      // both indicators — deriving "oracle flagged" from the
+      // OR-combined `isSanctioned()` would hide oracle activity
+      // whenever the self-list also matches.
+      const oracleConfigured = isConfiguredAddress(externalOracle);
+      const oraclePromise: Promise<boolean | null> = oracleConfigured
+        ? new Contract(externalOracle as string, ORACLE_ABI, readProvider)
+            .isSanctioned(normalized)
+            .then((v: boolean) => v)
+            .catch(() => null)
+        : Promise.resolve(null);
+      const [selfList, oracle] = await Promise.all([
+        contract.sanctioned(normalized) as Promise<boolean>,
+        oraclePromise,
+      ]);
+      setResult({ kind: "ok", data: { selfList, oracle } });
     } catch (err) {
       setResult({ kind: "error", msg: explainError(err) });
     }
-  }, [addr, readProvider]);
+  }, [addr, readProvider, externalOracle]);
 
   return (
     <section>
-      <SectionHeader
-        title="Lookup"
-        badge="live"
-        hint="includes external oracle if configured"
-      />
+      <SectionHeader title="Lookup" badge="live" hint="self-list + external oracle breakdown" />
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
         <div className="flex flex-wrap items-center gap-3">
           <input
@@ -194,19 +328,7 @@ function LookupPanel() {
             {result.kind === "loading" ? "Checking…" : "Check"}
           </button>
         </div>
-        {result.kind === "ok" && (
-          <div
-            className={`mt-4 rounded-md border px-3 py-2 text-sm ${
-              result.sanctioned
-                ? "border-[var(--color-danger)] bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
-                : "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
-            }`}
-          >
-            {result.sanctioned
-              ? "⚠ Address is sanctioned (self-list or external oracle)."
-              : "✓ Address is clear."}
-          </div>
-        )}
+        {result.kind === "ok" && <LookupBreakdown data={result.data} />}
         {result.kind === "error" && (
           <div className="mt-4 rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-2 text-sm text-[var(--color-danger)]">
             {result.msg}
@@ -217,17 +339,87 @@ function LookupPanel() {
   );
 }
 
+function LookupBreakdown({ data }: { data: LookupResult }) {
+  // "Sanctioned" if EITHER list flags. Oracle = null means "no oracle
+  // configured / call failed" — treat as not contributing.
+  const oracleFlagged = data.oracle === true;
+  const sanctioned = data.selfList || oracleFlagged;
+  return (
+    <div className="mt-4 space-y-2">
+      <div
+        className={`rounded-md border px-3 py-2 text-sm ${
+          sanctioned
+            ? "border-[var(--color-danger)] bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
+            : "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
+        }`}
+      >
+        {sanctioned ? "⚠ Address is sanctioned." : "✓ Address is clear."}
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <div
+          className={`rounded-md border px-3 py-2 ${
+            data.selfList
+              ? "border-[var(--color-danger)] bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
+              : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+          }`}
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-wide">Self-list</div>
+          <div className="mt-0.5">
+            {data.selfList ? "Listed — removable via this admin" : "Not listed"}
+          </div>
+        </div>
+        <div
+          className={`rounded-md border px-3 py-2 ${
+            oracleFlagged
+              ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+              : "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+          }`}
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-wide">External oracle</div>
+          <div className="mt-0.5">
+            {data.oracle === null
+              ? "No oracle configured (or unreachable)"
+              : oracleFlagged
+                ? "Listed — managed by oracle operator (not removable here)"
+                : "Not flagged by oracle"}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WritePanel() {
   const { account, signer, connect } = useWallet();
+  const { refresh } = useSanctions();
   const [addr, setAddr] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 
   const submit = useCallback(
     async (action: "add" | "remove") => {
-      if (!signer || !isValidEvmAddress(addr.trim())) return;
+      // Surface a real error rather than silently no-op — the button is
+      // gated below, but a race (wallet disconnects between click and
+      // handler) would otherwise leave the operator staring at a still
+      // page wondering whether their click was received.
+      if (!signer) {
+        setPhase({ kind: "error", msg: "Wallet signer unavailable. Reconnect and try again." });
+        return;
+      }
+      // Re-validate at submit time using checksum-aware normalize —
+      // this is the last line of defence before the tx leaves the
+      // browser, so a mixed-case typo must NOT silently pass through
+      // to addSanction()/removeSanction().
+      const normalized = normalizeEvmAddress(addr.trim());
+      if (!normalized) {
+        setPhase({
+          kind: "error",
+          msg: "Invalid address (mixed-case must satisfy EIP-55 checksum)",
+        });
+        return;
+      }
       setPhase({ kind: "submitting" });
       try {
-        const tx = await writeSanction(signer, addr.trim(), action);
+        const tx = await writeSanction(signer, normalized, action);
         const receipt = await tx.wait();
         setPhase({
           kind: "success",
@@ -235,13 +427,18 @@ function WritePanel() {
           action,
         });
         setAddr("");
+        refresh();
       } catch (err) {
         setPhase({ kind: "error", msg: explainError(err) });
       }
     },
-    [signer, addr],
+    [signer, addr, refresh],
   );
 
+  // Syntactic gate for the disabled state — keeps the button live
+  // for all-lower/upper inputs and lets `submit` produce the real
+  // EIP-55 error message on click. Otherwise mixed-case typos
+  // disable the button with no explanation.
   const valid = isValidEvmAddress(addr.trim());
 
   return (
@@ -272,7 +469,7 @@ function WritePanel() {
             <>
               <button
                 type="button"
-                disabled={!valid || phase.kind === "submitting"}
+                disabled={!signer || !valid || phase.kind === "submitting"}
                 onClick={() => void submit("add")}
                 className="rounded-md bg-[var(--color-danger)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
               >
@@ -280,7 +477,7 @@ function WritePanel() {
               </button>
               <button
                 type="button"
-                disabled={!valid || phase.kind === "submitting"}
+                disabled={!signer || !valid || phase.kind === "submitting"}
                 onClick={() => void submit("remove")}
                 className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-4 py-2 text-sm font-medium text-[var(--color-success)] hover:bg-[var(--color-success)] hover:text-white disabled:opacity-50"
               >
@@ -305,9 +502,32 @@ function WritePanel() {
   );
 }
 
+function ExternalOracleSection() {
+  const { externalOracle, refresh } = useSanctions();
+
+  return (
+    <section>
+      <SectionHeader title="External oracle" badge="live" />
+      <div className="space-y-3">
+        <SetAddressCard
+          title="Set external oracle"
+          description="SanctionsList.setExternalOracle(address). Typically the Chainalysis SDN oracle. Pass 0x0 to disable the OR-combine fallback and rely only on the self-managed list."
+          contractAddress={SANCTIONS_LIST_ADDRESS}
+          contractAbi={SANCTIONS_ABI}
+          readerFn="externalOracle"
+          setterFn="setExternalOracle"
+          submitLabel="Update oracle"
+          allowZeroAddress
+          onSuccess={refresh}
+        />
+        <OracleHealthProbe oracleAddress={externalOracle} />
+      </div>
+    </section>
+  );
+}
+
 async function writeSanction(signer: Signer, addr: string, action: "add" | "remove") {
   const contract = new Contract(SANCTIONS_LIST_ADDRESS, SANCTIONS_ABI, signer);
   const tx = action === "add" ? contract.addSanction(addr) : contract.removeSanction(addr);
   return (await tx) as { hash: string; wait(): Promise<{ hash?: string } | null> };
 }
-
