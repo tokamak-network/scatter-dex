@@ -94,6 +94,32 @@ describe("SettlementPushWorker", () => {
     expect(stats.total).toBe(1);
   });
 
+  it("prunes acknowledged rows older than the configured window", async () => {
+    db.enqueueSettlementPush("0x111", { txHash: "0x111" });
+    db.enqueueSettlementPush("0x222", { txHash: "0x222" });
+    db.markSettlementPushSucceeded("0x111");
+    // Pending row stays untouched even with a 0-ms retention window.
+    const pruned = db.prunePushedSettlementPushes(0);
+    expect(pruned).toBe(1);
+    const stats = db.getSettlementPushOutboxStats();
+    expect(stats).toMatchObject({ total: 1, pending: 1, pushed: 0 });
+  });
+
+  it("worker auto-prunes on the configured cadence", async () => {
+    db.enqueueSettlementPush("0x333", { txHash: "0x333" });
+    const pusher = makePusher(async () => true);
+    const worker = new SettlementPushWorker({
+      db,
+      pusher,
+      retryBackoffMs: 0,
+      prunePushedAfterMs: 0,
+      pruneEveryTicks: 1,
+    });
+    await worker.tick();
+    // First tick pushed + then pruned immediately. Outbox is empty.
+    expect(db.getSettlementPushOutboxStats()).toMatchObject({ total: 0, pending: 0, pushed: 0 });
+  });
+
   it("normalises tx_hash casing across enqueue + mark calls", async () => {
     db.enqueueSettlementPush("0xABC", { txHash: "0xABC" });
     db.markSettlementPushSucceeded("0xabc");

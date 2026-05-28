@@ -334,6 +334,7 @@ export class PrivateOrderDB {
   private markPushSucceededStmt: ReturnType<Database.Database["prepare"]>;
   private markPushFailedStmt: ReturnType<Database.Database["prepare"]>;
   private countPushOutbox: ReturnType<Database.Database["prepare"]>;
+  private prunePushOutboxStmt: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     // [L-8] For production with sensitive data, consider replacing better-sqlite3
@@ -791,6 +792,15 @@ export class PrivateOrderDB {
         MAX(attempts)                                 AS maxAttempts
       FROM settlement_push_outbox
     `);
+    // Successful pushes are kept for the audit trail / stats endpoint
+    // but only need to live as long as the operator might look at
+    // them. Pruning by `pushed_at < cutoff` keeps the table bounded
+    // without losing pending rows (which never satisfy the predicate).
+    this.prunePushOutboxStmt = this.db.prepare(`
+      DELETE FROM settlement_push_outbox
+       WHERE pushed_at IS NOT NULL
+         AND pushed_at <= @cutoff
+    `);
   }
 
   /** Record a settlement (success or failure) plus any per-side fees
@@ -1131,6 +1141,14 @@ export class PrivateOrderDB {
       // the row size — the operator only needs the leading signal.
       error: error.slice(0, 500),
     });
+  }
+
+  /** Drop pushed rows older than `olderThanMs` to bound table growth.
+   *  Pending rows are never deleted — they're the whole reason the
+   *  outbox exists. Returns the number of rows removed. */
+  prunePushedSettlementPushes(olderThanMs: number): number {
+    const info = this.prunePushOutboxStmt.run({ cutoff: Date.now() - olderThanMs });
+    return info.changes;
   }
 
   getSettlementPushOutboxStats(): {

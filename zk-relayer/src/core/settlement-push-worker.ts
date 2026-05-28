@@ -27,6 +27,16 @@ const log = createLogger("settlement-push-worker");
 export const DEFAULT_TICK_INTERVAL_MS = 30_000;
 export const DEFAULT_BATCH_SIZE = 50;
 export const DEFAULT_RETRY_BACKOFF_MS = 30_000;
+// Keep successful pushes around for a week so the operator can still
+// audit recent push activity, then drop them — the outbox would
+// otherwise grow without bound. Pending rows are never pruned.
+export const DEFAULT_PRUNE_PUSHED_AFTER_MS = 7 * 24 * 60 * 60_000;
+// Pruning is cheap (DELETE on an indexed predicate) but doesn't need
+// to run every drain tick. Once an hour is plenty.
+export const DEFAULT_PRUNE_EVERY_TICKS = Math.max(
+  1,
+  Math.floor((60 * 60_000) / DEFAULT_TICK_INTERVAL_MS),
+);
 
 export interface SettlementPusher {
   pushSettlement(payload: unknown): Promise<boolean>;
@@ -38,6 +48,8 @@ export interface SettlementPushWorkerDeps {
   tickIntervalMs?: number;
   batchSize?: number;
   retryBackoffMs?: number;
+  prunePushedAfterMs?: number;
+  pruneEveryTicks?: number;
 }
 
 export class SettlementPushWorker {
@@ -47,11 +59,16 @@ export class SettlementPushWorker {
   private readonly tickIntervalMs: number;
   private readonly batchSize: number;
   private readonly retryBackoffMs: number;
+  private readonly prunePushedAfterMs: number;
+  private readonly pruneEveryTicks: number;
+  private tickCount = 0;
 
   constructor(private readonly deps: SettlementPushWorkerDeps) {
     this.tickIntervalMs = deps.tickIntervalMs ?? DEFAULT_TICK_INTERVAL_MS;
     this.batchSize = deps.batchSize ?? DEFAULT_BATCH_SIZE;
     this.retryBackoffMs = deps.retryBackoffMs ?? DEFAULT_RETRY_BACKOFF_MS;
+    this.prunePushedAfterMs = deps.prunePushedAfterMs ?? DEFAULT_PRUNE_PUSHED_AFTER_MS;
+    this.pruneEveryTicks = deps.pruneEveryTicks ?? DEFAULT_PRUNE_EVERY_TICKS;
   }
 
   start(): void {
@@ -108,6 +125,11 @@ export class SettlementPushWorker {
       }
       if (rows.length > 0) {
         log.info("drain tick", { attempted: rows.length, pushed, failed });
+      }
+      this.tickCount++;
+      if (this.tickCount % this.pruneEveryTicks === 0) {
+        const pruned = this.deps.db.prunePushedSettlementPushes(this.prunePushedAfterMs);
+        if (pruned > 0) log.info("pruned acknowledged pushes", { pruned });
       }
       return { attempted: rows.length, pushed, failed };
     } catch (err) {
