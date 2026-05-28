@@ -7,7 +7,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { AdminConnectBar } from "../components/AdminConnectBar";
 import { Stat } from "../components/Stat";
 import { adminDownload, adminGet, readAdminAuth, type AdminAuth } from "../lib/adminApi";
-import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import { RevenueCard, VolumeCard } from "../components/PerTokenCards";
 
 type Auth = AdminAuth | null;
 
@@ -274,11 +274,14 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
 
       <section>
         <SectionHeader
-          title="Per-token revenue & volume"
+          title="Per-token volume & revenue"
           badge="live"
-          hint="Volume sums both legs of confirmed trades. Fee column sums all sides (maker + taker + scatterDirect). Pre-migration rows lack amount data and contribute fills but no volume."
+          hint="Volume is the sell-leg notional this relayer routed (the counterparty's buy leg is the mirror). Revenue sums fee accruals across all sides (maker + taker + scatterDirect)."
         />
-        <PerTokenTable fees={fees} volume={volume} />
+        <div className="grid gap-4 md:grid-cols-2">
+          <VolumeCard volume={volume ? { totals: volume } : null} />
+          <RevenueCard fees={fees ? { totals: fees } : null} />
+        </div>
       </section>
 
       <section>
@@ -296,107 +299,6 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
         </button>
       </section>
     </>
-  );
-}
-
-function PerTokenTable({
-  fees,
-  volume,
-}: {
-  fees: FeeTotal[] | null;
-  volume: VolumeTotal[] | null;
-}) {
-  // Merge fees + volume by token address — relayers can earn fees on
-  // a token without notional rows when historical settlements predate
-  // the sell_amount/buy_amount columns, so the table keys the union
-  // of both sources.
-  type Row = {
-    token: string;
-    fees: FeeTotal | null;
-    vol: VolumeTotal | null;
-  };
-  const merged: Row[] = useMemo(() => {
-    const map = new Map<string, Row>();
-    for (const f of fees ?? []) {
-      map.set(f.token, { token: f.token, fees: f, vol: null });
-    }
-    for (const v of volume ?? []) {
-      const cur = map.get(v.token);
-      if (cur) cur.vol = v;
-      else map.set(v.token, { token: v.token, fees: null, vol: v });
-    }
-    return [...map.values()].sort((a, b) => {
-      // Sort by fee revenue desc (primary), then total settle count
-      // desc — operators care most about which token paid the bills.
-      // Tie-breaker sums sell + buy fills so a token that mostly
-      // appears on the buy leg isn't under-ranked vs one that mostly
-      // sells.
-      const af = a.fees ? BigInt(a.fees.totalWei) : 0n;
-      const bf = b.fees ? BigInt(b.fees.totalWei) : 0n;
-      if (af !== bf) return af > bf ? -1 : 1;
-      const ac = (a.vol?.sellFills ?? 0) + (a.vol?.buyFills ?? 0);
-      const bc = (b.vol?.sellFills ?? 0) + (b.vol?.buyFills ?? 0);
-      return bc - ac;
-    });
-  }, [fees, volume]);
-
-  if (fees === null || volume === null) {
-    return <div className="text-sm text-[var(--color-text-muted)]">Loading…</div>;
-  }
-  if (merged.length === 0) {
-    return (
-      <div className="rounded-lg border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-6 text-center text-sm text-[var(--color-text-muted)]">
-        No settlements in this window.
-      </div>
-    );
-  }
-  return (
-    <div className="overflow-x-auto rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <table className="w-full text-sm">
-        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-          <tr>
-            <th className="px-5 py-3 text-left">Token</th>
-            <th className="px-5 py-3 text-right">Fee revenue</th>
-            <th className="px-5 py-3 text-right">Settlements</th>
-            <th className="px-5 py-3 text-right">Sell volume</th>
-            <th className="px-5 py-3 text-right">Buy volume</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[var(--color-border)]">
-          {merged.map((r) => {
-            const info = tokenInfo(r.token);
-            return (
-              <tr key={r.token}>
-                <td className="px-5 py-3 font-medium">
-                  {info.symbol}
-                  <div className="text-[10px] text-[var(--color-text-subtle)]">
-                    {r.token}
-                  </div>
-                </td>
-                <td className="px-5 py-3 text-right font-mono">
-                  {r.fees ? formatAmount(r.fees.totalWei, info.decimals) : "—"}
-                </td>
-                {/* Prefer the per-row settlement count (vol.sellFills,
-                    one row per confirmed settle on the sell side),
-                    falling back to fee_history rows for pre-migration
-                    tokens. fee_history can have 2 rows per settle
-                    (maker + taker), so using it directly would inflate
-                    the count whenever vol is available. */}
-                <td className="px-5 py-3 text-right">
-                  {r.vol ? r.vol.sellFills : (r.fees?.count ?? 0)}
-                </td>
-                <td className="px-5 py-3 text-right font-mono">
-                  {r.vol ? formatAmount(r.vol.totalSellWei, info.decimals) : "—"}
-                </td>
-                <td className="px-5 py-3 text-right font-mono">
-                  {r.vol ? formatAmount(r.vol.totalBuyWei, info.decimals) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
   );
 }
 
