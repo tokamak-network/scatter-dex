@@ -326,7 +326,17 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
       const type = parseSettlementType(req.query.type);
       const status = parseSettlementStatus(req.query.status);
       const { rows, total } = db.getSettlementHistory({ limit, offset, type, status });
-      res.json({ rows, total, limit, offset });
+      // Attach per-tx fee aggregation so the dashboard's recent-
+      // settlements list can show "what did this settle pay me"
+      // without N+1'ing /history/by-tx for every row. Empty array
+      // when no fee rows exist for the tx (older settle row or a
+      // failed attempt).
+      const feesByTx = rows.length > 0 ? db.getFeesByTxHashes(rows.map((r) => r.tx_hash)) : new Map();
+      const enriched = rows.map((r) => ({
+        ...r,
+        fees: feesByTx.get(r.tx_hash) ?? [],
+      }));
+      res.json({ rows: enriched, total, limit, offset });
     } catch (err) {
       log.error("history failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load settlement history" });

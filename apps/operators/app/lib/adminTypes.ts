@@ -18,6 +18,21 @@ export interface SettlementRow {
   gas_cost_eth: string | null;
   sell_token: string | null;
   buy_token: string | null;
+  /** Decimal-wei notional for each leg of the trade. Null on rows
+   *  recorded before these columns existed (pre-analytics) and on
+   *  rows back-filled from shared-OB when the indexer didn't have
+   *  the amount. Render "—" for null. */
+  sell_amount: string | null;
+  buy_amount: string | null;
+  /** Per-token fee accrual for this tx, attached by /api/admin/history.
+   *  Multiple entries when a same-relayer match credited fees in two
+   *  different tokens (one per side). Empty array on failed rows or
+   *  rows whose fee accruals never persisted.
+   *
+   *  Optional because an older relayer the dashboard happens to be
+   *  connected to won't include the field; consumers should treat
+   *  `undefined` and `[]` identically (default to "—"). */
+  fees?: Array<{ token: string; amountWei: string }>;
   error_reason: string | null;
   created_at: number;
 }

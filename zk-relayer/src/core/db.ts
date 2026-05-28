@@ -876,6 +876,53 @@ export class PrivateOrderDB {
     insertAll(input);
   }
 
+  /** Batched per-tx fee aggregation. Returns a map keyed by tx_hash
+   *  with per-token totals (one entry per token per tx — a same-
+   *  relayer match has one entry per side's buyToken, which may be
+   *  the same token or two different tokens). Used by /history to
+   *  attach fees without N+1 calls.
+   *
+   *  Aggregation happens in JS rather than SQL because SUM over the
+   *  TEXT `amount_wei` column would lose precision past 2^53; the
+   *  reduce walks rows once and accumulates a per-token bigint.
+   *  Token keys are normalised to lowercase so a backfilled row with
+   *  a checksummed address doesn't fragment a single token across
+   *  two map entries. */
+  getFeesByTxHashes(
+    txHashes: string[],
+  ): Map<string, Array<{ token: string; amountWei: string }>> {
+    const out = new Map<string, Array<{ token: string; amountWei: string }>>();
+    if (txHashes.length === 0) return out;
+    const lowered = txHashes.map((h) => lowerHex(h) as string);
+    // Dynamic IN-list; better-sqlite3 caches by SQL text so we get
+    // statement reuse for repeated row-counts.
+    const placeholders = lowered.map(() => "?").join(",");
+    const sql = `SELECT tx_hash, token, amount_wei FROM fee_history WHERE tx_hash IN (${placeholders})`;
+    const rows = this.db.prepare(sql).all(...lowered) as Array<{
+      tx_hash: string; token: string; amount_wei: string;
+    }>;
+    // Two-level reduce: tx → token → bigint sum.
+    const byTx = new Map<string, Map<string, bigint>>();
+    for (const r of rows) {
+      let perToken = byTx.get(r.tx_hash);
+      if (!perToken) {
+        perToken = new Map();
+        byTx.set(r.tx_hash, perToken);
+      }
+      try {
+        const tokenLc = r.token.toLowerCase();
+        perToken.set(tokenLc, (perToken.get(tokenLc) ?? 0n) + BigInt(r.amount_wei));
+      } catch { /* malformed wei — skip the row */ }
+    }
+    for (const [tx, perToken] of byTx) {
+      out.set(
+        tx,
+        [...perToken].map(([token, sum]) => ({ token, amountWei: sum.toString() })),
+      );
+    }
+    return out;
+  }
+
   /** Page through settlement history (newest first). Filter by type
    *  and/or status. Returns rows + total count for pagination UIs. */
   getSettlementHistory(opts: HistoryQueryOpts): {
