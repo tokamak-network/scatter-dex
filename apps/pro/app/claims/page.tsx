@@ -56,12 +56,36 @@ export default function ClaimsPage() {
    *  menu at a time so the dropdown layout stays predictable when
    *  many rows are visible. */
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  /** Set when an inline gasless claim is in-flight or just finished.
-   *  Keyed by entry.id so per-row error messages don't bleed across
-   *  rows. */
+  /** Per-row transient feedback. Keyed by entry.id so per-row
+   *  messages don't bleed across rows. `flash` shows a green/info
+   *  success indicator for ~2 s after any quick action (copy, save,
+   *  remove); `claiming` shows the spinner-ish label; `error` is
+   *  sticky until the next action. Without this, Copy / Save fired
+   *  silently and the operator couldn't tell if the click landed. */
   const [rowState, setRowState] = useState<
-    Record<string, { status: "claiming" | "error"; message?: string }>
+    Record<
+      string,
+      | { status: "claiming" }
+      | { status: "error"; message: string }
+      | { status: "flash"; message: string }
+    >
   >({});
+  const flashRow = useCallback((id: string, message: string) => {
+    setRowState((s) => ({ ...s, [id]: { status: "flash", message } }));
+    // Auto-clear after a short window. setTimeout id is intentionally
+    // not tracked — a second flash for the same row overwrites the
+    // state before the prior timeout fires, and the cleared-state
+    // branch is a no-op for any row that's since transitioned to
+    // claiming/error.
+    window.setTimeout(() => {
+      setRowState((s) => {
+        if (s[id]?.status !== "flash") return s;
+        const next = { ...s };
+        delete next[id];
+        return next;
+      });
+    }, 2000);
+  }, []);
   const [entries, setEntries] = useState<ClaimInboxEntry[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pasteValue, setPasteValue] = useState("");
@@ -137,8 +161,13 @@ export default function ClaimsPage() {
       typeof window !== "undefined" ? `${window.location.origin}${href}` : href;
     try {
       await navigator.clipboard.writeText(full);
+      flashRow(e.id, "✓ Copied");
     } catch (err) {
       console.warn("[Pro] copy claim link failed", err);
+      setRowState((s) => ({
+        ...s,
+        [e.id]: { status: "error", message: "Clipboard write blocked" },
+      }));
     }
   }
 
@@ -164,12 +193,8 @@ export default function ClaimsPage() {
         signer: signer ?? undefined,
       });
       await markClaimInboxEntryClaimed(e.id, txHash);
-      setRowState((s) => {
-        const next = { ...s };
-        delete next[e.id];
-        return next;
-      });
       await refresh();
+      flashRow(e.id, `✓ Claimed (${txHash.slice(0, 8)}…)`);
     } catch (err) {
       setRowState((s) => ({
         ...s,
@@ -343,7 +368,10 @@ function InboxRowActions({
   entry: ClaimInboxEntry;
   isClaimable: boolean;
   menuOpen: boolean;
-  rowState?: { status: "claiming" | "error"; message?: string };
+  rowState?:
+    | { status: "claiming" }
+    | { status: "error"; message: string }
+    | { status: "flash"; message: string };
   onOpenMenu: () => void;
   onCloseMenu: () => void;
   onCopyLink: () => void;
@@ -418,7 +446,12 @@ function InboxRowActions({
       </div>
       {rowState?.status === "error" && (
         <div className="max-w-[14rem] rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-2 py-1 text-[10px] text-[var(--color-warning)]">
-          {rowState.message ?? "Claim failed"}
+          {rowState.message}
+        </div>
+      )}
+      {rowState?.status === "flash" && (
+        <div className="max-w-[14rem] rounded border border-[var(--color-success)] bg-[var(--color-success-soft)] px-2 py-1 text-[10px] font-medium text-[var(--color-success)]">
+          {rowState.message}
         </div>
       )}
     </div>
