@@ -328,6 +328,12 @@ export class PrivateOrderDB {
   private selectSettlementBucketRows: ReturnType<Database.Database["prepare"]>;
   private sumFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
   private sumVolumeByToken: ReturnType<Database.Database["prepare"]>;
+  // Settlement push outbox
+  private upsertPushOutbox: ReturnType<Database.Database["prepare"]>;
+  private selectPendingPushes: ReturnType<Database.Database["prepare"]>;
+  private markPushSucceededStmt: ReturnType<Database.Database["prepare"]>;
+  private markPushFailedStmt: ReturnType<Database.Database["prepare"]>;
+  private countPushOutbox: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     // [L-8] For production with sensitive data, consider replacing better-sqlite3
@@ -742,6 +748,49 @@ export class PrivateOrderDB {
          AND buy_amount IS NOT NULL
        ORDER BY token, leg
     `);
+
+    // Settlement push outbox. INSERT-OR-IGNORE on tx_hash so a duplicate
+    // enqueue (live-push wrapper enqueues, then on-restart replay also
+    // enqueues) is a no-op rather than overwriting attempt counters.
+    this.upsertPushOutbox = this.db.prepare(`
+      INSERT OR IGNORE INTO settlement_push_outbox
+        (tx_hash, payload_json, attempts, created_at)
+      VALUES (@txHash, @payloadJson, 0, @createdAt)
+    `);
+    // Pending = not yet pushed. `last_attempt_at IS NULL OR <= cutoff`
+    // implements a simple backoff window — a row that failed seconds
+    // ago shouldn't immediately get hammered again on the next tick.
+    this.selectPendingPushes = this.db.prepare(`
+      SELECT tx_hash, payload_json, attempts
+        FROM settlement_push_outbox
+       WHERE pushed_at IS NULL
+         AND (last_attempt_at IS NULL OR last_attempt_at <= @cutoff)
+       ORDER BY created_at ASC
+       LIMIT @limit
+    `);
+    this.markPushSucceededStmt = this.db.prepare(`
+      UPDATE settlement_push_outbox
+         SET pushed_at = @now,
+             last_attempt_at = @now,
+             last_error = NULL,
+             attempts = attempts + 1
+       WHERE tx_hash = @txHash
+    `);
+    this.markPushFailedStmt = this.db.prepare(`
+      UPDATE settlement_push_outbox
+         SET last_attempt_at = @now,
+             last_error = @error,
+             attempts = attempts + 1
+       WHERE tx_hash = @txHash
+    `);
+    this.countPushOutbox = this.db.prepare(`
+      SELECT
+        COUNT(*)                                      AS total,
+        COUNT(*) FILTER (WHERE pushed_at IS NULL)     AS pending,
+        COUNT(*) FILTER (WHERE pushed_at IS NOT NULL) AS pushed,
+        MAX(attempts)                                 AS maxAttempts
+      FROM settlement_push_outbox
+    `);
   }
 
   /** Record a settlement (success or failure) plus any per-side fees
@@ -1019,6 +1068,89 @@ export class PrivateOrderDB {
     }
     flush();
     return result;
+  }
+
+  // ─── Settlement push outbox ───────────────────────────────────
+  //
+  // Enqueue every confirmed settlement so a background worker can
+  // retry the shared-OB push if the live fire-and-forget attempt
+  // drops (transient network, indexer restart, etc). Local DB is
+  // the trusted source; this outbox lets shared-OB catch up.
+
+  /** Enqueue a settlement-push payload for delivery. No-op if the
+   *  tx_hash is already in the outbox (covers duplicate enqueues from
+   *  e.g. the live-push wrapper + a recovery sweep). */
+  enqueueSettlementPush(txHash: string, payload: unknown): void {
+    this.upsertPushOutbox.run({
+      txHash: lowerHex(txHash) as string,
+      payloadJson: JSON.stringify(payload),
+      createdAt: Date.now(),
+    });
+  }
+
+  /** Claim up to `limit` outbox rows that are pending and past the
+   *  per-row backoff cutoff. Returns the raw payload so the worker
+   *  can pass it back through `sharedClient.pushSettlement`. */
+  getPendingSettlementPushes(
+    limit: number,
+    backoffMs: number,
+  ): Array<{ txHash: string; payload: unknown; attempts: number }> {
+    const rows = this.selectPendingPushes.all({
+      cutoff: Date.now() - backoffMs,
+      limit,
+    }) as Array<{ tx_hash: string; payload_json: string; attempts: number }>;
+    const out: Array<{ txHash: string; payload: unknown; attempts: number }> = [];
+    for (const r of rows) {
+      try {
+        out.push({ txHash: r.tx_hash, payload: JSON.parse(r.payload_json), attempts: r.attempts });
+      } catch {
+        // Corrupt JSON — mark as failed so it doesn't keep tripping
+        // the worker forever, but keep the row for forensics.
+        this.markPushFailedStmt.run({
+          txHash: r.tx_hash,
+          now: Date.now(),
+          error: "payload_json parse failed",
+        });
+      }
+    }
+    return out;
+  }
+
+  markSettlementPushSucceeded(txHash: string): void {
+    this.markPushSucceededStmt.run({
+      txHash: lowerHex(txHash) as string,
+      now: Date.now(),
+    });
+  }
+
+  markSettlementPushFailed(txHash: string, error: string): void {
+    this.markPushFailedStmt.run({
+      txHash: lowerHex(txHash) as string,
+      now: Date.now(),
+      // Bound the error string so a noisy stack trace can't blow up
+      // the row size — the operator only needs the leading signal.
+      error: error.slice(0, 500),
+    });
+  }
+
+  getSettlementPushOutboxStats(): {
+    total: number;
+    pending: number;
+    pushed: number;
+    maxAttempts: number;
+  } {
+    const row = this.countPushOutbox.get({}) as {
+      total: number;
+      pending: number;
+      pushed: number;
+      maxAttempts: number | null;
+    };
+    return {
+      total: row.total,
+      pending: row.pending,
+      pushed: row.pushed,
+      maxAttempts: row.maxAttempts ?? 0,
+    };
   }
 
   /** Sum per-token notional from confirmed settlements in [since, until).
@@ -1354,6 +1486,26 @@ export class PrivateOrderDB {
       );
       CREATE INDEX IF NOT EXISTS idx_fh_token_created ON fee_history(token, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_fh_tx ON fee_history(tx_hash);
+    `);
+
+    // Outbox for shared-OB settlement pushes. The live push path is
+    // fire-and-forget — a transient shared-OB outage silently drops
+    // the notification, and the leaderboard (which sources from
+    // shared-OB) then under-reports until the next push succeeds.
+    // Persisting the payload here lets a background worker retry until
+    // shared-OB acknowledges the row. tx_hash is PK so the live push +
+    // worker re-attempt converge on the same row.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS settlement_push_outbox (
+        tx_hash         TEXT PRIMARY KEY,
+        payload_json    TEXT NOT NULL,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at INTEGER,
+        last_error      TEXT,
+        pushed_at       INTEGER,
+        created_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_spo_pending ON settlement_push_outbox(pushed_at, last_attempt_at);
     `);
   }
 

@@ -694,6 +694,20 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
   });
 
+  // Settlement push-outbox stats — surfaces how many local settlements
+  // are still awaiting shared-OB acknowledgement, so the operator can
+  // detect a stuck push pipeline without tailing logs.
+  router.get("/push-outbox/stats", (_req: Request, res: Response) => {
+    try {
+      res.json(db.getSettlementPushOutboxStats());
+    } catch (err) {
+      log.error("push-outbox/stats failed", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).json({ error: "Failed to read outbox stats" });
+    }
+  });
+
   // GET /api/admin/webhook — recent alert deliveries + config state.
   // The URL itself is not echoed back; operators see whether one is
   // configured and the last 50 alerts that were attempted.
