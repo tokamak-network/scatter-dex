@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { formatTokenLabel } from "@zkscatter/sdk";
+import { formatTokenLabel, PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import { encodeClaimPackage } from "@zkscatter/sdk/notes";
 import {
   addClaimInboxEntry,
@@ -15,8 +15,6 @@ import {
   removeClaimInboxEntry,
   type ClaimInboxEntry,
 } from "@zkscatter/sdk/storage";
-import { ethers } from "ethers";
-import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { formatLocalStampSec } from "../_lib/format";
