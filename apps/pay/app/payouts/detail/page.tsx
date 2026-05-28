@@ -21,6 +21,7 @@ import { formatTokenLabel } from "@zkscatter/sdk";
 import { shortTxHash } from "@zkscatter/sdk/util";
 import { submitClaim } from "../../_lib/claimSubmit";
 import {
+  addClaimInboxEntry,
   indexLatestNotifications,
   saveRun,
   type ClaimedRecipientInput,
@@ -221,6 +222,33 @@ function PayoutBody({
    *  by the operator's Dismiss click or by the next claim. */
   const [lastClaimTx, setLastClaimTx] = useState<{ rowIndex: number; txHash: string } | null>(null);
 
+  /** Save THIS recipient's claim link to the operator's local Claims
+   *  inbox. Useful when the operator is also a recipient (common in
+   *  demo flows) or wants to pre-stage the claim for later. Decodes
+   *  the row's encoded ClaimPackage and persists it under the active
+   *  folder; the inbox UI surfaces it next time the operator opens
+   *  /claims. Best-effort: silently swallow corrupt-payload errors
+   *  (the row's claim badge already surfaces those). */
+  const onSaveToInbox = useCallback(
+    async (row: RecipientRow) => {
+      if (!row.claimPackage) return;
+      setOpenMenu(null);
+      try {
+        const pkg = decodeClaimPackage(row.claimPackage);
+        await addClaimInboxEntry({
+          rawInput:
+            typeof window !== "undefined"
+              ? buildClaimUrl(window.location.origin, "saved", row)
+              : "",
+          pkg,
+        });
+      } catch (err) {
+        console.warn("[Pay] save-to-inbox failed", err);
+      }
+    },
+    [],
+  );
+
   const onMarkSentRow = useCallback(
     async (row: RecipientRow) => {
       if (!row.email) return;
@@ -356,6 +384,7 @@ function PayoutBody({
         busy={busy}
         onMarkSent={onMarkSentRow}
         onClaim={onClaimRow}
+        onSaveToInbox={onSaveToInbox}
         claimingRow={claimingRow}
       />
       {claimError && (
@@ -736,6 +765,7 @@ function RecipientTable({
   busy,
   onMarkSent,
   onClaim,
+  onSaveToInbox,
   claimingRow,
 }: {
   record: RunRecord;
@@ -749,6 +779,9 @@ function RecipientTable({
    *  relayer. Resolves once the relayer's submit returns or throws —
    *  the parent's claim reconciler effect handles the badge flip. */
   onClaim: (row: RecipientRow) => Promise<void>;
+  /** Stash this row's claim link in the operator's local Claims
+   *  inbox so they can re-open it from /inbox later. */
+  onSaveToInbox: (row: RecipientRow) => Promise<void>;
   /** `rowIndex` of the row whose claim is currently in flight, or
    *  `null` when nothing is claiming. Drives the per-row "Claiming…"
    *  label and disables the menu while the proof is generating. */
@@ -795,6 +828,7 @@ function RecipientTable({
                       }
                       onClose={closeMenu}
                       onCopy={() => copyClaimLink(record, r)}
+                      onSaveToInbox={() => onSaveToInbox(r)}
                       onSend={() => openClaimMailDraftAndConfirm(record, r, onMarkSent)}
                       hasClaimPackage={!!r.claimPackage}
                       hasEmail={!!r.email}
@@ -1136,6 +1170,10 @@ interface RowMenuProps {
   onOpen: () => void;
   onClose: () => void;
   onCopy: () => void;
+  /** Stash THIS recipient's claim link in the operator's local
+   *  Claims inbox. Useful when the operator is also the recipient,
+   *  or when they want to pre-stage the claim for later. */
+  onSaveToInbox: () => void;
   onSend: () => void;
   hasClaimPackage: boolean;
   hasEmail: boolean;
@@ -1169,6 +1207,7 @@ function RowMenu({
   onOpen,
   onClose,
   onCopy,
+  onSaveToInbox,
   onSend,
   hasClaimPackage,
   hasEmail,
@@ -1205,6 +1244,18 @@ function RowMenu({
             className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
           >
             Copy claim link
+          </button>
+          <button
+            onClick={onSaveToInbox}
+            disabled={!hasClaimPackage}
+            title={
+              hasClaimPackage
+                ? "Save this recipient's claim link to your local Claims inbox so you can open it from /inbox later."
+                : "This row predates the claim flow — no encoded package."
+            }
+            className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+          >
+            Save to Claims inbox
           </button>
           <button
             disabled={!hasEmail || busy}
