@@ -271,7 +271,12 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
 
     /// @dev Internal helper for the ETH path. Surfaces a typed error
     ///      instead of bubbling the bare `call` failure so the front-end
-    ///      revert reason maps to a known case.
+    ///      revert reason maps to a known case. The two callers of this
+    ///      helper inside `claimAsEth` pass either `treasury` (owner-
+    ///      set, address(0) blocked) or `msg.sender` (the relayer
+    ///      claiming their own balance) — neither is "arbitrary" in
+    ///      slither's sense. Suppression mirrors RelayerRegistry._pushBond.
+    // slither-disable-next-line arbitrary-send-eth
     function _sendEth(address to, uint256 amount) internal {
         (bool ok,) = payable(to).call{value: amount}("");
         if (!ok) revert EthTransferFailed();
