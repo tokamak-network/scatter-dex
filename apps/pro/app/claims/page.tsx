@@ -368,22 +368,22 @@ function InboxRowActions({
         </button>
         {menuOpen && (
           <div className="absolute right-0 z-10 mt-1 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg">
-            {!claimed && (
-              // Plain <a> instead of next/link <Link>: the claim URL
-              // fragment is a 1+ KB base64url payload and App Router's
-              // <Link> double-pushes the hash on client-side nav,
-              // producing `#FRAG#FRAG`. Hard nav writes the URL
-              // verbatim, dodging the duplication.
-              <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={onCloseMenu}
-                className="block px-3 py-1.5 hover:bg-[var(--color-primary-soft)]"
-              >
-                Open claim page ↗
-              </a>
-            )}
+            {/* Always available — even after claim — so the operator
+                can revisit the claim page to see the tx hash, copy
+                the link, or verify "Already claimed" state. Plain
+                <a> instead of next/link <Link>: the claim URL fragment
+                is a 1+ KB base64url payload and App Router's <Link>
+                double-pushes the hash on client-side nav, producing
+                `#FRAG#FRAG`. Hard nav writes the URL verbatim. */}
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onCloseMenu}
+              className="block px-3 py-1.5 hover:bg-[var(--color-primary-soft)]"
+            >
+              Open claim page ↗
+            </a>
             <button
               type="button"
               onClick={onCopyLink}
