@@ -15,14 +15,23 @@ import {
 } from "../lib/dashboardHelpers";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { formatEth } from "../lib/adminUi";
-import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import {
+  RevenueCard,
+  VolumeCard,
+  type FeeTotal,
+  type VolumeTotal,
+} from "../components/PerTokenCards";
 
 type Auth = AdminAuth | null;
 
 import type { SettlementRow } from "../lib/adminTypes";
 
 interface FeeTotals {
-  totals: Array<{ token: string; count: number; totalWei: string }>;
+  totals: FeeTotal[];
+}
+
+interface VolumeTotals {
+  totals: VolumeTotal[];
 }
 
 interface StatusBody {
@@ -213,6 +222,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
   const [status, setStatus] = useState<StatusBody | null>(null);
   const [recent, setRecent] = useState<SettlementRow[] | null>(null);
   const [feeTotals, setFeeTotals] = useState<FeeTotals | null>(null);
+  const [volumeTotals, setVolumeTotals] = useState<VolumeTotals | null>(null);
   const [perf, setPerf] = useState<BucketsBody | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -224,13 +234,21 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
     try {
       const since = Date.now() - ONE_DAY_MS;
       const perfSince = Date.now() - SEVEN_DAYS_MS;
-      const [s, h, f, p] = await Promise.all([
+      const [s, h, f, v, p] = await Promise.all([
         adminGet<StatusBody>(auth, "/api/admin/status"),
         adminGet<{ rows: SettlementRow[] }>(
           auth,
           `/api/admin/history?limit=200`,
         ),
         adminGet<FeeTotals>(auth, `/api/admin/history/fees?since=${since}`),
+        // Volume endpoint shipped after fees — an older relayer the
+        // dashboard is connected to would 404 here. Swallow into an
+        // empty payload so the rest of the dashboard still renders,
+        // and log so the operator can see why volume is blank.
+        adminGet<VolumeTotals>(auth, `/api/admin/history/volume?since=${since}`).catch((err) => {
+          console.warn("[dashboard] volume endpoint unavailable; rendering empty", err);
+          return { totals: [] } as VolumeTotals;
+        }),
         adminGet<BucketsBody>(
           auth,
           `/api/admin/history/buckets?since=${perfSince}&bucketMs=${60 * 60 * 1000}`,
@@ -239,6 +257,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
       setStatus(s);
       setRecent(h.rows);
       setFeeTotals(f);
+      setVolumeTotals(v);
       setPerf(p);
       setRefreshedAt(Date.now());
     } catch (e) {
@@ -329,45 +348,15 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
       </section>
 
       <section>
-        <SectionHeader title="Fee accrual (24h)" badge="live" />
-        {!feeTotals ? (
-          <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
-        ) : feeTotals.totals.length === 0 ? (
-          <p className="text-sm text-[var(--color-text-muted)]">
-            No fees accrued in the last 24 hours.
-          </p>
-        ) : (
-          <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-                <tr>
-                  <th className="px-5 py-3 text-left font-medium">Token</th>
-                  <th className="px-5 py-3 text-right font-medium">Fills</th>
-                  <th className="px-5 py-3 text-right font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {feeTotals.totals.map((t) => {
-                  const info = tokenInfo(t.token);
-                  return (
-                    <tr key={t.token} className="border-t border-[var(--color-border)]">
-                      <td className="px-5 py-3">
-                        <div className="font-medium">{info.symbol}</div>
-                        <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
-                          {t.token}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-right font-mono">{t.count}</td>
-                      <td className="px-5 py-3 text-right font-mono">
-                        {formatAmount(t.totalWei, info.decimals)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <SectionHeader
+          title="Volume & revenue (24h)"
+          badge="live"
+          hint="Two views of the same window. Revenue answers 'what did I earn'; volume answers 'what did I route'."
+        />
+        <div className="grid gap-4 md:grid-cols-2">
+          <VolumeCard volume={volumeTotals} />
+          <RevenueCard fees={feeTotals} />
+        </div>
       </section>
 
       <section>
@@ -748,5 +737,4 @@ function HealthCard({
     </div>
   );
 }
-
 
