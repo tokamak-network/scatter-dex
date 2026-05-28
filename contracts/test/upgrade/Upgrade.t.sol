@@ -54,7 +54,7 @@ contract UpgradeSimTest is Test {
 
         // Upgrade to V2.
         UpgradeHelper.upgrade(address(v1), address(new FeeVaultV2()), admin);
-        FeeVaultV2 v2 = FeeVaultV2(address(v1));
+        FeeVaultV2 v2 = FeeVaultV2(payable(address(v1)));
 
         // V1 state survives.
         assertEq(v2.treasury(), treasury, "v2 treasury preserved");
@@ -79,7 +79,7 @@ contract UpgradeSimTest is Test {
             abi.encodeWithSelector(FeeVaultV2.reinitializeV2.selector, uint256(0xBEEF))
         );
 
-        FeeVaultV2 v2 = FeeVaultV2(address(v1));
+        FeeVaultV2 v2 = FeeVaultV2(payable(address(v1)));
         // V1 state still there.
         assertEq(v2.treasury(), treasury, "v1 treasury preserved through reinit");
         assertEq(v2.platformFeeBps(), 500, "v1 fee bps preserved through reinit");
