@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { formatTokenLabel } from "@zkscatter/sdk";
+import { formatTokenLabel, PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import { encodeClaimPackage } from "@zkscatter/sdk/notes";
 import {
   addClaimInboxEntry,
@@ -15,6 +15,7 @@ import {
   removeClaimInboxEntry,
   type ClaimInboxEntry,
 } from "@zkscatter/sdk/storage";
+import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { formatLocalStampSec } from "../_lib/format";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
@@ -39,9 +40,29 @@ export default function ClaimInbox() {
   const folder = useFolderStorage();
   const { account, readProvider, signer } = useWallet();
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  /** Per-row transient feedback. Same shape as Pro /claims —
+   *  `flash` shows a green success indicator for ~2 s after Copy /
+   *  Claim landed, so silent clipboard writes still tell the
+   *  operator the click registered. */
   const [rowState, setRowState] = useState<
-    Record<string, { status: "claiming" | "error"; message?: string }>
+    Record<
+      string,
+      | { status: "claiming" }
+      | { status: "error"; message: string }
+      | { status: "flash"; message: string }
+    >
   >({});
+  const flashRow = useCallback((id: string, message: string) => {
+    setRowState((s) => ({ ...s, [id]: { status: "flash", message } }));
+    window.setTimeout(() => {
+      setRowState((s) => {
+        if (s[id]?.status !== "flash") return s;
+        const next = { ...s };
+        delete next[id];
+        return next;
+      });
+    }, 2000);
+  }, []);
   const [entries, setEntries] = useState<ClaimInboxEntry[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pasteValue, setPasteValue] = useState("");
@@ -77,6 +98,68 @@ export default function ClaimInbox() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Reconcile on-chain truth ↔ local inbox status: for every
+  // entry still showing "available", probe `claimNullifiers`;
+  // when the nullifier is spent, flip the local row to "claimed".
+  // Handles the cross-tab case (recipient opens the /claim link in
+  // a new tab where File System Access handle isn't re-granted, so
+  // /claim's own reconcile path can't write to the inbox) and the
+  // "claim happened in a different session / wallet" case where
+  // nothing local ever fired `markClaimInboxEntryClaimed`.
+  useEffect(() => {
+    if (!readProvider || entries.length === 0) return;
+    const pending = entries.filter((e) => e.status !== "claimed");
+    if (pending.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      // Catch + log on the IIFE body so a stray rejection in
+      // `markClaimInboxEntryClaimed` / `refresh` can't surface as
+      // an unhandled promise rejection. Gemini review feedback.
+      try {
+      // Parallel probe: `Promise.all` fires all eth_calls in the
+      // same microtask; ethers v6's JsonRpcProvider auto-batches
+      // them into a single HTTP POST (defaults: batchStallTime=10ms,
+      // batchMaxCount=100) so a 20-entry reconciliation costs 1 RPC
+      // round-trip, not 20. Equivalent to a Multicall3 aggregation
+      // at the network level without the on-chain helper contract.
+      // Writes stay serial — see the matching note in Pro /claims
+      // for why parallelising the fs writes wouldn't help.
+      const probes = await Promise.allSettled(
+        pending.map(async (e) => {
+          const nullifier = await computeClaimNullifier(
+            BigInt(e.pkg.secret),
+            BigInt(e.pkg.leafIndex),
+          );
+          const settlement = new ethers.Contract(
+            e.pkg.settlementAddress,
+            PRIVATE_SETTLEMENT_ABI,
+            readProvider,
+          );
+          const spent = (await settlement.claimNullifiers(
+            toBytes32Hex(nullifier),
+          )) as boolean;
+          return { id: e.id, spent };
+        }),
+      );
+      if (cancelled) return;
+      let flipped = 0;
+      for (const r of probes) {
+        if (cancelled) return;
+        if (r.status === "fulfilled" && r.value.spent) {
+          await markClaimInboxEntryClaimed(r.value.id);
+          flipped += 1;
+        }
+      }
+      if (!cancelled && flipped > 0) await refresh();
+      } catch (err) {
+        console.warn("[Pay] inbox reconcile failed", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [entries, readProvider, refresh]);
 
   useEffect(() => {
     // First hydration tick sets the real wall clock; the minute
@@ -119,8 +202,13 @@ export default function ClaimInbox() {
       typeof window !== "undefined" ? `${window.location.origin}${href}` : href;
     try {
       await navigator.clipboard.writeText(full);
+      flashRow(e.id, "✓ Copied");
     } catch (err) {
       console.warn("[Pay] copy claim link failed", err);
+      setRowState((s) => ({
+        ...s,
+        [e.id]: { status: "error", message: "Clipboard write blocked" },
+      }));
     }
   }
 
@@ -145,12 +233,8 @@ export default function ClaimInbox() {
         signer: signer ?? undefined,
       });
       await markClaimInboxEntryClaimed(e.id, txHash);
-      setRowState((s) => {
-        const next = { ...s };
-        delete next[e.id];
-        return next;
-      });
       await refresh();
+      flashRow(e.id, `✓ Claimed (${txHash.slice(0, 8)}…)`);
     } catch (err) {
       setRowState((s) => ({
         ...s,
@@ -321,7 +405,10 @@ function InboxRowActions({
   entry: ClaimInboxEntry;
   isClaimable: boolean;
   menuOpen: boolean;
-  rowState?: { status: "claiming" | "error"; message?: string };
+  rowState?:
+    | { status: "claiming" }
+    | { status: "error"; message: string }
+    | { status: "flash"; message: string };
   onOpenMenu: () => void;
   onCloseMenu: () => void;
   onCopyLink: () => void;
@@ -392,7 +479,12 @@ function InboxRowActions({
       </div>
       {rowState?.status === "error" && (
         <div className="max-w-[14rem] rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-2 py-1 text-[10px] text-[var(--color-warning)]">
-          {rowState.message ?? "Claim failed"}
+          {rowState.message}
+        </div>
+      )}
+      {rowState?.status === "flash" && (
+        <div className="max-w-[14rem] rounded border border-[var(--color-success)] bg-[var(--color-success-soft)] px-2 py-1 text-[10px] font-medium text-[var(--color-success)]">
+          {rowState.message}
         </div>
       )}
     </div>

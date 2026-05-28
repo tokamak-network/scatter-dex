@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Button, useOutsideClick, useToast } from "@zkscatter/ui";
+import { Button, useToast } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
   addClaimInboxEntry,
@@ -964,11 +964,12 @@ function ShareActions({
   // trigger wrapper or the portaled menu as "inside" so a click on
   // a menu item doesn't get treated as an outside-click and close
   // the menu before the item's onClick runs.
-  useOutsideClick({
-    enabled: menuOpen,
-    ref: wrapperRef,
-    onClose: () => setMenuOpen(false),
-  });
+  //
+  // Can't use `useOutsideClick` here because it only knows about
+  // `wrapperRef`; the menu lives in a portal (= outside the wrapper
+  // subtree), so every menu-item click would register as "outside"
+  // and close the menu BEFORE the item's onClick fired — that's the
+  // bug operators saw as "Actions menu does nothing."
   useEffect(() => {
     if (!menuOpen) return;
     const onDocDown = (e: MouseEvent) => {

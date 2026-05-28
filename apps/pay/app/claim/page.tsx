@@ -10,6 +10,7 @@ import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
   addClaimInboxEntry,
+  loadClaimInbox,
   markClaimInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
 import { getNetworkConfig } from "../_lib/network";
@@ -160,6 +161,65 @@ function ClaimInner() {
   // invited to burn another proof generation that the relayer would
   // reject anyway.
   const [alreadyClaimed, setAlreadyClaimed] = useState<boolean | null>(null);
+  // If the local Claims inbox carries a prior claim record for THIS
+  // package, surface the saved txHash on the already-claimed panel
+  // so the /claim page matches the inbox row's "Claimed · Tx 0x…" UI.
+  // Also reconciles: nullifier spent on-chain + inbox row still
+  // "available" → flip the inbox row to "claimed" so the badge
+  // stops contradicting the /claim page (claim happened in another
+  // session / wallet, never ran through markClaimInboxEntryClaimed
+  // here). txHash is left absent on the reconciliation path — we
+  // don't know which on-chain tx spent the nullifier without a log
+  // scan, and an unknown-tx claim beats a stale "Claimable" badge
+  // that invites a re-attempt.
+  const [priorClaimTxHash, setPriorClaimTxHash] = useState<string | null>(null);
+  // Gate the "See it in your Claims inbox" footer link on whether
+  // the local inbox actually has a row for this slot; without the
+  // gate, externally-claimed links (never saved locally) would
+  // route to an inbox with no matching row. Copilot review.
+  const [hasMatchingInboxEntry, setHasMatchingInboxEntry] = useState(false);
+  useEffect(() => {
+    if (!parsed || !folder.ready) {
+      setPriorClaimTxHash(null);
+      setHasMatchingInboxEntry(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await loadClaimInbox();
+        const match = list.find(
+          (e) =>
+            e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
+            e.pkg.leafIndex === parsed.pkg.leafIndex,
+        );
+        if (cancelled) return;
+        setHasMatchingInboxEntry(!!match);
+        setPriorClaimTxHash(
+          match?.status === "claimed" && match.txHash ? match.txHash : null,
+        );
+        if (
+          alreadyClaimed === true &&
+          match &&
+          match.status !== "claimed"
+        ) {
+          await markClaimInboxEntryClaimed(match.id);
+        }
+      } catch (err) {
+        // Catch + log so an inbox-load failure in this background
+        // reconciler can't surface as an unhandled promise rejection.
+        // Gemini review.
+        console.warn("[Pay] claim-page inbox reconcile failed", err);
+        if (!cancelled) {
+          setPriorClaimTxHash(null);
+          setHasMatchingInboxEntry(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parsed, folder.ready, alreadyClaimed]);
   useEffect(() => {
     if (!parsed || !readProvider) {
       setAlreadyClaimed(null);
@@ -374,6 +434,48 @@ function ClaimInner() {
                 </div>
               )}
             </div>
+          ) : alreadyClaimed === true && parsed ? (
+            // Match the inbox row's celebratory "Claimed" state instead
+            // of the prior gray dead-end notice + disabled big button.
+            // Pulls the tx hash from the local inbox if a prior session
+            // recorded one for this slot (matched by claimsRoot +
+            // leafIndex — unique per slot).
+            <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-center text-xs text-[var(--color-success)]">
+              <div className="mb-1 font-semibold">✓ Already claimed</div>
+              {priorClaimTxHash ? (
+                explorerTxUrl ? (
+                  <a
+                    href={explorerTxUrl(priorClaimTxHash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono underline-offset-2 hover:underline"
+                  >
+                    {shortAddr(priorClaimTxHash)} ↗
+                  </a>
+                ) : (
+                  <div className="font-mono">{shortAddr(priorClaimTxHash)}</div>
+                )
+              ) : (
+                <div className="text-[10px] text-[var(--color-text-muted)]">
+                  This link&apos;s nullifier is spent on-chain.
+                </div>
+              )}
+              <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                Tokens are at {shortAddr(parsed.pkg.recipient)}.
+              </div>
+              {hasMatchingInboxEntry && (
+                <div className="mt-2 text-[10px]">
+                  See it in your{" "}
+                  <a
+                    href="/inbox"
+                    className="font-medium underline-offset-2 hover:underline"
+                  >
+                    Claims inbox
+                  </a>
+                  .
+                </div>
+              )}
+            </div>
           ) : (() => {
               // App-chain mismatch is terminal — neither path can
               // work because the SDK / contract addresses are wired
@@ -478,7 +580,12 @@ function ClaimInner() {
                       {phase.message}
                     </div>
                   )}
-                  {gasless && (phase.kind === "idle" || phase.kind === "error") && (
+                  {/* Hide self-pay + save-to-inbox once the nullifier
+                      is already spent — both actions would either
+                      revert or just shuffle a useless row into the
+                      inbox. Keeps the "Already claimed" state visually
+                      consistent with the inbox row's Claimed badge. */}
+                  {gasless && (phase.kind === "idle" || phase.kind === "error") && alreadyClaimed !== true && (
                     <button
                       onClick={() => {
                         setForceSelfPay(true);
@@ -490,7 +597,7 @@ function ClaimInner() {
                       Submit with my wallet instead (you pay gas)
                     </button>
                   )}
-                  {folder.ready && (phase.kind === "idle" || phase.kind === "error") && (
+                  {folder.ready && (phase.kind === "idle" || phase.kind === "error") && alreadyClaimed !== true && (
                     <button
                       onClick={() => void saveToInbox()}
                       disabled={preSaveState === "saving"}
