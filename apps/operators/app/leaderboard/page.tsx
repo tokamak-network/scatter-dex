@@ -18,6 +18,57 @@ import { formatEther, formatIsoDate } from "../lib/format";
 import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
+/** Local USD price oracle — hardcoded for the dev environment so
+ *  cross-token Volume/Revenue can collapse to a single comparable
+ *  number. Replace with a Chainlink / CoinGecko fetch when wiring
+ *  testnet/mainnet. Symbols are case-insensitive; tokens not in this
+ *  table contribute $0 (and the cell shows a "?" tooltip). */
+const USD_PRICES: Record<string, number> = {
+  ETH: 3000,
+  WETH: 3000,
+  USDC: 1,
+  USDT: 1,
+  TON: 1.5,
+};
+function tokenUsd(wei: string, decimals: number, symbol: string): number | null {
+  const px = USD_PRICES[symbol.toUpperCase()];
+  if (px === undefined) return null;
+  try {
+    const denom = 10n ** BigInt(decimals);
+    const v = BigInt(wei);
+    const whole = Number(v / denom);
+    const frac = Number(v % denom) / Number(denom);
+    return (whole + frac) * px;
+  } catch {
+    return null;
+  }
+}
+function sumUsd(
+  rows: Array<{ token?: string; sellToken?: string; totalWei?: string; totalVolume?: string }>,
+): { total: number; missing: number } {
+  let total = 0;
+  let missing = 0;
+  for (const r of rows) {
+    const tokAddr = r.token ?? r.sellToken;
+    const wei = r.totalWei ?? r.totalVolume;
+    if (!tokAddr || !wei) continue;
+    const info = tokenInfo(tokAddr);
+    const usd = tokenUsd(wei, info.decimals, info.symbol);
+    if (usd === null) {
+      missing += 1;
+    } else {
+      total += usd;
+    }
+  }
+  return { total, missing };
+}
+function fmtUsd(n: number): string {
+  if (n === 0) return "$0";
+  if (n < 0.01) return "<$0.01";
+  if (n < 1000) return `$${n.toFixed(2)}`;
+  return `$${Math.round(n).toLocaleString("en-US")}`;
+}
+
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 // Shared-OB indexer URL — when set, leaderboard stats come from the
 // network-wide settlements indexer (durable across relayer DB
@@ -37,7 +88,7 @@ interface LeaderboardState {
  *  Centralising the choices here (instead of one switch per use site)
  *  keeps the table header arrow, the segmented control, and the
  *  caption copy from drifting apart. */
-type RankCriterionId = "bond" | "fee" | "activity" | "revenue" | "success" | "speed";
+type RankCriterionId = "volume" | "revenue" | "activity" | "bond" | "fee" | "success" | "speed";
 interface RankCriterion {
   id: RankCriterionId;
   label: string;
@@ -65,6 +116,27 @@ function compareNullable(
 
 const RANK_CRITERIA: RankCriterion[] = [
   {
+    id: "volume",
+    label: "Volume",
+    description: "Highest USD-equivalent throughput first",
+    compare: (a, b) =>
+      compareNullable(usdTotal(a.stats?.settledVolume), usdTotal(b.stats?.settledVolume), true),
+  },
+  {
+    id: "revenue",
+    label: "Revenue",
+    description: "Highest USD-equivalent fee earned first",
+    compare: (a, b) =>
+      compareNullable(usdTotal(a.stats?.feeTotals), usdTotal(b.stats?.feeTotals), true),
+  },
+  {
+    id: "activity",
+    label: "Settled",
+    description: "Most settled orders first",
+    compare: (a, b) =>
+      compareNullable(a.stats?.settledOrders, b.stats?.settledOrders, true),
+  },
+  {
     id: "bond",
     label: "Bond",
     description: "Most skin-in-the-game first",
@@ -83,20 +155,6 @@ const RANK_CRITERIA: RankCriterion[] = [
     },
   },
   {
-    id: "activity",
-    label: "Activity",
-    description: "Most settled orders first",
-    compare: (a, b) =>
-      compareNullable(a.stats?.settledOrders, b.stats?.settledOrders, true),
-  },
-  {
-    id: "revenue",
-    label: "Revenue",
-    description: "Highest fee earned (ranked by the relayer's biggest per-token total — cross-token sums need an oracle)",
-    compare: (a, b) =>
-      compareNullable(topFeeWeiNumeric(a), topFeeWeiNumeric(b), true),
-  },
-  {
     id: "success",
     label: "Success",
     description: "Highest success rate first",
@@ -112,29 +170,19 @@ const RANK_CRITERIA: RankCriterion[] = [
   },
 ];
 
-function criterionById(id: RankCriterionId): RankCriterion {
-  return RANK_CRITERIA.find((c) => c.id === id) ?? RANK_CRITERIA[0];
+// Sort-comparator helper: collapse a relayer's per-token stats into
+// a single USD-equivalent total via the local price oracle. Returns
+// undefined when the relayer has no stats at all (caller treats
+// undefined as worse than any defined value via compareNullable).
+function usdTotal(
+  rows: Array<{ token?: string; sellToken?: string; totalWei?: string; totalVolume?: string }> | undefined,
+): number | undefined {
+  if (!rows || rows.length === 0) return undefined;
+  return sumUsd(rows).total;
 }
 
-/** Pick the highest per-token fee total for sort comparisons. Cross-
- *  token revenue can't be summed without an oracle (1 USDC of fee
- *  ≠ 1 WETH of fee), so the comparator ranks by each relayer's top
- *  earning token. Returns a Number — sort comparators are scalar
- *  and BigInt isn't subtraction-safe across them. Falls back to
- *  undefined so undefined-as-worst behavior kicks in. The Number
- *  cast loses precision above 2^53, which is fine for ranking
- *  (the order is preserved; the exact wei doesn't matter). */
-function topFeeWeiNumeric(r: RankedRelayer): number | undefined {
-  const totals = r.stats?.feeTotals;
-  if (!totals || totals.length === 0) return undefined;
-  let max = 0n;
-  for (const t of totals) {
-    try {
-      const v = BigInt(t.totalWei);
-      if (v > max) max = v;
-    } catch { /* malformed row — skip */ }
-  }
-  return Number(max);
+function criterionById(id: RankCriterionId): RankCriterion {
+  return RANK_CRITERIA.find((c) => c.id === id) ?? RANK_CRITERIA[0];
 }
 
 export default function LeaderboardPage() {
@@ -179,7 +227,7 @@ export default function LeaderboardPage() {
   // focus immediate refresh on top.
   useTimedRefresh({ refresh, intervalMs: 30_000, enabled: registryDeployed });
 
-  const [criterionId, setCriterionId] = useState<RankCriterionId>("bond");
+  const [criterionId, setCriterionId] = useState<RankCriterionId>("volume");
   const criterion = criterionById(criterionId);
   const accountLc = account?.toLowerCase() ?? null;
   const ranked = useMemo(
@@ -244,44 +292,23 @@ export default function LeaderboardPage() {
         <SectionHeader
           title="Ranking"
           badge="live"
-          hint={criterion.description}
+          hint={`Click a column header to sort · ${criterion.description}`}
         />
-        <div className="mb-3 flex flex-wrap items-center gap-2">
-          <span className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-            Sort by
-          </span>
-          <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
-            {RANK_CRITERIA.map((c) => {
-              const active = c.id === criterionId;
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => setCriterionId(c.id)}
-                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition ${
-                    active
-                      ? "bg-[var(--color-primary)] text-white"
-                      : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
-                  }`}
-                >
-                  {c.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
         <RelayerTable
           ranked={ranked}
           placeholder={placeholder}
           accountLc={accountLc}
           activeCriterion={criterionId}
+          onSortChange={setCriterionId}
         />
+        <NetworkTotalsStrip ranked={ranked} />
         <p className="mt-2 text-xs text-[var(--color-text-subtle)]">
-          Status dot reflects a live <code className="font-mono">/api/info</code> probe. Settlement
-          counters, volume, and avg-settle latency come from each peer&apos;s public{" "}
-          <code className="font-mono">/api/relayer/stats</code> — older builds without the endpoint
-          fall back to <code className="font-mono">—</code>. Cross-token sort proxies (Activity)
-          rank by settlement count since amounts can&apos;t be compared without a price oracle.
+          Status dot reflects a live <code className="font-mono">/api/info</code> probe.
+          Settlement counters, volume, and avg-settle latency come from the shared
+          orderbook indexer (durable across relayer DB resets); per-leg fee splits
+          credit the relayer that brought each order, not just the on-chain submitter.
+          Cross-token sums need a price oracle, so Volume / Revenue are shown per token
+          and rank by the relayer&apos;s biggest single token.
         </p>
       </section>
     </div>
@@ -443,10 +470,11 @@ const TABLE_COLUMNS = 11;
 // Map each sort criterion onto the column header it should highlight.
 // Centralised so the arrow indicator + the sort selector can't drift.
 const CRITERION_TO_COLUMN: Record<RankCriterionId, string> = {
+  volume: "volume",
+  revenue: "revenue",
+  activity: "settled",
   bond: "bond",
   fee: "fee",
-  activity: "settled",
-  revenue: "revenue",
   success: "success",
   speed: "speed",
 };
@@ -456,15 +484,58 @@ function RelayerTable({
   placeholder,
   accountLc,
   activeCriterion,
+  onSortChange,
 }: {
   ranked: RankedRelayer[];
   placeholder: Placeholder | null;
   accountLc: string | null;
   activeCriterion: RankCriterionId;
+  onSortChange: (id: RankCriterionId) => void;
 }) {
   const activeColumn = CRITERION_TO_COLUMN[activeCriterion];
-  const arrow = (col: string) =>
-    col === activeColumn ? <span aria-hidden> ↓</span> : null;
+  // Header for a sortable column — clicking sets the sort criterion,
+  // and the active column gets a down arrow + bolded label so the
+  // active sort is visible without a separate pill bar above the
+  // table. Non-sortable columns (#, Relayer, Address, Registered)
+  // render as plain <th> via SortableTh's `criterion={null}` branch.
+  const SortableTh = ({
+    label,
+    column,
+    criterion,
+    align = "right",
+  }: {
+    label: string;
+    column: string;
+    criterion: RankCriterionId | null;
+    align?: "left" | "right";
+  }) => {
+    const isActive = column === activeColumn;
+    const justify = align === "right" ? "justify-end" : "justify-start";
+    const text = align === "right" ? "text-right" : "text-left";
+    if (!criterion) {
+      return <th className={`px-5 py-3 ${text}`}>{label}</th>;
+    }
+    return (
+      <th className={`px-5 py-3 ${text}`}>
+        <button
+          type="button"
+          onClick={() => onSortChange(criterion)}
+          aria-sort={isActive ? "descending" : "none"}
+          className={`group inline-flex items-center gap-1 ${justify} w-full uppercase tracking-wide text-[var(--color-text-subtle)] hover:text-[var(--color-text)] focus:outline-none focus-visible:text-[var(--color-text)] ${
+            isActive ? "font-semibold text-[var(--color-text)]" : ""
+          }`}
+        >
+          {label}
+          <span
+            aria-hidden
+            className={isActive ? "" : "opacity-30 group-hover:opacity-60"}
+          >
+            ↓
+          </span>
+        </button>
+      </th>
+    );
+  };
   // Row-level expansion lives at the table so reordering or filtering
   // doesn't have to thread it through every row. Keyed by address —
   // the rank can shift between sorts and rank-based keys would close
@@ -480,19 +551,19 @@ function RelayerTable({
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <table className="w-full text-sm">
-        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+        <thead className="bg-[var(--color-bg)] text-xs">
           <tr>
-            <th className="px-5 py-3 text-left">#</th>
-            <th className="px-5 py-3 text-left">Relayer</th>
-            <th className="px-5 py-3 text-left">Address</th>
-            <th className="px-5 py-3 text-right">Fee rate{arrow("fee")}</th>
-            <th className="px-5 py-3 text-right">Bond{arrow("bond")}</th>
-            <th className="px-5 py-3 text-right">Settled{arrow("settled")}</th>
-            <th className="px-5 py-3 text-right">Volume</th>
-            <th className="px-5 py-3 text-right">Revenue{arrow("revenue")}</th>
-            <th className="px-5 py-3 text-right">Success{arrow("success")}</th>
-            <th className="px-5 py-3 text-right">Avg settle{arrow("speed")}</th>
-            <th className="px-5 py-3 text-right">Registered</th>
+            <SortableTh label="#" column="" criterion={null} align="left" />
+            <SortableTh label="Relayer" column="" criterion={null} align="left" />
+            <SortableTh label="Address" column="" criterion={null} align="left" />
+            <SortableTh label="Fee rate" column="fee" criterion="fee" />
+            <SortableTh label="Bond" column="bond" criterion="bond" />
+            <SortableTh label="Settled" column="settled" criterion="activity" />
+            <SortableTh label="Volume" column="volume" criterion="volume" />
+            <SortableTh label="Revenue" column="revenue" criterion="revenue" />
+            <SortableTh label="Success" column="success" criterion="success" />
+            <SortableTh label="Avg settle" column="speed" criterion="speed" />
+            <SortableTh label="Registered" column="" criterion={null} />
           </tr>
         </thead>
         <tbody>
@@ -583,7 +654,7 @@ function RelayerRow({
               {isExpanded ? "▾" : "▸"}
             </span>
           )}
-          {row.rank}
+          <RankBadge rank={row.rank} />
         </td>
         <td className="px-5 py-3">
           <RelayerNameCell row={row} isMe={isMe} />
@@ -609,12 +680,11 @@ function RelayerRow({
   );
 }
 
-/** Volume column. Cross-token notionals can't be summed without a
- *  price oracle (and trade-time rates would drift from current rates
- *  anyway), so the cell stacks every token's total vertically — one
- *  amount + symbol per line, biggest-by-notional first. Peers without
- *  a `settledVolume` field (older builds / pre-migration registry
- *  rows) render the same offline `—` as Settled/Success/Avg-settle. */
+/** Volume column. Single USD total so cross-token entries are
+ *  directly comparable (a price oracle's job — see USD_PRICES above).
+ *  Per-token breakdown lives in the expandable detail row so the
+ *  cell stays one number. Peers without a `settledVolume` field
+ *  (older builds / pre-migration rows) render the offline `—`. */
 function VolumeCell({ row }: { row: RankedRelayer }) {
   const volumes = row.stats?.settledVolume ?? [];
   const status = relayerStatsCellStatus(row, volumes.length > 0 ? 1 : undefined);
@@ -626,24 +696,98 @@ function VolumeCell({ row }: { row: RankedRelayer }) {
       </td>
     );
   }
-  const sorted = [...volumes].sort((a, b) => {
-    const av = safeBigInt(a.totalVolume);
-    const bv = safeBigInt(b.totalVolume);
-    if (av === bv) return 0;
-    return av > bv ? -1 : 1;
-  });
+  const { total, missing } = sumUsd(volumes);
+  const tokenCount = volumes.length;
   return (
     <td className="px-5 py-3 text-right">
-      {sorted.map((v) => {
-        const info = tokenInfo(v.sellToken);
-        return (
-          <div key={v.sellToken} className="leading-tight">
-            <span className="font-mono">{formatAmount(v.totalVolume, info.decimals)}</span>{" "}
-            <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
-          </div>
-        );
-      })}
+      <div className="font-mono font-semibold">{fmtUsd(total)}</div>
+      <div className="text-[10px] text-[var(--color-text-subtle)]">
+        {tokenCount} token{tokenCount === 1 ? "" : "s"}
+        {missing > 0 ? ` · ${missing} unpriced` : ""}
+      </div>
     </td>
+  );
+}
+
+/** Top-3 rank pill (gold / silver / bronze) so the eye lands on the
+ *  current leader without a header re-read. Beyond 3 it renders as
+ *  plain text — chasing the leaders matters more than knowing whether
+ *  you're #7 vs #8. */
+function RankBadge({ rank }: { rank: number }) {
+  if (rank > 3) return <>{rank}</>;
+  const palette =
+    rank === 1
+      ? "bg-amber-100 text-amber-800 border-amber-300"
+      : rank === 2
+      ? "bg-slate-100 text-slate-700 border-slate-300"
+      : "bg-orange-100 text-orange-800 border-orange-300";
+  return (
+    <span
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-full border ${palette} text-sm font-bold`}
+    >
+      {rank}
+    </span>
+  );
+}
+
+/** One-row strip below the table summarising the network-wide totals
+ *  the per-row USD columns hint at. Gives the operator a single "what
+ *  is the network doing right now" number so they can read the table
+ *  as their share of that pie rather than absolute amounts in a
+ *  vacuum. */
+function NetworkTotalsStrip({ ranked }: { ranked: RankedRelayer[] }) {
+  const vols = ranked.flatMap((r) => r.stats?.settledVolume ?? []);
+  const fees = ranked.flatMap((r) => r.stats?.feeTotals ?? []);
+  if (vols.length === 0 && fees.length === 0) return null;
+  const vol = sumUsd(vols);
+  const fee = sumUsd(fees);
+  const totalSettled = ranked.reduce(
+    (n, r) => n + (r.stats?.settledOrders ?? 0),
+    0,
+  );
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-xs text-[var(--color-text-muted)]">
+      <span>
+        <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Network volume:{" "}
+        </span>
+        <strong className="font-mono text-[var(--color-text)]">{fmtUsd(vol.total)}</strong>
+      </span>
+      <span>
+        <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Network revenue:{" "}
+        </span>
+        <strong className="font-mono text-[var(--color-success)]">{fmtUsd(fee.total)}</strong>
+      </span>
+      <span>
+        <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Settles:{" "}
+        </span>
+        <strong className="font-mono text-[var(--color-text)]">{totalSettled}</strong>
+      </span>
+    </div>
+  );
+}
+
+/** Color-coded token chip — visual differentiation per token so
+ *  the eye can tag rows by asset class at a glance instead of
+ *  reading the symbol every time. Palette is keyed off the symbol
+ *  (case-insensitive); unknowns get a neutral slate chip. */
+function TokenChip({ symbol }: { symbol: string }) {
+  const palette: Record<string, string> = {
+    ETH: "bg-blue-100 text-blue-800 border-blue-300",
+    WETH: "bg-blue-100 text-blue-800 border-blue-300",
+    USDC: "bg-emerald-100 text-emerald-800 border-emerald-300",
+    USDT: "bg-teal-100 text-teal-800 border-teal-300",
+    TON: "bg-amber-100 text-amber-800 border-amber-300",
+  };
+  const cls = palette[symbol.toUpperCase()] ?? "bg-slate-100 text-slate-700 border-slate-300";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cls}`}
+    >
+      {symbol}
+    </span>
   );
 }
 
@@ -666,23 +810,15 @@ function RevenueCell({ row }: { row: RankedRelayer }) {
       </td>
     );
   }
-  const sorted = [...totals].sort((a, b) => {
-    const av = safeBigInt(a.totalWei);
-    const bv = safeBigInt(b.totalWei);
-    if (av === bv) return 0;
-    return av > bv ? -1 : 1;
-  });
+  const { total, missing } = sumUsd(totals);
+  const tokenCount = totals.length;
   return (
     <td className="px-5 py-3 text-right">
-      {sorted.map((t) => {
-        const info = tokenInfo(t.token);
-        return (
-          <div key={t.token} className="leading-tight">
-            <span className="font-mono">{formatAmount(t.totalWei, info.decimals)}</span>{" "}
-            <span className="text-xs text-[var(--color-text-muted)]">{info.symbol}</span>
-          </div>
-        );
-      })}
+      <div className="font-mono font-semibold text-[var(--color-success)]">{fmtUsd(total)}</div>
+      <div className="text-[10px] text-[var(--color-text-subtle)]">
+        {tokenCount} token{tokenCount === 1 ? "" : "s"}
+        {missing > 0 ? ` · ${missing} unpriced` : ""}
+      </div>
     </td>
   );
 }
@@ -750,17 +886,21 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
               >
                 Fills
               </th>
-              <th className="px-3 py-1 text-right">Volume</th>
-              <th className="px-3 py-1 text-right">Revenue</th>
+              <th className="px-3 py-1 text-right">Volume (native)</th>
+              <th className="px-3 py-1 text-right">Volume (USD)</th>
+              <th className="px-3 py-1 text-right">Revenue (native)</th>
+              <th className="px-3 py-1 text-right">Revenue (USD)</th>
             </tr>
           </thead>
           <tbody>
             {rows.map(([addr, { volume, fee }]) => {
               const info = tokenInfo(addr);
+              const volUsd = volume ? tokenUsd(volume.totalVolume, info.decimals, info.symbol) : null;
+              const feeUsd = fee ? tokenUsd(fee.totalWei, info.decimals, info.symbol) : null;
               return (
                 <tr key={addr} className="border-t border-[var(--color-border)]">
                   <td className="px-3 py-1.5">
-                    <span className="font-medium">{info.symbol}</span>{" "}
+                    <TokenChip symbol={info.symbol} />{" "}
                     <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">
                       {shortAddr(addr)}
                     </span>
@@ -772,7 +912,13 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
                     {volume ? formatAmount(volume.totalVolume, info.decimals) : "—"}
                   </td>
                   <td className="px-3 py-1.5 text-right font-mono">
+                    {volUsd !== null ? fmtUsd(volUsd) : <span className="text-[var(--color-text-subtle)]" title="No price in local oracle">?</span>}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono">
                     {fee ? formatAmount(fee.totalWei, info.decimals) : "—"}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono">
+                    {feeUsd !== null ? fmtUsd(feeUsd) : <span className="text-[var(--color-text-subtle)]" title="No price in local oracle">?</span>}
                   </td>
                 </tr>
               );
