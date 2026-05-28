@@ -77,7 +77,7 @@ export function RevenueCard({
   fees: { totals: FeeTotal[] } | null;
   platformFeeBps?: number | null;
 }) {
-  if (!fees) return <CardPlaceholder title="Revenue" />;
+  if (!fees) return <CardPlaceholder title="Fee" />;
   const rows = [...fees.totals].sort((a, b) => {
     const ai = safeBig(a.totalWei);
     const bi = safeBig(b.totalWei);
@@ -90,7 +90,7 @@ export function RevenueCard({
       : "";
   return (
     <PerTokenCard
-      title="Revenue"
+      title="Fee"
       subtitle={`fee earned · ${tokenCountLabel(rows.length)}${feeRows > 0 ? ` · ${feeRows} fee row${feeRows === 1 ? "" : "s"}` : ""}${cutLabel}`}
       emptyMsg="No fees in this window."
       rows={rows.map((r) => {

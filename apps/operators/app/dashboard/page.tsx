@@ -352,9 +352,9 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
 
       <section>
         <SectionHeader
-          title="Volume & revenue (24h)"
+          title="Volume & fee (24h)"
           badge="live"
-          hint="Two views of the same window. Revenue answers 'what did I earn'; volume answers 'what did I route'."
+          hint="Two views of the same window. Fee answers 'what did I earn'; volume answers 'what did I route'."
         />
         <div className="grid gap-4 md:grid-cols-2">
           <VolumeCard volume={volumeTotals} />

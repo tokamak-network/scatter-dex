@@ -276,9 +276,9 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
 
       <section>
         <SectionHeader
-          title="Per-token volume & revenue"
+          title="Per-token volume & fee"
           badge="live"
-          hint="Volume is the sell-leg notional this relayer routed (the counterparty's buy leg is the mirror). Revenue sums fee accruals across all sides (maker + taker + scatterDirect)."
+          hint="Volume is the sell-leg notional this relayer routed (the counterparty's buy leg is the mirror). Fee sums accruals across all sides (maker + taker + scatterDirect)."
         />
         <div className="grid gap-4 md:grid-cols-2">
           <VolumeCard volume={volume ? { totals: volume } : null} />

@@ -125,7 +125,7 @@ const RANK_CRITERIA: RankCriterion[] = [
   },
   {
     id: "revenue",
-    label: "Revenue",
+    label: "Fee",
     description: "Highest USD-equivalent fee earned first",
     compare: (a, b) => compareNullable(a.revenueUsd, b.revenueUsd, true),
   },
@@ -307,13 +307,13 @@ export default function LeaderboardPage() {
           Settlement counters, volume, and avg-settle latency come from the shared
           orderbook indexer (durable across relayer DB resets); per-leg fee splits
           credit the relayer that brought each order, not just the on-chain submitter.
-          Volume / Revenue collapse to a single USD-equivalent total via a local
+          Volume / Fee collapse to a single USD-equivalent total via a local
           price oracle (<code className="font-mono">USD_PRICES</code>; replace with
-          Chainlink/CoinGecko before mainnet), and the Volume / Revenue columns rank
+          Chainlink/CoinGecko before mainnet), and the Volume / Fee columns rank
           by that USD sum across all priced tokens. Per-token amounts are visible in
           each row&apos;s expand drawer.{" "}
-          <strong>Revenue figures are gross</strong> — each relayer&apos;s net is the
-          revenue minus the platform fee (
+          <strong>Fee figures are gross</strong> — each relayer&apos;s net is the
+          fee minus the platform cut (
           <code className="font-mono">FeeVault.platformFeeBps</code>) at{" "}
           <code className="font-mono">claim()</code> time. See your own dashboard for
           the post-cut figure.
@@ -594,7 +594,7 @@ function RelayerTable({
             <SortableTh label="Bond" column="bond" criterion="bond" />
             <SortableTh label="Settled" column="settled" criterion="activity" />
             <SortableTh label="Volume" column="volume" criterion="volume" />
-            <SortableTh label="Revenue" column="revenue" criterion="revenue" />
+            <SortableTh label="Fee" column="revenue" criterion="revenue" />
             <SortableTh label="Success" column="success" criterion="success" />
             <SortableTh label="Avg settle" column="speed" criterion="speed" />
           </tr>
@@ -785,7 +785,7 @@ function NetworkTotalsStrip({ ranked }: { ranked: RankedRelayer[] }) {
       </span>
       <span>
         <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">
-          Network revenue:{" "}
+          Network fee:{" "}
         </span>
         <strong className="font-mono text-[var(--color-success)]">{fmtUsd(fee.total)}</strong>
       </span>
@@ -931,7 +931,7 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
                 two drawers were open at once. */}
             <span
               className="ml-1 cursor-help text-[var(--color-text-muted)]"
-              title="Volume and Revenue are aggregated independently. Cross-token swaps accrue the fee in the buy-side token, so the same token rarely appears with matching numbers on both sides."
+              title="Volume and Fee are aggregated independently. Cross-token swaps accrue the fee in the buy-side token, so the same token rarely appears with matching numbers on both sides."
             >
               ⓘ
             </span>
@@ -957,7 +957,7 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
             accent="text-[var(--color-text)]"
           />
           <BreakdownCard
-            title="Revenue by token"
+            title="Fee by token"
             subtitle="Fees earned (accrues in the buy-leg token of each settle)"
             rows={feeRows.map((f) => {
               const info = tokenInfo(f.token);
