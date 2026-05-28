@@ -137,10 +137,18 @@ export default function ClaimsPage() {
     if (pending.length === 0) return;
     let cancelled = false;
     (async () => {
-      let flipped = 0;
-      for (const e of pending) {
-        if (cancelled) return;
-        try {
+      // Parallel probe: each entry's nullifier check is an
+      // independent `eth_call`, so the previous serial loop spent
+      // (N × ~50ms) round-trip time waiting on the chain. Bundle
+      // them into one `Promise.all` so the whole reconciliation
+      // finishes in one round-trip's worth of latency regardless
+      // of inbox size. `markClaimInboxEntryClaimed` is sequenced
+      // afterwards (a single fs write per flipped row) because the
+      // inbox file is `withLock`-serialized inside the SDK helper
+      // anyway — parallelising writes would just queue inside the
+      // lock without speeding anything up.
+      const probes = await Promise.allSettled(
+        pending.map(async (e) => {
           const nullifier = await computeClaimNullifier(
             BigInt(e.pkg.secret),
             BigInt(e.pkg.leafIndex),
@@ -153,14 +161,19 @@ export default function ClaimsPage() {
           const spent = (await settlement.claimNullifiers(
             toBytes32Hex(nullifier),
           )) as boolean;
-          if (cancelled) return;
-          if (spent) {
-            await markClaimInboxEntryClaimed(e.id);
-            flipped += 1;
-          }
-        } catch {
-          /* per-entry probe failure shouldn't block the rest */
+          return { id: e.id, spent };
+        }),
+      );
+      if (cancelled) return;
+      let flipped = 0;
+      for (const r of probes) {
+        if (cancelled) return;
+        if (r.status === "fulfilled" && r.value.spent) {
+          await markClaimInboxEntryClaimed(r.value.id);
+          flipped += 1;
         }
+        // Rejected probes are dropped silently — a single malformed
+        // package shouldn't block the rest of the reconciliation.
       }
       if (!cancelled && flipped > 0) await refresh();
     })();

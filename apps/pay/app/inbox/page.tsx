@@ -113,10 +113,10 @@ export default function ClaimInbox() {
     if (pending.length === 0) return;
     let cancelled = false;
     (async () => {
-      let flipped = 0;
-      for (const e of pending) {
-        if (cancelled) return;
-        try {
+      // Parallel probe — see the matching note in Pro /claims for
+      // why writes stay serial after the probes resolve.
+      const probes = await Promise.allSettled(
+        pending.map(async (e) => {
           const nullifier = await computeClaimNullifier(
             BigInt(e.pkg.secret),
             BigInt(e.pkg.leafIndex),
@@ -129,13 +129,16 @@ export default function ClaimInbox() {
           const spent = (await settlement.claimNullifiers(
             toBytes32Hex(nullifier),
           )) as boolean;
-          if (cancelled) return;
-          if (spent) {
-            await markClaimInboxEntryClaimed(e.id);
-            flipped += 1;
-          }
-        } catch {
-          /* per-entry probe failure shouldn't block the rest */
+          return { id: e.id, spent };
+        }),
+      );
+      if (cancelled) return;
+      let flipped = 0;
+      for (const r of probes) {
+        if (cancelled) return;
+        if (r.status === "fulfilled" && r.value.spent) {
+          await markClaimInboxEntryClaimed(r.value.id);
+          flipped += 1;
         }
       }
       if (!cancelled && flipped > 0) await refresh();
