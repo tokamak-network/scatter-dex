@@ -11,7 +11,7 @@ import type { OrderClaim, OrderRecord } from "../lib/orders";
 import { StatusBadge } from "./StatusBadge";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useVault } from "../lib/vault";
-import { formatClaimAmount, formatField, formatWhen } from "../lib/format";
+import { formatClaimAmount, formatField, formatLocalStampSec, formatWhen } from "../lib/format";
 import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPackage";
 import { submitClaim } from "../lib/claimSubmit";
 
@@ -974,10 +974,29 @@ function ShareActions({
       // OS's mailto handler so an Apple-Mail-by-default user
       // doesn't lose the draft.
       const subject = `Your payment from ${order.label}`;
+      // Surface this row's actual state in the body so the
+      // recipient doesn't open the link only to be told to wait
+      // (locked) or that the slot's already gone (claimed). Mirrors
+      // the same status-aware copy Pay's payouts/detail uses; keeps
+      // the two apps' recipient emails consistent.
+      const claimedSet = new Set(order.claimedLeafIndexes ?? []);
+      const isClaimed = claimedSet.has(target.leafIndex);
+      const releaseUnix = Number(target.releaseTime);
+      const nowUnix = Math.floor(Date.now() / 1000);
+      const isLocked = !isClaimed && nowUnix < releaseUnix;
+      const amountLabel = formatClaimAmount(target.amount, target.token, network.tokens);
+      let statusLine: string;
+      if (isClaimed) {
+        statusLine = `This payment of ${amountLabel} has already been claimed.`;
+      } else if (isLocked) {
+        statusLine = `Your payment of ${amountLabel} will be claimable from ${formatLocalStampSec(releaseUnix)}.`;
+      } else {
+        statusLine = `Your payment of ${amountLabel} is ready to claim now.`;
+      }
       const body = [
         `Hi,`,
         ``,
-        `Your private payout is ready to claim.`,
+        statusLine,
         ``,
         `Open the link to claim:`,
         url,
