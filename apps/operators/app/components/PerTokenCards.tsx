@@ -8,6 +8,7 @@
 "use client";
 
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import { netAfterPlatformFee } from "../lib/usePlatformFeeBps";
 
 export interface FeeTotal {
   token: string;
@@ -63,30 +64,47 @@ export function VolumeCard({ volume }: { volume: { totals: VolumeTotal[] } | nul
   );
 }
 
-/** Per-token fee revenue (maker + taker + scatterDirect summed). The
- *  count here is "fee rows" — per-side accruals, so a same-relayer
- *  match contributes 2 rows. Labelled that way in the subtitle so it
- *  doesn't get mistaken for a settle count. */
-export function RevenueCard({ fees }: { fees: { totals: FeeTotal[] } | null }) {
-  if (!fees) return <CardPlaceholder title="Revenue" />;
+/** Per-token fee revenue (maker + taker + scatterDirect summed).
+ *  Rows show gross with a secondary "net X" line when
+ *  `platformFeeBps` is known — that's the share the relayer actually
+ *  keeps after `FeeVault.claim()` takes the platform cut. The count
+ *  is "fee rows" (per-side accruals), so a same-relayer match
+ *  contributes 2 rows. */
+export function RevenueCard({
+  fees,
+  platformFeeBps = null,
+}: {
+  fees: { totals: FeeTotal[] } | null;
+  platformFeeBps?: number | null;
+}) {
+  if (!fees) return <CardPlaceholder title="Fee" />;
   const rows = [...fees.totals].sort((a, b) => {
     const ai = safeBig(a.totalWei);
     const bi = safeBig(b.totalWei);
     return ai > bi ? -1 : ai < bi ? 1 : 0;
   });
   const feeRows = rows.reduce((n, r) => n + r.count, 0);
+  const cutLabel =
+    platformFeeBps !== null && platformFeeBps > 0
+      ? ` · net of ${(platformFeeBps / 100).toFixed(2)}% platform fee`
+      : "";
   return (
     <PerTokenCard
-      title="Revenue"
-      subtitle={`fee earned · ${tokenCountLabel(rows.length)}${feeRows > 0 ? ` · ${feeRows} fee row${feeRows === 1 ? "" : "s"}` : ""}`}
+      title="Fee"
+      subtitle={`fee earned · ${tokenCountLabel(rows.length)}${feeRows > 0 ? ` · ${feeRows} fee row${feeRows === 1 ? "" : "s"}` : ""}${cutLabel}`}
       emptyMsg="No fees in this window."
       rows={rows.map((r) => {
         const info = tokenInfo(r.token);
+        const netWei = netAfterPlatformFee(r.totalWei, platformFeeBps);
         return {
           key: r.token,
           token: r.token,
           symbol: info.symbol,
           amount: formatAmount(r.totalWei, info.decimals),
+          secondary:
+            netWei !== null && platformFeeBps !== null && platformFeeBps > 0
+              ? `net ${formatAmount(netWei, info.decimals)}`
+              : undefined,
         };
       })}
     />
@@ -98,6 +116,10 @@ interface PerTokenRow {
   token: string;
   symbol: string;
   amount: string;
+  /** Optional second-line label rendered under the primary amount —
+   *  used to surface the net-after-platform-fee figure without
+   *  taking a whole extra row. */
+  secondary?: string;
 }
 
 function PerTokenCard({
@@ -135,7 +157,14 @@ function PerTokenCard({
                   {r.token}
                 </span>
               </div>
-              <span className="shrink-0 font-mono text-sm font-semibold">{r.amount}</span>
+              <div className="flex shrink-0 flex-col items-end">
+                <span className="font-mono text-sm font-semibold">{r.amount}</span>
+                {r.secondary && (
+                  <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+                    {r.secondary}
+                  </span>
+                )}
+              </div>
             </li>
           ))}
         </ul>
