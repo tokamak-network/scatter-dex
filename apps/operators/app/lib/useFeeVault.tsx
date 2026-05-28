@@ -5,9 +5,11 @@ import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
   loadFeeVaultBalances,
+  loadPendingFeeChange,
   loadPlatformFeeBps,
   unwrapEthersError,
   type FeeVaultBalance,
+  type PendingFeeChange,
 } from "@zkscatter/sdk/relayer";
 import { DEMO_NETWORK } from "./network";
 
@@ -31,6 +33,11 @@ export interface FeeVaultState {
    *  balances are a list with per-row claim buttons). `null` while
    *  the read is in flight or has succeeded. */
   platformFeeError: string | null;
+  /** A scheduled platform-fee change waiting on the timelock; `null`
+   *  when there's no pending change. Surfaces an "fee changing on
+   *  YYYY-MM-DD" banner so the operator knows the rate they see today
+   *  may not match what their next claim() actually pays. */
+  pendingFeeChange: PendingFeeChange | null;
   /** Re-fetch every token balance. Call after a successful claim
    *  so the row drops back to zero without a page reload. */
   refresh: () => void;
@@ -45,6 +52,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [platformFeeBps, setPlatformFeeBps] = useState<number | null>(null);
   const [platformFeeError, setPlatformFeeError] = useState<string | null>(null);
+  const [pendingFeeChange, setPendingFeeChange] = useState<PendingFeeChange | null>(null);
   const [tick, setTick] = useState(0);
   const vaultAddress = DEMO_NETWORK.contracts.feeVault;
   const vaultDeployed = isConfiguredAddress(vaultAddress);
@@ -101,17 +109,24 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
         setPlatformFeeBps(null);
         setPlatformFeeError(unwrapEthersError(e));
       });
+    // Pending change — separate call so a contract that doesn't
+    // expose the timelock fields (old deploy) doesn't take down the
+    // current bps read. Errors here just leave the banner hidden;
+    // the current-bps stat still renders.
+    loadPendingFeeChange(vaultAddress, readProvider)
+      .then((p) => { if (!cancelled) setPendingFeeChange(p); })
+      .catch(() => { if (!cancelled) setPendingFeeChange(null); });
     return () => { cancelled = true; };
   }, [vaultDeployed, vaultAddress, readProvider]);
 
   const value = useMemo<FeeVaultState>(
     () => ({
       account, loading, balances, error, vaultDeployed,
-      platformFeeBps, platformFeeError, refresh,
+      platformFeeBps, platformFeeError, pendingFeeChange, refresh,
     }),
     [
       account, loading, balances, error, vaultDeployed,
-      platformFeeBps, platformFeeError, refresh,
+      platformFeeBps, platformFeeError, pendingFeeChange, refresh,
     ],
   );
   return <FeeVaultCtx.Provider value={value}>{children}</FeeVaultCtx.Provider>;

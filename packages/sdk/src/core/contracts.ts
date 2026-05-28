@@ -141,6 +141,8 @@ export const FEE_VAULT_ABI = [
   "function balances(address relayer, address token) view returns (uint256)",
   "function claim(address token) external",
   "function platformFeeBps() view returns (uint256)",
+  "function pendingFeeBps() view returns (uint256)",
+  "function pendingFeeEffectiveTime() view returns (uint256)",
   "function treasury() view returns (address)",
   "function totalTracked(address token) view returns (uint256)",
   "function platformRevenue(address token) view returns (uint256)",

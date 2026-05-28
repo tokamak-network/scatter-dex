@@ -29,3 +29,23 @@ export function formatRelative(unixMs: number): string {
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   return `${Math.floor(diff / 86_400_000)}d ago`;
 }
+
+/** Render a future unix-ms timestamp as a coarse "in Xs/m/h/d"
+ *  string — the symmetric counterpart to `formatRelative`. Past
+ *  timestamps clamp to "now"; consumers that need to distinguish
+ *  "ready" from "almost ready" should branch on `unixMs <= Date.now()`
+ *  themselves and call this only for the future branch. */
+export function formatRelativeFuture(unixMs: number): string {
+  const diff = Math.max(0, unixMs - Date.now());
+  if (diff === 0) return "now";
+  if (diff < 60_000) return `in ${Math.floor(diff / 1000)}s`;
+  if (diff < 3_600_000) return `in ${Math.floor(diff / 60_000)}m`;
+  if (diff < 86_400_000) {
+    const h = Math.floor(diff / 3_600_000);
+    const m = Math.floor((diff % 3_600_000) / 60_000);
+    return m === 0 ? `in ${h}h` : `in ${h}h ${m}m`;
+  }
+  const d = Math.floor(diff / 86_400_000);
+  const h = Math.floor((diff % 86_400_000) / 3_600_000);
+  return h === 0 ? `in ${d}d` : `in ${d}d ${h}h`;
+}

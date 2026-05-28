@@ -64,9 +64,11 @@ export default function TreasuryPage() {
       <header>
         <h1 className="text-2xl font-semibold">Treasury</h1>
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
-          Multisig treasury operations: per-token platform revenue + withdraw, current fee
-          rate, and pending fee changes governed off the <code className="font-mono">FeeVault</code>{" "}
-          contract.
+          Multisig treasury operations: per-token platform revenue + withdraw, and the
+          <strong> platform fee rate</strong> (the cut the platform skims from every relayer
+          claim — distinct from the per-relayer trading fee each operator sets in{" "}
+          <code className="font-mono">RelayerRegistry</code>). All governed off the{" "}
+          <code className="font-mono">FeeVault</code> contract.
         </p>
       </header>
 
@@ -130,7 +132,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           <Stat
             label="Owner (multisig)"
             value={snap.owner ? shortAddr(snap.owner) : snap.loaded ? "—" : "…"}
-            sub="Holds setTreasury / fee-change rights"
+            sub="Holds platform fee-change rights (treasury swap is cast/forge-only)"
           />
           <Stat
             label="Platform fee"
@@ -150,7 +152,11 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
         snap.pendingFeeEffectiveTime != null &&
         snap.pendingFeeEffectiveTime > 0n && (
           <section>
-            <SectionHeader title="Pending fee change" badge="live" />
+            <SectionHeader
+              title="Pending platform fee change"
+              badge="live"
+              hint="Changes the cut from each relayer claim. Does not affect the per-relayer trading fee."
+            />
             <PendingFeeBanner
               pendingBps={snap.pendingFeeBps}
               effectiveTime={Number(snap.pendingFeeEffectiveTime)}

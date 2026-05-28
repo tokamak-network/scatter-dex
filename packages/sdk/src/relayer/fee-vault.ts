@@ -45,6 +45,32 @@ export async function loadPlatformFeeBps(
   return Number(raw);
 }
 
+/** A scheduled platform-fee change waiting on the timelock. Returns
+ *  `null` when no change is pending (the contract zeros both fields
+ *  once a change is applied or cancelled). `effectiveAt` is the unix
+ *  second when `applyFeeChange()` becomes callable. */
+export interface PendingFeeChange {
+  bps: number;
+  effectiveAt: number;
+}
+
+export async function loadPendingFeeChange(
+  feeVaultAddress: string,
+  provider: ethers.Provider,
+): Promise<PendingFeeChange | null> {
+  const vault = new ethers.Contract(feeVaultAddress, FEE_VAULT_ABI, provider);
+  const [bpsRaw, effRaw] = await Promise.all([
+    vault.pendingFeeBps() as Promise<bigint>,
+    vault.pendingFeeEffectiveTime() as Promise<bigint>,
+  ]);
+  // Contract clears both to 0 when there's no pending change. Treat
+  // `effectiveAt === 0` as the no-pending signal — even bps=0 is a
+  // legitimate scheduled value (the platform removing its cut), and
+  // we shouldn't hide that from the operator.
+  if (effRaw === 0n) return null;
+  return { bps: Number(bpsRaw), effectiveAt: Number(effRaw) };
+}
+
 /** Submit `claim(token)` to pull the operator's accrued balance
  *  for a single token. Reverts with `NothingToClaim` when the
  *  balance is zero — gate the button on a non-zero balance read
