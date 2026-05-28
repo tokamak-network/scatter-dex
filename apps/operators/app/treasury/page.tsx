@@ -13,7 +13,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { WriteResult } from "../components/WriteResult";
 import { DEMO_NETWORK } from "../lib/network";
-import { formatRelative, formatTokenAmount } from "../lib/format";
+import { formatRelative, formatRelativeFuture, formatTokenAmount } from "../lib/format";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { useChainWrite } from "../lib/useChainWrite";
 import { useFeeVault, type FeeVaultState } from "../lib/useFeeVault";
@@ -489,10 +489,18 @@ function computeClaimSplit(
  *  absolute timestamp so the operator can plan against their own
  *  timezone without doing the math. */
 function PendingFeeChangeBanner({ vault }: { vault: FeeVaultState }) {
+  // Gate every time/locale-sensitive computation behind a mount
+  // flag so SSR renders a stable placeholder and the client takes
+  // over after hydration — without this, `Date.now()` /
+  // `toLocaleString()` disagree between server and client and
+  // trip React's hydration mismatch warning.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   const pending = vault.pendingFeeChange;
   if (!pending) return null;
   const effectiveMs = pending.effectiveAt * 1000;
-  const isReady = effectiveMs <= Date.now();
+  const isReady = mounted && effectiveMs <= Date.now();
   const currentBps = vault.platformFeeBps;
   const delta =
     currentBps !== null
@@ -529,10 +537,14 @@ function PendingFeeChangeBanner({ vault }: { vault: FeeVaultState }) {
         </div>
         <div className="text-right text-xs">
           <div className="font-mono text-sm font-semibold">
-            {isReady ? "Ready now" : formatRelative(effectiveMs)}
+            {!mounted
+              ? "…"
+              : isReady
+                ? "Ready now"
+                : formatRelativeFuture(effectiveMs)}
           </div>
           <div className="text-[var(--color-text-muted)]">
-            {new Date(effectiveMs).toLocaleString()}
+            {mounted ? new Date(effectiveMs).toLocaleString() : "…"}
           </div>
         </div>
       </div>
