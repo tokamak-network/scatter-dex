@@ -39,6 +39,23 @@ export function formatClaimAmount(
  *  mounted state so the server emits a placeholder. The dollar
  *  cost is real but tiny (a brief flicker on first paint), the
  *  benefit is users seeing their own clock. */
+
+/** Second-precision local timestamp ("2026-05-28 14:23:05"). Used on
+ *  the `/claim` page where the recipient needs to know the exact
+ *  unlock moment. Mirrors Pay's `formatLocalStampSec` so a claim
+ *  package round-trips with identical copy across both apps. */
+export function formatLocalStampSec(unixSec: number | undefined): string {
+  if (!unixSec) return "";
+  const d = new Date(unixSec * 1000);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+}
+
 export function formatWhen(ts: number): string {
   const d = new Date(ts);
   const base = d.toLocaleString("en-US", {
