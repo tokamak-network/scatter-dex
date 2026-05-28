@@ -62,6 +62,14 @@ export interface AuthorizeOrderRow {
 // trace blows up both.
 const MAX_ERR_LEN = 512;
 
+/** Cap on how many times the push worker will replay a single outbox
+ *  row before giving up. 50 × 30 s default backoff ≈ 25 minutes of
+ *  retries before the row sticks in stats as permanently pending —
+ *  enough to ride out a typical indexer outage without burning DB
+ *  writes on a genuinely broken payload (corrupt JSON, schema-incompat
+ *  push body, etc.). Exposed so the worker test can override. */
+export const MAX_PUSH_ATTEMPTS = 50;
+
 /** Grace period before a terminal authorize_orders row is purged. The
  *  mobile pending-orders poll loop needs to GET /:nullifier and observe
  *  the terminal status (settled / failed / dead_letter / expired /
@@ -333,6 +341,7 @@ export class PrivateOrderDB {
   private selectPendingPushes: ReturnType<Database.Database["prepare"]>;
   private markPushSucceededStmt: ReturnType<Database.Database["prepare"]>;
   private markPushFailedStmt: ReturnType<Database.Database["prepare"]>;
+  private markPushDeadStmt: ReturnType<Database.Database["prepare"]>;
   private countPushOutbox: ReturnType<Database.Database["prepare"]>;
   private prunePushOutboxStmt: ReturnType<Database.Database["prepare"]>;
 
@@ -758,13 +767,19 @@ export class PrivateOrderDB {
         (tx_hash, payload_json, attempts, created_at)
       VALUES (@txHash, @payloadJson, 0, @createdAt)
     `);
-    // Pending = not yet pushed. `last_attempt_at IS NULL OR <= cutoff`
-    // implements a simple backoff window — a row that failed seconds
-    // ago shouldn't immediately get hammered again on the next tick.
+    // Pending = not yet pushed AND under the attempts cap. The cap
+    // stops a permanently rejected payload (corrupt JSON, shared-OB
+    // returning 4xx forever) from cycling through DB writes every
+    // tick — once attempts >= MAX_PUSH_ATTEMPTS the row stays
+    // pending in stats (so the operator sees it) but is no longer
+    // claimed. `last_attempt_at IS NULL OR <= cutoff` implements a
+    // simple backoff window — a row that failed seconds ago
+    // shouldn't get hammered on the next tick.
     this.selectPendingPushes = this.db.prepare(`
       SELECT tx_hash, payload_json, attempts
         FROM settlement_push_outbox
        WHERE pushed_at IS NULL
+         AND attempts < ${MAX_PUSH_ATTEMPTS}
          AND (last_attempt_at IS NULL OR last_attempt_at <= @cutoff)
        ORDER BY created_at ASC
        LIMIT @limit
@@ -784,12 +799,25 @@ export class PrivateOrderDB {
              attempts = attempts + 1
        WHERE tx_hash = @txHash
     `);
+    // Used when a payload is structurally unrecoverable (e.g. corrupt
+    // JSON on disk) and there's no point in re-attempting. Bumps
+    // attempts past the cap in one shot so the row is immediately
+    // excluded from selectPendingPushes; the row stays in the table
+    // so the operator can see it via /push-outbox/stats.
+    this.markPushDeadStmt = this.db.prepare(`
+      UPDATE settlement_push_outbox
+         SET last_attempt_at = @now,
+             last_error = @error,
+             attempts = ${MAX_PUSH_ATTEMPTS}
+       WHERE tx_hash = @txHash
+    `);
     this.countPushOutbox = this.db.prepare(`
       SELECT
-        COUNT(*)                                      AS total,
-        COUNT(*) FILTER (WHERE pushed_at IS NULL)     AS pending,
-        COUNT(*) FILTER (WHERE pushed_at IS NOT NULL) AS pushed,
-        MAX(attempts)                                 AS maxAttempts
+        COUNT(*)                                                                       AS total,
+        COUNT(*) FILTER (WHERE pushed_at IS NULL AND attempts < ${MAX_PUSH_ATTEMPTS})  AS pending,
+        COUNT(*) FILTER (WHERE pushed_at IS NULL AND attempts >= ${MAX_PUSH_ATTEMPTS}) AS dead,
+        COUNT(*) FILTER (WHERE pushed_at IS NOT NULL)                                  AS pushed,
+        MAX(attempts)                                                                  AS maxAttempts
       FROM settlement_push_outbox
     `);
     // Successful pushes are kept for the audit trail / stats endpoint
@@ -1114,13 +1142,9 @@ export class PrivateOrderDB {
       try {
         out.push({ txHash: r.tx_hash, payload: JSON.parse(r.payload_json), attempts: r.attempts });
       } catch {
-        // Corrupt JSON — mark as failed so it doesn't keep tripping
-        // the worker forever, but keep the row for forensics.
-        this.markPushFailedStmt.run({
-          txHash: r.tx_hash,
-          now: Date.now(),
-          error: "payload_json parse failed",
-        });
+        // Corrupt JSON — unrecoverable. Mark dead in one shot so we
+        // don't burn a write every tick for the same broken row.
+        this.markSettlementPushDead(r.tx_hash, "payload_json parse failed");
       }
     }
     return out;
@@ -1143,6 +1167,18 @@ export class PrivateOrderDB {
     });
   }
 
+  /** Mark a row as permanently failed (e.g. corrupt payload, schema
+   *  incompatibility) so the worker stops claiming it. The row stays
+   *  in the table for forensics — visible in /push-outbox/stats as a
+   *  pending row whose attempts is pinned at the cap. */
+  markSettlementPushDead(txHash: string, error: string): void {
+    this.markPushDeadStmt.run({
+      txHash: lowerHex(txHash) as string,
+      now: Date.now(),
+      error: error.slice(0, 500),
+    });
+  }
+
   /** Drop pushed rows older than `olderThanMs` to bound table growth.
    *  Pending rows are never deleted — they're the whole reason the
    *  outbox exists. Returns the number of rows removed. */
@@ -1154,18 +1190,21 @@ export class PrivateOrderDB {
   getSettlementPushOutboxStats(): {
     total: number;
     pending: number;
+    dead: number;
     pushed: number;
     maxAttempts: number;
   } {
     const row = this.countPushOutbox.get({}) as {
       total: number;
       pending: number;
+      dead: number;
       pushed: number;
       maxAttempts: number | null;
     };
     return {
       total: row.total,
       pending: row.pending,
+      dead: row.dead,
       pushed: row.pushed,
       maxAttempts: row.maxAttempts ?? 0,
     };

@@ -8,7 +8,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { rmSync } from "fs";
 import { randomUUID } from "crypto";
-import { PrivateOrderDB } from "./db.js";
+import { MAX_PUSH_ATTEMPTS, PrivateOrderDB } from "./db.js";
 import { SettlementPushWorker } from "./settlement-push-worker.js";
 
 describe("SettlementPushWorker", () => {
@@ -118,6 +118,46 @@ describe("SettlementPushWorker", () => {
     await worker.tick();
     // First tick pushed + then pruned immediately. Outbox is empty.
     expect(db.getSettlementPushOutboxStats()).toMatchObject({ total: 0, pending: 0, pushed: 0 });
+  });
+
+  it("excludes rows past MAX_PUSH_ATTEMPTS from the claim query", async () => {
+    db.enqueueSettlementPush("0x444", { txHash: "0x444" });
+    // Simulate the worker having burnt every retry. The row stays in
+    // the table (visible in stats as `dead`) but no longer gets
+    // claimed by getPendingSettlementPushes.
+    for (let i = 0; i < MAX_PUSH_ATTEMPTS; i++) {
+      db.markSettlementPushFailed("0x444", `attempt ${i}`);
+    }
+    const claimed = db.getPendingSettlementPushes(10, 0);
+    expect(claimed).toHaveLength(0);
+    expect(db.getSettlementPushOutboxStats()).toMatchObject({
+      total: 1,
+      pending: 0,
+      dead: 1,
+      pushed: 0,
+    });
+  });
+
+  it("markSettlementPushDead immediately excludes the row", async () => {
+    db.enqueueSettlementPush("0x555", { txHash: "0x555" });
+    db.markSettlementPushDead("0x555", "schema mismatch");
+    expect(db.getPendingSettlementPushes(10, 0)).toHaveLength(0);
+    expect(db.getSettlementPushOutboxStats()).toMatchObject({ dead: 1, pending: 0 });
+  });
+
+  it("corrupt JSON in the outbox is marked dead, not retried each tick", async () => {
+    db.enqueueSettlementPush("0x666", { txHash: "0x666" });
+    // Surgically corrupt the row's payload to simulate disk bitrot.
+    const raw = (db as unknown as { db: { exec: (sql: string) => void } }).db;
+    raw.exec(`UPDATE settlement_push_outbox SET payload_json = 'not-json' WHERE tx_hash = '0x666'`);
+
+    const pusher = makePusher(async () => true);
+    const worker = new SettlementPushWorker({ db, pusher, retryBackoffMs: 0 });
+
+    await worker.tick();
+    await worker.tick();
+    expect(pusher.pushSettlement).not.toHaveBeenCalled();
+    expect(db.getSettlementPushOutboxStats()).toMatchObject({ dead: 1, pending: 0 });
   });
 
   it("normalises tx_hash casing across enqueue + mark calls", async () => {
