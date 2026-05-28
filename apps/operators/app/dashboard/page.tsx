@@ -21,6 +21,7 @@ import {
   type FeeTotal,
   type VolumeTotal,
 } from "../components/PerTokenCards";
+import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
 type Auth = AdminAuth | null;
 
@@ -409,36 +410,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
         ) : (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
             {recent.slice(0, 10).map((s) => (
-              <div
-                key={s.tx_hash}
-                className="flex items-center justify-between border-b border-[var(--color-border)] px-5 py-4 last:border-b-0"
-              >
-                <div>
-                  <div className="font-medium">
-                    {s.type}{" "}
-                    <span
-                      className={`ml-2 inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${
-                        s.status === "confirmed"
-                          ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
-                          : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
-                      }`}
-                    >
-                      {s.status}
-                    </span>
-                  </div>
-                  <div className="font-mono text-xs text-[var(--color-text-muted)]">
-                    {s.tx_hash}
-                  </div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-sm">
-                    {s.gas_cost_eth ? `${s.gas_cost_eth} ETH` : "—"}
-                  </div>
-                  <div className="text-xs text-[var(--color-text-subtle)]">
-                    {formatRelative(s.created_at)} · block {s.block_number ?? "?"}
-                  </div>
-                </div>
-              </div>
+              <RecentSettlementRow key={s.tx_hash} row={s} />
             ))}
           </div>
         )}
@@ -738,3 +710,63 @@ function HealthCard({
   );
 }
 
+
+/** Single row in the Recent settlements list. Lays out three info
+ *  blocks: type/status + tx, sell-leg volume + per-token fee revenue,
+ *  and gas + timing. Volume falls back to "—" for pre-migration rows
+ *  and shared-OB back-filled rows that have NULL amounts. */
+function RecentSettlementRow({ row }: { row: SettlementRow }) {
+  const sellInfo = row.sell_token ? tokenInfo(row.sell_token) : null;
+  return (
+    <div className="grid grid-cols-12 items-center gap-3 border-b border-[var(--color-border)] px-5 py-4 last:border-b-0">
+      <div className="col-span-5 min-w-0">
+        <div className="font-medium">
+          {row.type}{" "}
+          <span
+            className={`ml-2 inline-flex items-center rounded px-2 py-0.5 text-[10px] font-semibold uppercase ${
+              row.status === "confirmed"
+                ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+                : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+            }`}
+          >
+            {row.status}
+          </span>
+        </div>
+        <div className="truncate font-mono text-xs text-[var(--color-text-muted)]" title={row.tx_hash}>
+          {row.tx_hash}
+        </div>
+      </div>
+      {/* Volume + fee block — the per-tx "what flowed, what we earned"
+          summary. Volume is the sell leg only (= what this relayer's
+          user brought in); fee can have multiple tokens for same-
+          relayer matches that earned in both legs' buyTokens. */}
+      <div className="col-span-4 text-right">
+        <div className="font-mono text-xs">
+          <span className="text-[var(--color-text-subtle)]">vol </span>
+          {row.sell_amount && sellInfo
+            ? `${formatAmount(row.sell_amount, sellInfo.decimals)} ${sellInfo.symbol}`
+            : "—"}
+        </div>
+        <div className="mt-0.5 font-mono text-xs">
+          <span className="text-[var(--color-text-subtle)]">fee </span>
+          {row.fees.length === 0
+            ? "—"
+            : row.fees
+                .map((f) => {
+                  const fi = tokenInfo(f.token);
+                  return `${formatAmount(f.amountWei, fi.decimals)} ${fi.symbol}`;
+                })
+                .join(" + ")}
+        </div>
+      </div>
+      <div className="col-span-3 text-right">
+        <div className="font-mono text-sm">
+          {row.gas_cost_eth ? `${row.gas_cost_eth} ETH` : "—"}
+        </div>
+        <div className="text-xs text-[var(--color-text-subtle)]">
+          {formatRelative(row.created_at)} · block {row.block_number ?? "?"}
+        </div>
+      </div>
+    </div>
+  );
+}
