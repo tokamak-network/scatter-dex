@@ -27,6 +27,7 @@ import { useWallet } from "@zkscatter/sdk/react";
 import {
   loadOperatorRow,
   RelayerClient,
+  fetchRelayerStatsFromSharedOrderbook,
   unwrapEthersError,
   type OperatorRow,
   type RelayerApiInfo,
@@ -40,6 +41,11 @@ import { safeOperatorUrl } from "../lib/operatorDisplay";
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
+// Shared-OB indexer URL — when set, the detail page sources
+// volume/revenue from the network indexer (matches leaderboard).
+// Falls back to the peer's /api/relayer/stats when unset OR when
+// the shared-OB query fails (older deployments without an indexer).
+const SHARED_OB_URL = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL;
 
 interface PageState {
   loading: boolean;
@@ -117,18 +123,41 @@ function RelayerDetailBody() {
         let online = false;
         if (row.url) {
           const client = new RelayerClient(row.url, { timeoutMs: 4000 });
-          // Run info + stats in parallel; either can fail
-          // independently (older builds return 404 on /api/relayer/stats
-          // while /api/info still works).
-          const [infoR, statsR] = await Promise.allSettled([
+          // info from the peer (live /api/info probe — only the peer
+          // itself can answer "am I up right now"), stats from the
+          // shared-OB indexer when configured so the detail page
+          // matches the leaderboard's totals. Falling back to the
+          // peer's /api/relayer/stats keeps the page working in
+          // environments without a shared OB (older deployments).
+          const [infoR, sharedStats] = await Promise.allSettled([
             client.getInfo(),
-            client.getStats(),
+            SHARED_OB_URL
+              ? fetchRelayerStatsFromSharedOrderbook(SHARED_OB_URL, targetAddress, 4000)
+              : Promise.resolve(null),
           ]);
           if (infoR.status === "fulfilled") {
             online = true;
             api = infoR.value;
           }
-          stats = statsR.status === "fulfilled" ? statsR.value : null;
+          // Prefer shared-OB ONLY when it has data for THIS relayer
+          // — a registered relayer with rows in its own local DB but
+          // none in shared-OB (e.g. pre-push-hook history, or its
+          // settles haven't been indexed yet) would otherwise show
+          // an all-zero card while /api/relayer/stats on the peer
+          // can still see the data. `txCount === 0` is the same
+          // "no rows for this address" condition fetchRelayerStats…
+          // uses internally for its single-relayer aggregate.
+          const sharedOk = sharedStats.status === "fulfilled" ? sharedStats.value : null;
+          if (sharedOk && sharedOk.settledOrders > 0) {
+            stats = sharedOk;
+          } else {
+            const peerStats = await client.getStats().catch(() => null);
+            // Final fallback: if peer is also empty, surface whatever
+            // shared-OB gave (zeros, with a valid shape) so the page
+            // still renders its "Performance" / "Routed volume" cards
+            // instead of leaving them empty.
+            stats = peerStats ?? sharedOk;
+          }
         }
         if (cancelled) return;
         setState({

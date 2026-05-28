@@ -94,6 +94,14 @@ export interface SettlePushContext {
   buyToken?: string;
   sellAmount?: string;
   buyAmount?: string;
+  /** True for scatterDirectAuth (Pay-style same-token scatter): there
+   *  is only one party, so the indexer row should store
+   *  `taker_relayer = NULL` instead of defaulting to the submitter.
+   *  The wrapper in index.ts inspects this flag — without it, the
+   *  ?? fallback would write `takerRelayer = makerRelayer` and
+   *  inflate per-relayer attribution under joins keyed on that
+   *  column. */
+  singleParty?: boolean;
 }
 export type SettlementPusher = (ctx: SettlePushContext) => void | Promise<unknown>;
 
@@ -383,23 +391,42 @@ export class AuthorizeSubmitter {
       // a DB failure here must not reject after the on-chain tx
       // already succeeded.
       try {
-        const sellToken = publicSignalToAddress(makerPs.sellToken);
-        const buyToken = publicSignalToAddress(makerPs.buyToken);
+        // Sell-only per-relayer attribution: each settlement_history
+        // row represents ONE local order's sell-leg. settlement_history
+        // is `INSERT OR IGNORE` on tx_hash (the prepared stmt at
+        // db.ts:624) — a second insert with the same txHash silently
+        // no-ops — so we can write ONLY one row per tx here. The
+        // canonical authoritative source for both legs of a same-
+        // relayer match is the shared-OB indexer (one row, both
+        // maker+taker relayers = us), which the SDK aggregator
+        // resolves into per-leg totals via buildAllStatsFromSharedOb.
+        // The local DB only needs the submitter-side row + per-side
+        // fee_history accruals (fee_history has no UNIQUE on tx_hash,
+        // so taker-side fees DO persist for local revenue reads).
+        const makerSellToken = publicSignalToAddress(makerPs.sellToken);
+        const makerBuyToken = publicSignalToAddress(makerPs.buyToken);
+        const takerBuyToken = publicSignalToAddress(takerPs.buyToken);
+        const isCrossRelayer = Boolean(pushExtras?.takerRelayer);
         this.db?.recordSettlementEvent({
           txHash,
           type: "settleAuth",
           status: "confirmed",
           blockNumber: receipt.blockNumber,
           gasCostEth: gasCheck.gasCostEth,
-          sellToken,
-          buyToken,
+          sellToken: makerSellToken,
           sellAmount: BigInt(makerPs.sellAmount).toString(),
-          buyAmount: BigInt(makerPs.buyAmount).toString(),
           durationMs: Date.now() - authSettleStart,
-          fees: [
-            { side: "maker", token: buyToken, amountWei: feeTokenMaker.toString() },
-            { side: "taker", token: sellToken, amountWei: feeTokenTaker.toString() },
-          ],
+          // Cross-relayer: only maker fee accrues to this submitter
+          // (the counterparty peer records its own taker fee in its
+          // own fee_history via the cross-matcher counterparty path).
+          // Single-relayer: both fees flowed to us, so persist both —
+          // fee_history has no UNIQUE on tx_hash, so both inserts land.
+          fees: isCrossRelayer
+            ? [{ side: "maker", token: makerBuyToken, amountWei: feeTokenMaker.toString() }]
+            : [
+                { side: "maker", token: makerBuyToken, amountWei: feeTokenMaker.toString() },
+                { side: "taker", token: takerBuyToken, amountWei: feeTokenTaker.toString() },
+              ],
         });
       } catch (e) {
         log.warn("settleAuth history persist failed", {
@@ -507,12 +534,15 @@ export class AuthorizeSubmitter {
           durationMs: Date.now() - scatterStart,
           sellToken,
           buyToken: sellToken,
-          // Same-token scatter: both legs are the same amount in the
-          // same token. Record both so the volume aggregate's UNION ALL
-          // still gets a row, instead of silently dropping these from
-          // throughput numbers.
-          sellAmount: BigInt(ps.sellAmount).toString(),
-          buyAmount: BigInt(ps.sellAmount).toString(),
+          // Same-token scatter: record the principal (`totalLocked`),
+          // NOT `ps.sellAmount` — the latter is gross (= principal + fee).
+          // Storing gross double-counts the fee in throughput: the
+          // operator leaderboard sums sell_amount AND separately sums
+          // fee_history.amount_wei into "Revenue", so the fee appears
+          // in both columns. `totalLocked` is the actual amount the
+          // user scattered to recipients.
+          sellAmount: totalLocked.toString(),
+          buyAmount: totalLocked.toString(),
           fees: [
             { side: "scatterDirect", token: sellToken, amountWei: fee.toString() },
           ],
@@ -532,6 +562,31 @@ export class AuthorizeSubmitter {
       // I/O error doesn't reject after a successful tx.
       this.persistSettledClaimsRoot(params.proof.claimsRoot, "scatterDirectAuth", txHash);
       log.info("scatterDirectAuth tx", { txHash });
+
+      // Push to shared-OB indexer so the network-wide operator
+      // leaderboard sees Pay scatters too. Single-party invariant
+      // (only one signer/order/nullifier) → takerRelayer=NULL via
+      // `singleParty: true`, taker nullifier mirrors maker, taker fee
+      // & maxFee are zero. Same fire-and-forget pattern as settleAuth
+      // — shared-OB down ≠ settle failure.
+      if (this.settlementPusher) {
+        const scatterToken = publicSignalToAddress(ps.sellToken);
+        this.firePush({
+          txHash,
+          blockNumber: receipt.blockNumber,
+          makerNullifier: ps.nullifier,
+          takerNullifier: ps.nullifier,
+          feeMaker: fee.toString(),
+          feeTaker: "0",
+          userMaxFeeMaker: Number(ps.maxFee),
+          userMaxFeeTaker: 0,
+          sellToken: scatterToken,
+          buyToken: scatterToken,
+          sellAmount: totalLocked.toString(),
+          buyAmount: totalLocked.toString(),
+          singleParty: true,
+        });
+      }
       return txHash;
     });
   }

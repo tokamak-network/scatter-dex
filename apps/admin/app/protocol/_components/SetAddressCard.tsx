@@ -26,6 +26,11 @@ interface Props {
   submitLabel?: string;
   /** Allow the zero address (e.g. setSanctionsList(0) → disable). */
   allowZeroAddress?: boolean;
+  /** Render the current value as a prominent full-address header
+   *  before the form (in addition to hiding the inline short form
+   *  inside the form). Use when the admin needs to copy / visually
+   *  verify the address before swapping. */
+  showFullAddressHeader?: { label: string };
 }
 
 /** Generic admin write surface: read a single-address slot from a
@@ -42,6 +47,7 @@ export function SetAddressCard({
   setterFn,
   submitLabel,
   allowZeroAddress,
+  showFullAddressHeader,
 }: Props) {
   const { signer, readProvider } = useWallet();
   const [current, setCurrent] = useState<string | null>(null);
@@ -75,33 +81,53 @@ export function SetAddressCard({
   }, [signer, valid, contractAddress, contractAbi, setterFn, trimmed]);
 
   return (
-    <AdminWriteCard
-      title={title}
-      description={description}
-      submitLabel={submitLabel ?? "Update"}
-      disabled={!valid}
-      onSubmit={submit}
-      onSuccess={() => {
-        setInput("");
-        setReloadKey((k) => k + 1);
-      }}
-    >
-      <div className="text-xs text-[var(--color-text-muted)]">
-        {readerLabel ?? "Current"}:{" "}
-        <strong className="font-mono">{current ? shortAddr(current) : "…"}</strong>
-      </div>
-      <label className="block text-xs">
-        <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
-          New address {allowZeroAddress && "(0x0 disables)"}
-        </span>
-        <input
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
-          placeholder="0x…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-      </label>
-    </AdminWriteCard>
+    <>
+      {showFullAddressHeader && (
+        <div className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+            {showFullAddressHeader.label}
+          </div>
+          {current === null ? (
+            <div className="text-xs text-[var(--color-text-muted)]">Reading…</div>
+          ) : (
+            <div className="break-all font-mono text-sm text-[var(--color-text)]">
+              {current}
+            </div>
+          )}
+        </div>
+      )}
+      <AdminWriteCard
+        title={title}
+        description={description}
+        submitLabel={submitLabel ?? "Update"}
+        disabled={!valid}
+        onSubmit={submit}
+        onSuccess={() => {
+          setInput("");
+          setReloadKey((k) => k + 1);
+        }}
+      >
+        {!showFullAddressHeader && (
+          <div className="text-xs text-[var(--color-text-muted)]">
+            {readerLabel ?? "Current"}:{" "}
+            <strong className="font-mono">
+              {current ? shortAddr(current) : "…"}
+            </strong>
+          </div>
+        )}
+        <label className="block text-xs">
+          <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
+            New address {allowZeroAddress && "(0x0 disables)"}
+          </span>
+          <input
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
+            placeholder="0x…"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+          />
+        </label>
+      </AdminWriteCard>
+    </>
   );
 }
 

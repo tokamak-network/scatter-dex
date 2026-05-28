@@ -19,10 +19,13 @@ export default function ProtocolIdentityUserPage() {
       envHint="NEXT_PUBLIC_IDENTITY_GATE_ADDRESS"
     >
       <p className="mb-3 text-xs text-[var(--color-text-muted)]">
-        Aggregates multiple zk-X509 IdentityRegistry contracts (one per CA) using
-        OR-combine. <code className="font-mono">CommitmentPool.deposit()</code> and{" "}
-        <code className="font-mono">PrivateSettlement</code> read this when verifying
-        users. Add a registry to trust it; remove to stop.
+        These zk-X509 CAs authenticate <strong>Pay and Pro end users</strong> — the
+        registry list below gates every <code className="font-mono">CommitmentPool.deposit()</code>{" "}
+        and <code className="font-mono">PrivateSettlement</code> call by checking each
+        sender against the trusted set. Multiple CAs are OR-combined: a user verified by
+        any one registry passes the gate. Add a registry to trust it; remove to stop.
+        Operator (relayer) authentication is configured separately on the{" "}
+        <strong>Identity (relayer)</strong> tab.
       </p>
       <IdentityGatePanel address={c.identityGate} />
     </ContractSection>

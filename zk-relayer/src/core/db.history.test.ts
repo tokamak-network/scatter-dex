@@ -497,20 +497,21 @@ describe("PrivateOrderDB settlement history", () => {
     expect(stats.avgSettleTimeMs).toBe(1500);
     expect(stats.uptimeSince).toBe(1700000000000);
     // Sanity-check the volume aggregate works on this fixture too —
-    // guards against re-introducing non-hex token strings here. Two
-    // entries: TOKEN_SELL (sell leg) and TOKEN_BUY (buy leg of the
-    // same cross-token settleAuth).
-    expect(db.getSettledVolume()).toHaveLength(2);
+    // guards against re-introducing non-hex token strings here.
+    // Sell-only attribution: 1 entry per distinct sell_token across
+    // confirmed rows. Both fixtures sell TOKEN_SELL, so just 1 group.
+    expect(db.getSettledVolume()).toHaveLength(1);
   });
 
-  it("getSettledVolume groups by sell_token across confirmed settleAuth fills", () => {
+  it("getSettledVolume groups by sell_token across confirmed settleAuth fills (sell-only)", () => {
     const TOKEN_1 = "0x" + "11".repeat(20);
     const TOKEN_2 = "0x" + "22".repeat(20);
     const ADDR_X = "0x" + "33".repeat(20);
-    // Two TOKEN_1→ADDR_X settles, one TOKEN_2→ADDR_X settle. Each
-    // contributes to BOTH tokens since settleAuth is cross-token;
-    // the test isolates the sell-side group counts by giving
-    // distinct sell tokens but a shared buy token.
+    // Sell-only per-relayer attribution: each settlement_history row
+    // contributes its sell-leg only. The buy_token is recorded for
+    // analytics/audit but is NOT summed into per-token Throughput —
+    // the counterparty relayer (or, for single-relayer matches, a
+    // second row in this DB) records the other side's sell-leg.
     db.recordSettlementEvent({
       txHash: "0x" + "a".repeat(64), type: "settleAuth", status: "confirmed",
       blockNumber: 1, sellToken: TOKEN_1, buyToken: ADDR_X,
@@ -536,18 +537,20 @@ describe("PrivateOrderDB settlement history", () => {
     const byToken = Object.fromEntries(volume.map((v) => [v.sellToken, v.count]));
     expect(byToken[TOKEN_1]).toBe(2);  // 2 sell-leg fills on TOKEN_1
     expect(byToken[TOKEN_2]).toBe(1);  // 1 sell-leg fill on TOKEN_2
-    expect(byToken[ADDR_X]).toBe(3);   // 3 buy-leg fills, all on ADDR_X
-    expect(volume).toHaveLength(3);
+    expect(byToken[ADDR_X]).toBeUndefined();  // buy leg NOT aggregated under sell-only model
+    expect(volume).toHaveLength(2);
   });
 
-  it("getSettledVolume counts both legs for settleAuth, sell leg only for scatterDirectAuth", () => {
-    // settleAuth moves two different tokens — sell-token leaves the
-    // pool, buy-token enters — so the per-token throughput is the sum
-    // of both legs. scatterDirectAuth is a single-token Pay payout
-    // (sell_token == buy_token, sell_amount == buy_amount): UNION-ing
-    // both legs there doubles a single payout (PR #837 regression
-    // surfaced when an 11_200 USDC scatter rendered as 22_467.5 USDC
-    // on the operator leaderboard).
+  it("getSettledVolume sums sell-leg only — buy-leg never adds to the same relayer's throughput", () => {
+    // Sell-only per-relayer attribution: each row contributes its
+    // sell_token+sell_amount. The buy leg is the counterparty's
+    // movement, accrued under that party's row (cross-relayer: in
+    // the peer's DB via the counterparty path; single-relayer: as a
+    // second row in this DB written by the submitter for the taker
+    // side). This avoids the old UNION-ed-buy-leg double count
+    // where a 4_500 USDC / 1 WETH settle inflated USDC volume by
+    // counting USDC twice, and a same-token 11_200 USDC scatter
+    // inflated by 2× (PR #837 regression).
     const USDC = "0x" + "11".repeat(20);
     const WETH = "0x" + "22".repeat(20);
     db.recordSettlementEvent({
@@ -562,13 +565,14 @@ describe("PrivateOrderDB settlement history", () => {
     });
     const volume = db.getSettledVolume();
     const byToken = Object.fromEntries(volume.map((v) => [v.sellToken, v]));
-    // USDC: 4_500 from settleAuth sell + 11_200 from scatter sell = 15_700.
-    // The scatter's buy leg (also USDC) must NOT add another 11_200.
+    // USDC: 4_500 (settleAuth sell) + 11_200 (scatter sell) = 15_700.
+    // Neither row's buy leg (WETH on settleAuth, USDC on scatter) adds.
     expect(byToken[USDC].totalVolume).toBe("15700000000");
     expect(byToken[USDC].count).toBe(2);
-    // WETH: 1e18 from settleAuth buy leg only.
-    expect(byToken[WETH].totalVolume).toBe("1000000000000000000");
-    expect(byToken[WETH].count).toBe(1);
+    // WETH not present — it was only a buy-leg here, never a sell-leg
+    // in this DB. (The peer that holds the matched ETH-sell order
+    // would record the WETH sell row in its own DB.)
+    expect(byToken[WETH]).toBeUndefined();
   });
 
   it("counterparty rows count toward volume/fills the same as submitter rows", () => {
@@ -589,8 +593,14 @@ describe("PrivateOrderDB settlement history", () => {
     });
     const volume = db.getSettledVolume();
     const byToken = Object.fromEntries(volume.map((v) => [v.sellToken, v]));
+    // Counterparty rows still aggregate the same as submitter rows
+    // — what's recorded as `sell_token`/`sell_amount` is the LOCAL
+    // order's sell-leg (the relayer's own user's commitment), which
+    // belongs in this DB's throughput. The buy_token (the
+    // counterparty's sell-leg, recorded under that party's row in
+    // the peer's DB) does NOT add a phantom entry here.
     expect(byToken[TOKEN_X]).toMatchObject({ count: 1, totalVolume: "1000" });
-    expect(byToken[TOKEN_Y]).toMatchObject({ count: 1, totalVolume: "2000" });
+    expect(byToken[TOKEN_Y]).toBeUndefined();
   });
 });
 

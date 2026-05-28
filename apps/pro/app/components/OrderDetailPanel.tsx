@@ -254,8 +254,29 @@ function TradeHeroCard({
     const buySym = order.side === "sell" ? quote : base;
     const sizeN = Number(order.size.replace(/,/g, ""));
     const priceN = Number(order.price.replace(/,/g, ""));
-    const sellAmt = order.side === "sell" ? sizeN : sizeN * priceN;
-    const grossBuy = order.side === "sell" ? sizeN * priceN : sizeN;
+    // Prefer the SIGNED amounts (publicSignals) when present — they
+    // are the authoritative values on-chain matches enforce against.
+    // Recomputing from `size × price` rounds the price to its display
+    // precision (e.g. 1/3000 → 0.000333 → 0.999 instead of 1.000) and
+    // makes the "TRADE TOTAL" mismatch the actual settle on every
+    // tight-decimal pair. Take-order paths copy the maker's exact
+    // wei amounts; standalone orders may show signed values that
+    // differ from the truncated display price by one ULP. Fall back
+    // to `size × price` only for pre-sign drafts that haven't been
+    // submitted yet (no signedBuyWei).
+    const sellToken = tokens.find((t) => t.symbol === sellSym);
+    const buyTokenForSize = tokens.find((t) => t.symbol === buySym);
+    const weiToNumber = (wei: bigint | undefined, dec: number | undefined): number | null => {
+      if (wei === undefined || dec === undefined) return null;
+      const denom = 10n ** BigInt(dec);
+      const whole = Number(wei / denom);
+      const frac = Number(wei % denom) / Number(denom);
+      return whole + frac;
+    };
+    const signedSell = weiToNumber(order.signedSellWei, sellToken?.decimals);
+    const signedBuy = weiToNumber(order.signedBuyWei, buyTokenForSize?.decimals);
+    const sellAmt = signedSell ?? (order.side === "sell" ? sizeN : sizeN * priceN);
+    const grossBuy = signedBuy ?? (order.side === "sell" ? sizeN * priceN : sizeN);
     const feeBps = order.relayer?.feeBps ?? 0;
     const feeAmt = grossBuy * (feeBps / 10_000);
     const netBuy = grossBuy - feeAmt;
@@ -267,10 +288,11 @@ function TradeHeroCard({
     //   (a) legacy orders where only `claim[0]` was persisted, and
     //   (b) any future drift between the prover input and the stored
     //       record.
-    const buyToken = tokens.find((t) => t.symbol === buySym);
+    // Reuse the buy-token lookup we already did for the signed amount
+    // decode above — same symbol, same row.
     let recipientsSum: number | null = null;
-    if (buyToken && order.claims) {
-      const denom = 10n ** BigInt(buyToken.decimals);
+    if (buyTokenForSize && order.claims) {
+      const denom = 10n ** BigInt(buyTokenForSize.decimals);
       const denomN = Number(denom);
       recipientsSum = order.claims.reduce((acc, c) => {
         const whole = Number(c.amount / denom);

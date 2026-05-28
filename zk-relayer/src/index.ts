@@ -185,12 +185,24 @@ async function main() {
     authSubmitter.setSettlementPusher((ctx) => {
       // makerRelayer is always us when we're the settling relayer;
       // takerRelayer is filled by the cross-relayer matcher when the
-      // counterparty came from a different relayer.
+      // counterparty came from a different relayer. For
+      // scatterDirectAuth (Pay), `singleParty` is set so we write
+      // `taker_relayer = NULL` rather than defaulting it to ourAddr —
+      // a self-self pair would falsely look like a same-relayer
+      // match in the shared-OB leaderboard joins.
+      //
+      // Destructure `singleParty` out of the spread so the flag
+      // doesn't leak into the wire payload — it's a transport-side
+      // signal for THIS wrapper to consume, not a field the shared-OB
+      // schema knows about. shared-OB currently ignores unknown
+      // fields, but a future strict-schema bump would 400 the push.
+      const { singleParty, ...rest } = ctx;
       const ourAddr = authSubmitter.getAddress().toLowerCase();
+      const takerRelayer = singleParty ? undefined : (ctx.takerRelayer ?? ourAddr);
       sharedClient!.pushSettlement({
-        ...ctx,
+        ...rest,
         makerRelayer: ourAddr,
-        takerRelayer: ctx.takerRelayer ?? ourAddr,
+        takerRelayer,
       });
     });
 
