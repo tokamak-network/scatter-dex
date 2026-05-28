@@ -141,6 +141,21 @@ export async function loadRelayersWithSharedOrderbookStats(
   );
 }
 
+/** Fetch + build per-relayer stats from the shared orderbook for ONE
+ *  address. Used by the relayer detail page so its numbers don't
+ *  drift from the leaderboard (which already reads from shared-OB).
+ *  Returns null on fetch failure so the caller can fall back to the
+ *  peer's local /api/relayer/stats. */
+export async function fetchRelayerStatsFromSharedOrderbook(
+  sharedOrderbookUrl: string,
+  address: string,
+  timeoutMs = 3_000,
+): Promise<RelayerStatsResponse | null> {
+  const rows = await fetchAllSettlements(sharedOrderbookUrl, timeoutMs);
+  if (rows.length === 0) return null;
+  return buildStatsFromSharedOb(address, rows);
+}
+
 async function fetchAllSettlements(
   sharedOrderbookUrl: string,
   timeoutMs: number,

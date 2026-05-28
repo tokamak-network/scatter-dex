@@ -1136,7 +1136,15 @@ function RelayerNameCell({ row, isMe }: { row: RankedRelayer; isMe: boolean }) {
         <Link
           // Query-param route — see relayer/page.tsx and the
           // `output: "export"` convention note in next.config.ts.
+          // `target=_blank` so the operator can keep the
+          // leaderboard open while drilling into one relayer (the
+          // common "compare two relayers" workflow). `rel` blocks
+          // window.opener access from the new tab (security
+          // hygiene; the destination is a sibling page but the
+          // pattern is cheap insurance).
           href={`/relayer?address=${row.address}`}
+          target="_blank"
+          rel="noopener noreferrer"
           className="font-medium text-[var(--color-text)] hover:text-[var(--color-primary)] hover:underline"
         >
           {row.displayName}
