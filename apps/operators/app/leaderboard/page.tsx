@@ -7,6 +7,7 @@ import { isConfiguredAddress } from "@zkscatter/sdk";
 import { LiveFreshness, shortAddr, useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
 import {
   loadRelayersWithApiInfo,
+  loadRelayersWithSharedOrderbookStats,
   unwrapEthersError,
   type RelayerInfo,
 } from "@zkscatter/sdk/relayer";
@@ -18,6 +19,11 @@ import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStat
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
+// Shared-OB indexer URL — when set, leaderboard stats come from the
+// network-wide settlements indexer (durable across relayer DB
+// resets, sell-only attribution, fees split per maker/taker leg).
+// Falls back to per-peer `/api/relayer/stats` when unset.
+const SHARED_OB_URL = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL;
 
 interface LeaderboardState {
   loading: boolean;
@@ -147,7 +153,10 @@ export default function LeaderboardPage() {
     }
     let cancelled = false;
     setState((s) => ({ ...s, loading: true, error: null }));
-    loadRelayersWithApiInfo(REGISTRY, readProvider, { withStats: true })
+    const loader = SHARED_OB_URL
+      ? loadRelayersWithSharedOrderbookStats(REGISTRY, readProvider, SHARED_OB_URL)
+      : loadRelayersWithApiInfo(REGISTRY, readProvider, { withStats: true });
+    loader
       .then((rows) => {
         if (cancelled) return;
         setState({ loading: false, rows, error: null });

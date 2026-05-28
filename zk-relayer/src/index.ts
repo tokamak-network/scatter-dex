@@ -185,12 +185,19 @@ async function main() {
     authSubmitter.setSettlementPusher((ctx) => {
       // makerRelayer is always us when we're the settling relayer;
       // takerRelayer is filled by the cross-relayer matcher when the
-      // counterparty came from a different relayer.
+      // counterparty came from a different relayer. For
+      // scatterDirectAuth (Pay), `singleParty` is set so we write
+      // `taker_relayer = NULL` rather than defaulting it to ourAddr —
+      // a self-self pair would falsely look like a same-relayer
+      // match in the shared-OB leaderboard joins.
       const ourAddr = authSubmitter.getAddress().toLowerCase();
+      const takerRelayer = ctx.singleParty
+        ? undefined
+        : (ctx.takerRelayer ?? ourAddr);
       sharedClient!.pushSettlement({
         ...ctx,
         makerRelayer: ourAddr,
-        takerRelayer: ctx.takerRelayer ?? ourAddr,
+        takerRelayer,
       });
     });
 

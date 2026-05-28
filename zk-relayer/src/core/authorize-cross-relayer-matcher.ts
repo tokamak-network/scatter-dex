@@ -11,6 +11,7 @@ import {
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
+import { computeSideFee } from "./fees.js";
 import { publicSignalToAddress } from "../types/authorize-order.js";
 import { decPubKeyCount, nullifierToOfferHandle } from "../routes/authorize-orders.js";
 import { eqAddr } from "../lib/address.js";
@@ -49,6 +50,17 @@ export interface AuthorizeTradeOfferResponse {
   status: "settled" | "rejected" | "error";
   txHash?: string;
   reason?: string;
+  /** Taker-side fee accrued on-chain (decimal-wei, denominated in
+   *  takerBuyToken). On-chain the fee goes to the submitter address,
+   *  but the counterparty relayer (which originated the taker order)
+   *  records this in its own fee_history for leaderboard parity —
+   *  otherwise the relayer that brought half the trade shows zero
+   *  Revenue. Off-chain accounting only; no on-chain split. */
+  takerFee?: string;
+  /** Token address (lowercased 0x…) the takerFee is denominated in
+   *  — the taker's buyToken. Carried explicitly so the counterparty
+   *  doesn't need to re-derive it from publicSignals. */
+  takerFeeToken?: string;
 }
 
 export type OrderSettledCallback = (nullifier: string, txHash: string) => void;
@@ -137,10 +149,13 @@ export class AuthorizeCrossRelayerMatchService {
           this.onSettled?.(nullifier, result.txHash);
 
           // Record the counterparty side locally so the leaderboard
-          // reflects our participation in this match. The peer
-          // submitted on-chain (gas + submit-side fee accrued to
-          // them); we only persist our own leg amounts and no fee
-          // rows, so Revenue stays correctly attributed. Wrapped in
+          // reflects our participation. Sell-only: we record our
+          // taker's sell-leg (network-wide pairs with the peer's
+          // maker-leg row → exactly one row per side per trade, no
+          // double count). Fee is off-chain accounting: on-chain
+          // the taker fee went to the submitter peer, but we record
+          // it in our own fee_history so the relayer that brought
+          // the taker order doesn't show Revenue: 0. Wrapped in
           // try/catch so a DB hiccup here can't unwind the
           // already-confirmed on-chain settle.
           try {
@@ -148,15 +163,24 @@ export class AuthorizeCrossRelayerMatchService {
             // convert to 0x-hex addresses to match the shape every
             // other recordSettlementEvent caller writes (and what
             // lowerHex / the analytics query expect).
+            const takerFees =
+              result.takerFee && result.takerFeeToken
+                ? [
+                    {
+                      side: "taker" as const,
+                      token: result.takerFeeToken,
+                      amountWei: result.takerFee,
+                    },
+                  ]
+                : undefined;
             this.db?.recordSettlementEvent({
               txHash: result.txHash,
               type: "settleAuth",
               status: "confirmed",
               sellToken: publicSignalToAddress(ps.sellToken),
-              buyToken: publicSignalToAddress(ps.buyToken),
               sellAmount: BigInt(ps.sellAmount).toString(),
-              buyAmount: BigInt(ps.buyAmount).toString(),
               counterparty: true,
+              fees: takerFees,
             });
           } catch (e) {
             log.warn("Failed to persist counterparty settle row", {
@@ -337,6 +361,21 @@ export class AuthorizeCrossRelayerMatchService {
         makerOrderId: nullifierToOfferHandle(mapKey),
         takerRelayer: senderAddress.toLowerCase(),
       });
+      // Compute the taker-side fee with the same formula
+      // `submitAuthSettle` used (computeSideFee on taker.buyAmount ×
+      // signed maxFee × chosen relayerFee). Returned to the
+      // counterparty in AuthorizeTradeOfferResponse so its
+      // leaderboard "Revenue" credits it for the order it brought
+      // — without this, every cross-relayer match shows the
+      // counterparty's Revenue as zero.
+      const takerFee = computeSideFee(
+        takerOrder.publicSignals.buyAmount,
+        takerOrder.publicSignals.maxFee,
+        relayerFee,
+      );
+      const takerFeeToken = publicSignalToAddress(
+        takerOrder.publicSignals.buyToken,
+      );
 
       makerStored.status = "settled";
       makerStored.settleTxHash = txHash;
@@ -358,7 +397,12 @@ export class AuthorizeCrossRelayerMatchService {
         takerFrom: senderAddress,
         tx: txHash,
       });
-      return { status: "settled", txHash };
+      return {
+        status: "settled",
+        txHash,
+        takerFee: takerFee.toString(),
+        takerFeeToken,
+      };
     } catch (err) {
       // Don't leave the maker stuck in "matched" — restore the captured
       // prior live-queue status in both memory AND the DB so the local

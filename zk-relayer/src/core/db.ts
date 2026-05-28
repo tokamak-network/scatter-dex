@@ -443,42 +443,31 @@ export class PrivateOrderDB {
     // BigInt-safe — SUM() would coerce to JS number and lose
     // precision for >2^53 totals (16 WETH at 18 decimals overflows).
     //
-    // Each cross-token settlement contributes to BOTH tokens'
-    // throughput: the sell-token sees `sell_amount` leave the pool,
-    // the buy-token sees `buy_amount` come in. The prior sell-only
-    // shape reported `USDC totalVolume: 0` on every ETH→USDC settle
-    // even though 4500 USDC actually moved.
+    // Sell-only per-relayer attribution: each settlement_history row
+    // represents ONE local order's sell-leg. A cross-token swap is
+    // recorded as TWO rows when both orders are local to this relayer
+    // (one per side, each with its own sellToken/sellAmount), or as
+    // ONE row when the counterparty relayer owns the other side
+    // (that peer records its own sell-leg in its own DB). Either way,
+    // network-wide each side of each trade is counted exactly once —
+    // no double-count. See `authorize-submitter.ts:submitAuthSettle`
+    // for the writer-side rule, and `authorize-cross-relayer-matcher.ts`
+    // counterparty path for the cross-relayer half.
     //
-    // The buy leg is gated on `type = 'settleAuth'` because
-    // `scatterDirectAuth` (Pay-style single-token scatter) records
-    // sell_token == buy_token + sell_amount == buy_amount on the
-    // same row — UNION-ing both legs there double-counts a single
-    // payout (e.g. a 11_200 USDC scatter rendered as 22_467.5 USDC
-    // on the operator leaderboard). settleAuth is the only type
-    // whose buy leg is genuinely a separate token movement worth
-    // adding. GROUP_CONCAT keeps the SQL BigInt-safe — SUM() would
-    // coerce to JS number and lose precision for >2^53 totals.
-    // Outer column is aliased `sell_token` (not `token`) for backward
-    // compatibility with the `getSettledVolume()` consumer below, the
-    // `/api/relayer/stats` JSON shape it produces, and the Prometheus
-    // labels that depend on the field name. The "sell" in the alias
-    // is now a misnomer — the value can be a buy-leg token — but the
-    // wire contract is the load-bearing thing, not the name.
+    // The prior UNION-ed buy_token leg (gated on `type='settleAuth'`)
+    // double-counted in the single-relayer-match case where one row
+    // carried both maker and taker amounts — the buy leg was a
+    // second pseudo-row for the same trade. Removed now that each
+    // sell-leg lives in its own row.
     this.statsSettledVolume = this.db.prepare(
-      `SELECT token AS sell_token,
+      `SELECT sell_token,
               COUNT(*) AS count,
-              COALESCE(GROUP_CONCAT(amount), '') AS amounts
-         FROM (
-           SELECT sell_token AS token, sell_amount AS amount
-             FROM settlement_history
-            WHERE status = 'confirmed' AND sell_token IS NOT NULL AND sell_amount IS NOT NULL
-           UNION ALL
-           SELECT buy_token  AS token, buy_amount  AS amount
-             FROM settlement_history
-            WHERE status = 'confirmed' AND type = 'settleAuth'
-              AND buy_token IS NOT NULL AND buy_amount IS NOT NULL
-         )
-        GROUP BY token`,
+              COALESCE(GROUP_CONCAT(sell_amount), '') AS amounts
+         FROM settlement_history
+        WHERE status = 'confirmed'
+          AND sell_token IS NOT NULL
+          AND sell_amount IS NOT NULL
+        GROUP BY sell_token`,
     );
     this.upsertMeta = this.db.prepare(
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
