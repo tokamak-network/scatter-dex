@@ -167,9 +167,13 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
 
       {/* Side-by-side at md+ to fill the right-hand void the
           single-column stack left behind. Below md they fold back
-          to a vertical stack so neither card gets cramped. */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <section>
+          to a vertical stack so neither card gets cramped.
+          `items-start` keeps the shorter Treasury-writes card from
+          stretching to the tall Platform-revenue table; `min-w-0`
+          on each child lets the inner table shrink instead of
+          blowing the column past the viewport on long addresses. */}
+      <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2">
+        <section className="min-w-0">
           <SectionHeader
             title="Platform revenue"
             badge="live"
@@ -183,7 +187,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           />
         </section>
 
-        <section>
+        <section className="min-w-0">
           <SectionHeader title="Treasury writes" badge="live" />
           <FeeVaultWrites
             feeVaultAddress={feeVaultAddress}
