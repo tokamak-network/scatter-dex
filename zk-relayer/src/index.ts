@@ -19,6 +19,7 @@ import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthor
 import { publicSignalToAddress } from "./types/authorize-order.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { SettlementPushWorker } from "./core/settlement-push-worker.js";
+import { backfillFromSharedOb } from "./core/shared-ob-backfill.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createMetricsRoutes } from "./routes/metrics.js";
 import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js";
@@ -427,6 +428,16 @@ async function main() {
     submitter, db,
     drainAuthorizeOrders, getAuthorizeOrderStats,
     writeLimiter,
+    backfillFromSharedOb: sharedClient
+      ? (since?: number) => backfillFromSharedOb(
+          {
+            db,
+            sharedClient,
+            ownAddress: authSubmitter.getAddress(),
+          },
+          { since },
+        )
+      : undefined,
   }));
 
   // [R-7] Pause guard — reject new order submissions (POST only) when paused
