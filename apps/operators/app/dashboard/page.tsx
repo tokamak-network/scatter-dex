@@ -25,6 +25,16 @@ interface FeeTotals {
   totals: Array<{ token: string; count: number; totalWei: string }>;
 }
 
+interface VolumeTotals {
+  totals: Array<{
+    token: string;
+    sellFills: number;
+    buyFills: number;
+    totalSellWei: string;
+    totalBuyWei: string;
+  }>;
+}
+
 interface StatusBody {
   paused: boolean;
   feeBps: number;
@@ -213,6 +223,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
   const [status, setStatus] = useState<StatusBody | null>(null);
   const [recent, setRecent] = useState<SettlementRow[] | null>(null);
   const [feeTotals, setFeeTotals] = useState<FeeTotals | null>(null);
+  const [volumeTotals, setVolumeTotals] = useState<VolumeTotals | null>(null);
   const [perf, setPerf] = useState<BucketsBody | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -224,13 +235,14 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
     try {
       const since = Date.now() - ONE_DAY_MS;
       const perfSince = Date.now() - SEVEN_DAYS_MS;
-      const [s, h, f, p] = await Promise.all([
+      const [s, h, f, v, p] = await Promise.all([
         adminGet<StatusBody>(auth, "/api/admin/status"),
         adminGet<{ rows: SettlementRow[] }>(
           auth,
           `/api/admin/history?limit=200`,
         ),
         adminGet<FeeTotals>(auth, `/api/admin/history/fees?since=${since}`),
+        adminGet<VolumeTotals>(auth, `/api/admin/history/volume?since=${since}`),
         adminGet<BucketsBody>(
           auth,
           `/api/admin/history/buckets?since=${perfSince}&bucketMs=${60 * 60 * 1000}`,
@@ -239,6 +251,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
       setStatus(s);
       setRecent(h.rows);
       setFeeTotals(f);
+      setVolumeTotals(v);
       setPerf(p);
       setRefreshedAt(Date.now());
     } catch (e) {
@@ -329,45 +342,12 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
       </section>
 
       <section>
-        <SectionHeader title="Fee accrual (24h)" badge="live" />
-        {!feeTotals ? (
-          <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>
-        ) : feeTotals.totals.length === 0 ? (
-          <p className="text-sm text-[var(--color-text-muted)]">
-            No fees accrued in the last 24 hours.
-          </p>
-        ) : (
-          <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-                <tr>
-                  <th className="px-5 py-3 text-left font-medium">Token</th>
-                  <th className="px-5 py-3 text-right font-medium">Fills</th>
-                  <th className="px-5 py-3 text-right font-medium">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {feeTotals.totals.map((t) => {
-                  const info = tokenInfo(t.token);
-                  return (
-                    <tr key={t.token} className="border-t border-[var(--color-border)]">
-                      <td className="px-5 py-3">
-                        <div className="font-medium">{info.symbol}</div>
-                        <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
-                          {t.token}
-                        </div>
-                      </td>
-                      <td className="px-5 py-3 text-right font-mono">{t.count}</td>
-                      <td className="px-5 py-3 text-right font-mono">
-                        {formatAmount(t.totalWei, info.decimals)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <SectionHeader
+          title="Fee + volume (24h)"
+          badge="live"
+          hint="Fee revenue per token (maker + taker + scatterDirect) alongside the sell- and buy-leg notional from confirmed settlements."
+        />
+        <FeeVolumeTable fees={feeTotals} volume={volumeTotals} />
       </section>
 
       <section>
@@ -750,3 +730,92 @@ function HealthCard({
 }
 
 
+
+/** Merges per-token fee + volume rows by token address. Same shape
+ *  as /analytics' Per-token table — fees can appear without volume
+ *  on pre-migration rows where amount columns are NULL, so the row
+ *  set keys the union of both sources. */
+function FeeVolumeTable({
+  fees,
+  volume,
+}: {
+  fees: FeeTotals | null;
+  volume: VolumeTotals | null;
+}) {
+  if (!fees || !volume) {
+    return <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>;
+  }
+  type Row = {
+    token: string;
+    fees: FeeTotals["totals"][number] | null;
+    vol: VolumeTotals["totals"][number] | null;
+  };
+  const map = new Map<string, Row>();
+  for (const f of fees.totals) map.set(f.token, { token: f.token, fees: f, vol: null });
+  for (const v of volume.totals) {
+    const cur = map.get(v.token);
+    if (cur) cur.vol = v;
+    else map.set(v.token, { token: v.token, fees: null, vol: v });
+  }
+  const merged = [...map.values()].sort((a, b) => {
+    const af = a.fees ? BigInt(a.fees.totalWei) : 0n;
+    const bf = b.fees ? BigInt(b.fees.totalWei) : 0n;
+    if (af !== bf) return af > bf ? -1 : 1;
+    const ac = (a.vol?.sellFills ?? 0) + (a.vol?.buyFills ?? 0);
+    const bc = (b.vol?.sellFills ?? 0) + (b.vol?.buyFills ?? 0);
+    return bc - ac;
+  });
+  if (merged.length === 0) {
+    return (
+      <p className="text-sm text-[var(--color-text-muted)]">
+        No settlements in the last 24 hours.
+      </p>
+    );
+  }
+  return (
+    <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full text-sm">
+        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-5 py-3 text-left font-medium">Token</th>
+            <th className="px-5 py-3 text-right font-medium">Fee revenue</th>
+            <th className="px-5 py-3 text-right font-medium">Settlements</th>
+            <th className="px-5 py-3 text-right font-medium">Sell volume</th>
+            <th className="px-5 py-3 text-right font-medium">Buy volume</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[var(--color-border)]">
+          {merged.map((r) => {
+            const info = tokenInfo(r.token);
+            return (
+              <tr key={r.token}>
+                <td className="px-5 py-3">
+                  <div className="font-medium">{info.symbol}</div>
+                  <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+                    {r.token}
+                  </div>
+                </td>
+                <td className="px-5 py-3 text-right font-mono">
+                  {r.fees ? formatAmount(r.fees.totalWei, info.decimals) : "—"}
+                </td>
+                {/* Prefer per-row settlement count from volume (sell-leg
+                    fills, 1 row per confirmed settle); fee count is
+                    per-side (maker+taker), which would double-count
+                    when volume is available. */}
+                <td className="px-5 py-3 text-right">
+                  {r.vol ? r.vol.sellFills : (r.fees?.count ?? 0)}
+                </td>
+                <td className="px-5 py-3 text-right font-mono">
+                  {r.vol ? formatAmount(r.vol.totalSellWei, info.decimals) : "—"}
+                </td>
+                <td className="px-5 py-3 text-right font-mono">
+                  {r.vol ? formatAmount(r.vol.totalBuyWei, info.decimals) : "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
