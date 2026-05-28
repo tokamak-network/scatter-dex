@@ -18,6 +18,7 @@
 import type { PrivateOrderDB } from "./db.js";
 import type { SharedOrderbookClient } from "./shared-orderbook-client.js";
 import { createLogger } from "./logger.js";
+import { eqAddr } from "../lib/address.js";
 
 const log = createLogger("shared-ob-backfill");
 
@@ -45,12 +46,26 @@ export async function backfillFromSharedOb(
   deps: BackfillDeps,
   opts: { since?: number } = {},
 ): Promise<BackfillResult> {
-  const ourAddr = deps.ownAddress.toLowerCase();
+  const ourAddr = deps.ownAddress;
   const result: BackfillResult = { scanned: 0, inserted: 0, skipped: 0, errors: 0, pages: 0 };
+
+  // The API contract takes `since` as **unix-ms** to stay consistent
+  // with every other admin endpoint (settlement_history filters,
+  // /history/fees, etc.) — but shared-OB's GET /api/settlements
+  // expects **unix-seconds** (its parseSinceQuery floors at 1e9).
+  // Convert here so callers can keep using one unit; reject NaN/Inf/
+  // negative so a typo doesn't silently scan from epoch.
+  let sinceSeconds: number | undefined;
+  if (opts.since !== undefined) {
+    if (!Number.isFinite(opts.since) || opts.since < 0) {
+      throw new Error(`backfill: invalid 'since' value ${opts.since} — expected non-negative unix-ms`);
+    }
+    sinceSeconds = Math.floor(opts.since / 1000);
+  }
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const rows = await deps.sharedClient.fetchSettlementsForAddress(ourAddr, {
-      since: opts.since,
+      since: sinceSeconds,
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
     });
@@ -75,6 +90,17 @@ export async function backfillFromSharedOb(
     if (rows.length < PAGE_SIZE) break;
   }
 
+  // Hitting the page cap means we successfully drained MAX_PAGES *
+  // PAGE_SIZE rows AND the last page was full — there may be more
+  // historical rows we didn't reach. Surface as a warning the
+  // operator can act on (re-run with a tighter `since`).
+  if (result.pages === MAX_PAGES && result.scanned === MAX_PAGES * PAGE_SIZE) {
+    log.warn("backfill hit page cap — older rows may not have been scanned", {
+      scanned: result.scanned,
+      pageCap: MAX_PAGES,
+    });
+  }
+
   log.info("backfill complete", { ...result });
   return result;
 }
@@ -91,10 +117,10 @@ function insertIfMissing(
   if (!txHash) throw new Error("row missing txHash");
   if (db.getSettlementByTxHash(txHash)) return false;
 
-  const maker = readString(row, "makerRelayer")?.toLowerCase();
-  const taker = readString(row, "takerRelayer")?.toLowerCase();
-  const isMaker = maker === ourAddr;
-  const isTaker = !!taker && taker === ourAddr;
+  const maker = readString(row, "makerRelayer");
+  const taker = readString(row, "takerRelayer");
+  const isMaker = !!maker && eqAddr(maker, ourAddr);
+  const isTaker = !!taker && eqAddr(taker, ourAddr);
   if (!isMaker && !isTaker) {
     // The shared-OB filter returned us under `submitter` only — this
     // node submitted but neither side was our user. Nothing fee-wise

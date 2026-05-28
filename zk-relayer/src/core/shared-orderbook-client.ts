@@ -493,34 +493,45 @@ export class SharedOrderbookClient {
    *  submitter, maker, or taker. Used by the local-DB backfill
    *  reconciler to recover rows that exist in shared-OB but went
    *  missing from local storage (typically: a relayer DB reset before
-   *  the push-outbox shipped). Caller pages by passing the largest
-   *  `createdAt` it has seen as the next `since`. Returns up to `limit`
-   *  rows per call; the server clamps at 500. */
+   *  the push-outbox shipped).
+   *
+   *  `since` is **unix-seconds** to match shared-OB's
+   *  `parseSinceQuery` — callers that work in ms must convert. Pages
+   *  via `limit` + `offset`; the server clamps `limit` at 500. Rows
+   *  are returned in `block_number DESC, tx_hash ASC` order.
+   *
+   *  Throws on network / HTTP errors so the caller (typically a
+   *  one-shot admin endpoint) can report the failure instead of
+   *  silently treating it as zero rows. The `serverOnline` heartbeat
+   *  is intentionally bypassed — a stale heartbeat shouldn't block a
+   *  human-triggered backfill when HTTP is actually reachable. */
   async fetchSettlementsForAddress(
     address: string,
     opts: { since?: number; limit?: number; offset?: number } = {},
   ): Promise<Array<Record<string, unknown>>> {
-    if (!this.serverOnline) return [];
+    // Use the URL API so a serverUrl with or without trailing slash
+    // produces the same canonical request path, and validate the
+    // protocol so a misconfigured env var (e.g. `file://`) can't
+    // turn into a privileged file read.
+    const url = new URL("/api/settlements", this.serverUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      throw new Error(`fetchSettlementsForAddress: unsupported protocol ${url.protocol}`);
+    }
     const params = new URLSearchParams({ relayer: address });
     if (typeof opts.since === "number") params.set("since", String(opts.since));
     if (typeof opts.limit === "number") params.set("limit", String(opts.limit));
     if (typeof opts.offset === "number") params.set("offset", String(opts.offset));
-    try {
-      const res = await fetch(`${this.serverUrl}/api/settlements?${params.toString()}`, {
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!res.ok) {
-        log.warn("fetchSettlementsForAddress non-OK", { status: res.status });
-        return [];
-      }
-      const data = (await res.json()) as { settlements?: Array<Record<string, unknown>> };
-      return data.settlements ?? [];
-    } catch (err) {
-      log.warn("fetchSettlementsForAddress failed", {
-        err: err instanceof Error ? err.message : "unknown",
-      });
-      return [];
+    url.search = params.toString();
+
+    const res = await fetch(url.toString(), { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `fetchSettlementsForAddress: HTTP ${res.status} ${body.slice(0, 200)}`,
+      );
     }
+    const data = (await res.json()) as { settlements?: Array<Record<string, unknown>> };
+    return data.settlements ?? [];
   }
 
   /** Fetch all open orders from server (initial sync or periodic refresh) */

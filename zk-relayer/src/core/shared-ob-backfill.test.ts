@@ -17,11 +17,14 @@ const OUR_ADDR = "0x7099797f5210a8d7a4d2cb5b73b1c8c8d5f7d79c8"; // 42 chars padd
 
 function fakeClient(pages: Array<Array<Record<string, unknown>>>) {
   let call = 0;
+  const calls: Array<{ since?: number; limit?: number; offset?: number }> = [];
   return {
+    calls,
     fetchSettlementsForAddress: async (
       _addr: string,
-      _opts: { since?: number; limit?: number; offset?: number },
+      opts: { since?: number; limit?: number; offset?: number },
     ) => {
+      calls.push(opts);
       // Each call returns the next page; subsequent calls beyond the
       // provided pages return [] so the loop terminates.
       return pages[call++] ?? [];
@@ -207,6 +210,44 @@ describe("backfillFromSharedOb", () => {
     expect(r.scanned).toBe(210);
     expect(r.inserted).toBe(210);
     expect(r.pages).toBe(2);
+  });
+
+  it("converts `since` from unix-ms to unix-seconds before calling shared-OB", async () => {
+    const sharedClient = fakeClient([[]]);
+    await backfillFromSharedOb(
+      { db, sharedClient, ownAddress: OUR_ADDR },
+      { since: 1_716_000_000_000 }, // 2024-05-18 in ms
+    );
+    expect(sharedClient.calls[0].since).toBe(1_716_000_000); // seconds
+  });
+
+  it("rejects a non-finite `since`", async () => {
+    const sharedClient = fakeClient([]);
+    await expect(
+      backfillFromSharedOb({ db, sharedClient, ownAddress: OUR_ADDR }, { since: NaN }),
+    ).rejects.toThrow(/invalid 'since'/);
+    await expect(
+      backfillFromSharedOb({ db, sharedClient, ownAddress: OUR_ADDR }, { since: -1 }),
+    ).rejects.toThrow(/invalid 'since'/);
+    expect(sharedClient.calls).toHaveLength(0);
+  });
+
+  it("matches addresses case-insensitively (mixed-case maker from shared-OB)", async () => {
+    const sharedClient = fakeClient([
+      [
+        {
+          txHash: "0xmixed",
+          // Same address as OUR_ADDR but with mixed casing (EIP-55-ish).
+          makerRelayer: OUR_ADDR.toUpperCase(),
+          buyToken: "0xUSDC",
+          feeMaker: "100",
+        },
+      ],
+    ]);
+
+    const r = await backfillFromSharedOb({ db, sharedClient, ownAddress: OUR_ADDR });
+
+    expect(r).toMatchObject({ inserted: 1 });
   });
 
   it("counts a corrupt row as an error without aborting the batch", async () => {
