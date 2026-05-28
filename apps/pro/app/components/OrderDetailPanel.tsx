@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button, useOutsideClick, useToast } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
 import {
@@ -923,8 +924,63 @@ function ShareActions({
   const toast = useToast();
   const [busy, setBusy] = useState<null | "copy" | "email" | "save" | "claim">(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  useOutsideClick({ enabled: menuOpen, ref: menuRef, onClose: () => setMenuOpen(false) });
+  // Compute the dropdown's viewport position from the trigger's
+  // bounding rect. The recipients table lives inside
+  // OrderDetailDrawer's `overflow-y-auto` container, which clipped
+  // an `absolute`-positioned menu (most items disappeared past the
+  // panel's right edge). Rendering the menu through a portal with
+  // `position: fixed` escapes the overflow chain entirely; the
+  // coords are recomputed on every open + on scroll/resize so the
+  // menu tracks the trigger if the drawer scrolls.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
+  useEffect(() => {
+    if (!menuOpen) {
+      setMenuPos(null);
+      return;
+    }
+    const reposition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuPos({
+        // 4px gap below the trigger button — matches the prior `mt-1`.
+        top: rect.bottom + 4,
+        // Anchor to the trigger's right edge; the menu's CSS `right`
+        // is the gap from viewport's right edge, so we invert.
+        right: window.innerWidth - rect.right,
+      });
+    };
+    reposition();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [menuOpen]);
+  // Close on outside click — but consider clicks inside EITHER the
+  // trigger wrapper or the portaled menu as "inside" so a click on
+  // a menu item doesn't get treated as an outside-click and close
+  // the menu before the item's onClick runs.
+  useOutsideClick({
+    enabled: menuOpen,
+    ref: wrapperRef,
+    onClose: () => setMenuOpen(false),
+  });
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (menuRef.current?.contains(t)) return;
+      if (wrapperRef.current?.contains(t)) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocDown, true);
+    return () => document.removeEventListener("mousedown", onDocDown, true);
+  }, [menuOpen]);
   const settlement = network.contracts.privateSettlement;
 
   const buildPkg = async () => {
@@ -1111,8 +1167,9 @@ function ShareActions({
     : undefined;
 
   return (
-    <div ref={menuRef} className="relative inline-block text-left" title={title}>
+    <div ref={wrapperRef} className="inline-block text-left" title={title}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setMenuOpen((v) => !v)}
         disabled={disabled}
@@ -1124,22 +1181,32 @@ function ShareActions({
             ? "Working…"
             : "Actions ▾"}
       </button>
-      {menuOpen && (
-        <div className="absolute right-0 z-10 mt-1 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg">
-          <ShareMenuItem onClick={onCopy} disabled={disabled}>
-            Copy claim link
-          </ShareMenuItem>
-          <ShareMenuItem onClick={onSave} disabled={disabled}>
-            Save to Claims inbox
-          </ShareMenuItem>
-          <ShareMenuItem onClick={onEmail} disabled={disabled}>
-            Send via Gmail
-          </ShareMenuItem>
-          <ShareMenuItem onClick={onClaimNow} disabled={disabled}>
-            Claim now (gasless)
-          </ShareMenuItem>
-        </div>
-      )}
+      {menuOpen && menuPos && typeof window !== "undefined" &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: "fixed",
+              top: menuPos.top,
+              right: menuPos.right,
+            }}
+            className="z-50 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg"
+          >
+            <ShareMenuItem onClick={onCopy} disabled={disabled}>
+              Copy claim link
+            </ShareMenuItem>
+            <ShareMenuItem onClick={onSave} disabled={disabled}>
+              Save to Claims inbox
+            </ShareMenuItem>
+            <ShareMenuItem onClick={onEmail} disabled={disabled}>
+              Send via Gmail
+            </ShareMenuItem>
+            <ShareMenuItem onClick={onClaimNow} disabled={disabled}>
+              Claim now (gasless)
+            </ShareMenuItem>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

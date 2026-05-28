@@ -715,15 +715,31 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
         res.status(503).json({ error: "shared-OB indexer not configured" });
         return;
       }
+      // `since` is unix-ms (to match every other admin endpoint) —
+      // the backfill module converts to seconds internally before
+      // calling shared-OB. Reject non-finite / negative values up
+      // front so a typo returns 400 instead of a silent no-op.
+      let since: number | undefined;
+      if (req.body && req.body.since !== undefined && req.body.since !== null) {
+        const raw = req.body.since;
+        if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+          res.status(400).json({
+            error: "'since' must be a non-negative finite number (unix-ms)",
+          });
+          return;
+        }
+        since = raw;
+      }
       try {
-        const since = req.body && typeof req.body.since === "number" ? req.body.since : undefined;
         const result = await backfillFromSharedOb(since);
         res.json(result);
       } catch (err) {
         log.error("backfill-from-shared-ob failed", {
           err: err instanceof Error ? err.message : String(err),
         });
-        res.status(500).json({ error: "Backfill failed" });
+        res.status(500).json({
+          error: err instanceof Error ? err.message : "Backfill failed",
+        });
       }
     },
   );

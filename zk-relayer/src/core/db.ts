@@ -62,6 +62,14 @@ export interface AuthorizeOrderRow {
 // trace blows up both.
 const MAX_ERR_LEN = 512;
 
+/** Cap on how many times the push worker will replay a single outbox
+ *  row before giving up. 50 × 30 s default backoff ≈ 25 minutes of
+ *  retries before the row sticks in stats as permanently pending —
+ *  enough to ride out a typical indexer outage without burning DB
+ *  writes on a genuinely broken payload (corrupt JSON, schema-incompat
+ *  push body, etc.). Exposed so the worker test can override. */
+export const MAX_PUSH_ATTEMPTS = 50;
+
 /** Grace period before a terminal authorize_orders row is purged. The
  *  mobile pending-orders poll loop needs to GET /:nullifier and observe
  *  the terminal status (settled / failed / dead_letter / expired /
@@ -328,6 +336,14 @@ export class PrivateOrderDB {
   private selectSettlementBucketRows: ReturnType<Database.Database["prepare"]>;
   private sumFeeHistoryByToken: ReturnType<Database.Database["prepare"]>;
   private sumVolumeByToken: ReturnType<Database.Database["prepare"]>;
+  // Settlement push outbox
+  private upsertPushOutbox: ReturnType<Database.Database["prepare"]>;
+  private selectPendingPushes: ReturnType<Database.Database["prepare"]>;
+  private markPushSucceededStmt: ReturnType<Database.Database["prepare"]>;
+  private markPushFailedStmt: ReturnType<Database.Database["prepare"]>;
+  private markPushDeadStmt: ReturnType<Database.Database["prepare"]>;
+  private countPushOutbox: ReturnType<Database.Database["prepare"]>;
+  private prunePushOutboxStmt: ReturnType<Database.Database["prepare"]>;
 
   constructor(dbPath = DB_PATH) {
     // [L-8] For production with sensitive data, consider replacing better-sqlite3
@@ -742,6 +758,77 @@ export class PrivateOrderDB {
          AND buy_amount IS NOT NULL
        ORDER BY token, leg
     `);
+
+    // Settlement push outbox. INSERT-OR-IGNORE on tx_hash so a duplicate
+    // enqueue (live-push wrapper enqueues, then on-restart replay also
+    // enqueues) is a no-op rather than overwriting attempt counters.
+    this.upsertPushOutbox = this.db.prepare(`
+      INSERT OR IGNORE INTO settlement_push_outbox
+        (tx_hash, payload_json, attempts, created_at)
+      VALUES (@txHash, @payloadJson, 0, @createdAt)
+    `);
+    // Pending = not yet pushed AND under the attempts cap. The cap
+    // stops a permanently rejected payload (corrupt JSON, shared-OB
+    // returning 4xx forever) from cycling through DB writes every
+    // tick — once attempts >= MAX_PUSH_ATTEMPTS the row stays
+    // pending in stats (so the operator sees it) but is no longer
+    // claimed. `last_attempt_at IS NULL OR <= cutoff` implements a
+    // simple backoff window — a row that failed seconds ago
+    // shouldn't get hammered on the next tick.
+    this.selectPendingPushes = this.db.prepare(`
+      SELECT tx_hash, payload_json, attempts
+        FROM settlement_push_outbox
+       WHERE pushed_at IS NULL
+         AND attempts < ${MAX_PUSH_ATTEMPTS}
+         AND (last_attempt_at IS NULL OR last_attempt_at <= @cutoff)
+       ORDER BY created_at ASC
+       LIMIT @limit
+    `);
+    this.markPushSucceededStmt = this.db.prepare(`
+      UPDATE settlement_push_outbox
+         SET pushed_at = @now,
+             last_attempt_at = @now,
+             last_error = NULL,
+             attempts = attempts + 1
+       WHERE tx_hash = @txHash
+    `);
+    this.markPushFailedStmt = this.db.prepare(`
+      UPDATE settlement_push_outbox
+         SET last_attempt_at = @now,
+             last_error = @error,
+             attempts = attempts + 1
+       WHERE tx_hash = @txHash
+    `);
+    // Used when a payload is structurally unrecoverable (e.g. corrupt
+    // JSON on disk) and there's no point in re-attempting. Bumps
+    // attempts past the cap in one shot so the row is immediately
+    // excluded from selectPendingPushes; the row stays in the table
+    // so the operator can see it via /push-outbox/stats.
+    this.markPushDeadStmt = this.db.prepare(`
+      UPDATE settlement_push_outbox
+         SET last_attempt_at = @now,
+             last_error = @error,
+             attempts = ${MAX_PUSH_ATTEMPTS}
+       WHERE tx_hash = @txHash
+    `);
+    this.countPushOutbox = this.db.prepare(`
+      SELECT
+        COUNT(*)                                                                       AS total,
+        COUNT(*) FILTER (WHERE pushed_at IS NULL AND attempts < ${MAX_PUSH_ATTEMPTS})  AS pending,
+        COUNT(*) FILTER (WHERE pushed_at IS NULL AND attempts >= ${MAX_PUSH_ATTEMPTS}) AS dead,
+        COUNT(*) FILTER (WHERE pushed_at IS NOT NULL)                                  AS pushed,
+        MAX(attempts)                                                                  AS maxAttempts
+      FROM settlement_push_outbox
+    `);
+    // Successful pushes are kept for the audit trail / stats endpoint
+    // but only need to live as long as the operator might look at
+    // them. Pruning by `pushed_at < cutoff` keeps the table bounded
+    // without losing pending rows (which never satisfy the predicate).
+    this.prunePushOutboxStmt = this.db.prepare(`
+      DELETE FROM settlement_push_outbox
+       WHERE pushed_at IS NOT NULL
+         AND pushed_at <= @cutoff
+    `);
   }
 
   /** Record a settlement (success or failure) plus any per-side fees
@@ -1019,6 +1106,108 @@ export class PrivateOrderDB {
     }
     flush();
     return result;
+  }
+
+  // ─── Settlement push outbox ───────────────────────────────────
+  //
+  // Enqueue every confirmed settlement so a background worker can
+  // retry the shared-OB push if the live fire-and-forget attempt
+  // drops (transient network, indexer restart, etc). Local DB is
+  // the trusted source; this outbox lets shared-OB catch up.
+
+  /** Enqueue a settlement-push payload for delivery. No-op if the
+   *  tx_hash is already in the outbox (covers duplicate enqueues from
+   *  e.g. the live-push wrapper + a recovery sweep). */
+  enqueueSettlementPush(txHash: string, payload: unknown): void {
+    this.upsertPushOutbox.run({
+      txHash: lowerHex(txHash) as string,
+      payloadJson: JSON.stringify(payload),
+      createdAt: Date.now(),
+    });
+  }
+
+  /** Claim up to `limit` outbox rows that are pending and past the
+   *  per-row backoff cutoff. Returns the raw payload so the worker
+   *  can pass it back through `sharedClient.pushSettlement`. */
+  getPendingSettlementPushes(
+    limit: number,
+    backoffMs: number,
+  ): Array<{ txHash: string; payload: unknown; attempts: number }> {
+    const rows = this.selectPendingPushes.all({
+      cutoff: Date.now() - backoffMs,
+      limit,
+    }) as Array<{ tx_hash: string; payload_json: string; attempts: number }>;
+    const out: Array<{ txHash: string; payload: unknown; attempts: number }> = [];
+    for (const r of rows) {
+      try {
+        out.push({ txHash: r.tx_hash, payload: JSON.parse(r.payload_json), attempts: r.attempts });
+      } catch {
+        // Corrupt JSON — unrecoverable. Mark dead in one shot so we
+        // don't burn a write every tick for the same broken row.
+        this.markSettlementPushDead(r.tx_hash, "payload_json parse failed");
+      }
+    }
+    return out;
+  }
+
+  markSettlementPushSucceeded(txHash: string): void {
+    this.markPushSucceededStmt.run({
+      txHash: lowerHex(txHash) as string,
+      now: Date.now(),
+    });
+  }
+
+  markSettlementPushFailed(txHash: string, error: string): void {
+    this.markPushFailedStmt.run({
+      txHash: lowerHex(txHash) as string,
+      now: Date.now(),
+      // Bound the error string so a noisy stack trace can't blow up
+      // the row size — the operator only needs the leading signal.
+      error: error.slice(0, 500),
+    });
+  }
+
+  /** Mark a row as permanently failed (e.g. corrupt payload, schema
+   *  incompatibility) so the worker stops claiming it. The row stays
+   *  in the table for forensics — visible in /push-outbox/stats as a
+   *  pending row whose attempts is pinned at the cap. */
+  markSettlementPushDead(txHash: string, error: string): void {
+    this.markPushDeadStmt.run({
+      txHash: lowerHex(txHash) as string,
+      now: Date.now(),
+      error: error.slice(0, 500),
+    });
+  }
+
+  /** Drop pushed rows older than `olderThanMs` to bound table growth.
+   *  Pending rows are never deleted — they're the whole reason the
+   *  outbox exists. Returns the number of rows removed. */
+  prunePushedSettlementPushes(olderThanMs: number): number {
+    const info = this.prunePushOutboxStmt.run({ cutoff: Date.now() - olderThanMs });
+    return info.changes;
+  }
+
+  getSettlementPushOutboxStats(): {
+    total: number;
+    pending: number;
+    dead: number;
+    pushed: number;
+    maxAttempts: number;
+  } {
+    const row = this.countPushOutbox.get({}) as {
+      total: number;
+      pending: number;
+      dead: number;
+      pushed: number;
+      maxAttempts: number | null;
+    };
+    return {
+      total: row.total,
+      pending: row.pending,
+      dead: row.dead,
+      pushed: row.pushed,
+      maxAttempts: row.maxAttempts ?? 0,
+    };
   }
 
   /** Sum per-token notional from confirmed settlements in [since, until).
@@ -1354,6 +1543,26 @@ export class PrivateOrderDB {
       );
       CREATE INDEX IF NOT EXISTS idx_fh_token_created ON fee_history(token, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_fh_tx ON fee_history(tx_hash);
+    `);
+
+    // Outbox for shared-OB settlement pushes. The live push path is
+    // fire-and-forget — a transient shared-OB outage silently drops
+    // the notification, and the leaderboard (which sources from
+    // shared-OB) then under-reports until the next push succeeds.
+    // Persisting the payload here lets a background worker retry until
+    // shared-OB acknowledges the row. tx_hash is PK so the live push +
+    // worker re-attempt converge on the same row.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS settlement_push_outbox (
+        tx_hash         TEXT PRIMARY KEY,
+        payload_json    TEXT NOT NULL,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at INTEGER,
+        last_error      TEXT,
+        pushed_at       INTEGER,
+        created_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_spo_pending ON settlement_push_outbox(pushed_at, last_attempt_at);
     `);
   }
 
