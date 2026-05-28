@@ -2,8 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
-import {TransparentUpgradeableProxy} from
-    "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {SanctionsList} from "../src/SanctionsList.sol";
 
 /// @dev Standalone deploy that only puts SanctionsList behind a proxy.
@@ -26,8 +25,7 @@ contract DeploySanctionsOnly is Script {
         vm.startBroadcast();
         SanctionsList impl = new SanctionsList();
         bytes memory initData = abi.encodeCall(SanctionsList.initialize, (msg.sender));
-        TransparentUpgradeableProxy proxy =
-            new TransparentUpgradeableProxy(address(impl), msg.sender, initData);
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), msg.sender, initData);
         console.log("SanctionsList impl:", address(impl));
         console.log("SanctionsList proxy:", address(proxy));
         vm.stopBroadcast();

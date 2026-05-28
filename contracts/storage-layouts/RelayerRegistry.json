@@ -1,7 +1,7 @@
 {
   "storage": [
     {
-      "astId": 1453,
+      "astId": 43880,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "minBond",
       "offset": 0,
@@ -9,23 +9,23 @@
       "type": "t_uint256"
     },
     {
-      "astId": 1463,
+      "astId": 43890,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "identityRegistry",
       "offset": 0,
       "slot": "1",
-      "type": "t_contract(IIdentityRegistry)2379"
+      "type": "t_contract(IIdentityRegistry)45229"
     },
     {
-      "astId": 1467,
+      "astId": 43894,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "bondToken",
       "offset": 0,
       "slot": "2",
-      "type": "t_contract(IERC20)942"
+      "type": "t_contract(IERC20)38324"
     },
     {
-      "astId": 1469,
+      "astId": 43896,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "treasury",
       "offset": 0,
@@ -33,15 +33,15 @@
       "type": "t_address"
     },
     {
-      "astId": 1474,
+      "astId": 43901,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "relayers",
       "offset": 0,
       "slot": "4",
-      "type": "t_mapping(t_address,t_struct(Relayer)1451_storage)"
+      "type": "t_mapping(t_address,t_struct(Relayer)43878_storage)"
     },
     {
-      "astId": 1478,
+      "astId": 43905,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "inList",
       "offset": 0,
@@ -49,7 +49,7 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 1481,
+      "astId": 43908,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "relayerList",
       "offset": 0,
@@ -57,7 +57,7 @@
       "type": "t_array(t_address)dyn_storage"
     },
     {
-      "astId": 1486,
+      "astId": 43913,
       "contract": "src/RelayerRegistry.sol:RelayerRegistry",
       "label": "__gap",
       "offset": 0,
@@ -88,12 +88,12 @@
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "t_contract(IERC20)942": {
+    "t_contract(IERC20)38324": {
       "encoding": "inplace",
       "label": "contract IERC20",
       "numberOfBytes": "20"
     },
-    "t_contract(IIdentityRegistry)2379": {
+    "t_contract(IIdentityRegistry)45229": {
       "encoding": "inplace",
       "label": "contract IIdentityRegistry",
       "numberOfBytes": "20"
@@ -105,25 +105,25 @@
       "numberOfBytes": "32",
       "value": "t_bool"
     },
-    "t_mapping(t_address,t_struct(Relayer)1451_storage)": {
+    "t_mapping(t_address,t_struct(Relayer)43878_storage)": {
       "encoding": "mapping",
       "key": "t_address",
       "label": "mapping(address => struct RelayerRegistry.Relayer)",
       "numberOfBytes": "32",
-      "value": "t_struct(Relayer)1451_storage"
+      "value": "t_struct(Relayer)43878_storage"
     },
     "t_string_storage": {
       "encoding": "bytes",
       "label": "string",
       "numberOfBytes": "32"
     },
-    "t_struct(Relayer)1451_storage": {
+    "t_struct(Relayer)43878_storage": {
       "encoding": "inplace",
       "label": "struct RelayerRegistry.Relayer",
       "numberOfBytes": "224",
       "members": [
         {
-          "astId": 1438,
+          "astId": 43865,
           "contract": "src/RelayerRegistry.sol:RelayerRegistry",
           "label": "url",
           "offset": 0,
@@ -131,7 +131,7 @@
           "type": "t_string_storage"
         },
         {
-          "astId": 1440,
+          "astId": 43867,
           "contract": "src/RelayerRegistry.sol:RelayerRegistry",
           "label": "name",
           "offset": 0,
@@ -139,7 +139,7 @@
           "type": "t_string_storage"
         },
         {
-          "astId": 1442,
+          "astId": 43869,
           "contract": "src/RelayerRegistry.sol:RelayerRegistry",
           "label": "fee",
           "offset": 0,
@@ -147,7 +147,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 1444,
+          "astId": 43871,
           "contract": "src/RelayerRegistry.sol:RelayerRegistry",
           "label": "bond",
           "offset": 0,
@@ -155,7 +155,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 1446,
+          "astId": 43873,
           "contract": "src/RelayerRegistry.sol:RelayerRegistry",
           "label": "registeredAt",
           "offset": 0,
@@ -163,7 +163,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 1448,
+          "astId": 43875,
           "contract": "src/RelayerRegistry.sol:RelayerRegistry",
           "label": "exitRequestedAt",
           "offset": 0,
@@ -171,7 +171,7 @@
           "type": "t_uint256"
         },
         {
-          "astId": 1450,
+          "astId": 43877,
           "contract": "src/RelayerRegistry.sol:RelayerRegistry",
           "label": "active",
           "offset": 0,
