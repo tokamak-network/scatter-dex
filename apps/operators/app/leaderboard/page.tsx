@@ -549,8 +549,15 @@ function RelayerTable({
       return next;
     });
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <table className="w-full text-sm">
+    // `overflow-x-auto` (not -hidden) so a too-wide table on a
+    // narrow viewport scrolls horizontally instead of silently
+    // chopping the last columns — the previous -hidden cut off
+    // "Registered" + the USD totals on the right edge of the
+    // expanded breakdown cards. `min-w-full` keeps the table at
+    // least viewport-wide so short content doesn't shrink the
+    // header pill.
+    <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full min-w-[1100px] text-sm">
         {/* Header had ~8 RGB units of contrast against the row bg
             (`--color-bg` #f7f8fb on `--color-surface` #ffffff) — the
             two melted into each other. Switch to slate-100 (an
