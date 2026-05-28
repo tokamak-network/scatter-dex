@@ -14,7 +14,7 @@ import {
 import { Stat } from "../components/Stat";
 import { SectionHeader } from "../components/SectionHeader";
 import { DEMO_NETWORK } from "../lib/network";
-import { formatEther, formatIsoDate } from "../lib/format";
+import { formatEther } from "../lib/format";
 import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
@@ -465,7 +465,7 @@ function leaderboardPlaceholder(state: LeaderboardState, registryDeployed: boole
   return null;
 }
 
-const TABLE_COLUMNS = 11;
+const TABLE_COLUMNS = 10;
 
 // Map each sort criterion onto the column header it should highlight.
 // Centralised so the arrow indicator + the sort selector can't drift.
@@ -550,14 +550,13 @@ function RelayerTable({
     });
   return (
     // `overflow-x-auto` (not -hidden) so a too-wide table on a
-    // narrow viewport scrolls horizontally instead of silently
-    // chopping the last columns — the previous -hidden cut off
-    // "Registered" + the USD totals on the right edge of the
-    // expanded breakdown cards. `min-w-full` keeps the table at
-    // least viewport-wide so short content doesn't shrink the
-    // header pill.
+    // narrow viewport falls back to a horizontal scroll instead of
+    // silently chopping the last columns. With the Registered
+    // column dropped (operators rarely sort by it; ops-team trust
+    // signals live elsewhere), the table fits a standard desktop
+    // viewport without scroll most of the time.
     <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <table className="w-full min-w-[1100px] text-sm">
+      <table className="w-full text-sm">
         {/* Header had ~8 RGB units of contrast against the row bg
             (`--color-bg` #f7f8fb on `--color-surface` #ffffff) — the
             two melted into each other. Switch to slate-100 (an
@@ -578,7 +577,6 @@ function RelayerTable({
             <SortableTh label="Revenue" column="revenue" criterion="revenue" />
             <SortableTh label="Success" column="success" criterion="success" />
             <SortableTh label="Avg settle" column="speed" criterion="speed" />
-            <SortableTh label="Registered" column="" criterion={null} />
           </tr>
         </thead>
         <tbody>
@@ -686,9 +684,6 @@ function RelayerRow({
           value={row.stats?.avgSettleTimeMs}
           render={(n) => `${Math.round(n)} ms`}
         />
-        <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">
-          {formatIsoDate(row.registeredAt)}
-        </td>
       </tr>
       {isExpanded && canExpand && <RelayerDetailRow row={row} />}
     </>
