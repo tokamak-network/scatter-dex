@@ -31,6 +31,9 @@ interface Props {
    *  inside the form). Use when the admin needs to copy / visually
    *  verify the address before swapping. */
   showFullAddressHeader?: { label: string };
+  /** Called after a confirmed tx so the parent can refresh related
+   *  reads (e.g. an oracle health probe sitting next to the setter). */
+  onSuccess?: () => void;
 }
 
 /** Generic admin write surface: read a single-address slot from a
@@ -48,6 +51,7 @@ export function SetAddressCard({
   submitLabel,
   allowZeroAddress,
   showFullAddressHeader,
+  onSuccess,
 }: Props) {
   const { signer, readProvider } = useWallet();
   const [current, setCurrent] = useState<string | null>(null);
@@ -105,6 +109,7 @@ export function SetAddressCard({
         onSuccess={() => {
           setInput("");
           setReloadKey((k) => k + 1);
+          onSuccess?.();
         }}
       >
         {!showFullAddressHeader && (

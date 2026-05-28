@@ -440,6 +440,11 @@ if [ "$MOCK_MODE" = true ]; then
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *PrivateSettlement( proxy)?:" | tail -1 | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *IdentityGate( proxy)?:" | tail -1 | awk '{print $NF}')
   FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *FeeVault( proxy)?:" | tail -1 | awk '{print $NF}')
+  # SanctionsList lives behind TransparentUpgradeableProxy — DeployLocal
+  # emits "SanctionsList proxy: 0x…" via console.log. Parse it so admin
+  # can manage the self-multisig list without operator hand-editing the
+  # env on every redeploy.
+  SANCTIONS_LIST=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *SanctionsList proxy:" | tail -1 | awk '{print $NF}')
   BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^  BatchExecutor:" | awk '{print $NF}')
 
   if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
@@ -744,7 +749,12 @@ write_app_env() {
   # like ONEINCH_API_KEY belong to the developer, not the deployment.
   local preserved=""
   if [ -f "$target_dir/.env.local" ]; then
-    preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL)=' "$target_dir/.env.local" || true)
+    # NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS + NEXT_PUBLIC_EXPLORER_BASE
+    # are admin-side reads (apps/admin/app/lib/network.ts) that this
+    # script does not emit from forge-output — operators set them by
+    # hand. Without preserving, every dev.sh run silently wipes them
+    # and AttestationPanel / explorer links go dark with no warning.
+    preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL|NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS|NEXT_PUBLIC_EXPLORER_BASE)=' "$target_dir/.env.local" || true)
   fi
   # Cache-bust the IndexedDB-cached zk assets on every deploy. Without
   # this, Pro/Pay's `zk-asset-cache` keeps serving the previous zkey
@@ -771,6 +781,7 @@ NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
+NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS=$SANCTIONS_LIST
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
@@ -809,6 +820,17 @@ else
   for app in "${APPS_TO_RUN[@]}"; do
     check_port "${APP_PORTS[$app]}" "apps/$app"
   done
+fi
+
+# Always sync apps/admin env, even if dev.sh isn't starting it. Admin
+# is typically launched separately (e.g. `npm run dev` from apps/admin)
+# but it needs the same contract addresses to read SanctionsList,
+# FeeVault, RelayerRegistry, etc. — without this, every redeploy
+# silently leaves the admin pages on the previous addresses (or
+# ConfigBanner if no env existed at all).
+if [ -d "$ROOT_DIR/apps/admin" ]; then
+  write_app_env "$ROOT_DIR/apps/admin"
+  echo "  Wrote apps/admin/.env.local"
 fi
 
 # Mobile reads its per-chain contract map from
@@ -914,6 +936,9 @@ echo "  RelayerRegistry:     $RELAYER_REGISTRY"
 [ -n "$USDC" ] && echo "  USDC:                $USDC"
 [ -n "$COMMITMENT_POOL" ] && echo "  CommitmentPool:      $COMMITMENT_POOL"
 [ -n "$PRIVATE_SETTLEMENT" ] && echo "  PrivateSettlement:   $PRIVATE_SETTLEMENT"
+[ -n "$IDENTITY_GATE" ] && echo "  IdentityGate:        $IDENTITY_GATE"
+[ -n "$FEE_VAULT" ] && echo "  FeeVault:            $FEE_VAULT"
+[ -n "$SANCTIONS_LIST" ] && echo "  SanctionsList:       $SANCTIONS_LIST"
 echo ""
 echo "  Logs:      $LOG_DIR/"
 echo ""

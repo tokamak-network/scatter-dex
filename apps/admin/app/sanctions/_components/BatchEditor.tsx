@@ -5,6 +5,7 @@ import { Contract, type Signer } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { parseAddressList } from "../../lib/parseAddressList";
+import { useSanctions } from "./SanctionsContext";
 
 const SANCTIONS_ABI = [
   "function addSanctionsBatch(address[] calldata addrs) external",
@@ -21,6 +22,7 @@ interface Props {
 
 export function BatchEditor({ address, onSuccess }: Props) {
   const { signer } = useWallet();
+  const { refresh } = useSanctions();
   const [text, setText] = useState("");
   const [action, setAction] = useState<"add" | "remove">("add");
 
@@ -53,6 +55,7 @@ export function BatchEditor({ address, onSuccess }: Props) {
       onSubmit={submit}
       onSuccess={() => {
         setText("");
+        refresh();
         onSuccess?.();
       }}
     >
