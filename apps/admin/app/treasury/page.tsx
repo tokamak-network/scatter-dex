@@ -20,6 +20,14 @@ const FEE_VAULT_ABI = [
   "function withdrawPlatformRevenue(address token) external",
 ];
 
+// Minimal WETH9-compatible ABI. The native-ETH revenue row is stored
+// on-chain as WETH balance held by `treasury` after withdraw; calling
+// `withdraw(amount)` from the treasury wallet unwraps it to native ETH.
+const WETH_ABI = [
+  "function withdraw(uint256 amount) external",
+  "function balanceOf(address) external view returns (uint256)",
+];
+
 // Native asset slot (ETH) — `DEMO_NETWORK.contracts.weth` is the
 // address relayers use when fees are paid in native ETH.
 type NativeRow = { kind: "native"; symbol: string; decimals: number; address: string };
@@ -159,6 +167,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
         />
         <PlatformRevenueTable
           feeVaultAddress={feeVaultAddress}
+          treasuryAddress={snap.treasury}
           rows={tokenRows}
           onWithdrawn={() => setReloadKey((k) => k + 1)}
         />
@@ -178,6 +187,9 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
             snap.pendingFeeEffectiveTime > 0n &&
             Number(snap.pendingFeeEffectiveTime) <= Math.floor(Date.now() / 1000)
           }
+          currentFeeBps={snap.platformFeeBps}
+          pendingFeeBps={snap.pendingFeeBps}
+          pendingEffectiveTime={snap.pendingFeeEffectiveTime}
           onReload={() => setReloadKey((k) => k + 1)}
         />
       </section>
@@ -221,10 +233,12 @@ function rowMeta(row: TokenRow): RowMeta {
 
 function PlatformRevenueTable({
   feeVaultAddress,
+  treasuryAddress,
   rows,
   onWithdrawn,
 }: {
   feeVaultAddress: string;
+  treasuryAddress: string | null;
   rows: TokenRow[];
   onWithdrawn: () => void;
 }) {
@@ -252,6 +266,7 @@ function PlatformRevenueTable({
             <TokenRevenueRow
               key={`${row.kind}:${rowMeta(row).address}`}
               feeVaultAddress={feeVaultAddress}
+              treasuryAddress={treasuryAddress}
               row={row}
               onWithdrawn={onWithdrawn}
             />
@@ -270,10 +285,14 @@ type RowPhase =
 
 function TokenRevenueRow({
   feeVaultAddress,
+  treasuryAddress,
   row,
   onWithdrawn,
 }: {
   feeVaultAddress: string;
+  /** On-chain `FeeVault.treasury`. Needed to read the post-withdraw
+   *  WETH balance for the auto-unwrap step on the native ETH row. */
+  treasuryAddress: string | null;
   row: TokenRow;
   onWithdrawn: () => void;
 }) {
@@ -304,28 +323,67 @@ function TokenRevenueRow({
     try {
       const tx = await writeWithdraw(signer, feeVaultAddress, meta.address);
       const receipt = await tx.wait();
-      setPhase({ kind: "success", txHash: receipt?.hash ?? tx.hash });
+      let finalHash = receipt?.hash ?? tx.hash;
+
+      // Native-ETH revenue row: WETH is now in the treasury wallet.
+      // Auto-unwrap by calling WETH.withdraw(amount) from the same
+      // signer — only valid when the connected wallet IS the treasury,
+      // otherwise WETH stays as ERC20 (the operator can still claim it
+      // later by signing the unwrap themselves).
+      if (
+        row.kind === "native" &&
+        treasuryAddress &&
+        revenue !== null &&
+        revenue > 0n &&
+        (await signer.getAddress()).toLowerCase() === treasuryAddress.toLowerCase()
+      ) {
+        const weth = new Contract(meta.address, WETH_ABI, signer);
+        const unwrapTx = (await weth.withdraw(revenue)) as {
+          hash: string;
+          wait(): Promise<{ hash?: string } | null>;
+        };
+        const unwrapReceipt = await unwrapTx.wait();
+        finalHash = unwrapReceipt?.hash ?? unwrapTx.hash;
+      }
+
+      setPhase({ kind: "success", txHash: finalHash });
       onWithdrawn();
     } catch (err) {
       setPhase({ kind: "error", msg: explainError(err) });
     }
-  }, [signer, feeVaultAddress, meta.address, onWithdrawn]);
+  }, [signer, feeVaultAddress, meta.address, onWithdrawn, row.kind, treasuryAddress, revenue]);
 
   const hasRevenue = revenue != null && revenue > 0n;
+  // For the native row, the on-chain balance is WETH but withdraws
+  // are auto-unwrapped to native ETH. Surface both in the cell so the
+  // operator sees the underlying WETH amount AND the ETH they'll
+  // actually receive on Withdraw.
+  const isNative = row.kind === "native";
 
   return (
     <tr className="border-t border-[var(--color-border)]">
       <td className="px-4 py-3">
         <div className="font-medium">{meta.symbol}</div>
         <div className="text-xs text-[var(--color-text-muted)]">
-          {row.kind === "native" ? "Native (WETH slot)" : "ERC20"}
+          {isNative ? "Native ETH (auto-unwrap from WETH on withdraw)" : "ERC20"}
         </div>
       </td>
       <td className="px-4 py-3 font-mono text-xs text-[var(--color-text-muted)]">
         {shortAddr(meta.address)}
       </td>
       <td className="px-4 py-3 text-right font-mono">
-        {revenue == null ? "…" : `${formatUnits(revenue, meta.decimals)} ${meta.symbol}`}
+        {revenue == null ? (
+          "…"
+        ) : isNative ? (
+          <>
+            <div>{formatUnits(revenue, meta.decimals)} ETH</div>
+            <div className="text-[10px] text-[var(--color-text-muted)]">
+              ({formatUnits(revenue, meta.decimals)} WETH on-chain)
+            </div>
+          </>
+        ) : (
+          `${formatUnits(revenue, meta.decimals)} ${meta.symbol}`
+        )}
       </td>
       <td className="px-4 py-3 text-right">
         {!account || !signer ? (

@@ -291,7 +291,9 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
             dexPlatformFeeBps = 0;
         }
         emit FeeVaultUpdated(address(feeVault), _vault);
-        feeVault = FeeVault(_vault);
+        // payable cast: FeeVault now has `receive()` to accept ETH refunds
+        // from WETH.withdraw during the auto-unwrap claim path.
+        feeVault = FeeVault(payable(_vault));
     }
 
     /// @notice Register (or replace) the AuthorizeVerifier for a tier.

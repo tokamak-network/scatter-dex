@@ -23,7 +23,7 @@ library ProxyDeployer {
         FeeVault impl = new FeeVault();
         bytes memory initData = abi.encodeCall(FeeVault.initialize, (initialOwner, treasury, platformFeeBps));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
-        return FeeVault(address(proxy));
+        return FeeVault(payable(address(proxy)));
     }
 
     function deploySanctionsList(address proxyAdminOwner, address initialOwner) internal returns (SanctionsList) {

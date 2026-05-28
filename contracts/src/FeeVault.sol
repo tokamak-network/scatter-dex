@@ -8,6 +8,14 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+/// @dev Minimal WETH9 surface so relayer claims paid in WETH can be auto-
+///      unwrapped to native ETH. Only the two functions we use here are
+///      declared; full WETH ABI is irrelevant to FeeVault.
+interface IWETH9 {
+    function withdraw(uint256 amount) external;
+    function balanceOf(address) external view returns (uint256);
+}
+
 /// @title FeeVault
 /// @notice Accumulates settlement fees for relayers and deducts a platform fee on withdrawal.
 ///         PrivateSettlement deposits fees here during settle/scatterDirect.
@@ -44,8 +52,19 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     /// @notice Only authorized depositors (PrivateSettlement) can credit fees.
     mapping(address => bool) public authorizedDepositors;
 
+    /// @notice WETH address used to auto-unwrap relayer claims into native ETH.
+    ///         When `claim(token)` is invoked with `token == weth`, the
+    ///         contract burns the WETH and sends ETH to the relayer + treasury.
+    ///         Setting to `address(0)` disables auto-unwrap (claims revert to
+    ///         the plain ERC20 transfer path even for the same WETH address —
+    ///         use this as a kill-switch if the WETH contract misbehaves).
+    address public weth;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[50] private __gap;
+    ///      Reduced from 50 → 49 when `weth` was added in the auto-unwrap
+    ///      upgrade. Subsequent upgrades MUST keep adding from the top of
+    ///      __gap (slot index 0) to preserve the layout of existing proxies.
+    uint256[49] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────
     event FeeDeposited(address indexed relayer, address indexed token, uint256 amount);
@@ -63,6 +82,11 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     event PlatformFeeUpdated(uint256 oldBps, uint256 newBps);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event DepositorUpdated(address indexed depositor, bool authorized);
+    event WethUpdated(address oldWeth, address newWeth);
+    /// @notice Fired in addition to `FeeClaimed` when a claim was paid out
+    ///         as native ETH via the WETH auto-unwrap path. The platform
+    ///         fee portion is sent to `treasury` as ETH as well.
+    event FeeClaimedAsEth(address indexed relayer, uint256 amount, uint256 platformFee);
 
     // ─── Errors ─────────────────────────────────────────────────
     error ZeroAddress();
@@ -73,6 +97,11 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     error InsufficientTokenBalance();
     error NoFeeChangePending();
     error FeeChangeNotReady();
+    /// @notice Native-ETH transfer to relayer or treasury failed (gas
+    ///         starvation, target contract revert, etc.).
+    error EthTransferFailed();
+    /// @notice Stray ETH sent to the vault outside the WETH-unwrap path.
+    error OnlyWethRefund();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -166,6 +195,11 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     // ─── Claim (called by relayers) ─────────────────────────────
 
     /// @notice Withdraw accumulated fees for a specific token. Platform fee is deducted.
+    /// @dev    If `token == weth` and `weth` is configured, the contract
+    ///         unwraps the WETH internally and sends native ETH to both the
+    ///         relayer and the treasury. Relayers integrating with the
+    ///         vault don't need a separate claimNative entrypoint — passing
+    ///         the WETH address is enough.
     function claim(address token) external nonReentrant {
         if (token == address(0)) revert ZeroAddress();
         uint256 balance = balances[msg.sender][token];
@@ -176,6 +210,27 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
 
         uint256 platformFee = (balance * platformFeeBps) / 10000;
         uint256 relayerAmount = balance - platformFee;
+
+        address _weth = weth;
+        if (_weth != address(0) && token == _weth) {
+            // Unwrap once for the full balance, then split as ETH. Doing
+            // the unwrap up-front keeps `totalTracked` and the on-chain
+            // WETH supply consistent across the two recipient transfers —
+            // a partial unwrap would leave the contract holding a sliver
+            // of WETH that no relayer balance maps to.
+            IWETH9(_weth).withdraw(balance);
+
+            if (platformFee > 0) {
+                _sendEth(treasury, platformFee);
+                emit PlatformFeeFromRelayerClaim(token, platformFee, msg.sender);
+            }
+            if (relayerAmount > 0) {
+                _sendEth(msg.sender, relayerAmount);
+            }
+            emit FeeClaimed(msg.sender, token, relayerAmount, platformFee);
+            emit FeeClaimedAsEth(msg.sender, relayerAmount, platformFee);
+            return;
+        }
 
         if (platformFee > 0) {
             IERC20(token).safeTransfer(treasury, platformFee);
@@ -188,6 +243,23 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         emit FeeClaimed(msg.sender, token, relayerAmount, platformFee);
     }
 
+    /// @dev Internal helper for the ETH path. Surfaces a typed error
+    ///      instead of bubbling the bare `call` failure so the front-end
+    ///      revert reason maps to a known case.
+    function _sendEth(address to, uint256 amount) internal {
+        (bool ok,) = payable(to).call{value: amount}("");
+        if (!ok) revert EthTransferFailed();
+    }
+
+    /// @notice Receive native ETH ONLY from the configured WETH contract
+    ///         during a `claim()` unwrap. Rejecting other senders prevents
+    ///         random EOAs from parking ETH on the vault, where it would
+    ///         not be tracked by `balances` or `platformRevenue` and would
+    ///         eventually be stranded.
+    receive() external payable {
+        if (msg.sender != weth) revert OnlyWethRefund();
+    }
+
     // ─── Admin ──────────────────────────────────────────────────
 
     /// @notice Add or remove an authorized depositor (typically PrivateSettlement).
@@ -195,6 +267,15 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         if (depositor == address(0)) revert ZeroAddress();
         authorizedDepositors[depositor] = authorized;
         emit DepositorUpdated(depositor, authorized);
+    }
+
+    /// @notice Configure (or disable) the WETH auto-unwrap path.
+    ///         Pass `address(0)` to disable — claim() then transfers WETH
+    ///         as a plain ERC20 instead of unwrapping to native ETH.
+    function setWeth(address _weth) external onlyOwner {
+        address prev = weth;
+        weth = _weth;
+        emit WethUpdated(prev, _weth);
     }
 
     /// @notice Schedule a platform fee change. Takes effect after FEE_CHANGE_DELAY.

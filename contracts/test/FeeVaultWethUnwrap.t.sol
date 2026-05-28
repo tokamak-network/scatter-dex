@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.28;
+
+import {Test} from "forge-std/Test.sol";
+import {FeeVault} from "../src/FeeVault.sol";
+import {MockWETH} from "./mocks/MockWETH.sol";
+import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
+
+/// @title FeeVaultWethUnwrap
+/// @notice Covers the WETH→ETH auto-unwrap path on `claim()`.
+contract FeeVaultWethUnwrapTest is Test {
+    FeeVault internal vault;
+    MockWETH internal weth;
+
+    address internal owner = address(0xA11CE);
+    address internal treasury = address(0xCAFE);
+    address internal depositor = address(0xDEAD); // stands in for PrivateSettlement
+    address internal relayer;
+
+    function setUp() public {
+        vault = ProxyDeployer.deployFeeVault(address(this), owner, treasury, 500); // 5%
+        weth = new MockWETH();
+        relayer = makeAddr("relayer");
+        vm.prank(owner);
+        vault.setWeth(address(weth));
+        vm.prank(owner);
+        vault.setAuthorizedDepositor(depositor, true);
+    }
+
+    /// @dev Credit a relayer balance by minting WETH directly to the
+    ///      vault then calling `depositFee` from an authorized depositor.
+    function _creditRelayer(uint256 amount) internal {
+        vm.deal(address(this), amount);
+        weth.deposit{value: amount}();
+        weth.transfer(address(vault), amount);
+        vm.prank(depositor);
+        vault.deposit(relayer, address(weth), amount);
+    }
+
+    // ─────────────────────────────────────────────────────────────
+
+    function test_setWeth_setsTheSlotAndEmitsEvent() public {
+        vm.prank(owner);
+        vault.setWeth(address(0));
+        assertEq(vault.weth(), address(0), "weth cleared");
+
+        vm.prank(owner);
+        vault.setWeth(address(weth));
+        assertEq(vault.weth(), address(weth), "weth restored");
+    }
+
+    function test_setWeth_rejectsNonOwner() public {
+        vm.expectRevert();
+        vault.setWeth(address(weth));
+    }
+
+    function test_claim_weth_pays_relayer_and_treasury_in_eth() public {
+        _creditRelayer(1 ether);
+
+        uint256 relayerEthBefore = relayer.balance;
+        uint256 treasuryEthBefore = treasury.balance;
+        uint256 vaultWethBefore = weth.balanceOf(address(vault));
+        assertEq(vaultWethBefore, 1 ether, "vault holds the WETH pre-claim");
+
+        vm.prank(relayer);
+        vault.claim(address(weth));
+
+        // 5% fee = 0.05 ETH → treasury; 95% = 0.95 ETH → relayer.
+        assertEq(treasury.balance - treasuryEthBefore, 0.05 ether, "treasury ETH delta");
+        assertEq(relayer.balance - relayerEthBefore, 0.95 ether, "relayer ETH delta");
+
+        // Vault should hold zero WETH and zero ETH after the unwrap.
+        assertEq(weth.balanceOf(address(vault)), 0, "vault WETH drained");
+        assertEq(address(vault).balance, 0, "vault ETH zero");
+
+        // Relayer balance entry zeroed; totalTracked decremented.
+        assertEq(vault.balances(relayer, address(weth)), 0, "balance zeroed");
+        assertEq(vault.totalTracked(address(weth)), 0, "totalTracked zeroed");
+    }
+
+    function test_claim_weth_when_weth_unset_falls_back_to_erc20_transfer() public {
+        _creditRelayer(1 ether);
+        // Operator kill-switch: clear weth slot before relayer claims.
+        vm.prank(owner);
+        vault.setWeth(address(0));
+
+        uint256 relayerEthBefore = relayer.balance;
+        uint256 treasuryEthBefore = treasury.balance;
+
+        vm.prank(relayer);
+        vault.claim(address(weth));
+
+        // No ETH moved — claim falls back to ERC20 WETH transfer.
+        assertEq(relayer.balance, relayerEthBefore, "no ETH to relayer");
+        assertEq(treasury.balance, treasuryEthBefore, "no ETH to treasury");
+        assertEq(weth.balanceOf(relayer), 0.95 ether, "relayer got WETH");
+        assertEq(weth.balanceOf(treasury), 0.05 ether, "treasury got WETH");
+    }
+
+    function test_claim_nonWeth_token_still_uses_erc20_path() public {
+        // Use a different ERC20 (treat MockWETH as a normal ERC20 by NOT
+        // registering it as the unwrap target). Re-uses the same mock
+        // since it implements ERC20.
+        MockWETH otherToken = new MockWETH();
+
+        vm.deal(address(this), 1 ether);
+        otherToken.deposit{value: 1 ether}();
+        otherToken.transfer(address(vault), 1 ether);
+        vm.prank(depositor);
+        vault.deposit(relayer, address(otherToken), 1 ether);
+
+        uint256 relayerEthBefore = relayer.balance;
+        vm.prank(relayer);
+        vault.claim(address(otherToken));
+
+        assertEq(relayer.balance, relayerEthBefore, "no ETH for non-WETH token");
+        assertEq(otherToken.balanceOf(relayer), 0.95 ether, "relayer got ERC20");
+        assertEq(otherToken.balanceOf(treasury), 0.05 ether, "treasury got ERC20");
+    }
+
+    function test_receive_reverts_for_non_weth_sender() public {
+        vm.deal(address(this), 1 ether);
+        // Direct ETH from a random EOA must NOT stick on the vault.
+        (bool ok,) = address(vault).call{value: 1 ether}("");
+        assertFalse(ok, "receive() must reject non-WETH senders");
+    }
+
+    function test_claim_zero_platform_fee_only_pays_relayer() public {
+        // Schedule + apply a 0-bps fee so the fee branch is exercised
+        // with platformFee == 0.
+        vm.prank(owner);
+        vault.scheduleFeeChange(0);
+        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vm.prank(owner);
+        vault.applyFeeChange();
+        assertEq(vault.platformFeeBps(), 0, "fee set to 0");
+
+        _creditRelayer(1 ether);
+        uint256 relayerEthBefore = relayer.balance;
+        uint256 treasuryEthBefore = treasury.balance;
+
+        vm.prank(relayer);
+        vault.claim(address(weth));
+
+        assertEq(relayer.balance - relayerEthBefore, 1 ether, "relayer got full 1 ETH");
+        assertEq(treasury.balance, treasuryEthBefore, "treasury unchanged");
+    }
+}

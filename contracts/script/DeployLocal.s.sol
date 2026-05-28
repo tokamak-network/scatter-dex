@@ -173,6 +173,11 @@ contract DeployLocal is Script {
         //     ProxyAdmin owner = UPGRADE_OWNER env (multisig on mainnet); falls back to deployer.
         FeeVault vault = _deployFeeVaultProxy(deployer);
         vault.setAuthorizedDepositor(address(privateSettlement), true);
+        // Enable the WETH auto-unwrap path so relayer claims paid in WETH
+        // arrive as native ETH. Skipping this would not break claim()
+        // (it falls back to ERC20 transfer), but the operator experience
+        // diverges from production where WETH should always settle as ETH.
+        vault.setWeth(wethAddr);
 
         // 12. Wire relayer registry + fee vault to PrivateSettlement
         privateSettlement.setRelayerRegistry(address(relayerRegistry));
@@ -410,7 +415,7 @@ contract DeployLocal is Script {
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("FeeVault impl:", address(impl));
         console.log("FeeVault proxy:", address(proxy));
-        return FeeVault(address(proxy));
+        return FeeVault(payable(address(proxy)));
     }
 
     function _deployIdentityGateProxy(address deployer, address initialRegistry) internal returns (IdentityGate) {
