@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
+import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { formatTokenLabel } from "@zkscatter/sdk";
 import { encodeClaimPackage } from "@zkscatter/sdk/notes";
@@ -9,6 +10,7 @@ import {
   addClaimInboxEntry,
   ClaimInboxCorruptError,
   loadClaimInbox,
+  markClaimInboxEntryClaimed,
   parseClaimInboxInput,
   removeClaimInboxEntry,
   type ClaimInboxEntry,
@@ -16,6 +18,7 @@ import {
 import { useFolderStorage } from "../_lib/folderStorage";
 import { formatLocalStampSec } from "../_lib/format";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
+import { submitClaim } from "../_lib/claimSubmit";
 
 /** Reconstruct the /claim URL from a stored entry. We always have the
  *  decoded package, so we re-encode it. The `id` query param is just a
@@ -34,7 +37,11 @@ function rowStatusLabel(e: ClaimInboxEntry, nowSec: number | undefined): string 
 
 export default function ClaimInbox() {
   const folder = useFolderStorage();
-  const { account } = useWallet();
+  const { account, readProvider, signer } = useWallet();
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [rowState, setRowState] = useState<
+    Record<string, { status: "claiming" | "error"; message?: string }>
+  >({});
   const [entries, setEntries] = useState<ClaimInboxEntry[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pasteValue, setPasteValue] = useState("");
@@ -101,6 +108,58 @@ export default function ClaimInbox() {
   async function onRemove(id: string) {
     await removeClaimInboxEntry(id);
     await refresh();
+  }
+
+  /** Copy the full /claim URL (origin + path + hash) so the operator
+   *  can paste it elsewhere — same payload format Pay/Pro accept on
+   *  the recipient side. */
+  async function onCopyLink(e: ClaimInboxEntry) {
+    const href = claimHrefFor(e);
+    const full =
+      typeof window !== "undefined" ? `${window.location.origin}${href}` : href;
+    try {
+      await navigator.clipboard.writeText(full);
+    } catch (err) {
+      console.warn("[Pay] copy claim link failed", err);
+    }
+  }
+
+  /** Inline gasless claim — skips /claim landing page and submits
+   *  straight through the package's relayer. Mark-claimed after the
+   *  tx resolves so the badge flips Claimable → Claimed without a
+   *  refresh. */
+  async function onClaimNow(e: ClaimInboxEntry) {
+    setOpenMenuId(null);
+    if (!readProvider) {
+      setRowState((s) => ({
+        ...s,
+        [e.id]: { status: "error", message: "Wallet not connected" },
+      }));
+      return;
+    }
+    setRowState((s) => ({ ...s, [e.id]: { status: "claiming" } }));
+    try {
+      const { txHash } = await submitClaim({
+        pkg: e.pkg,
+        readProvider,
+        signer: signer ?? undefined,
+      });
+      await markClaimInboxEntryClaimed(e.id, txHash);
+      setRowState((s) => {
+        const next = { ...s };
+        delete next[e.id];
+        return next;
+      });
+      await refresh();
+    } catch (err) {
+      setRowState((s) => ({
+        ...s,
+        [e.id]: {
+          status: "error",
+          message: err instanceof Error ? err.message : String(err),
+        },
+      }));
+    }
   }
 
   return (
@@ -214,34 +273,20 @@ export default function ClaimInbox() {
                       >
                         {status}
                       </span>
-                      <div className="flex gap-1.5">
-                        {e.status !== "claimed" && (
-                          // Plain <a> instead of next/link <Link>: the
-                          // claim URL fragment is a 1+ KB base64url
-                          // payload, and App Router's <Link> double-pushes
-                          // the hash on client-side nav, producing
-                          // `#FRAG#FRAG` in the URL bar — which then
-                          // makes `window.location.hash.replace(/^#/, "")`
-                          // leak the inner `#` into the base64 input and
-                          // throws `decodeClaimPackage: malformed
-                          // base64url payload`. A bare <a> hard-navigates
-                          // and writes the URL verbatim, dodging the
-                          // duplication entirely.
-                          <a
-                            href={claimHrefFor(e)}
-                            className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-primary-soft)]"
-                          >
-                            Open
-                          </a>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => void onRemove(e.id)}
-                          className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-warning-soft)]"
-                        >
-                          Remove
-                        </button>
-                      </div>
+                      <InboxRowActions
+                        entry={e}
+                        isClaimable={status === "Claimable"}
+                        menuOpen={openMenuId === e.id}
+                        rowState={rowState[e.id]}
+                        onOpenMenu={() =>
+                          setOpenMenuId((cur) => (cur === e.id ? null : e.id))
+                        }
+                        onCloseMenu={() => setOpenMenuId(null)}
+                        onCopyLink={() => void onCopyLink(e)}
+                        onClaimNow={() => void onClaimNow(e)}
+                        onRemove={() => void onRemove(e.id)}
+                        href={claimHrefFor(e)}
+                      />
                     </div>
                   </div>
                 </li>
@@ -251,6 +296,101 @@ export default function ClaimInbox() {
         )}
       </section>
         </>
+      )}
+    </div>
+  );
+}
+
+/** Per-row Actions dropdown. Open / Copy claim link / Claim now /
+ *  Remove. Mirrors Pro's /claims same-named component byte-for-byte
+ *  so a future refactor can hoist this into a shared package; the
+ *  only thing that diverges between the two apps is the
+ *  `console.warn` label, which is intentionally per-app for telemetry. */
+function InboxRowActions({
+  entry,
+  isClaimable,
+  menuOpen,
+  rowState,
+  onOpenMenu,
+  onCloseMenu,
+  onCopyLink,
+  onClaimNow,
+  onRemove,
+  href,
+}: {
+  entry: ClaimInboxEntry;
+  isClaimable: boolean;
+  menuOpen: boolean;
+  rowState?: { status: "claiming" | "error"; message?: string };
+  onOpenMenu: () => void;
+  onCloseMenu: () => void;
+  onCopyLink: () => void;
+  onClaimNow: () => void;
+  onRemove: () => void;
+  href: string;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useOutsideClick({ enabled: menuOpen, ref, onClose: onCloseMenu });
+  const claimed = entry.status === "claimed";
+  const claiming = rowState?.status === "claiming";
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <div ref={ref} className="relative inline-block text-left">
+        <button
+          type="button"
+          onClick={onOpenMenu}
+          disabled={claiming}
+          className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+        >
+          {claiming ? "Claiming…" : "Actions ▾"}
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 z-10 mt-1 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg">
+            {!claimed && (
+              <a
+                href={href}
+                onClick={onCloseMenu}
+                className="block px-3 py-1.5 hover:bg-[var(--color-primary-soft)]"
+              >
+                Open claim page
+              </a>
+            )}
+            <button
+              type="button"
+              onClick={onCopyLink}
+              className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)]"
+            >
+              Copy claim link
+            </button>
+            {!claimed && (
+              <button
+                type="button"
+                onClick={onClaimNow}
+                disabled={!isClaimable}
+                title={
+                  isClaimable
+                    ? "Submit the gasless claim straight from here (no /claim landing page)."
+                    : "Locked — wait for the release time before claiming."
+                }
+                className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+              >
+                Claim now (gasless)
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onRemove}
+              className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-warning-soft)]"
+            >
+              Remove
+            </button>
+          </div>
+        )}
+      </div>
+      {rowState?.status === "error" && (
+        <div className="max-w-[14rem] rounded border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-2 py-1 text-[10px] text-[var(--color-warning)]">
+          {rowState.message ?? "Claim failed"}
+        </div>
       )}
     </div>
   );
