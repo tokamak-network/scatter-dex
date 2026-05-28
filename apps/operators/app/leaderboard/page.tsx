@@ -551,7 +551,15 @@ function RelayerTable({
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
       <table className="w-full text-sm">
-        <thead className="bg-[var(--color-bg)] text-xs">
+        {/* Header had ~8 RGB units of contrast against the row bg
+            (`--color-bg` #f7f8fb on `--color-surface` #ffffff) — the
+            two melted into each other. Switch to slate-100 (an
+            explicit darker neutral) + a thick bottom border so the
+            thead clearly separates from the body. Can't reuse
+            `--color-primary-soft` here: that's already taken by the
+            "you" row highlight, and matching it would blur the
+            "this is my row" cue. */}
+        <thead className="border-b-2 border-[var(--color-border-strong)] bg-slate-100 text-xs">
           <tr>
             <SortableTh label="#" column="" criterion={null} align="left" />
             <SortableTh label="Relayer" column="" criterion={null} align="left" />
