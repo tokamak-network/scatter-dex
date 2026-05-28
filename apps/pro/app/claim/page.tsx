@@ -431,7 +431,15 @@ function ClaimInner() {
                       {phase.message}
                     </div>
                   )}
-                  {gasless && (phase.kind === "idle" || phase.kind === "error") && (
+                  {/* Hide the self-pay fallback + save-to-inbox buttons
+                      once the nullifier is already spent on-chain —
+                      both actions are footguns at that point (self-pay
+                      reverts, save-to-inbox just shuffles a useless
+                      row into the inbox). The inbox row's green
+                      "Claimed" badge already records the result; this
+                      page just needs to confirm the state without
+                      offering irrelevant follow-ups. */}
+                  {gasless && (phase.kind === "idle" || phase.kind === "error") && alreadyClaimed !== true && (
                     <button
                       onClick={() => {
                         setForceSelfPay(true);
@@ -443,7 +451,7 @@ function ClaimInner() {
                       Submit with my wallet instead (you pay gas)
                     </button>
                   )}
-                  {folder.ready && (phase.kind === "idle" || phase.kind === "error") && (
+                  {folder.ready && (phase.kind === "idle" || phase.kind === "error") && alreadyClaimed !== true && (
                     <button
                       onClick={() => void saveToInbox()}
                       disabled={preSaveState === "saving"}
