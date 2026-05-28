@@ -29,11 +29,19 @@ export interface VolumeTotal {
  *  only — what THIS relayer's users brought into settlement. */
 export function VolumeCard({ volume }: { volume: { totals: VolumeTotal[] } | null }) {
   if (!volume) return <CardPlaceholder title="Volume" />;
-  const rows = [...volume.totals].sort((a, b) => {
-    const ai = safeBig(a.totalSellWei);
-    const bi = safeBig(b.totalSellWei);
-    return ai > bi ? -1 : ai < bi ? 1 : 0;
-  });
+  // Drop tokens that only appeared on the buy leg in this window. A
+  // pure-buy token has no sell-leg notional, so rendering it here
+  // with amount=0 alongside a settles count > 0 misleads the
+  // operator into thinking we routed sell-side flow we didn't.
+  // The counterparty's Volume card carries those rows on the other
+  // side of the trade.
+  const rows = volume.totals
+    .filter((r) => safeBig(r.totalSellWei) > 0n)
+    .sort((a, b) => {
+      const ai = safeBig(a.totalSellWei);
+      const bi = safeBig(b.totalSellWei);
+      return ai > bi ? -1 : ai < bi ? 1 : 0;
+    });
   // sellFills is one row per confirmed on-chain settle for the token —
   // matches what Operations(24h) reports, so the two numbers tie out.
   const settles = rows.reduce((n, r) => n + r.sellFills, 0);

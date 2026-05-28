@@ -241,7 +241,14 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
           `/api/admin/history?limit=200`,
         ),
         adminGet<FeeTotals>(auth, `/api/admin/history/fees?since=${since}`),
-        adminGet<VolumeTotals>(auth, `/api/admin/history/volume?since=${since}`),
+        // Volume endpoint shipped after fees — an older relayer the
+        // dashboard is connected to would 404 here. Swallow into an
+        // empty payload so the rest of the dashboard still renders,
+        // and log so the operator can see why volume is blank.
+        adminGet<VolumeTotals>(auth, `/api/admin/history/volume?since=${since}`).catch((err) => {
+          console.warn("[dashboard] volume endpoint unavailable; rendering empty", err);
+          return { totals: [] } as VolumeTotals;
+        }),
         adminGet<BucketsBody>(
           auth,
           `/api/admin/history/buckets?since=${perfSince}&bucketMs=${60 * 60 * 1000}`,
