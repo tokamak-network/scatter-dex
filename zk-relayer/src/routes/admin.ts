@@ -44,10 +44,15 @@ export interface AdminRouteDeps {
   drainAuthorizeOrders: () => number;
   getAuthorizeOrderStats: () => { pending: number; matched: number; total: number };
   writeLimiter?: RequestHandler;
+  /** Required for the shared-OB backfill endpoint; absent when the
+   *  relayer runs without an indexer (the endpoint then 503s). */
+  backfillFromSharedOb?: (since?: number) => Promise<{
+    scanned: number; inserted: number; skipped: number; errors: number; pages: number;
+  }>;
 }
 
 export function createAdminRoutes(deps: AdminRouteDeps): Router {
-  const { submitter, db, drainAuthorizeOrders: drainAuthFn, getAuthorizeOrderStats: getAuthStatsFn, writeLimiter } = deps;
+  const { submitter, db, drainAuthorizeOrders: drainAuthFn, getAuthorizeOrderStats: getAuthStatsFn, writeLimiter, backfillFromSharedOb } = deps;
 
   // Restore pause state from DB on startup
   const savedPause = db.getMeta("paused");
@@ -691,6 +696,49 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     } catch (err) {
       log.error("history/volume failed", { err: err instanceof Error ? err.message : String(err) });
       res.status(500).json({ error: "Failed to load volume history" });
+    }
+  });
+
+  // One-shot reconciliation: pulls settlement rows from shared-OB
+  // that this relayer participated in but doesn't have locally and
+  // reinserts them into settlement_history + fee_history. Used to
+  // recover analytics after a local DB reset — the push-outbox
+  // covers the opposite direction (local → shared-OB) only.
+  //
+  //   POST /api/admin/push-outbox/backfill-from-shared-ob
+  //   body: { "since"?: <unix-ms> }  // omit to scan from epoch
+  router.post(
+    "/push-outbox/backfill-from-shared-ob",
+    ...wl,
+    async (req: Request, res: Response) => {
+      if (!backfillFromSharedOb) {
+        res.status(503).json({ error: "shared-OB indexer not configured" });
+        return;
+      }
+      try {
+        const since = req.body && typeof req.body.since === "number" ? req.body.since : undefined;
+        const result = await backfillFromSharedOb(since);
+        res.json(result);
+      } catch (err) {
+        log.error("backfill-from-shared-ob failed", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+        res.status(500).json({ error: "Backfill failed" });
+      }
+    },
+  );
+
+  // Settlement push-outbox stats — surfaces how many local settlements
+  // are still awaiting shared-OB acknowledgement, so the operator can
+  // detect a stuck push pipeline without tailing logs.
+  router.get("/push-outbox/stats", (_req: Request, res: Response) => {
+    try {
+      res.json(db.getSettlementPushOutboxStats());
+    } catch (err) {
+      log.error("push-outbox/stats failed", {
+        err: err instanceof Error ? err.message : String(err),
+      });
+      res.status(500).json({ error: "Failed to read outbox stats" });
     }
   });
 

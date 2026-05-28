@@ -489,6 +489,40 @@ export class SharedOrderbookClient {
     return ids;
   }
 
+  /** Paged fetch of settlement rows where the given address appears as
+   *  submitter, maker, or taker. Used by the local-DB backfill
+   *  reconciler to recover rows that exist in shared-OB but went
+   *  missing from local storage (typically: a relayer DB reset before
+   *  the push-outbox shipped). Caller pages by passing the largest
+   *  `createdAt` it has seen as the next `since`. Returns up to `limit`
+   *  rows per call; the server clamps at 500. */
+  async fetchSettlementsForAddress(
+    address: string,
+    opts: { since?: number; limit?: number; offset?: number } = {},
+  ): Promise<Array<Record<string, unknown>>> {
+    if (!this.serverOnline) return [];
+    const params = new URLSearchParams({ relayer: address });
+    if (typeof opts.since === "number") params.set("since", String(opts.since));
+    if (typeof opts.limit === "number") params.set("limit", String(opts.limit));
+    if (typeof opts.offset === "number") params.set("offset", String(opts.offset));
+    try {
+      const res = await fetch(`${this.serverUrl}/api/settlements?${params.toString()}`, {
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        log.warn("fetchSettlementsForAddress non-OK", { status: res.status });
+        return [];
+      }
+      const data = (await res.json()) as { settlements?: Array<Record<string, unknown>> };
+      return data.settlements ?? [];
+    } catch (err) {
+      log.warn("fetchSettlementsForAddress failed", {
+        err: err instanceof Error ? err.message : "unknown",
+      });
+      return [];
+    }
+  }
+
   /** Fetch all open orders from server (initial sync or periodic refresh) */
   async fetchOrders(pair?: string): Promise<OrderSummary[]> {
     if (this.serverOnline) {

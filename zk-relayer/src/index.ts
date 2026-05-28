@@ -18,6 +18,8 @@ import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
 import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle, applyOnChainAuthorizeCancel } from "./routes/authorize-orders.js";
 import { publicSignalToAddress } from "./types/authorize-order.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
+import { SettlementPushWorker } from "./core/settlement-push-worker.js";
+import { backfillFromSharedOb } from "./core/shared-ob-backfill.js";
 import { createHealthRoutes } from "./routes/health.js";
 import { createMetricsRoutes } from "./routes/metrics.js";
 import { startHealthMonitor, stopHealthMonitor } from "./core/health-monitor.js";
@@ -199,11 +201,23 @@ async function main() {
       const { singleParty, ...rest } = ctx;
       const ourAddr = authSubmitter.getAddress().toLowerCase();
       const takerRelayer = singleParty ? undefined : (ctx.takerRelayer ?? ourAddr);
-      sharedClient!.pushSettlement({
-        ...rest,
-        makerRelayer: ourAddr,
-        takerRelayer,
-      });
+      const payload = { ...rest, makerRelayer: ourAddr, takerRelayer };
+      // Persist before attempting delivery — local DB is the trusted
+      // source. If the immediate push drops (transient indexer outage,
+      // network blip), SettlementPushWorker will replay from the
+      // outbox until shared-OB acknowledges.
+      db.enqueueSettlementPush(ctx.txHash, payload);
+      sharedClient!.pushSettlement(payload)
+        .then((ok) => {
+          if (ok) db.markSettlementPushSucceeded(ctx.txHash);
+          else db.markSettlementPushFailed(ctx.txHash, "immediate push returned false");
+        })
+        .catch((err) => {
+          db.markSettlementPushFailed(
+            ctx.txHash,
+            err instanceof Error ? err.message : String(err),
+          );
+        });
     });
 
     try {
@@ -414,6 +428,16 @@ async function main() {
     submitter, db,
     drainAuthorizeOrders, getAuthorizeOrderStats,
     writeLimiter,
+    backfillFromSharedOb: sharedClient
+      ? (since?: number) => backfillFromSharedOb(
+          {
+            db,
+            sharedClient,
+            ownAddress: authSubmitter.getAddress(),
+          },
+          { since },
+        )
+      : undefined,
   }));
 
   // [R-7] Pause guard — reject new order submissions (POST only) when paused
@@ -510,6 +534,17 @@ async function main() {
   settlementWorker.start();
   settlementLog.info("Started");
 
+  // Drain the shared-OB push outbox in the background. The live
+  // pusher already attempts delivery inline; this worker only re-runs
+  // rows it missed. Skipped entirely when shared-OB isn't configured —
+  // no indexer means no push target.
+  let settlementPushWorker: SettlementPushWorker | null = null;
+  if (sharedClient) {
+    settlementPushWorker = new SettlementPushWorker({ db, pusher: sharedClient });
+    settlementPushWorker.start();
+    settlementLog.info("Settlement push outbox worker started");
+  }
+
   // Expiry sweeper — bulk-mark accepted/retrying/settling rows whose
   // circuit expiry passed without settlement (design §2.8).
   const expirySweepInterval = setInterval(() => {
@@ -597,9 +632,18 @@ async function main() {
     // tick drained, the worker would hit a closed handle. Chain stop →
     // server.close → db.close so the order is strict.
     void settlementWorker.stop().finally(() => {
-      server.close(() => {
-        db.close();
-        process.exit(0);
+      // Push worker also touches `db`; drain it before closing the
+      // handle. `stop()` is a no-op when the worker was never started
+      // (no shared-OB configured), so the conditional is just for
+      // type-safety, not logic.
+      const drainPush = settlementPushWorker
+        ? settlementPushWorker.stop()
+        : Promise.resolve();
+      void drainPush.finally(() => {
+        server.close(() => {
+          db.close();
+          process.exit(0);
+        });
       });
     });
   };

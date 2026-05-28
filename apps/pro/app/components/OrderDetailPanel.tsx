@@ -1,15 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Button, useToast } from "@zkscatter/ui";
+import { useMemo, useRef, useState } from "react";
+import { Button, useOutsideClick, useToast } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
-import { addClaimInboxEntry } from "@zkscatter/sdk/storage";
+import {
+  addClaimInboxEntry,
+  markClaimInboxEntryClaimed,
+} from "@zkscatter/sdk/storage";
 import type { OrderClaim, OrderRecord } from "../lib/orders";
 import { StatusBadge } from "./StatusBadge";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useVault } from "../lib/vault";
 import { formatClaimAmount, formatField, formatWhen } from "../lib/format";
 import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPackage";
+import { submitClaim } from "../lib/claimSubmit";
 
 interface Props {
   order: OrderRecord;
@@ -915,9 +919,12 @@ function ShareActions({
   enabled: boolean;
 }) {
   const { network } = useActiveNetwork();
-  const { account } = useWallet();
+  const { account, readProvider, signer } = useWallet();
   const toast = useToast();
-  const [busy, setBusy] = useState<null | "copy" | "email" | "save">(null);
+  const [busy, setBusy] = useState<null | "copy" | "email" | "save" | "claim">(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useOutsideClick({ enabled: menuOpen, ref: menuRef, onClose: () => setMenuOpen(false) });
   const settlement = network.contracts.privateSettlement;
 
   const buildPkg = async () => {
@@ -1027,35 +1034,109 @@ function ShareActions({
     }
   };
 
+  /** Inline gasless claim — operator submits on behalf of the
+   *  recipient through the order's bundled relayer. Tokens still
+   *  flow to `target.recipient` per the proof's public signals,
+   *  not to the operator's wallet. Falls through to self-pay when
+   *  the signer is available and the relayer is unset. Toast
+   *  surfaces success/failure; mark-claimed runs against the
+   *  inbox entry if one exists, so a re-share later shows the
+   *  claimed badge instead of re-prompting.
+   *
+   *  Why this lives here: operators commonly run a Pay-style
+   *  demo where they're both sender + recipient (#0 = #1 split
+   *  scenarios), and bouncing through /claims for each row is
+   *  friction. Same affordance Pay's payouts/detail rows ship. */
+  const onClaimNow = async () => {
+    setBusy("claim");
+    setMenuOpen(false);
+    try {
+      const pkg = await buildPkg();
+      if (!readProvider) throw new Error("Read provider not ready");
+      const { txHash } = await submitClaim({
+        pkg,
+        readProvider,
+        signer: signer ?? undefined,
+      });
+      // Best-effort inbox stash + mark-claimed so the /claims
+      // page reflects the result on next visit. Wrap in try so a
+      // folder-storage hiccup doesn't surface as a claim failure
+      // after the on-chain tx already landed.
+      try {
+        const rawInput = buildClaimLink(window.location.origin, order, pkg);
+        const { entry } = await addClaimInboxEntry({ rawInput, pkg });
+        await markClaimInboxEntryClaimed(entry.id, txHash);
+      } catch (saveErr) {
+        console.warn("[Pro] save-claimed-to-inbox failed", saveErr);
+      }
+      toast.push({
+        kind: "success",
+        title: "Claimed",
+        description: `tx ${txHash.slice(0, 10)}…${txHash.slice(-6)}`,
+      });
+    } catch (err) {
+      console.error("[ShareActions.claim]", err);
+      toast.push({
+        kind: "error",
+        title: "Claim failed",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const disabled = !enabled || busy !== null;
   const title = !enabled
     ? "Available once the order settles on-chain"
     : undefined;
 
   return (
-    <div className="inline-flex items-center gap-1" title={title}>
-      <ShareBtn onClick={onCopy} disabled={disabled} busy={busy === "copy"}>
-        Copy link
-      </ShareBtn>
-      <ShareBtn onClick={onEmail} disabled={disabled} busy={busy === "email"}>
-        Email
-      </ShareBtn>
-      <ShareBtn onClick={onSave} disabled={disabled} busy={busy === "save"}>
-        Save
-      </ShareBtn>
+    <div ref={menuRef} className="relative inline-block text-left" title={title}>
+      <button
+        type="button"
+        onClick={() => setMenuOpen((v) => !v)}
+        disabled={disabled}
+        className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+      >
+        {busy === "claim"
+          ? "Claiming…"
+          : busy
+            ? "Working…"
+            : "Actions ▾"}
+      </button>
+      {menuOpen && (
+        <div className="absolute right-0 z-10 mt-1 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg">
+          <ShareMenuItem onClick={onCopy} disabled={disabled}>
+            Copy claim link
+          </ShareMenuItem>
+          <ShareMenuItem onClick={onSave} disabled={disabled}>
+            Save to Claims inbox
+          </ShareMenuItem>
+          <ShareMenuItem onClick={onEmail} disabled={disabled}>
+            Send via Gmail
+          </ShareMenuItem>
+          <ShareMenuItem onClick={onClaimNow} disabled={disabled}>
+            Claim now (gasless)
+          </ShareMenuItem>
+        </div>
+      )}
     </div>
   );
 }
 
-function ShareBtn({
+/** Menu-item button for the Actions dropdown — same shape across
+ *  all four items so the dropdown stays visually uniform. The
+ *  per-item `onClick` swallows the menu-close intent (the parent's
+ *  setBusy / setMenuOpen handlers do that themselves) so a closing
+ *  animation doesn't race the action. */
+function ShareMenuItem({
   onClick,
   disabled,
-  busy,
   children,
 }: {
   onClick: () => void;
   disabled: boolean;
-  busy: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -1063,9 +1144,9 @@ function ShareBtn({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-0.5 text-[10px] font-medium hover:bg-[var(--color-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+      className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
     >
-      {busy ? "…" : children}
+      {children}
     </button>
   );
 }
