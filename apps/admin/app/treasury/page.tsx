@@ -327,23 +327,40 @@ function TokenRevenueRow({
 
       // Native-ETH revenue row: WETH is now in the treasury wallet.
       // Auto-unwrap by calling WETH.withdraw(amount) from the same
-      // signer — only valid when the connected wallet IS the treasury,
-      // otherwise WETH stays as ERC20 (the operator can still claim it
-      // later by signing the unwrap themselves).
+      // signer — only valid when the connected wallet IS the treasury.
+      // Read the post-withdraw treasury WETH balance for the unwrap
+      // amount instead of trusting the stale UI `revenue` value:
+      // platform revenue can accrue between the last poll and this
+      // click, and the stale value would either under- or over-unwrap.
       if (
         row.kind === "native" &&
         treasuryAddress &&
-        revenue !== null &&
-        revenue > 0n &&
         (await signer.getAddress()).toLowerCase() === treasuryAddress.toLowerCase()
       ) {
-        const weth = new Contract(meta.address, WETH_ABI, signer);
-        const unwrapTx = (await weth.withdraw(revenue)) as {
-          hash: string;
-          wait(): Promise<{ hash?: string } | null>;
-        };
-        const unwrapReceipt = await unwrapTx.wait();
-        finalHash = unwrapReceipt?.hash ?? unwrapTx.hash;
+        const wethContract = new Contract(meta.address, WETH_ABI, signer);
+        const wethBal = (await wethContract.balanceOf(treasuryAddress)) as bigint;
+        if (wethBal > 0n) {
+          try {
+            const unwrapTx = (await wethContract.withdraw(wethBal)) as {
+              hash: string;
+              wait(): Promise<{ hash?: string } | null>;
+            };
+            const unwrapReceipt = await unwrapTx.wait();
+            finalHash = unwrapReceipt?.hash ?? unwrapTx.hash;
+          } catch (unwrapErr) {
+            // Partial success — withdraw succeeded but the WETH unwrap
+            // failed (e.g. signer cancelled, RPC drop). Surface a
+            // distinct message instead of a blanket error so the
+            // operator knows the revenue IS in the treasury as WETH
+            // and they can unwrap manually later.
+            setPhase({
+              kind: "error",
+              msg: `Withdraw confirmed (WETH in treasury) but auto-unwrap failed: ${explainError(unwrapErr)}`,
+            });
+            onWithdrawn();
+            return;
+          }
+        }
       }
 
       setPhase({ kind: "success", txHash: finalHash });
@@ -351,7 +368,7 @@ function TokenRevenueRow({
     } catch (err) {
       setPhase({ kind: "error", msg: explainError(err) });
     }
-  }, [signer, feeVaultAddress, meta.address, onWithdrawn, row.kind, treasuryAddress, revenue]);
+  }, [signer, feeVaultAddress, meta.address, onWithdrawn, row.kind, treasuryAddress]);
 
   const hasRevenue = revenue != null && revenue > 0n;
   // For the native row, the on-chain balance is WETH but withdraws

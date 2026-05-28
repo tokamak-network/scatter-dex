@@ -102,6 +102,12 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     error EthTransferFailed();
     /// @notice Stray ETH sent to the vault outside the WETH-unwrap path.
     error OnlyWethRefund();
+    /// @notice `claimAsEth` invoked while `weth` slot is the zero address.
+    error WethNotConfigured();
+    /// @notice `claimAsEth` invoked with a token other than the configured WETH.
+    error WrongClaimToken();
+    /// @notice `setWeth` invoked with a non-zero address that has no code.
+    error NotAContract();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -195,11 +201,10 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     // ─── Claim (called by relayers) ─────────────────────────────
 
     /// @notice Withdraw accumulated fees for a specific token. Platform fee is deducted.
-    /// @dev    If `token == weth` and `weth` is configured, the contract
-    ///         unwraps the WETH internally and sends native ETH to both the
-    ///         relayer and the treasury. Relayers integrating with the
-    ///         vault don't need a separate claimNative entrypoint — passing
-    ///         the WETH address is enough.
+    ///         Pays out as the underlying ERC20. Smart-contract relayers
+    ///         that cannot receive native ETH (no `receive()` / `fallback`)
+    ///         MUST use this entry point — `claimAsEth` would revert their
+    ///         payout on the ETH transfer.
     function claim(address token) external nonReentrant {
         if (token == address(0)) revert ZeroAddress();
         uint256 balance = balances[msg.sender][token];
@@ -211,27 +216,6 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         uint256 platformFee = (balance * platformFeeBps) / 10000;
         uint256 relayerAmount = balance - platformFee;
 
-        address _weth = weth;
-        if (_weth != address(0) && token == _weth) {
-            // Unwrap once for the full balance, then split as ETH. Doing
-            // the unwrap up-front keeps `totalTracked` and the on-chain
-            // WETH supply consistent across the two recipient transfers —
-            // a partial unwrap would leave the contract holding a sliver
-            // of WETH that no relayer balance maps to.
-            IWETH9(_weth).withdraw(balance);
-
-            if (platformFee > 0) {
-                _sendEth(treasury, platformFee);
-                emit PlatformFeeFromRelayerClaim(token, platformFee, msg.sender);
-            }
-            if (relayerAmount > 0) {
-                _sendEth(msg.sender, relayerAmount);
-            }
-            emit FeeClaimed(msg.sender, token, relayerAmount, platformFee);
-            emit FeeClaimedAsEth(msg.sender, relayerAmount, platformFee);
-            return;
-        }
-
         if (platformFee > 0) {
             IERC20(token).safeTransfer(treasury, platformFee);
             emit PlatformFeeFromRelayerClaim(token, platformFee, msg.sender);
@@ -241,6 +225,48 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         }
 
         emit FeeClaimed(msg.sender, token, relayerAmount, platformFee);
+    }
+
+    /// @notice Opt-in WETH→ETH variant of `claim`. Unwraps the relayer's
+    ///         full WETH balance via `IWETH9.withdraw` and pays both the
+    ///         relayer and the treasury in native ETH. Only callable when
+    ///         `weth` has been configured by the owner.
+    /// @dev    Kept as a separate entry point (rather than auto-unwrapping
+    ///         inside `claim`) so smart-contract relayers without a
+    ///         payable receive can continue to claim ERC20 WETH. Reverts
+    ///         with `WrongClaimToken` if `token != weth`, so a front-end
+    ///         that hard-codes this selector for the WETH case can't
+    ///         accidentally drain a non-WETH token through here.
+    function claimAsEth(address token) external nonReentrant {
+        address _weth = weth;
+        if (_weth == address(0)) revert WethNotConfigured();
+        if (token != _weth) revert WrongClaimToken();
+
+        uint256 balance = balances[msg.sender][token];
+        if (balance == 0) revert NothingToClaim();
+
+        balances[msg.sender][token] = 0;
+        totalTracked[token] -= balance;
+
+        uint256 platformFee = (balance * platformFeeBps) / 10000;
+        uint256 relayerAmount = balance - platformFee;
+
+        // Unwrap once for the full balance, then split as ETH. Doing the
+        // unwrap up-front keeps `totalTracked` and the on-chain WETH
+        // supply consistent across the two recipient transfers — a
+        // partial unwrap would leave the contract holding a sliver of
+        // WETH that no relayer balance maps to.
+        IWETH9(_weth).withdraw(balance);
+
+        if (platformFee > 0) {
+            _sendEth(treasury, platformFee);
+            emit PlatformFeeFromRelayerClaim(token, platformFee, msg.sender);
+        }
+        if (relayerAmount > 0) {
+            _sendEth(msg.sender, relayerAmount);
+        }
+        emit FeeClaimed(msg.sender, token, relayerAmount, platformFee);
+        emit FeeClaimedAsEth(msg.sender, relayerAmount, platformFee);
     }
 
     /// @dev Internal helper for the ETH path. Surfaces a typed error
@@ -273,6 +299,11 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     ///         Pass `address(0)` to disable — claim() then transfers WETH
     ///         as a plain ERC20 instead of unwrapping to native ETH.
     function setWeth(address _weth) external onlyOwner {
+        // Non-zero targets must have contract code — an EOA or
+        // unsuspecting address would DoS every `claimAsEth` call when
+        // the unwrap selector reverts. `address(0)` is allowed as the
+        // explicit disable.
+        if (_weth != address(0) && _weth.code.length == 0) revert NotAContract();
         address prev = weth;
         weth = _weth;
         emit WethUpdated(prev, _weth);

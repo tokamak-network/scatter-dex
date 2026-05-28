@@ -198,6 +198,16 @@ function FeeScheduleEditor({
     return invokeNullary(signer, address, "cancelFeeChange");
   }, [signer, address]);
 
+  // After apply / cancel succeeds the live `currentFeeBps` will move
+  // (apply → pending value; cancel → unchanged), and the operator's
+  // mental model is "the card snaps back to a clean state". Re-arm
+  // the prefill flag so the next render syncs the input to the
+  // new on-chain value.
+  const onPendingSuccess = useCallback(() => {
+    prefilledRef.current = false;
+    onSuccess();
+  }, [onSuccess]);
+
   // When a pending change exists and the timelock has elapsed, the
   // most useful action is applyFeeChange(); otherwise the primary
   // action is scheduleFeeChange(). We surface both as primary/secondary
@@ -211,7 +221,7 @@ function FeeScheduleEditor({
         secondaryLabel="Cancel pending change"
         onSubmit={apply}
         onSecondary={cancel}
-        onSuccess={onSuccess}
+        onSuccess={onPendingSuccess}
       >
         <PendingSummary
           currentFeeBps={currentFeeBps}
@@ -233,7 +243,7 @@ function FeeScheduleEditor({
         description="FeeVault has a pending fee change waiting for its timelock window. Cancel to revert to the current bps, or wait for the elapsed window to apply."
         submitLabel="Cancel pending change"
         onSubmit={cancel}
-        onSuccess={onSuccess}
+        onSuccess={onPendingSuccess}
       >
         <PendingSummary
           currentFeeBps={currentFeeBps}
