@@ -142,6 +142,16 @@ function ClaimInner() {
   // surface the saved txHash on the already-claimed panel so the
   // /claim page matches the inbox row's "Claimed · Tx 0x…" UI
   // instead of just saying "already claimed" without a receipt.
+  //
+  // Also reconciles inbox state with on-chain truth: when the
+  // nullifier is spent on-chain but the local inbox entry still
+  // says "available" (claim happened in another session / from a
+  // different wallet, never ran through `markClaimInboxEntryClaimed`
+  // here), flip the local row to "claimed" so the inbox badge
+  // stops contradicting the /claim page. txHash is left absent —
+  // we don't know which on-chain tx spent the nullifier without a
+  // log scan, and an unknown-tx claim is still better than a stale
+  // "Claimable" badge that invites the user to re-attempt.
   const [priorClaimTxHash, setPriorClaimTxHash] = useState<string | null>(null);
   useEffect(() => {
     if (!parsed || !folder.ready) {
@@ -154,12 +164,24 @@ function ClaimInner() {
         const list = await loadClaimInbox();
         const match = list.find(
           (e) =>
-            e.status === "claimed" &&
-            !!e.txHash &&
             e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
             e.pkg.leafIndex === parsed.pkg.leafIndex,
         );
-        if (!cancelled) setPriorClaimTxHash(match?.txHash ?? null);
+        if (cancelled) return;
+        setPriorClaimTxHash(
+          match?.status === "claimed" && match.txHash ? match.txHash : null,
+        );
+        // Reconcile: nullifier spent on-chain + local row still
+        // says "available" → flip the local row to "claimed". Only
+        // fires when the on-chain probe has confirmed spent; we
+        // don't want to mark anything as claimed pre-emptively.
+        if (
+          alreadyClaimed === true &&
+          match &&
+          match.status !== "claimed"
+        ) {
+          await markClaimInboxEntryClaimed(match.id);
+        }
       } catch {
         if (!cancelled) setPriorClaimTxHash(null);
       }
@@ -167,7 +189,7 @@ function ClaimInner() {
     return () => {
       cancelled = true;
     };
-  }, [parsed, folder.ready]);
+  }, [parsed, folder.ready, alreadyClaimed]);
   useEffect(() => {
     if (!parsed || !readProvider) {
       setAlreadyClaimed(null);

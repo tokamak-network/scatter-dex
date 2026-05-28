@@ -164,6 +164,14 @@ function ClaimInner() {
   // If the local Claims inbox carries a prior claim record for THIS
   // package, surface the saved txHash on the already-claimed panel
   // so the /claim page matches the inbox row's "Claimed · Tx 0x…" UI.
+  // Also reconciles: nullifier spent on-chain + inbox row still
+  // "available" → flip the inbox row to "claimed" so the badge
+  // stops contradicting the /claim page (claim happened in another
+  // session / wallet, never ran through markClaimInboxEntryClaimed
+  // here). txHash is left absent on the reconciliation path — we
+  // don't know which on-chain tx spent the nullifier without a log
+  // scan, and an unknown-tx claim beats a stale "Claimable" badge
+  // that invites a re-attempt.
   const [priorClaimTxHash, setPriorClaimTxHash] = useState<string | null>(null);
   useEffect(() => {
     if (!parsed || !folder.ready) {
@@ -176,12 +184,20 @@ function ClaimInner() {
         const list = await loadClaimInbox();
         const match = list.find(
           (e) =>
-            e.status === "claimed" &&
-            !!e.txHash &&
             e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
             e.pkg.leafIndex === parsed.pkg.leafIndex,
         );
-        if (!cancelled) setPriorClaimTxHash(match?.txHash ?? null);
+        if (cancelled) return;
+        setPriorClaimTxHash(
+          match?.status === "claimed" && match.txHash ? match.txHash : null,
+        );
+        if (
+          alreadyClaimed === true &&
+          match &&
+          match.status !== "claimed"
+        ) {
+          await markClaimInboxEntryClaimed(match.id);
+        }
       } catch {
         if (!cancelled) setPriorClaimTxHash(null);
       }
@@ -189,7 +205,7 @@ function ClaimInner() {
     return () => {
       cancelled = true;
     };
-  }, [parsed, folder.ready]);
+  }, [parsed, folder.ready, alreadyClaimed]);
   useEffect(() => {
     if (!parsed || !readProvider) {
       setAlreadyClaimed(null);
