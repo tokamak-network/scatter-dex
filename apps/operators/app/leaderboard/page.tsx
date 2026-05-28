@@ -838,95 +838,243 @@ function normAddr(s: unknown): string | null {
   }
 }
 
-/** Inline expansion row — joins per-token settled volume and per-token
- *  fee earned on the token address so the operator can read both
- *  metrics on the same line per token without scanning two columns. */
+/** Inline expansion row — two SEPARATE per-token tables side-by-side.
+ *
+ *  Volume is aggregated by sell-leg token (what flowed in via this
+ *  relayer's orders); Revenue is aggregated by fee-leg token (what
+ *  this relayer earned in fees, which sits on the BUY side of every
+ *  match — so it's almost always a different token from the sell
+ *  leg). Earlier this was rendered as a single joined table keyed by
+ *  token address: a WETH row showed "Volume 1 WETH | Revenue 0.003
+ *  WETH" side by side, falsely implying the 0.003 WETH came from
+ *  selling that 1 WETH — but those two rows came from DIFFERENT
+ *  settles (a sell-side maker fee in one accrues in the buy-token of
+ *  another). Splitting them disconnects the columns visually so the
+ *  operator can't read causation that isn't there. */
 function RelayerDetailRow({ row }: { row: RankedRelayer }) {
   const volumes = row.stats?.settledVolume ?? [];
   const fees = row.stats?.feeTotals ?? [];
-  const tokens = new Map<string, { volume?: typeof volumes[number]; fee?: typeof fees[number] }>();
-  for (const v of volumes) {
-    const k = normAddr(v.sellToken);
-    if (!k) continue;
-    tokens.set(k, { ...(tokens.get(k) ?? {}), volume: v });
-  }
-  for (const f of fees) {
-    const k = normAddr(f.token);
-    if (!k) continue;
-    tokens.set(k, { ...(tokens.get(k) ?? {}), fee: f });
-  }
-  // Sort by volume notional desc, then by fee notional desc — matches
-  // the order the parent cells render so the eye lands in the same place.
-  const rows = Array.from(tokens.entries()).sort(([, a], [, b]) => {
-    const av = safeBigInt(a.volume?.totalVolume ?? "0");
-    const bv = safeBigInt(b.volume?.totalVolume ?? "0");
-    if (av !== bv) return av > bv ? -1 : 1;
-    const af = safeBigInt(a.fee?.totalWei ?? "0");
-    const bf = safeBigInt(b.fee?.totalWei ?? "0");
-    return af === bf ? 0 : af > bf ? -1 : 1;
-  });
+  // Sort by USD desc instead of raw wei — 1 WETH and 1 USDC have very
+  // different notional values, so a wei-based sort would surface a
+  // few thousand wei of WETH above 10,000 USDC. USD makes the ordering
+  // actually mean "most impactful to this relayer's revenue".
+  const rankByUsd = <T extends { token?: string; sellToken?: string; totalWei?: string; totalVolume?: string }>(
+    rows: T[],
+  ): T[] => {
+    return [...rows].sort((a, b) => {
+      const ai = tokenInfo((a.token ?? a.sellToken) ?? "");
+      const bi = tokenInfo((b.token ?? b.sellToken) ?? "");
+      const av = tokenUsd((a.totalWei ?? a.totalVolume) ?? "0", ai.decimals, ai.symbol) ?? 0;
+      const bv = tokenUsd((b.totalWei ?? b.totalVolume) ?? "0", bi.decimals, bi.symbol) ?? 0;
+      return bv - av;
+    });
+  };
+  const volRows = rankByUsd(volumes);
+  const feeRows = rankByUsd(fees);
+  const volTotal = sumUsd(volumes).total;
+  const feeTotal = sumUsd(fees).total;
+  // Match the colored left-border accent to the rank-badge palette
+  // (gold #1 / silver #2 / bronze #3 / neutral 4+) so the eye can
+  // trace any open drawer straight back to its parent row at a
+  // glance — important when two or more drawers are open and they'd
+  // otherwise blur into one another with identical background.
+  const accent =
+    row.rank === 1
+      ? "border-l-amber-400"
+      : row.rank === 2
+      ? "border-l-slate-400"
+      : row.rank === 3
+      ? "border-l-orange-400"
+      : "border-l-[var(--color-primary)]";
   return (
     <tr className="border-t border-[var(--color-border)] bg-[var(--color-bg)]">
-      <td colSpan={TABLE_COLUMNS} className="px-5 py-4">
-        <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-          Per-token breakdown
+      <td colSpan={TABLE_COLUMNS} className={`border-l-4 ${accent} px-5 py-4 shadow-inner`}>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+            <span>Per-token breakdown</span>
+            <span className="text-[var(--color-text)]">·</span>
+            <span className="font-semibold text-[var(--color-text)]">{row.name || `Relayer #${row.rank}`}</span>
+            <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">{shortAddr(row.address)}</span>
+            {/* One-line help — replaces the per-row paragraph that
+                repeated identically beneath every expanded row and
+                was the single biggest source of visual noise when
+                two drawers were open at once. */}
+            <span
+              className="ml-1 cursor-help text-[var(--color-text-muted)]"
+              title="Volume and Revenue are aggregated independently. Cross-token swaps accrue the fee in the buy-side token, so the same token rarely appears with matching numbers on both sides."
+            >
+              ⓘ
+            </span>
+          </div>
         </div>
-        <table className="mt-2 w-full text-sm">
-          <thead className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-            <tr>
-              <th className="px-3 py-1 text-left">Token</th>
-              {/* "Fills" — not "Settled" — because a single cross-token
-                  settleAuth contributes one fill to BOTH tokens (sell
-                  + buy leg). Reusing the top-level "Settled" label
-                  would invite the obvious-but-wrong sum across rows.
-                  The tooltip explains the per-leg semantics. */}
-              <th
-                className="px-3 py-1 text-right"
-                title="Per-token fills: a cross-token settle contributes one fill to each side; a same-token Pay scatter contributes one fill to that token. Summing across tokens won't match the row's Settled total."
-              >
-                Fills
-              </th>
-              <th className="px-3 py-1 text-right">Volume (native)</th>
-              <th className="px-3 py-1 text-right">Volume (USD)</th>
-              <th className="px-3 py-1 text-right">Revenue (native)</th>
-              <th className="px-3 py-1 text-right">Revenue (USD)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(([addr, { volume, fee }]) => {
-              const info = tokenInfo(addr);
-              const volUsd = volume ? tokenUsd(volume.totalVolume, info.decimals, info.symbol) : null;
-              const feeUsd = fee ? tokenUsd(fee.totalWei, info.decimals, info.symbol) : null;
-              return (
-                <tr key={addr} className="border-t border-[var(--color-border)]">
-                  <td className="px-3 py-1.5">
-                    <TokenChip symbol={info.symbol} />{" "}
-                    <span className="font-mono text-[10px] text-[var(--color-text-subtle)]">
-                      {shortAddr(addr)}
-                    </span>
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono">
-                    {volume?.count ?? 0}
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono">
-                    {volume ? formatAmount(volume.totalVolume, info.decimals) : "—"}
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono">
-                    {volUsd !== null ? fmtUsd(volUsd) : <span className="text-[var(--color-text-subtle)]" title="No price in local oracle">?</span>}
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono">
-                    {fee ? formatAmount(fee.totalWei, info.decimals) : "—"}
-                  </td>
-                  <td className="px-3 py-1.5 text-right font-mono">
-                    {feeUsd !== null ? fmtUsd(feeUsd) : <span className="text-[var(--color-text-subtle)]" title="No price in local oracle">?</span>}
-                  </td>
-                </tr>
-              );
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <BreakdownCard
+            title="Volume by token"
+            subtitle="Sell-leg flow this relayer brought into settlement"
+            rows={volRows.map((v) => {
+              const info = tokenInfo(v.sellToken);
+              const usd = tokenUsd(v.totalVolume, info.decimals, info.symbol);
+              return {
+                tokenAddr: v.sellToken,
+                tokenInfo: info,
+                count: v.count,
+                native: formatAmount(v.totalVolume, info.decimals),
+                usd,
+              };
             })}
-          </tbody>
-        </table>
+            total={volTotal}
+            countLabel="fills"
+            accent="text-[var(--color-text)]"
+          />
+          <BreakdownCard
+            title="Revenue by token"
+            subtitle="Fees earned (accrues in the buy-leg token of each settle)"
+            rows={feeRows.map((f) => {
+              const info = tokenInfo(f.token);
+              const usd = tokenUsd(f.totalWei, info.decimals, info.symbol);
+              return {
+                tokenAddr: f.token,
+                tokenInfo: info,
+                count: f.count,
+                native: formatAmount(f.totalWei, info.decimals),
+                usd,
+              };
+            })}
+            total={feeTotal}
+            countLabel="settles"
+            accent="text-[var(--color-success)]"
+          />
+        </div>
       </td>
     </tr>
+  );
+}
+
+interface BreakdownRow {
+  tokenAddr: string;
+  tokenInfo: { symbol: string; decimals: number };
+  count: number;
+  native: string;
+  usd: number | null;
+}
+
+/** Initial number of rows shown before the "+ N more" collapse kicks
+ *  in. Tokens proliferate fast on a busy relayer (a launch with a
+ *  dozen pairs covers 20+ tokens once stables / wrapped variants are
+ *  counted); without a cap the drawer would push every row below the
+ *  fold. 6 is generous enough that almost every operator sees their
+ *  full list without expanding, while still trimming the long tail. */
+const BREAKDOWN_VISIBLE_ROWS = 6;
+
+/** One half of the per-token breakdown — either Volume or Revenue.
+ *  Kept self-contained so the two halves can render in parallel
+ *  without sharing layout state, and so future additions (sparkline,
+ *  share-of-network bar) only need to touch one component. Long
+ *  token lists collapse after `BREAKDOWN_VISIBLE_ROWS` with a
+ *  "+ N more" toggle. */
+function BreakdownCard({
+  title,
+  subtitle,
+  rows,
+  total,
+  countLabel,
+  accent,
+}: {
+  title: string;
+  subtitle: string;
+  rows: BreakdownRow[];
+  total: number;
+  countLabel: string;
+  accent: string;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  // Per-row USD as a fraction of the card's total — drives the
+  // background "share" bar so the eye gauges each token's
+  // contribution without computing percentages in its head. Clamp
+  // to [0, 1] so a rounding overflow can't render a 101% bar.
+  const max = total > 0 ? total : 1;
+  const overflow = rows.length - BREAKDOWN_VISIBLE_ROWS;
+  const visibleRows = showAll || overflow <= 0 ? rows : rows.slice(0, BREAKDOWN_VISIBLE_ROWS);
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+      <div className="flex items-baseline justify-between">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide">{title}</div>
+          <div className="text-[10px] text-[var(--color-text-subtle)]">{subtitle}</div>
+        </div>
+        <div className="text-right">
+          <div className={`font-mono text-sm font-semibold ${accent}`}>{fmtUsd(total)}</div>
+          <div className="text-[10px] text-[var(--color-text-subtle)]">
+            {rows.length} token{rows.length === 1 ? "" : "s"}
+          </div>
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <div className="mt-3 text-xs text-[var(--color-text-muted)]">No activity yet.</div>
+      ) : (
+        <>
+          <ul className="mt-3 space-y-2">
+            {visibleRows.map((r) => {
+              const pct = r.usd !== null ? Math.min(1, r.usd / max) : 0;
+              const pctLabel = total > 0 && r.usd !== null ? `${Math.round((r.usd / total) * 100)}%` : "";
+              return (
+                <li key={r.tokenAddr} className="relative">
+                  {/* Background "share" bar — width = this row's USD share of the card total.
+                      Sits behind the foreground text so it doesn't crowd the numbers; the
+                      soft tint keeps it readable on both light and dark themes. */}
+                  <div
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 rounded bg-[var(--color-primary-soft)] opacity-60"
+                    style={{ width: `${pct * 100}%` }}
+                  />
+                  <div className="relative flex items-center justify-between gap-3 px-2 py-1.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <TokenChip symbol={r.tokenInfo.symbol} />
+                      <span
+                        className="font-mono text-[10px] text-[var(--color-text-subtle)]"
+                        title={r.tokenAddr}
+                      >
+                        {shortAddr(r.tokenAddr)}
+                      </span>
+                      {pctLabel && (
+                        <span className="rounded bg-[var(--color-bg)] px-1.5 py-0.5 font-mono text-[9px] text-[var(--color-text-muted)]">
+                          {pctLabel}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-baseline gap-3 font-mono text-xs">
+                      <span className="text-[var(--color-text-muted)]">
+                        {r.count} {countLabel}
+                      </span>
+                      <span>{r.native}</span>
+                      <span className="w-16 text-right font-semibold">
+                        {r.usd !== null ? fmtUsd(r.usd) : <span className="text-[var(--color-text-subtle)]" title="No price in local oracle">?</span>}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {overflow > 0 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                // The parent <tr> is registered as a clickable
+                // "expand/collapse" affordance; without stopPropagation,
+                // clicking "+ N more" would also collapse the entire
+                // drawer the toggle lives inside.
+                e.stopPropagation();
+                setShowAll((v) => !v);
+              }}
+              className="mt-2 w-full rounded border border-dashed border-[var(--color-border)] py-1.5 text-[11px] text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+            >
+              {showAll ? "Show top 6" : `+ ${overflow} more token${overflow === 1 ? "" : "s"}`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
