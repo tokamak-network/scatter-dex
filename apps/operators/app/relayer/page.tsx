@@ -139,12 +139,24 @@ function RelayerDetailBody() {
             online = true;
             api = infoR.value;
           }
+          // Prefer shared-OB ONLY when it has data for THIS relayer
+          // — a registered relayer with rows in its own local DB but
+          // none in shared-OB (e.g. pre-push-hook history, or its
+          // settles haven't been indexed yet) would otherwise show
+          // an all-zero card while /api/relayer/stats on the peer
+          // can still see the data. `txCount === 0` is the same
+          // "no rows for this address" condition fetchRelayerStats…
+          // uses internally for its single-relayer aggregate.
           const sharedOk = sharedStats.status === "fulfilled" ? sharedStats.value : null;
-          if (sharedOk) {
+          if (sharedOk && sharedOk.settledOrders > 0) {
             stats = sharedOk;
           } else {
             const peerStats = await client.getStats().catch(() => null);
-            stats = peerStats;
+            // Final fallback: if peer is also empty, surface whatever
+            // shared-OB gave (zeros, with a valid shape) so the page
+            // still renders its "Performance" / "Routed volume" cards
+            // instead of leaving them empty.
+            stats = peerStats ?? sharedOk;
           }
         }
         if (cancelled) return;

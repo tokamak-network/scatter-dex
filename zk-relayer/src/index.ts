@@ -190,12 +190,17 @@ async function main() {
       // `taker_relayer = NULL` rather than defaulting it to ourAddr —
       // a self-self pair would falsely look like a same-relayer
       // match in the shared-OB leaderboard joins.
+      //
+      // Destructure `singleParty` out of the spread so the flag
+      // doesn't leak into the wire payload — it's a transport-side
+      // signal for THIS wrapper to consume, not a field the shared-OB
+      // schema knows about. shared-OB currently ignores unknown
+      // fields, but a future strict-schema bump would 400 the push.
+      const { singleParty, ...rest } = ctx;
       const ourAddr = authSubmitter.getAddress().toLowerCase();
-      const takerRelayer = ctx.singleParty
-        ? undefined
-        : (ctx.takerRelayer ?? ourAddr);
+      const takerRelayer = singleParty ? undefined : (ctx.takerRelayer ?? ourAddr);
       sharedClient!.pushSettlement({
-        ...ctx,
+        ...rest,
         makerRelayer: ourAddr,
         takerRelayer,
       });
