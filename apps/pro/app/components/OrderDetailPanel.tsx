@@ -1,15 +1,20 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { Button, useToast } from "@zkscatter/ui";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Button, useOutsideClick, useToast } from "@zkscatter/ui";
 import { useWallet } from "@zkscatter/sdk/react";
-import { addClaimInboxEntry } from "@zkscatter/sdk/storage";
+import {
+  addClaimInboxEntry,
+  markClaimInboxEntryClaimed,
+} from "@zkscatter/sdk/storage";
 import type { OrderClaim, OrderRecord } from "../lib/orders";
 import { StatusBadge } from "./StatusBadge";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useVault } from "../lib/vault";
-import { formatClaimAmount, formatField, formatWhen } from "../lib/format";
+import { formatClaimAmount, formatField, formatLocalStampSec, formatWhen } from "../lib/format";
 import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPackage";
+import { submitClaim } from "../lib/claimSubmit";
 
 interface Props {
   order: OrderRecord;
@@ -915,9 +920,67 @@ function ShareActions({
   enabled: boolean;
 }) {
   const { network } = useActiveNetwork();
-  const { account } = useWallet();
+  const { account, readProvider, signer } = useWallet();
   const toast = useToast();
-  const [busy, setBusy] = useState<null | "copy" | "email" | "save">(null);
+  const [busy, setBusy] = useState<null | "copy" | "email" | "save" | "claim">(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Compute the dropdown's viewport position from the trigger's
+  // bounding rect. The recipients table lives inside
+  // OrderDetailDrawer's `overflow-y-auto` container, which clipped
+  // an `absolute`-positioned menu (most items disappeared past the
+  // panel's right edge). Rendering the menu through a portal with
+  // `position: fixed` escapes the overflow chain entirely; the
+  // coords are recomputed on every open + on scroll/resize so the
+  // menu tracks the trigger if the drawer scrolls.
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
+  useEffect(() => {
+    if (!menuOpen) {
+      setMenuPos(null);
+      return;
+    }
+    const reposition = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setMenuPos({
+        // 4px gap below the trigger button — matches the prior `mt-1`.
+        top: rect.bottom + 4,
+        // Anchor to the trigger's right edge; the menu's CSS `right`
+        // is the gap from viewport's right edge, so we invert.
+        right: window.innerWidth - rect.right,
+      });
+    };
+    reposition();
+    window.addEventListener("scroll", reposition, true);
+    window.addEventListener("resize", reposition);
+    return () => {
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+    };
+  }, [menuOpen]);
+  // Close on outside click — but consider clicks inside EITHER the
+  // trigger wrapper or the portaled menu as "inside" so a click on
+  // a menu item doesn't get treated as an outside-click and close
+  // the menu before the item's onClick runs.
+  useOutsideClick({
+    enabled: menuOpen,
+    ref: wrapperRef,
+    onClose: () => setMenuOpen(false),
+  });
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocDown = (e: MouseEvent) => {
+      const t = e.target;
+      if (!(t instanceof Node)) return;
+      if (menuRef.current?.contains(t)) return;
+      if (wrapperRef.current?.contains(t)) return;
+      setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDocDown, true);
+    return () => document.removeEventListener("mousedown", onDocDown, true);
+  }, [menuOpen]);
   const settlement = network.contracts.privateSettlement;
 
   const buildPkg = async () => {
@@ -967,10 +1030,29 @@ function ShareActions({
       // OS's mailto handler so an Apple-Mail-by-default user
       // doesn't lose the draft.
       const subject = `Your payment from ${order.label}`;
+      // Surface this row's actual state in the body so the
+      // recipient doesn't open the link only to be told to wait
+      // (locked) or that the slot's already gone (claimed). Mirrors
+      // the same status-aware copy Pay's payouts/detail uses; keeps
+      // the two apps' recipient emails consistent.
+      const claimedSet = new Set(order.claimedLeafIndexes ?? []);
+      const isClaimed = claimedSet.has(target.leafIndex);
+      const releaseUnix = Number(target.releaseTime);
+      const nowUnix = Math.floor(Date.now() / 1000);
+      const isLocked = !isClaimed && nowUnix < releaseUnix;
+      const amountLabel = formatClaimAmount(target.amount, target.token, network.tokens);
+      let statusLine: string;
+      if (isClaimed) {
+        statusLine = `This payment of ${amountLabel} has already been claimed.`;
+      } else if (isLocked) {
+        statusLine = `Your payment of ${amountLabel} will be claimable from ${formatLocalStampSec(releaseUnix)}.`;
+      } else {
+        statusLine = `Your payment of ${amountLabel} is ready to claim now.`;
+      }
       const body = [
         `Hi,`,
         ``,
-        `Your private payout is ready to claim.`,
+        statusLine,
         ``,
         `Open the link to claim:`,
         url,
@@ -1027,35 +1109,150 @@ function ShareActions({
     }
   };
 
+  /** Inline gasless claim — operator submits on behalf of the
+   *  recipient through the order's bundled relayer. Tokens still
+   *  flow to `target.recipient` per the proof's public signals,
+   *  not to the operator's wallet. Falls through to self-pay when
+   *  the signer is available and the relayer is unset. Toast
+   *  surfaces success/failure; mark-claimed runs against the
+   *  inbox entry if one exists, so a re-share later shows the
+   *  claimed badge instead of re-prompting.
+   *
+   *  Why this lives here: operators commonly run a Pay-style
+   *  demo where they're both sender + recipient (#0 = #1 split
+   *  scenarios), and bouncing through /claims for each row is
+   *  friction. Same affordance Pay's payouts/detail rows ship. */
+  const onClaimNow = async () => {
+    setBusy("claim");
+    setMenuOpen(false);
+    try {
+      const pkg = await buildPkg();
+      if (!readProvider) throw new Error("Read provider not ready");
+      const { txHash } = await submitClaim({
+        pkg,
+        readProvider,
+        signer: signer ?? undefined,
+      });
+      // Best-effort inbox stash + mark-claimed so the /claims
+      // page reflects the result on next visit. Wrap in try so a
+      // folder-storage hiccup doesn't surface as a claim failure
+      // after the on-chain tx already landed.
+      try {
+        const rawInput = buildClaimLink(window.location.origin, order, pkg);
+        const { entry } = await addClaimInboxEntry({ rawInput, pkg });
+        await markClaimInboxEntryClaimed(entry.id, txHash);
+      } catch (saveErr) {
+        console.warn("[Pro] save-claimed-to-inbox failed", saveErr);
+      }
+      toast.push({
+        kind: "success",
+        title: "Claimed",
+        description: `tx ${txHash.slice(0, 10)}…${txHash.slice(-6)}`,
+      });
+    } catch (err) {
+      console.error("[ShareActions.claim]", err);
+      toast.push({
+        kind: "error",
+        title: "Claim failed",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const disabled = !enabled || busy !== null;
   const title = !enabled
     ? "Available once the order settles on-chain"
     : undefined;
+  // Per-leaf gates for "Claim now (gasless)" — the order-level
+  // `enabled` flag flips to true once ANY leaf becomes claimable,
+  // but an individual recipient's leaf may already be spent on-chain
+  // (`claimedLeafIndexes`) or still locked until its `releaseTime`.
+  // Without this gate, clicking burns proof generation only to hit
+  // an on-chain `NotYetReleasable` / `NullifierSpent` revert.
+  const claimedLeavesSet = useMemo(
+    () => new Set(order.claimedLeafIndexes ?? []),
+    [order.claimedLeafIndexes],
+  );
+  const leafClaimed = claimedLeavesSet.has(target.leafIndex);
+  const leafLocked =
+    !leafClaimed &&
+    Math.floor(Date.now() / 1000) < Number(target.releaseTime);
+  const claimDisabled = disabled || leafClaimed || leafLocked;
+  const claimTitle = leafClaimed
+    ? "Already claimed — this slot's nullifier is spent on-chain."
+    : leafLocked
+      ? `Locked until ${formatLocalStampSec(Number(target.releaseTime))}.`
+      : undefined;
 
   return (
-    <div className="inline-flex items-center gap-1" title={title}>
-      <ShareBtn onClick={onCopy} disabled={disabled} busy={busy === "copy"}>
-        Copy link
-      </ShareBtn>
-      <ShareBtn onClick={onEmail} disabled={disabled} busy={busy === "email"}>
-        Email
-      </ShareBtn>
-      <ShareBtn onClick={onSave} disabled={disabled} busy={busy === "save"}>
-        Save
-      </ShareBtn>
+    <div ref={wrapperRef} className="inline-block text-left" title={title}>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setMenuOpen((v) => !v)}
+        disabled={disabled}
+        className="rounded border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+      >
+        {busy === "claim"
+          ? "Claiming…"
+          : busy
+            ? "Working…"
+            : "Actions ▾"}
+      </button>
+      {menuOpen && menuPos && typeof window !== "undefined" &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={{
+              position: "fixed",
+              top: menuPos.top,
+              right: menuPos.right,
+            }}
+            className="z-50 w-52 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-left text-xs shadow-lg"
+          >
+            <ShareMenuItem onClick={onCopy} disabled={disabled}>
+              Copy claim link
+            </ShareMenuItem>
+            <ShareMenuItem onClick={onSave} disabled={disabled}>
+              Save to Claims inbox
+            </ShareMenuItem>
+            <ShareMenuItem onClick={onEmail} disabled={disabled}>
+              Send via Gmail
+            </ShareMenuItem>
+            <ShareMenuItem
+              onClick={onClaimNow}
+              disabled={claimDisabled}
+              title={claimTitle}
+            >
+              {leafClaimed
+                ? "Claim now (already claimed)"
+                : leafLocked
+                  ? "Claim now (locked)"
+                  : "Claim now (gasless)"}
+            </ShareMenuItem>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
 
-function ShareBtn({
+/** Menu-item button for the Actions dropdown — same shape across
+ *  all four items so the dropdown stays visually uniform. The
+ *  per-item `onClick` swallows the menu-close intent (the parent's
+ *  setBusy / setMenuOpen handlers do that themselves) so a closing
+ *  animation doesn't race the action. */
+function ShareMenuItem({
   onClick,
   disabled,
-  busy,
+  title,
   children,
 }: {
   onClick: () => void;
   disabled: boolean;
-  busy: boolean;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -1063,9 +1260,10 @@ function ShareBtn({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="rounded border border-[var(--color-border-strong)] bg-white px-1.5 py-0.5 text-[10px] font-medium hover:bg-[var(--color-primary-soft)] disabled:cursor-not-allowed disabled:opacity-40"
+      title={title}
+      className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
     >
-      {busy ? "…" : children}
+      {children}
     </button>
   );
 }

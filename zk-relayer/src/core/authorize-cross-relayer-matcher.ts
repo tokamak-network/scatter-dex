@@ -182,6 +182,20 @@ export class AuthorizeCrossRelayerMatchService {
               counterparty: true,
               fees: takerFees,
             });
+            // Persist OUR user's claimsRoot so the recipient can
+            // request a gasless claim from us (their originating
+            // relayer per the claim package's `relayerUrl`).
+            // `/api/private-claim` gates on
+            // `settled_claims_roots`; without this row, every
+            // cross-relayer match has a counterparty whose
+            // recipients hit a 403 "claims root not settled by this
+            // relayer" because only the submitter peer recorded
+            // the root in its own DB. Convert publicSignals
+            // decimal → bytes32 hex to match the format the
+            // submitter saves (db.ts:1363 lowercases internally).
+            const claimsRootBytes32 =
+              "0x" + BigInt(ps.claimsRoot).toString(16).padStart(64, "0");
+            this.db?.saveSettledClaimsRoot(claimsRootBytes32);
           } catch (e) {
             log.warn("Failed to persist counterparty settle row", {
               tx: result.txHash,

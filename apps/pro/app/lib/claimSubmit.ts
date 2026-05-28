@@ -65,11 +65,18 @@ export async function submitClaim(opts: SubmitClaimOpts): Promise<SubmitClaimRes
     }>,
     claimProver.ready(),
   ]);
+  // `isConfiguredAddress` rejects the sentinel zero address (and
+  // garbage/undefined) — same helper used everywhere else in the
+  // SDK for "is this slot populated yet" checks, keeps the zero-
+  // address constant in one place.
   if (!isConfiguredAddress(group.token)) {
     throw new Error(
       "On-chain claims group is missing — the settle tx may not have confirmed yet.",
     );
   }
+  // `eqAddr` runs a case-insensitive comparison via the shared
+  // address normaliser; avoids the manual `.toLowerCase()` dance
+  // that's easy to forget on one side.
   if (!eqAddr(group.token, pkg.token)) {
     throw new Error(
       "Claim package token disagrees with the on-chain claims group — refusing to submit.",

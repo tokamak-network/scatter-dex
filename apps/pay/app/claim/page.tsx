@@ -16,7 +16,6 @@ import { getNetworkConfig } from "../_lib/network";
 import { buildExplorerTxUrl } from "../_lib/explorerUrl";
 import { formatLocalStampSec } from "../_lib/format";
 import { submitClaim } from "../_lib/claimSubmit";
-import { useIdentityStatus } from "../_lib/identity";
 import { useFolderStorage } from "../_lib/folderStorage";
 
 /** Pre-Next 16 the route was `/claim/[link]#secret`; Pay now ships
@@ -109,19 +108,19 @@ function ClaimInner() {
     const ctrl = new AbortController();
     new RelayerClient(url)
       .getInfo(ctrl.signal)
-      .then(() => setRelayerUp(true))
-      .catch(() => setRelayerUp(false));
+      .then(() => {
+        if (!ctrl.signal.aborted) setRelayerUp(true);
+      })
+      .catch((err) => {
+        // AbortError fires on effect cleanup (unmount / dep change);
+        // that's an intentional cancel, not a real probe failure.
+        // Skip the state flip so we don't falsely disable the
+        // gasless button on every nav.
+        if (err instanceof Error && err.name === "AbortError") return;
+        if (!ctrl.signal.aborted) setRelayerUp(false);
+      });
     return () => ctrl.abort();
   }, [parsed?.pkg.relayerUrl]);
-
-  // EOA claims require the connecting wallet (= recipient) to be
-  // zk-X509 verified.
-  const { state: claimerIdentity } = useIdentityStatus();
-  const recipientUnverified =
-    !!account &&
-    (claimerIdentity.kind === "unverified" ||
-      claimerIdentity.kind === "expired" ||
-      claimerIdentity.kind === "error");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -198,10 +197,14 @@ function ClaimInner() {
   const wrongAppChain = parsed && parsed.pkg.chainId !== cfg.chainId;
   const wrongWalletChain =
     !!parsed && walletChainId !== null && walletChainId !== parsed.pkg.chainId;
-  const wrongRecipient =
-    !!parsed &&
-    !!account &&
-    account.toLowerCase() !== parsed.recipientLower;
+  // Display-only "this isn't your wallet" notice — does NOT gate the
+  // submit button. Tokens always flow to `pkg.recipient` per the
+  // proof's public signals (msg.sender is irrelevant to the on-chain
+  // transfer), so anyone with the claim note can submit. Relayer
+  // already collected the fee at order-submit time; whoever pays the
+  // gas just submits on behalf of the bound recipient.
+  const walletIsRecipient =
+    !!parsed && !!account && account.toLowerCase() === parsed.recipientLower;
   const gasless = !!parsed?.pkg.relayerUrl && !forceSelfPay;
 
   // Phase 2b: prefer the operator's relayer to dispatch the claim
@@ -430,22 +433,10 @@ function ClaimInner() {
                       Switch your wallet to chain {parsed!.pkg.chainId} — submitting on the wrong network would target the wrong contract at the same address.
                     </div>
                   )}
-                  {needWallet && wrongRecipient && (
-                    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
-                      This claim is bound to {shortAddr(parsed!.pkg.recipient)} —
-                      switch wallets to claim.
-                    </div>
-                  )}
-                  {recipientUnverified && (
-                    <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-center text-xs text-[var(--color-warning)]">
-                      Your wallet isn&apos;t zk-X509 verified yet. Recipients
-                      must verify before claiming.{" "}
-                      <a
-                        href="/identity"
-                        className="font-medium underline underline-offset-2"
-                      >
-                        Register with zk-X509 →
-                      </a>
+                  {needWallet && parsed && !walletIsRecipient && (
+                    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-2 text-center text-[10px] text-[var(--color-text-muted)]">
+                      Tokens will go to {shortAddr(parsed.pkg.recipient)} —
+                      whoever submits this tx just pays the gas.
                     </div>
                   )}
                   <button
@@ -454,8 +445,6 @@ function ClaimInner() {
                       !parsed ||
                       !isAvailable ||
                       (needWallet && wrongWalletChain) ||
-                      (needWallet && wrongRecipient) ||
-                      recipientUnverified ||
                       busy ||
                       (gasless && relayerUp === false) ||
                       alreadyClaimed === true
