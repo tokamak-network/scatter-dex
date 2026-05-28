@@ -343,11 +343,14 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
 
       <section>
         <SectionHeader
-          title="Fee + volume (24h)"
+          title="Revenue & volume (24h)"
           badge="live"
-          hint="Fee revenue per token (maker + taker + scatterDirect) alongside the sell- and buy-leg notional from confirmed settlements."
+          hint="Two views of the same window. Revenue answers 'what did I earn'; volume answers 'what did I route'."
         />
-        <FeeVolumeTable fees={feeTotals} volume={volumeTotals} />
+        <div className="grid gap-4 md:grid-cols-2">
+          <RevenueCard fees={feeTotals} />
+          <VolumeCard volume={volumeTotals} />
+        </div>
       </section>
 
       <section>
@@ -731,91 +734,147 @@ function HealthCard({
 
 
 
-/** Merges per-token fee + volume rows by token address. Same shape
- *  as /analytics' Per-token table — fees can appear without volume
- *  on pre-migration rows where amount columns are NULL, so the row
- *  set keys the union of both sources. */
-function FeeVolumeTable({
-  fees,
-  volume,
-}: {
-  fees: FeeTotals | null;
-  volume: VolumeTotals | null;
-}) {
-  if (!fees || !volume) {
-    return <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>;
-  }
-  type Row = {
-    token: string;
-    fees: FeeTotals["totals"][number] | null;
-    vol: VolumeTotals["totals"][number] | null;
-  };
-  const map = new Map<string, Row>();
-  for (const f of fees.totals) map.set(f.token, { token: f.token, fees: f, vol: null });
-  for (const v of volume.totals) {
-    const cur = map.get(v.token);
-    if (cur) cur.vol = v;
-    else map.set(v.token, { token: v.token, fees: null, vol: v });
-  }
-  const merged = [...map.values()].sort((a, b) => {
-    const af = a.fees ? BigInt(a.fees.totalWei) : 0n;
-    const bf = b.fees ? BigInt(b.fees.totalWei) : 0n;
-    if (af !== bf) return af > bf ? -1 : 1;
-    const ac = (a.vol?.sellFills ?? 0) + (a.vol?.buyFills ?? 0);
-    const bc = (b.vol?.sellFills ?? 0) + (b.vol?.buyFills ?? 0);
-    return bc - ac;
+/** Per-token fee revenue. One amount per row — settle count moves to
+ *  the card header so a row isn't carrying both "what" and "how many"
+ *  at once. Mirrors leaderboard's "REVENUE BY TOKEN" box. */
+function RevenueCard({ fees }: { fees: FeeTotals | null }) {
+  if (!fees) return <CardPlaceholder title="Revenue" />;
+  const rows = [...fees.totals].sort((a, b) => {
+    const ai = BigInt(a.totalWei);
+    const bi = BigInt(b.totalWei);
+    return ai > bi ? -1 : ai < bi ? 1 : 0;
   });
-  if (merged.length === 0) {
-    return (
-      <p className="text-sm text-[var(--color-text-muted)]">
-        No settlements in the last 24 hours.
-      </p>
-    );
-  }
+  // Fee count is per-side (maker + taker + scatterDirect), so the sum
+  // overstates settles when same-relayer matches credit both sides.
+  // Surface it as "fee rows" — a transparent count, not a settle count.
+  const feeRows = rows.reduce((n, r) => n + r.count, 0);
   return (
-    <div className="overflow-x-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-      <table className="w-full text-sm">
-        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-          <tr>
-            <th className="px-5 py-3 text-left font-medium">Token</th>
-            <th className="px-5 py-3 text-right font-medium">Fee revenue</th>
-            <th className="px-5 py-3 text-right font-medium">Settlements</th>
-            <th className="px-5 py-3 text-right font-medium">Sell volume</th>
-            <th className="px-5 py-3 text-right font-medium">Buy volume</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[var(--color-border)]">
-          {merged.map((r) => {
-            const info = tokenInfo(r.token);
-            return (
-              <tr key={r.token}>
-                <td className="px-5 py-3">
-                  <div className="font-medium">{info.symbol}</div>
-                  <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
-                    {r.token}
-                  </div>
-                </td>
-                <td className="px-5 py-3 text-right font-mono">
-                  {r.fees ? formatAmount(r.fees.totalWei, info.decimals) : "—"}
-                </td>
-                {/* Prefer per-row settlement count from volume (sell-leg
-                    fills, 1 row per confirmed settle); fee count is
-                    per-side (maker+taker), which would double-count
-                    when volume is available. */}
-                <td className="px-5 py-3 text-right">
-                  {r.vol ? r.vol.sellFills : (r.fees?.count ?? 0)}
-                </td>
-                <td className="px-5 py-3 text-right font-mono">
-                  {r.vol ? formatAmount(r.vol.totalSellWei, info.decimals) : "—"}
-                </td>
-                <td className="px-5 py-3 text-right font-mono">
-                  {r.vol ? formatAmount(r.vol.totalBuyWei, info.decimals) : "—"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <PerTokenCard
+      title="Revenue"
+      subtitle={`fee earned · ${rows.length} token${rows.length === 1 ? "" : "s"}${feeRows > 0 ? ` · ${feeRows} fee row${feeRows === 1 ? "" : "s"}` : ""}`}
+      emptyMsg="No fees in the last 24 hours."
+      rows={rows.map((r) => {
+        const info = tokenInfo(r.token);
+        return {
+          key: r.token,
+          token: r.token,
+          symbol: info.symbol,
+          amount: formatAmount(r.totalWei, info.decimals),
+        };
+      })}
+    />
+  );
+}
+
+/** Per-token sell-leg notional. Shows only the sell side (= what this
+ *  relayer's users brought into settlement); the buy leg is the
+ *  counterparty's "throughput" by symmetry. Settle count goes to the
+ *  card header. */
+function VolumeCard({ volume }: { volume: VolumeTotals | null }) {
+  if (!volume) return <CardPlaceholder title="Volume" />;
+  const rows = [...volume.totals].sort((a, b) => {
+    const ai = BigInt(a.totalSellWei);
+    const bi = BigInt(b.totalSellWei);
+    return ai > bi ? -1 : ai < bi ? 1 : 0;
+  });
+  // sellFills is one row per confirmed on-chain settle for that token —
+  // the right denominator for "how active was this token this window."
+  const settles = rows.reduce((n, r) => n + r.sellFills, 0);
+  return (
+    <PerTokenCard
+      title="Volume"
+      subtitle={`sell-leg notional · ${rows.length} token${rows.length === 1 ? "" : "s"}${settles > 0 ? ` · ${settles} settle${settles === 1 ? "" : "s"}` : ""}`}
+      emptyMsg="No settlements in the last 24 hours."
+      rows={rows.map((r) => {
+        const info = tokenInfo(r.token);
+        return {
+          key: r.token,
+          token: r.token,
+          symbol: info.symbol,
+          amount: formatAmount(r.totalSellWei, info.decimals),
+        };
+      })}
+    />
+  );
+}
+
+interface PerTokenRow {
+  key: string;
+  token: string;
+  symbol: string;
+  amount: string;
+}
+
+function PerTokenCard({
+  title,
+  subtitle,
+  emptyMsg,
+  rows,
+}: {
+  title: string;
+  subtitle: string;
+  emptyMsg: string;
+  rows: PerTokenRow[];
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-sm font-semibold uppercase tracking-wide">{title}</h3>
+        <span className="text-[10px] text-[var(--color-text-subtle)]">{subtitle}</span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="mt-4 text-sm text-[var(--color-text-muted)]">{emptyMsg}</p>
+      ) : (
+        <ul className="mt-4 space-y-2">
+          {rows.map((r) => (
+            <li
+              key={r.key}
+              className="flex items-center justify-between gap-3 border-t border-[var(--color-border)] pt-2 first:border-t-0 first:pt-0"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <TokenChip symbol={r.symbol} />
+                <span
+                  className="truncate font-mono text-[10px] text-[var(--color-text-subtle)]"
+                  title={r.token}
+                >
+                  {r.token}
+                </span>
+              </div>
+              <span className="shrink-0 font-mono text-sm font-semibold">{r.amount}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
+  );
+}
+
+function CardPlaceholder({ title }: { title: string }) {
+  return (
+    <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+      <h3 className="text-sm font-semibold uppercase tracking-wide">{title}</h3>
+      <p className="mt-4 text-sm text-[var(--color-text-muted)]">Loading…</p>
+    </div>
+  );
+}
+
+/** Color-coded token chip — same palette as the leaderboard so the
+ *  eye can tag assets consistently across both pages. Unknowns get a
+ *  neutral slate. */
+function TokenChip({ symbol }: { symbol: string }) {
+  const palette: Record<string, string> = {
+    ETH: "bg-blue-100 text-blue-800 border-blue-300",
+    WETH: "bg-blue-100 text-blue-800 border-blue-300",
+    USDC: "bg-emerald-100 text-emerald-800 border-emerald-300",
+    USDT: "bg-teal-100 text-teal-800 border-teal-300",
+    TON: "bg-amber-100 text-amber-800 border-amber-300",
+  };
+  const cls = palette[symbol.toUpperCase()] ?? "bg-slate-100 text-slate-700 border-slate-300";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cls}`}
+    >
+      {symbol}
+    </span>
   );
 }
