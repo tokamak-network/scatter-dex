@@ -176,11 +176,13 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           readerFn="treasury"
           setterFn="setTreasury"
         />
-        {/* Identity-registry swap + operator X.509 issuance moved to
-            the dedicated /protocol/identity sub-route — keeping the
-            RelayerRegistry tab focused on bond / treasury / counts.
-            The Identity tab carries both the user-side IdentityGate
-            and the relayer-side CA swap behind a tab toggle. */}
+        {/* Identity-registry swap + operator X.509 issuance moved out
+            of the RelayerRegistry tab so this surface stays focused on
+            bond / treasury / counts. Identity is split into two sibling
+            sub-routes — /protocol/identity-user (user-side IdentityGate
+            trusted set) and /protocol/identity-relayer (operator CA
+            swap). The link below points at the relayer-side route since
+            that's the op this card was previously hosting. */}
         <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 md:col-span-2">
           <h3 className="text-sm font-semibold">Identity (CA) management</h3>
           <p className="mt-1 text-xs text-[var(--color-text-muted)]">
@@ -190,10 +192,10 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link
-              href="/protocol/identity"
+              href="/protocol/identity-relayer"
               className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1.5 text-xs font-medium hover:bg-[var(--color-bg)]"
             >
-              Open Identity tab →
+              Open Relayer Identity tab →
             </Link>
             <Link
               href="/operator-ca"
