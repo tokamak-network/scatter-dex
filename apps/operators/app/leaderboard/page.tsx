@@ -119,15 +119,15 @@ const RANK_CRITERIA: RankCriterion[] = [
     id: "volume",
     label: "Volume",
     description: "Highest USD-equivalent throughput first",
-    compare: (a, b) =>
-      compareNullable(usdTotal(a.stats?.settledVolume), usdTotal(b.stats?.settledVolume), true),
+    // Reads the Schwartzian-decorated sort key off RankedRelayer
+    // instead of recomputing per comparison — see rankRelayers.
+    compare: (a, b) => compareNullable(a.volumeUsd, b.volumeUsd, true),
   },
   {
     id: "revenue",
     label: "Revenue",
     description: "Highest USD-equivalent fee earned first",
-    compare: (a, b) =>
-      compareNullable(usdTotal(a.stats?.feeTotals), usdTotal(b.stats?.feeTotals), true),
+    compare: (a, b) => compareNullable(a.revenueUsd, b.revenueUsd, true),
   },
   {
     id: "activity",
@@ -420,19 +420,31 @@ function median(values: number[]): number | null {
 interface RankedRelayer extends RelayerInfo {
   rank: number;
   displayName: string;
+  /** Precomputed USD totals — derived once per render of the
+   *  leaderboard so the volume/revenue comparator doesn't re-iterate
+   *  the per-token list on every Array.sort comparison (O(n log n)
+   *  comparisons × O(k) tokens = an avoidable O(n k log n) per sort,
+   *  and Schwartzian-decorating beats memoising inside the
+   *  comparator because the sort doesn't reuse the result between
+   *  comparisons). Undefined when the relayer has no stats at all
+   *  — the comparator treats undefined as worse than 0. */
+  volumeUsd?: number;
+  revenueUsd?: number;
 }
 
 function rankRelayers(
   rows: RelayerInfo[],
   criterion: RankCriterion,
 ): RankedRelayer[] {
-  // Two-pass: project the per-row metadata first (display name, etc.)
-  // so the comparator works against a known-shape RankedRelayer and
-  // doesn't allocate fresh objects on every comparison.
+  // Decorate-sort-undecorate: project the per-row metadata + the
+  // USD sort keys ONCE before the sort, so the comparator never
+  // re-walks the per-token settledVolume / feeTotals arrays.
   const projected: RankedRelayer[] = rows.map((r) => ({
     ...r,
     rank: 0,
     displayName: relayerDisplayName(r),
+    volumeUsd: usdTotal(r.stats?.settledVolume),
+    revenueUsd: usdTotal(r.stats?.feeTotals),
   }));
   projected.sort(criterion.compare);
   return projected.map((r, i) => ({ ...r, rank: i + 1 }));

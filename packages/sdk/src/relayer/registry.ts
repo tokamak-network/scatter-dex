@@ -127,6 +127,13 @@ export async function loadRelayersWithSharedOrderbookStats(
   // lifetime totals; truncation manifests as conservative numbers,
   // not wrong direction.
   const allSettles = await fetchAllSettlements(sharedOrderbookUrl, timeoutMs);
+  // Single-pass index of all settlements keyed by relayer address.
+  // Cuts the per-relayer aggregation cost from O(N × R) to O(R + N×K)
+  // where N=relayers, R=settlement rows, K=unique tokens per
+  // relayer — the per-relayer pass over the full settlement list
+  // was the dominant cost when the indexer grows past a few
+  // hundred rows.
+  const statsByAddr = buildAllStatsFromSharedOb(allSettles);
   return Promise.all(
     onChain.map(async (r): Promise<RelayerInfo> => {
       const client = new RelayerClient(r.url, { timeoutMs });
@@ -134,7 +141,7 @@ export async function loadRelayersWithSharedOrderbookStats(
         .getInfo()
         .then((api) => ({ ok: true as const, api }))
         .catch(() => ({ ok: false as const }));
-      const stats = buildStatsFromSharedOb(r.address, allSettles);
+      const stats = finalizeStats(r.address, statsByAddr.get(r.address.toLowerCase()));
       if (!infoResult.ok) return { ...r, online: false, stats };
       return { ...r, api: infoResult.api, stats, online: true };
     }),
@@ -153,7 +160,8 @@ export async function fetchRelayerStatsFromSharedOrderbook(
 ): Promise<RelayerStatsResponse | null> {
   const rows = await fetchAllSettlements(sharedOrderbookUrl, timeoutMs);
   if (rows.length === 0) return null;
-  return buildStatsFromSharedOb(address, rows);
+  const byAddr = buildAllStatsFromSharedOb(rows);
+  return finalizeStats(address, byAddr.get(address.toLowerCase()));
 }
 
 async function fetchAllSettlements(
@@ -173,9 +181,15 @@ async function fetchAllSettlements(
   }
 }
 
-/** Aggregate the shared-OB settlement list into a RelayerStatsResponse
- *  for one address. Sell-only per-relayer attribution mirrors the
- *  per-relayer DB writer rule:
+interface RelayerAggregate {
+  txCount: number;
+  volByToken: Map<string, { count: number; totalVolume: bigint }>;
+  feeByToken: Map<string, { count: number; totalWei: bigint }>;
+}
+
+/** Single-pass index of the shared-OB settlement list into per-relayer
+ *  aggregates. Sell-only per-relayer attribution mirrors the per-
+ *  relayer DB writer rule:
  *   - maker_relayer accrues `sellAmount` of `sellToken` (its user's
  *     sell leg) + `feeMaker` in `buyToken`.
  *   - taker_relayer accrues `buyAmount` of `buyToken` (its user's
@@ -183,59 +197,81 @@ async function fetchAllSettlements(
  *     in `sellToken`.
  *   - scatterDirectAuth (Pay) has `takerRelayer = null`; only the
  *     maker side fires.
- *  Address comparisons are lowercase since shared-OB stores
- *  lowercased addrs. */
-function buildStatsFromSharedOb(
-  address: string,
+ *  All address keys are lowercased to match shared-OB's storage. */
+function buildAllStatsFromSharedOb(
   rows: SharedObSettlement[],
-): RelayerStatsResponse {
-  const lc = address.toLowerCase();
-  // Two BigInt-keyed maps because volume and fees rank independently
-  // in the leaderboard (Volume column vs Revenue column). Object
-  // literals would coerce BigInt → Number on insert.
-  const volByToken = new Map<string, { count: number; totalVolume: bigint }>();
-  const feeByToken = new Map<string, { count: number; totalWei: bigint }>();
-  const addVol = (tok: string | null | undefined, amt: string | null | undefined) => {
+): Map<string, RelayerAggregate> {
+  const byAddr = new Map<string, RelayerAggregate>();
+  const ensure = (addr: string): RelayerAggregate => {
+    let agg = byAddr.get(addr);
+    if (!agg) {
+      agg = { txCount: 0, volByToken: new Map(), feeByToken: new Map() };
+      byAddr.set(addr, agg);
+    }
+    return agg;
+  };
+  const addVol = (
+    agg: RelayerAggregate,
+    tok: string | null | undefined,
+    amt: string | null | undefined,
+  ) => {
     if (!tok || !amt) return;
     const k = tok.toLowerCase();
-    const cur = volByToken.get(k) ?? { count: 0, totalVolume: 0n };
+    const cur = agg.volByToken.get(k) ?? { count: 0, totalVolume: 0n };
     try {
       cur.totalVolume += BigInt(amt);
       cur.count += 1;
-      volByToken.set(k, cur);
+      agg.volByToken.set(k, cur);
     } catch {
       /* malformed wei string — drop the row instead of crashing the page */
     }
   };
-  const addFee = (tok: string | null | undefined, amt: string | null | undefined) => {
+  const addFee = (
+    agg: RelayerAggregate,
+    tok: string | null | undefined,
+    amt: string | null | undefined,
+  ) => {
     if (!tok || !amt) return;
     const k = tok.toLowerCase();
-    const cur = feeByToken.get(k) ?? { count: 0, totalWei: 0n };
+    const cur = agg.feeByToken.get(k) ?? { count: 0, totalWei: 0n };
     try {
       const v = BigInt(amt);
       if (v === 0n) return;
       cur.totalWei += v;
       cur.count += 1;
-      feeByToken.set(k, cur);
+      agg.feeByToken.set(k, cur);
     } catch {
       /* same — skip on parse failure */
     }
   };
-  let txCount = 0;
   for (const row of rows) {
-    const isMaker = row.makerRelayer?.toLowerCase() === lc;
-    const isTaker = row.takerRelayer?.toLowerCase() === lc;
-    if (!isMaker && !isTaker) continue;
-    txCount += 1;
-    if (isMaker) {
-      addVol(row.sellToken, row.sellAmount);
-      addFee(row.buyToken, row.feeMaker);
+    const maker = row.makerRelayer?.toLowerCase();
+    const taker = row.takerRelayer?.toLowerCase();
+    if (maker) {
+      const agg = ensure(maker);
+      agg.txCount += 1;
+      addVol(agg, row.sellToken, row.sellAmount);
+      addFee(agg, row.buyToken, row.feeMaker);
     }
-    if (isTaker) {
-      addVol(row.buyToken, row.buyAmount);
-      addFee(row.sellToken, row.feeTaker);
+    if (taker && taker !== maker) {
+      const agg = ensure(taker);
+      agg.txCount += 1;
+      addVol(agg, row.buyToken, row.buyAmount);
+      addFee(agg, row.sellToken, row.feeTaker);
     }
   }
+  return byAddr;
+}
+
+/** Materialise the public RelayerStatsResponse shape for one address
+ *  from a precomputed aggregate (or an absent one — a registered
+ *  relayer with zero activity still needs a valid empty response so
+ *  the leaderboard renders "—" instead of crashing). */
+function finalizeStats(
+  address: string,
+  agg: RelayerAggregate | undefined,
+): RelayerStatsResponse {
+  const txCount = agg?.txCount ?? 0;
   return {
     address,
     totalOrders: txCount,
@@ -251,15 +287,19 @@ function buildStatsFromSharedOb(
     avgSettleTimeMs: null,
     uptimeSince: null,
     pendingOrders: 0,
-    settledVolume: Array.from(volByToken, ([sellToken, { count, totalVolume }]) => ({
-      sellToken,
-      count,
-      totalVolume: totalVolume.toString(),
-    })),
-    feeTotals: Array.from(feeByToken, ([token, { count, totalWei }]) => ({
-      token,
-      count,
-      totalWei: totalWei.toString(),
-    })),
+    settledVolume: agg
+      ? Array.from(agg.volByToken, ([sellToken, { count, totalVolume }]) => ({
+          sellToken,
+          count,
+          totalVolume: totalVolume.toString(),
+        }))
+      : [],
+    feeTotals: agg
+      ? Array.from(agg.feeByToken, ([token, { count, totalWei }]) => ({
+          token,
+          count,
+          totalWei: totalWei.toString(),
+        }))
+      : [],
   };
 }
