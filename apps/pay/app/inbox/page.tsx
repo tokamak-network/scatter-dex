@@ -113,6 +113,10 @@ export default function ClaimInbox() {
     if (pending.length === 0) return;
     let cancelled = false;
     (async () => {
+      // Catch + log on the IIFE body so a stray rejection in
+      // `markClaimInboxEntryClaimed` / `refresh` can't surface as
+      // an unhandled promise rejection. Gemini review feedback.
+      try {
       // Parallel probe: `Promise.all` fires all eth_calls in the
       // same microtask; ethers v6's JsonRpcProvider auto-batches
       // them into a single HTTP POST (defaults: batchStallTime=10ms,
@@ -148,6 +152,9 @@ export default function ClaimInbox() {
         }
       }
       if (!cancelled && flipped > 0) await refresh();
+      } catch (err) {
+        console.warn("[Pay] inbox reconcile failed", err);
+      }
     })();
     return () => {
       cancelled = true;

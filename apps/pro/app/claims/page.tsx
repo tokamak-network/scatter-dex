@@ -137,6 +137,11 @@ export default function ClaimsPage() {
     if (pending.length === 0) return;
     let cancelled = false;
     (async () => {
+      // Catch + log on the IIFE body so a stray rejection in
+      // `markClaimInboxEntryClaimed` (folder lost, fs write race)
+      // or `refresh` can't surface as an unhandled promise
+      // rejection in the React dev overlay. Gemini review feedback.
+      try {
       // Parallel probe: each entry's nullifier check is an
       // independent `eth_call`, so the previous serial loop spent
       // (N × ~50ms) round-trip time waiting on the chain.
@@ -182,6 +187,9 @@ export default function ClaimsPage() {
         // package shouldn't block the rest of the reconciliation.
       }
       if (!cancelled && flipped > 0) await refresh();
+      } catch (err) {
+        console.warn("[Pro] inbox reconcile failed", err);
+      }
     })();
     return () => {
       cancelled = true;

@@ -173,9 +173,15 @@ function ClaimInner() {
   // scan, and an unknown-tx claim beats a stale "Claimable" badge
   // that invites a re-attempt.
   const [priorClaimTxHash, setPriorClaimTxHash] = useState<string | null>(null);
+  // Gate the "See it in your Claims inbox" footer link on whether
+  // the local inbox actually has a row for this slot; without the
+  // gate, externally-claimed links (never saved locally) would
+  // route to an inbox with no matching row. Copilot review.
+  const [hasMatchingInboxEntry, setHasMatchingInboxEntry] = useState(false);
   useEffect(() => {
     if (!parsed || !folder.ready) {
       setPriorClaimTxHash(null);
+      setHasMatchingInboxEntry(false);
       return;
     }
     let cancelled = false;
@@ -188,6 +194,7 @@ function ClaimInner() {
             e.pkg.leafIndex === parsed.pkg.leafIndex,
         );
         if (cancelled) return;
+        setHasMatchingInboxEntry(!!match);
         setPriorClaimTxHash(
           match?.status === "claimed" && match.txHash ? match.txHash : null,
         );
@@ -198,8 +205,15 @@ function ClaimInner() {
         ) {
           await markClaimInboxEntryClaimed(match.id);
         }
-      } catch {
-        if (!cancelled) setPriorClaimTxHash(null);
+      } catch (err) {
+        // Catch + log so an inbox-load failure in this background
+        // reconciler can't surface as an unhandled promise rejection.
+        // Gemini review.
+        console.warn("[Pay] claim-page inbox reconcile failed", err);
+        if (!cancelled) {
+          setPriorClaimTxHash(null);
+          setHasMatchingInboxEntry(false);
+        }
       }
     })();
     return () => {
@@ -449,7 +463,7 @@ function ClaimInner() {
               <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
                 Tokens are at {shortAddr(parsed.pkg.recipient)}.
               </div>
-              {folder.ready && (
+              {hasMatchingInboxEntry && (
                 <div className="mt-2 text-[10px]">
                   See it in your{" "}
                   <a

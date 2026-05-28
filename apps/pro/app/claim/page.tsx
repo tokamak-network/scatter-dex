@@ -153,9 +153,17 @@ function ClaimInner() {
   // log scan, and an unknown-tx claim is still better than a stale
   // "Claimable" badge that invites the user to re-attempt.
   const [priorClaimTxHash, setPriorClaimTxHash] = useState<string | null>(null);
+  // Tracks whether the LOCAL inbox has a row that corresponds to
+  // this claim link. The "See it in your Claims inbox" footer link
+  // is gated on this — without the gate, externally-claimed links
+  // (claim happened off this device, recipient was never saved
+  // locally) would route the operator to an inbox with no matching
+  // row, which is just confusing. Copilot review feedback.
+  const [hasMatchingInboxEntry, setHasMatchingInboxEntry] = useState(false);
   useEffect(() => {
     if (!parsed || !folder.ready) {
       setPriorClaimTxHash(null);
+      setHasMatchingInboxEntry(false);
       return;
     }
     let cancelled = false;
@@ -168,6 +176,7 @@ function ClaimInner() {
             e.pkg.leafIndex === parsed.pkg.leafIndex,
         );
         if (cancelled) return;
+        setHasMatchingInboxEntry(!!match);
         setPriorClaimTxHash(
           match?.status === "claimed" && match.txHash ? match.txHash : null,
         );
@@ -182,8 +191,15 @@ function ClaimInner() {
         ) {
           await markClaimInboxEntryClaimed(match.id);
         }
-      } catch {
-        if (!cancelled) setPriorClaimTxHash(null);
+      } catch (err) {
+        // Wrap state resets + log so an inbox-load / fs-write
+        // failure in this background reconciler can't surface as an
+        // unhandled promise rejection (Gemini review feedback).
+        console.warn("[Pro] claim-page inbox reconcile failed", err);
+        if (!cancelled) {
+          setPriorClaimTxHash(null);
+          setHasMatchingInboxEntry(false);
+        }
       }
     })();
     return () => {
@@ -422,7 +438,7 @@ function ClaimInner() {
               <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
                 Tokens are at {shortAddr(parsed.pkg.recipient)}.
               </div>
-              {folder.ready && (
+              {hasMatchingInboxEntry && (
                 <div className="mt-2 text-[10px]">
                   See it in your{" "}
                   <a
