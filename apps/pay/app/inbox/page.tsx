@@ -15,6 +15,9 @@ import {
   removeClaimInboxEntry,
   type ClaimInboxEntry,
 } from "@zkscatter/sdk/storage";
+import { ethers } from "ethers";
+import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
+import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { formatLocalStampSec } from "../_lib/format";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
@@ -97,6 +100,52 @@ export default function ClaimInbox() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Reconcile on-chain truth ↔ local inbox status: for every
+  // entry still showing "available", probe `claimNullifiers`;
+  // when the nullifier is spent, flip the local row to "claimed".
+  // Handles the cross-tab case (recipient opens the /claim link in
+  // a new tab where File System Access handle isn't re-granted, so
+  // /claim's own reconcile path can't write to the inbox) and the
+  // "claim happened in a different session / wallet" case where
+  // nothing local ever fired `markClaimInboxEntryClaimed`.
+  useEffect(() => {
+    if (!readProvider || entries.length === 0) return;
+    const pending = entries.filter((e) => e.status !== "claimed");
+    if (pending.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      let flipped = 0;
+      for (const e of pending) {
+        if (cancelled) return;
+        try {
+          const nullifier = await computeClaimNullifier(
+            BigInt(e.pkg.secret),
+            BigInt(e.pkg.leafIndex),
+          );
+          const settlement = new ethers.Contract(
+            e.pkg.settlementAddress,
+            PRIVATE_SETTLEMENT_ABI,
+            readProvider,
+          );
+          const spent = (await settlement.claimNullifiers(
+            toBytes32Hex(nullifier),
+          )) as boolean;
+          if (cancelled) return;
+          if (spent) {
+            await markClaimInboxEntryClaimed(e.id);
+            flipped += 1;
+          }
+        } catch {
+          /* per-entry probe failure shouldn't block the rest */
+        }
+      }
+      if (!cancelled && flipped > 0) await refresh();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [entries, readProvider, refresh]);
 
   useEffect(() => {
     // First hydration tick sets the real wall clock; the minute
