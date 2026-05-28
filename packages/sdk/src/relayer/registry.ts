@@ -121,11 +121,11 @@ export async function loadRelayersWithSharedOrderbookStats(
 ): Promise<RelayerInfo[]> {
   const onChain = await loadActiveRelayers(registryAddress, provider);
   const timeoutMs = opts.probeTimeoutMs ?? 3_000;
-  // Fetch shared-OB once for all relayers — single network round-trip
-  // beats N parallel per-relayer calls when N is small (the usual
-  // case). Bounded at limit=500 because the leaderboard view shows
-  // lifetime totals; truncation manifests as conservative numbers,
-  // not wrong direction.
+  // Fetch shared-OB once for all relayers — beats N parallel
+  // per-relayer calls because every relayer shares the same row set.
+  // Paginate-until-exhausted (see fetchAllSettlements) so totals
+  // remain correct beyond the per-page MAX_LIMIT cap shared-OB
+  // enforces; capped at SHARED_OB_MAX_PAGES pages to bound work.
   const allSettles = await fetchAllSettlements(sharedOrderbookUrl, timeoutMs);
   // Single-pass index of all settlements keyed by relayer address.
   // Cuts the per-relayer aggregation cost from O(N × R) to O(R + N×K)
@@ -164,20 +164,50 @@ export async function fetchRelayerStatsFromSharedOrderbook(
   return finalizeStats(address, byAddr.get(address.toLowerCase()));
 }
 
+// Per-page cap shared-OB enforces on /api/settlements (MAX_LIMIT in
+// shared-orderbook/src/routes/settlements.ts). A single fetch can't
+// exceed this; multi-page exhaustion is the only way to get the full
+// history.
+const SHARED_OB_PAGE_SIZE = 500;
+// Hard cap on the number of pages we'll fetch — at 500 rows/page this
+// is 25 000 settlements, well above what a single browser session
+// needs and short enough to bail out before a runaway loop hangs the
+// page on a misbehaving indexer.
+const SHARED_OB_MAX_PAGES = 50;
+
 async function fetchAllSettlements(
   sharedOrderbookUrl: string,
   timeoutMs: number,
 ): Promise<SharedObSettlement[]> {
+  const base = sharedOrderbookUrl.replace(/\/+$/, "");
+  const out: SharedObSettlement[] = [];
   try {
-    const res = await fetch(
-      `${sharedOrderbookUrl.replace(/\/+$/, "")}/api/settlements?limit=500`,
-      { signal: AbortSignal.timeout(timeoutMs) },
-    );
-    if (!res.ok) return [];
-    const data = (await res.json()) as SharedObListResponse;
-    return data.settlements ?? [];
+    // Paginate-until-exhausted via offset. Without this, networks
+    // with >500 settlements silently undercounted, drifting volume
+    // and revenue rankings as more trades landed. The /api/settlements
+    // endpoint enumerates by block_number DESC (idx_settle_block), so
+    // a stable offset is safe — new rows on top would only appear on
+    // the next refresh tick.
+    for (let page = 0; page < SHARED_OB_MAX_PAGES; page += 1) {
+      const offset = page * SHARED_OB_PAGE_SIZE;
+      const res = await fetch(
+        `${base}/api/settlements?limit=${SHARED_OB_PAGE_SIZE}&offset=${offset}`,
+        { signal: AbortSignal.timeout(timeoutMs) },
+      );
+      if (!res.ok) break;
+      const data = (await res.json()) as SharedObListResponse;
+      const batch = data.settlements ?? [];
+      out.push(...batch);
+      // Short page (or empty) means we've reached the end. Avoids a
+      // pointless extra round-trip that would always return 0 rows.
+      if (batch.length < SHARED_OB_PAGE_SIZE) break;
+    }
+    return out;
   } catch {
-    return [];
+    // Partial result is acceptable — better to show some leaderboard
+    // numbers than blank the whole page on a transient page-fetch
+    // failure mid-pagination.
+    return out;
   }
 }
 
@@ -247,15 +277,30 @@ function buildAllStatsFromSharedOb(
   for (const row of rows) {
     const maker = row.makerRelayer?.toLowerCase();
     const taker = row.takerRelayer?.toLowerCase();
+    // Three shapes to handle:
+    //   1) Cross-relayer match (maker != taker): each relayer counts
+    //      ONE leg (its own user's sell side) + one tx, the
+    //      counterparty records the other half in the peer's bucket.
+    //   2) Single-relayer match (maker == taker): one relayer brought
+    //      both sides of the trade. txCount is ONE (it's one tx) but
+    //      throughput accrues to BOTH tokens — the relayer's user-pair
+    //      contributed both legs to the pool. Without the both-leg
+    //      add here, single-relayer matches would silently undercount
+    //      the buy-leg token's throughput on that relayer.
+    //   3) scatterDirectAuth (Pay): taker is NULL, only the maker
+    //      branch fires.
     if (maker) {
       const agg = ensure(maker);
       agg.txCount += 1;
       addVol(agg, row.sellToken, row.sellAmount);
       addFee(agg, row.buyToken, row.feeMaker);
     }
-    if (taker && taker !== maker) {
+    if (taker) {
       const agg = ensure(taker);
-      agg.txCount += 1;
+      // Avoid double-counting the tx itself when both sides credit
+      // the same relayer; only the legs (different tokens) accrue
+      // a second time.
+      if (taker !== maker) agg.txCount += 1;
       addVol(agg, row.buyToken, row.buyAmount);
       addFee(agg, row.sellToken, row.feeTaker);
     }
@@ -274,12 +319,18 @@ function finalizeStats(
   const txCount = agg?.txCount ?? 0;
   return {
     address,
+    // `totalOrders` mirrors `settledOrders` here because shared-OB
+    // doesn't see failed/reverted attempts — only the on-chain
+    // settle events relayers push after a confirmed receipt land in
+    // the indexer. That means `successRate` derived from this slice
+    // is structurally 100% (or 0% with no history) and isn't
+    // comparable to the peer-reported success rate which divides
+    // settled / total ATTEMPTS. Left as 100/0 so the UI doesn't
+    // crash on null, but the leaderboard column reads "Success" as
+    // "confirmed share of confirmed attempts" — see the page footer
+    // for what the source actually means.
     totalOrders: txCount,
     settledOrders: txCount,
-    // Shared-OB only stores confirmed on-chain rows, so success is
-    // trivially 100% when there's any row. Show 0% with no history
-    // so a brand-new relayer doesn't display "100%" before settling
-    // anything (would be misleading green).
     successRate: txCount > 0 ? 100 : 0,
     crossRelayerSettled: 0,
     totalTradeOffers: 0,

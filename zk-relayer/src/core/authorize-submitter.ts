@@ -391,27 +391,22 @@ export class AuthorizeSubmitter {
       // a DB failure here must not reject after the on-chain tx
       // already succeeded.
       try {
-        // Sell-only per-relayer attribution: each row represents ONE
-        // local order's sell-leg. Avoids the prior "both legs in one
-        // row" double-count, which made per-token Throughput sum to
-        // 2× the actual settled value (since both maker.sell AND
-        // taker.sell — = maker.buy — landed in the same row, then
-        // the SQL UNION re-counted the buy leg as a second pseudo-row).
-        //
-        // Maker is always local to the submitter (this code path).
-        // Taker is local ONLY when this is a single-relayer match
-        // (settlement-worker path, no `takerRelayer` in pushExtras).
-        // Cross-relayer submits (received via /api/p2p/...) have the
-        // taker's relayer URL set — that peer records the taker leg
-        // in its own DB via the counterparty path, so we skip it
-        // here to avoid network-wide double counting. Fees split the
-        // same way: maker fee → submitter (this relayer), taker fee
-        // → submitter only when taker is also local; in cross-relayer
-        // the taker fee is logged by the counterparty.
+        // Sell-only per-relayer attribution: each settlement_history
+        // row represents ONE local order's sell-leg. settlement_history
+        // is `INSERT OR IGNORE` on tx_hash (the prepared stmt at
+        // db.ts:624) — a second insert with the same txHash silently
+        // no-ops — so we can write ONLY one row per tx here. The
+        // canonical authoritative source for both legs of a same-
+        // relayer match is the shared-OB indexer (one row, both
+        // maker+taker relayers = us), which the SDK aggregator
+        // resolves into per-leg totals via buildAllStatsFromSharedOb.
+        // The local DB only needs the submitter-side row + per-side
+        // fee_history accruals (fee_history has no UNIQUE on tx_hash,
+        // so taker-side fees DO persist for local revenue reads).
         const makerSellToken = publicSignalToAddress(makerPs.sellToken);
         const makerBuyToken = publicSignalToAddress(makerPs.buyToken);
+        const takerBuyToken = publicSignalToAddress(takerPs.buyToken);
         const isCrossRelayer = Boolean(pushExtras?.takerRelayer);
-        // Maker leg (always local to this relayer).
         this.db?.recordSettlementEvent({
           txHash,
           type: "settleAuth",
@@ -421,31 +416,18 @@ export class AuthorizeSubmitter {
           sellToken: makerSellToken,
           sellAmount: BigInt(makerPs.sellAmount).toString(),
           durationMs: Date.now() - authSettleStart,
-          fees: [
-            { side: "maker", token: makerBuyToken, amountWei: feeTokenMaker.toString() },
-          ],
+          // Cross-relayer: only maker fee accrues to this submitter
+          // (the counterparty peer records its own taker fee in its
+          // own fee_history via the cross-matcher counterparty path).
+          // Single-relayer: both fees flowed to us, so persist both —
+          // fee_history has no UNIQUE on tx_hash, so both inserts land.
+          fees: isCrossRelayer
+            ? [{ side: "maker", token: makerBuyToken, amountWei: feeTokenMaker.toString() }]
+            : [
+                { side: "maker", token: makerBuyToken, amountWei: feeTokenMaker.toString() },
+                { side: "taker", token: takerBuyToken, amountWei: feeTokenTaker.toString() },
+              ],
         });
-        // Taker leg — only for single-relayer matches. taker.sellToken
-        // = maker.buyToken; taker.sellAmount = maker.buyAmount (matched
-        // pair invariant), but we read them from takerPs directly so
-        // any future invariant break still records the truth.
-        if (!isCrossRelayer) {
-          const takerSellToken = publicSignalToAddress(takerPs.sellToken);
-          const takerBuyToken = publicSignalToAddress(takerPs.buyToken);
-          this.db?.recordSettlementEvent({
-            txHash,
-            type: "settleAuth",
-            status: "confirmed",
-            blockNumber: receipt.blockNumber,
-            gasCostEth: gasCheck.gasCostEth,
-            sellToken: takerSellToken,
-            sellAmount: BigInt(takerPs.sellAmount).toString(),
-            durationMs: Date.now() - authSettleStart,
-            fees: [
-              { side: "taker", token: takerBuyToken, amountWei: feeTokenTaker.toString() },
-            ],
-          });
-        }
       } catch (e) {
         log.warn("settleAuth history persist failed", {
           err: e instanceof Error ? e.message : String(e),

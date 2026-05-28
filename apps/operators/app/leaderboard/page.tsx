@@ -307,8 +307,11 @@ export default function LeaderboardPage() {
           Settlement counters, volume, and avg-settle latency come from the shared
           orderbook indexer (durable across relayer DB resets); per-leg fee splits
           credit the relayer that brought each order, not just the on-chain submitter.
-          Cross-token sums need a price oracle, so Volume / Revenue are shown per token
-          and rank by the relayer&apos;s biggest single token.
+          Volume / Revenue collapse to a single USD-equivalent total via a local
+          price oracle (<code className="font-mono">USD_PRICES</code>; replace with
+          Chainlink/CoinGecko before mainnet), and the Volume / Revenue columns rank
+          by that USD sum across all priced tokens. Per-token amounts are visible in
+          each row&apos;s expand drawer.
         </p>
       </section>
     </div>
