@@ -30,7 +30,7 @@ const TILES = [
     href: "/treasury",
     title: "Treasury",
     blurb:
-      "FeeVault: per-token platform revenue + withdraw, timelocked fee changes, setTreasury, authorized depositors.",
+      "FeeVault: per-token platform revenue + withdraw, timelocked platform-fee changes.",
     cta: "Open →",
     badge: "live" as const,
   },

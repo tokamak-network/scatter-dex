@@ -4,16 +4,20 @@ import { useCallback, useState } from "react";
 import { Contract, type Signer } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
-import { SetAddressCard } from "../../protocol/_components/SetAddressCard";
-import { isValidEvmAddress } from "../../lib/x509";
 
+// `setTreasury` and `setAuthorizedDepositor` are owner-only ops that
+// run once at deploy (treasury = multisig recipient; authorized
+// depositor = PrivateSettlement). Both stay callable on-chain via
+// cast/forge for genuine emergencies (multisig migration, new
+// settlement-variant contract), but the admin UI no longer surfaces
+// them — keeping them in the dashboard was pure foot-gun and
+// "FeeVault.setAuthorizedDepositor(0x…, false)" by mistake would
+// halt every settle on the next deposit() call.
 const ABI = [
   "function treasury() external view returns (address)",
   "function platformFeeBps() external view returns (uint256)",
   "function pendingFeeBps() external view returns (uint256)",
   "function pendingFeeEffectiveTime() external view returns (uint256)",
-  "function setTreasury(address _treasury) external",
-  "function setAuthorizedDepositor(address depositor, bool authorized) external",
   "function scheduleFeeChange(uint256 _bps) external",
   "function applyFeeChange() external",
   "function cancelFeeChange() external",
@@ -38,16 +42,6 @@ export function FeeVaultWrites({
 }: Props) {
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <SetAddressCard
-        title="Set treasury"
-        description="FeeVault.setTreasury(address). The new treasury becomes the destination for platform revenue withdrawals and the only non-owner caller of withdrawPlatformRevenue()."
-        contractAddress={feeVaultAddress}
-        contractAbi={ABI}
-        readerFn="treasury"
-        setterFn="setTreasury"
-        submitLabel="Update treasury"
-      />
-      <AuthorizedDepositorEditor address={feeVaultAddress} onSuccess={onReload} />
       <FeeScheduleEditor
         address={feeVaultAddress}
         hasPendingChange={hasPendingChange}
@@ -55,65 +49,6 @@ export function FeeVaultWrites({
         onSuccess={onReload}
       />
     </div>
-  );
-}
-
-function AuthorizedDepositorEditor({
-  address,
-  onSuccess,
-}: {
-  address: string;
-  onSuccess: () => void;
-}) {
-  const { signer } = useWallet();
-  const [input, setInput] = useState("");
-  const [authorize, setAuthorize] = useState(true);
-  const valid = isValidEvmAddress(input.trim());
-
-  const submit = useCallback(async () => {
-    if (!signer) throw new Error("Wallet not connected");
-    if (!valid) throw new Error("Invalid address");
-    const c = new Contract(address, ABI, signer);
-    return (await c.setAuthorizedDepositor(input.trim(), authorize)) as {
-      hash: string;
-      wait(): Promise<{ hash?: string } | null>;
-    };
-  }, [signer, valid, address, input, authorize]);
-
-  return (
-    <AdminWriteCard
-      title="Authorized depositor"
-      description="FeeVault.setAuthorizedDepositor(address, bool). Allows a non-PrivateSettlement caller (e.g. legacy contract) to deposit fees."
-      submitLabel={authorize ? "Authorize" : "Revoke"}
-      disabled={!valid}
-      onSubmit={submit}
-      onSuccess={() => {
-        setInput("");
-        onSuccess();
-      }}
-    >
-      <label className="block text-xs">
-        <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
-          Depositor address
-        </span>
-        <input
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
-          placeholder="0x…"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-      </label>
-      <div className="flex gap-4 text-xs">
-        <label className="flex items-center gap-2">
-          <input type="radio" checked={authorize} onChange={() => setAuthorize(true)} />
-          Authorize
-        </label>
-        <label className="flex items-center gap-2">
-          <input type="radio" checked={!authorize} onChange={() => setAuthorize(false)} />
-          Revoke
-        </label>
-      </div>
-    </AdminWriteCard>
   );
 }
 
@@ -157,8 +92,8 @@ function FeeScheduleEditor({
   if (hasPendingChange && pendingReady) {
     return (
       <AdminWriteCard
-        title="Fee change — ready to apply"
-        description="FeeVault.applyFeeChange(). The timelocked update has elapsed; finalise it (or cancel)."
+        title="Platform fee change — ready to apply"
+        description="FeeVault.applyFeeChange(). Applies the new platform cut taken from every relayer claim — not a per-relayer trading fee. The timelocked update has elapsed; finalise it (or cancel)."
         submitLabel="Apply fee change"
         secondaryLabel="Cancel pending change"
         onSubmit={apply}
@@ -175,8 +110,8 @@ function FeeScheduleEditor({
   if (hasPendingChange) {
     return (
       <AdminWriteCard
-        title="Fee change pending"
-        description="FeeVault has a pending fee change waiting for its timelock window. Cancel to revert to the current bps, or wait for the elapsed window to apply."
+        title="Platform fee change pending"
+        description="The platform's cut taken from every relayer claim has a pending update waiting for its timelock window. Doesn't affect the per-relayer trading fee. Cancel to revert, or wait for the elapsed window to apply."
         submitLabel="Cancel pending change"
         onSubmit={cancel}
         onSuccess={onSuccess}
@@ -190,8 +125,8 @@ function FeeScheduleEditor({
 
   return (
     <AdminWriteCard
-      title="Schedule fee change"
-      description={`FeeVault.scheduleFeeChange(uint256). Starts a timelocked update — apply after the window elapses. Max ${MAX_PLATFORM_FEE_BPS / 100}%.`}
+      title="Schedule platform fee change"
+      description={`Changes the platform's cut taken from every relayer claim — not the per-relayer trading fee (relayers set their own under RelayerRegistry). FeeVault.scheduleFeeChange(uint256). Starts a timelocked update — apply after the window elapses. Max ${MAX_PLATFORM_FEE_BPS / 100}%.`}
       submitLabel="Schedule"
       disabled={!validBps}
       onSubmit={schedule}

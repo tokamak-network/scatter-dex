@@ -7,7 +7,6 @@ import { isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { Stat } from "../../components/Stat";
-import { SetAddressCard } from "./SetAddressCard";
 
 const ABI = [
   "function minBond() external view returns (uint256)",
@@ -167,15 +166,12 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           onSuccess={reload}
           signer={signer}
         />
-        <SetAddressCard
-          title="Set treasury"
-          description="RelayerRegistry.setTreasury(address) — protocol fee destination."
-          submitLabel="Set treasury"
-          contractAddress={address}
-          contractAbi={ABI}
-          readerFn="treasury"
-          setterFn="setTreasury"
-        />
+        {/* `setTreasury` was here too. Removed for the same reason as
+            FeeVault.setTreasury — it's a one-shot deploy-time op that
+            rarely (if ever) changes in practice, and a wrong-address
+            click on this card would redirect every future protocol fee
+            stream. If a multisig migration ever becomes necessary, call
+            it via cast/forge with full review. */}
         {/* Identity-registry swap + operator X.509 issuance moved out
             of the RelayerRegistry tab so this surface stays focused on
             bond / treasury / counts. Identity is split into two sibling
