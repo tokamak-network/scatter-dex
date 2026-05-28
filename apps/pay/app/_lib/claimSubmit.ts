@@ -1,7 +1,7 @@
 "use client";
 
 import { ethers } from "ethers";
-import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
+import { eqAddr, isConfiguredAddress, PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import { callClaimWithProof, type ClaimCallInputs } from "@zkscatter/sdk/contracts";
 import type { ClaimPackage } from "@zkscatter/sdk/notes";
 import { RelayerClient, type GaslessClaimBody } from "@zkscatter/sdk/relayer";
@@ -65,12 +65,12 @@ export async function submitClaim(opts: SubmitClaimOpts): Promise<SubmitClaimRes
     }>,
     claimProver.ready(),
   ]);
-  if (group.token === ethers.ZeroAddress) {
+  if (!isConfiguredAddress(group.token)) {
     throw new Error(
       "On-chain claims group is missing — the settle tx may not have confirmed yet.",
     );
   }
-  if (group.token.toLowerCase() !== pkg.token.toLowerCase()) {
+  if (!eqAddr(group.token, pkg.token)) {
     throw new Error(
       "Claim package token disagrees with the on-chain claims group — refusing to submit.",
     );

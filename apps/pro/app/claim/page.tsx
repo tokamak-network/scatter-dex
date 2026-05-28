@@ -98,8 +98,18 @@ function ClaimInner() {
     const ctrl = new AbortController();
     new RelayerClient(url)
       .getInfo(ctrl.signal)
-      .then(() => setRelayerUp(true))
-      .catch(() => setRelayerUp(false));
+      .then(() => {
+        if (!ctrl.signal.aborted) setRelayerUp(true);
+      })
+      .catch((err) => {
+        // AbortError fires when the effect cleans up (unmount /
+        // dep change) — that's an intentional cancel, not a real
+        // probe failure. Surface it as "still unknown" by not
+        // touching state, instead of flipping relayerUp to false
+        // and falsely disabling the gasless button on every nav.
+        if (err instanceof Error && err.name === "AbortError") return;
+        if (!ctrl.signal.aborted) setRelayerUp(false);
+      });
     return () => ctrl.abort();
   }, [parsed?.pkg.relayerUrl]);
 

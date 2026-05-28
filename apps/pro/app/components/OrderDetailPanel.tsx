@@ -1165,6 +1165,26 @@ function ShareActions({
   const title = !enabled
     ? "Available once the order settles on-chain"
     : undefined;
+  // Per-leaf gates for "Claim now (gasless)" — the order-level
+  // `enabled` flag flips to true once ANY leaf becomes claimable,
+  // but an individual recipient's leaf may already be spent on-chain
+  // (`claimedLeafIndexes`) or still locked until its `releaseTime`.
+  // Without this gate, clicking burns proof generation only to hit
+  // an on-chain `NotYetReleasable` / `NullifierSpent` revert.
+  const claimedLeavesSet = useMemo(
+    () => new Set(order.claimedLeafIndexes ?? []),
+    [order.claimedLeafIndexes],
+  );
+  const leafClaimed = claimedLeavesSet.has(target.leafIndex);
+  const leafLocked =
+    !leafClaimed &&
+    Math.floor(Date.now() / 1000) < Number(target.releaseTime);
+  const claimDisabled = disabled || leafClaimed || leafLocked;
+  const claimTitle = leafClaimed
+    ? "Already claimed — this slot's nullifier is spent on-chain."
+    : leafLocked
+      ? `Locked until ${formatLocalStampSec(Number(target.releaseTime))}.`
+      : undefined;
 
   return (
     <div ref={wrapperRef} className="inline-block text-left" title={title}>
@@ -1201,8 +1221,16 @@ function ShareActions({
             <ShareMenuItem onClick={onEmail} disabled={disabled}>
               Send via Gmail
             </ShareMenuItem>
-            <ShareMenuItem onClick={onClaimNow} disabled={disabled}>
-              Claim now (gasless)
+            <ShareMenuItem
+              onClick={onClaimNow}
+              disabled={claimDisabled}
+              title={claimTitle}
+            >
+              {leafClaimed
+                ? "Claim now (already claimed)"
+                : leafLocked
+                  ? "Claim now (locked)"
+                  : "Claim now (gasless)"}
             </ShareMenuItem>
           </div>,
           document.body,
@@ -1219,10 +1247,12 @@ function ShareActions({
 function ShareMenuItem({
   onClick,
   disabled,
+  title,
   children,
 }: {
   onClick: () => void;
   disabled: boolean;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -1230,6 +1260,7 @@ function ShareMenuItem({
       type="button"
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className="block w-full px-3 py-1.5 text-left hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
     >
       {children}
