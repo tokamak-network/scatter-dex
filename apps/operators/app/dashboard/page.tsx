@@ -22,6 +22,7 @@ import {
   type VolumeTotal,
 } from "../components/PerTokenCards";
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import { usePlatformFeeBps, netAfterPlatformFee } from "../lib/usePlatformFeeBps";
 
 type Auth = AdminAuth | null;
 
@@ -220,6 +221,7 @@ interface BucketsBody {
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
+  const { bps: platformFeeBps } = usePlatformFeeBps();
   const [status, setStatus] = useState<StatusBody | null>(null);
   const [recent, setRecent] = useState<SettlementRow[] | null>(null);
   const [feeTotals, setFeeTotals] = useState<FeeTotals | null>(null);
@@ -356,7 +358,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
         />
         <div className="grid gap-4 md:grid-cols-2">
           <VolumeCard volume={volumeTotals} />
-          <RevenueCard fees={feeTotals} />
+          <RevenueCard fees={feeTotals} platformFeeBps={platformFeeBps} />
         </div>
       </section>
 
@@ -410,7 +412,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
         ) : (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
             {recent.slice(0, 10).map((s) => (
-              <RecentSettlementRow key={s.tx_hash} row={s} />
+              <RecentSettlementRow key={s.tx_hash} row={s} platformFeeBps={platformFeeBps} />
             ))}
           </div>
         )}
@@ -715,7 +717,7 @@ function HealthCard({
  *  blocks: type/status + tx, sell-leg volume + per-token fee revenue,
  *  and gas + timing. Volume falls back to "—" for pre-migration rows
  *  and shared-OB back-filled rows that have NULL amounts. */
-function RecentSettlementRow({ row }: { row: SettlementRow }) {
+function RecentSettlementRow({ row, platformFeeBps }: { row: SettlementRow; platformFeeBps: number | null }) {
   const sellInfo = row.sell_token ? tokenInfo(row.sell_token) : null;
   return (
     <div className="grid grid-cols-12 items-center gap-3 border-b border-[var(--color-border)] px-5 py-4 last:border-b-0">
@@ -758,6 +760,23 @@ function RecentSettlementRow({ row }: { row: SettlementRow }) {
                 })
                 .join(" + ")}
         </div>
+        {/* Net-after-platform-cut line — only when the bps is known
+            AND at least one fee row exists. Skipped when bps=0 (no
+            cut configured) to avoid duplicating the gross line. */}
+        {platformFeeBps !== null && platformFeeBps > 0 && (row.fees ?? []).length > 0 && (
+          <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+            net{" "}
+            {(row.fees ?? [])
+              .map((f) => {
+                const fi = tokenInfo(f.token);
+                const netWei = netAfterPlatformFee(f.amountWei, platformFeeBps);
+                return netWei !== null
+                  ? `${formatAmount(netWei, fi.decimals)} ${fi.symbol}`
+                  : `— ${fi.symbol}`;
+              })
+              .join(" + ")}
+          </div>
+        )}
       </div>
       <div className="col-span-3 text-right">
         <div className="font-mono text-sm">

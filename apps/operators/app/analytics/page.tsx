@@ -8,6 +8,7 @@ import { AdminConnectBar } from "../components/AdminConnectBar";
 import { Stat } from "../components/Stat";
 import { adminDownload, adminGet, readAdminAuth, type AdminAuth } from "../lib/adminApi";
 import { RevenueCard, VolumeCard } from "../components/PerTokenCards";
+import { usePlatformFeeBps } from "../lib/usePlatformFeeBps";
 
 type Auth = AdminAuth | null;
 
@@ -93,6 +94,7 @@ export default function AnalyticsPage() {
 }
 
 function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
+  const { bps: platformFeeBps } = usePlatformFeeBps();
   const [period, setPeriod] = useState<PeriodId>("7d");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [fees, setFees] = useState<FeeTotal[] | null>(null);
@@ -280,7 +282,7 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
         />
         <div className="grid gap-4 md:grid-cols-2">
           <VolumeCard volume={volume ? { totals: volume } : null} />
-          <RevenueCard fees={fees ? { totals: fees } : null} />
+          <RevenueCard fees={fees ? { totals: fees } : null} platformFeeBps={platformFeeBps} />
         </div>
       </section>
 

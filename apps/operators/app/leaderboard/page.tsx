@@ -311,7 +311,12 @@ export default function LeaderboardPage() {
           price oracle (<code className="font-mono">USD_PRICES</code>; replace with
           Chainlink/CoinGecko before mainnet), and the Volume / Revenue columns rank
           by that USD sum across all priced tokens. Per-token amounts are visible in
-          each row&apos;s expand drawer.
+          each row&apos;s expand drawer.{" "}
+          <strong>Revenue figures are gross</strong> — each relayer&apos;s net is the
+          revenue minus the platform fee (
+          <code className="font-mono">FeeVault.platformFeeBps</code>) at{" "}
+          <code className="font-mono">claim()</code> time. See your own dashboard for
+          the post-cut figure.
         </p>
       </section>
     </div>
