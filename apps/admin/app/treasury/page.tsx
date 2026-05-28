@@ -165,40 +165,49 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           </section>
         )}
 
-      <section>
-        <SectionHeader
-          title="Platform revenue"
-          badge="live"
-          hint={`${tokenRows.length} token${tokenRows.length === 1 ? "" : "s"} from NetworkConfig`}
-        />
-        <PlatformRevenueTable
-          feeVaultAddress={feeVaultAddress}
-          treasuryAddress={snap.treasury}
-          rows={tokenRows}
-          onWithdrawn={() => setReloadKey((k) => k + 1)}
-        />
-      </section>
+      {/* Side-by-side at md+ to fill the right-hand void the
+          single-column stack left behind. Below md they fold back
+          to a vertical stack so neither card gets cramped.
+          `items-start` keeps the shorter Treasury-writes card from
+          stretching to the tall Platform-revenue table; `min-w-0`
+          on each child lets the inner table shrink instead of
+          blowing the column past the viewport on long addresses. */}
+      <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2">
+        <section className="min-w-0">
+          <SectionHeader
+            title="Platform revenue"
+            badge="live"
+            hint={`${tokenRows.length} token${tokenRows.length === 1 ? "" : "s"} from NetworkConfig`}
+          />
+          <PlatformRevenueTable
+            feeVaultAddress={feeVaultAddress}
+            treasuryAddress={snap.treasury}
+            rows={tokenRows}
+            onWithdrawn={() => setReloadKey((k) => k + 1)}
+          />
+        </section>
 
-      <section>
-        <SectionHeader title="Treasury writes" badge="live" />
-        <FeeVaultWrites
-          feeVaultAddress={feeVaultAddress}
-          hasPendingChange={
-            snap.pendingFeeBps != null &&
-            snap.pendingFeeEffectiveTime != null &&
-            snap.pendingFeeEffectiveTime > 0n
-          }
-          pendingReady={
-            snap.pendingFeeEffectiveTime != null &&
-            snap.pendingFeeEffectiveTime > 0n &&
-            Number(snap.pendingFeeEffectiveTime) <= Math.floor(Date.now() / 1000)
-          }
-          currentFeeBps={snap.platformFeeBps}
-          pendingFeeBps={snap.pendingFeeBps}
-          pendingEffectiveTime={snap.pendingFeeEffectiveTime}
-          onReload={() => setReloadKey((k) => k + 1)}
-        />
-      </section>
+        <section className="min-w-0">
+          <SectionHeader title="Treasury writes" badge="live" />
+          <FeeVaultWrites
+            feeVaultAddress={feeVaultAddress}
+            hasPendingChange={
+              snap.pendingFeeBps != null &&
+              snap.pendingFeeEffectiveTime != null &&
+              snap.pendingFeeEffectiveTime > 0n
+            }
+            pendingReady={
+              snap.pendingFeeEffectiveTime != null &&
+              snap.pendingFeeEffectiveTime > 0n &&
+              Number(snap.pendingFeeEffectiveTime) <= Math.floor(Date.now() / 1000)
+            }
+            currentFeeBps={snap.platformFeeBps}
+            pendingFeeBps={snap.pendingFeeBps}
+            pendingEffectiveTime={snap.pendingFeeEffectiveTime}
+            onReload={() => setReloadKey((k) => k + 1)}
+          />
+        </section>
+      </div>
     </>
   );
 }

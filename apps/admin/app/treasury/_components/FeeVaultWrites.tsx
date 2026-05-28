@@ -54,18 +54,19 @@ export function FeeVaultWrites({
   pendingEffectiveTime,
   onReload,
 }: Props) {
+  // Single child — the page-level grid in treasury/page.tsx now
+  // does the side-by-side layout against PlatformRevenue, so the
+  // 2-col wrapper here is no longer load-bearing.
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <FeeScheduleEditor
-        address={feeVaultAddress}
-        hasPendingChange={hasPendingChange}
-        pendingReady={pendingReady}
-        currentFeeBps={currentFeeBps}
-        pendingFeeBps={pendingFeeBps}
-        pendingEffectiveTime={pendingEffectiveTime}
-        onSuccess={onReload}
-      />
-    </div>
+    <FeeScheduleEditor
+      address={feeVaultAddress}
+      hasPendingChange={hasPendingChange}
+      pendingReady={pendingReady}
+      currentFeeBps={currentFeeBps}
+      pendingFeeBps={pendingFeeBps}
+      pendingEffectiveTime={pendingEffectiveTime}
+      onSuccess={onReload}
+    />
   );
 }
 
