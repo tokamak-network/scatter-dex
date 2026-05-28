@@ -61,6 +61,8 @@ export default function TreasuryPage() {
         </Link>
       </header>
 
+      <PendingFeeChangeBanner vault={vault} />
+
       <section>
         <SectionHeader title="On-chain" badge="live" />
         <div className="grid grid-cols-3 gap-4">
@@ -351,7 +353,7 @@ function vaultPlaceholder(state: FeeVaultState): VaultPlaceholder | null {
   return null;
 }
 
-const BALANCE_COLUMNS = 4;
+const BALANCE_COLUMNS = 5;
 
 function BalancesTable({
   vault,
@@ -366,8 +368,9 @@ function BalancesTable({
         <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
           <tr>
             <th className="px-5 py-3 text-left">Token</th>
-            <th className="px-5 py-3 text-left">Address</th>
             <th className="px-5 py-3 text-right">Claimable</th>
+            <th className="px-5 py-3 text-right">Platform cut</th>
+            <th className="px-5 py-3 text-right">You receive</th>
             <th className="px-5 py-3 text-right">Action</th>
           </tr>
         </thead>
@@ -377,7 +380,12 @@ function BalancesTable({
             <EmptyRow message="No tokens configured on this network yet." />
           )}
           {!placeholder && vault.balances.map((b) => (
-            <BalanceRow key={b.token.address} entry={b} onClaimed={vault.refresh} />
+            <BalanceRow
+              key={b.token.address}
+              entry={b}
+              platformFeeBps={vault.platformFeeBps}
+              onClaimed={vault.refresh}
+            />
           ))}
         </tbody>
       </table>
@@ -395,12 +403,27 @@ function EmptyRow({ message }: { message: string }) {
   );
 }
 
-function BalanceRow({ entry, onClaimed }: { entry: FeeVaultBalance; onClaimed: () => void }) {
+function BalanceRow({
+  entry,
+  platformFeeBps,
+  onClaimed,
+}: {
+  entry: FeeVaultBalance;
+  platformFeeBps: number | null;
+  onClaimed: () => void;
+}) {
   const { signer } = useWallet();
   const write = useChainWrite({ explain: explainFeeVaultError, onSuccess: onClaimed });
   const { token, balance } = entry;
   const empty = balance === 0n;
   const submitting = write.phase.kind === "submitting";
+
+  // Compute the on-claim split — what the platform skims vs. what
+  // hits the relayer's treasury — so the operator sees the actual
+  // post-claim outcome instead of having to do the bps math
+  // themselves. Falls back to "—" when bps is null (RPC hasn't
+  // landed yet) so the row stays readable in the loading state.
+  const split = computeClaimSplit(balance, platformFeeBps);
 
   const onClaim = () => {
     if (!signer || !VAULT) return;
@@ -409,12 +432,20 @@ function BalanceRow({ entry, onClaimed }: { entry: FeeVaultBalance; onClaimed: (
 
   return (
     <tr className="border-t border-[var(--color-border)] align-top">
-      <td className="px-5 py-3 font-medium">{token.symbol}</td>
-      <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">
-        {shortAddr(token.address)}
+      <td className="px-5 py-3">
+        <div className="font-medium">{token.symbol}</div>
+        <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+          {shortAddr(token.address)}
+        </div>
       </td>
       <td className="px-5 py-3 text-right font-mono">
         {formatTokenAmount(balance, token.decimals)}
+      </td>
+      <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">
+        {split.platform === null ? "—" : `−${formatTokenAmount(split.platform, token.decimals)}`}
+      </td>
+      <td className="px-5 py-3 text-right font-mono">
+        {split.net === null ? "—" : formatTokenAmount(split.net, token.decimals)}
       </td>
       <td className="px-5 py-3 text-right">
         <button
@@ -430,3 +461,89 @@ function BalanceRow({ entry, onClaimed }: { entry: FeeVaultBalance; onClaimed: (
   );
 }
 
+/** Apply the platform bps to a gross balance and return the
+ *  {platform, net} split. Null bps → both null so the row falls
+ *  back to "—" instead of pretending it knows the split. The math
+ *  is intentionally bigint so values past 2^53 don't lose precision
+ *  in the display. */
+function computeClaimSplit(
+  balance: bigint,
+  bps: number | null,
+): { platform: bigint | null; net: bigint | null } {
+  if (bps === null || !Number.isFinite(bps) || bps < 0 || bps > 10_000) {
+    return { platform: null, net: null };
+  }
+  const platform = (balance * BigInt(bps)) / 10_000n;
+  return { platform, net: balance - platform };
+}
+
+
+/** Banner above the On-chain stats that warns the operator about a
+ *  scheduled platform-fee change. Renders nothing when no change is
+ *  pending so the page stays clean in the common case. Surfaces
+ *  current → new bps + the unix-second effective time so the
+ *  operator can decide whether to claim before or after the change
+ *  lands (claiming after a hike means a smaller net payout).
+ *
+ *  Effective time is rendered as both a relative ("in 6h") and
+ *  absolute timestamp so the operator can plan against their own
+ *  timezone without doing the math. */
+function PendingFeeChangeBanner({ vault }: { vault: FeeVaultState }) {
+  const pending = vault.pendingFeeChange;
+  if (!pending) return null;
+  const effectiveMs = pending.effectiveAt * 1000;
+  const isReady = effectiveMs <= Date.now();
+  const currentBps = vault.platformFeeBps;
+  const delta =
+    currentBps !== null
+      ? pending.bps > currentBps
+        ? "increase"
+        : pending.bps < currentBps
+          ? "decrease"
+          : "unchanged"
+      : null;
+  const tone =
+    delta === "increase"
+      ? "bg-[var(--color-warning-soft)] border-[var(--color-warning)] text-[var(--color-warning)]"
+      : delta === "decrease"
+        ? "bg-[var(--color-success-soft)] border-[var(--color-success)] text-[var(--color-success)]"
+        : "bg-[var(--color-bg)] border-[var(--color-border-strong)] text-[var(--color-text)]";
+  return (
+    <section className={`rounded-xl border-l-4 px-5 py-4 ${tone}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold uppercase tracking-wide">
+            Platform fee {isReady ? "change is ready to apply" : "change scheduled"}
+          </div>
+          <p className="mt-1 text-xs">
+            {currentBps !== null && (
+              <>
+                Current: <strong className="font-mono">{(currentBps / 100).toFixed(2)}%</strong>{" "}
+                →{" "}
+              </>
+            )}
+            New: <strong className="font-mono">{(pending.bps / 100).toFixed(2)}%</strong>
+            {delta === "increase" && " (your net per claim will drop)"}
+            {delta === "decrease" && " (your net per claim will rise)"}
+          </p>
+        </div>
+        <div className="text-right text-xs">
+          <div className="font-mono text-sm font-semibold">
+            {isReady ? "Ready now" : formatRelative(effectiveMs)}
+          </div>
+          <div className="text-[var(--color-text-muted)]">
+            {new Date(effectiveMs).toLocaleString()}
+          </div>
+        </div>
+      </div>
+      {delta === "increase" && !isReady && (
+        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+          Tip: claim any pending balances before the cutover to keep
+          today&apos;s rate. Once the change applies, all future
+          claims (including currently-accrued balances) use the new
+          rate.
+        </p>
+      )}
+    </section>
+  );
+}
