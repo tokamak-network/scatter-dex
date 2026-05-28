@@ -447,7 +447,7 @@ if [ "$MOCK_MODE" = true ]; then
   SANCTIONS_LIST=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *SanctionsList proxy:" | tail -1 | awk '{print $NF}')
   BATCH_EXECUTOR=$(echo "$DEPLOY_OUTPUT" | grep "^  BatchExecutor:" | awk '{print $NF}')
 
-  if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ]; then
+  if [ -z "$RELAYER_REGISTRY" ] || [ -z "$WETH" ] || [ -z "$USDC" ] || [ -z "$COMMITMENT_POOL" ] || [ -z "$PRIVATE_SETTLEMENT" ] || [ -z "$IDENTITY_GATE" ] || [ -z "$FEE_VAULT" ] || [ -z "$SANCTIONS_LIST" ]; then
     echo "  ERROR: deployment failed (missing one or more contract addresses)"
     echo "$DEPLOY_OUTPUT"
     exit 1
@@ -754,7 +754,16 @@ write_app_env() {
     # script does not emit from forge-output — operators set them by
     # hand. Without preserving, every dev.sh run silently wipes them
     # and AttestationPanel / explorer links go dark with no warning.
-    preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL|NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS|NEXT_PUBLIC_EXPLORER_BASE)=' "$target_dir/.env.local" || true)
+    # In MOCK mode we emit SANCTIONS_LIST_ADDRESS from DeployLocal
+    # output (handled outside the preserve block); in INTEGRATION
+    # mode the operator hand-sets it, so it must survive regen.
+    preserved=$(grep -E '^(ONEINCH_API_KEY|CSP_EXTRA_CONNECT_SRC|NEXT_PUBLIC_MAINNET_RPC|NEXT_PUBLIC_HUB_URL|NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS|NEXT_PUBLIC_EXPLORER_BASE|NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS)=' "$target_dir/.env.local" || true)
+    # In MOCK mode the deploy-driven SANCTIONS_LIST always supersedes
+    # the preserved value, so strip the preserved copy to avoid
+    # writing the key twice (the second wins, but it confuses tooling).
+    if [ -n "$SANCTIONS_LIST" ]; then
+      preserved=$(echo "$preserved" | grep -v '^NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS=' || true)
+    fi
   fi
   # Cache-bust the IndexedDB-cached zk assets on every deploy. Without
   # this, Pro/Pay's `zk-asset-cache` keeps serving the previous zkey
@@ -781,13 +790,19 @@ NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
-NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS=$SANCTIONS_LIST
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 NEXT_PUBLIC_ZK_X509_URL=${ZK_X509_URL:-http://localhost:3000}
 NEXT_PUBLIC_ZK_ASSETS_VERSION=$zk_assets_version
 EOF
+  # SanctionsList only exists in MOCK mode (parsed from DeployLocal
+  # output). In INTEGRATION mode the operator hasn't told us the
+  # address; emit nothing rather than write a blank line that would
+  # land the admin page on ConfigBanner after every dev.sh restart.
+  if [ -n "$SANCTIONS_LIST" ]; then
+    echo "NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS=$SANCTIONS_LIST" >> "$target_dir/.env.local"
+  fi
   case "$target_dir" in
     */apps/pay)
       cat >> "$target_dir/.env.local" << EOF

@@ -77,13 +77,24 @@ export function CurrentSetTable({ address }: { address: string }) {
   const exportCsv = useCallback(() => {
     const header = "address,added_at_block\n";
     const body = rows.map((r) => `${r.addr},${r.addedAtBlock ?? ""}`).join("\n");
-    const blob = new Blob([header + body], { type: "text/csv" });
+    // Prepend a UTF-8 BOM so Excel on Windows reads non-ASCII
+    // values as Unicode, matching apps/pro/app/lib/csv.ts.
+    const blob = new Blob(["﻿" + header + body], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `sanctions-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sanctions-${new Date().toISOString().slice(0, 10)}.csv`;
+      // Firefox requires the anchor to be in the DOM for click() to
+      // trigger a download; Safari races a synchronous revoke against
+      // the click→download pipeline. Append + defer the revoke to
+      // satisfy both.
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
   }, [rows]);
 
   return (

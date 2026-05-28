@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Contract, type EventLog, type Log } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
+import { explainError } from "../../lib/format";
 import { normalizeEvmAddress } from "../../lib/x509";
 
 // Combined ABI: events for the scan path + view fns for the contract-info
@@ -57,8 +58,11 @@ interface SanctionsData {
    *  so a single read drives the stat card + the probe input. */
   externalOracle: string | null;
   loading: boolean;
-  /** Non-fatal warning (e.g. one of the two queryFilter calls
-   *  rejected so the set is partial). Render alongside data. */
+  /** Non-fatal warning for view-read failures (owner / externalOracle)
+   *  that don't corrupt the event-derived set — the data fields stay
+   *  null and downstream stat cards render an "Unavailable" placeholder.
+   *  Event-scan failures escalate straight to `error` instead because
+   *  a partial scan would silently corrupt currentSet/activeAddBlock. */
   warning: string | null;
   error: string | null;
   lookback: bigint;
@@ -200,13 +204,30 @@ export function SanctionsProvider({ address, children }: ProviderProps) {
         // malicious / misbehaving RPC returning the wrong shape. A
         // garbage `as string` cast downstream would corrupt
         // shortAddr / eqAddr comparisons in the badge / lookup.
-        setOwner(extractAddress(ownerRes));
-        setExternalOracle(extractAddress(oracleRes));
-        setWarning(null);
+        const ownerAddr = extractAddress(ownerRes);
+        const oracleAddr = extractAddress(oracleRes);
+        setOwner(ownerAddr);
+        setExternalOracle(oracleAddr);
+        // Surface view-read failures as a non-fatal warning. The
+        // event-derived set is still valid; the stat cards will
+        // render "Unavailable" placeholders for the missing fields.
+        // Only mark as failed when the underlying promise actually
+        // rejected — a successfully-returned zero address is a real
+        // value (e.g. oracle deliberately disabled), not a failure.
+        const viewFailures: string[] = [];
+        if (ownerRes.status === "rejected") viewFailures.push("owner()");
+        if (oracleRes.status === "rejected") viewFailures.push("externalOracle()");
+        setWarning(
+          viewFailures.length > 0
+            ? `View read failed: ${viewFailures.join(", ")} — stat card shows last-known value.`
+            : null,
+        );
         setLoading(false);
       } catch (err) {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        // Route through explainError so a multi-line RPC stack
+        // trace doesn't blow out the inline error banner.
+        setError(explainError(err));
         setLoading(false);
       }
     }

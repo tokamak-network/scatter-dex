@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Contract, type Signer } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
@@ -70,18 +70,54 @@ export default function SanctionsPage() {
 
 function TabbedSurface() {
   const [active, setActive] = useState<TabKey>("self");
+  // Refs for roving-tabIndex focus management — arrow/Home/End keys
+  // move focus to the next tab without leaving the tablist scope,
+  // matching the WAI-ARIA Authoring Practices and the AuditViewer
+  // pattern elsewhere in this app.
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  const onTabKey = (e: KeyboardEvent<HTMLButtonElement>, idx: number) => {
+    if (
+      e.key !== "ArrowLeft" &&
+      e.key !== "ArrowRight" &&
+      e.key !== "Home" &&
+      e.key !== "End"
+    ) {
+      return;
+    }
+    e.preventDefault();
+    let next = idx;
+    if (e.key === "ArrowLeft") next = (idx - 1 + TABS.length) % TABS.length;
+    if (e.key === "ArrowRight") next = (idx + 1) % TABS.length;
+    if (e.key === "Home") next = 0;
+    if (e.key === "End") next = TABS.length - 1;
+    setActive(TABS[next].key);
+    tabRefs.current[next]?.focus();
+  };
+
   return (
     <div className="space-y-6">
-      <div role="tablist" className="flex flex-wrap gap-1 border-b border-[var(--color-border)]">
-        {TABS.map((tab) => {
+      <div
+        role="tablist"
+        aria-label="Sanctions management sections"
+        className="flex flex-wrap gap-1 border-b border-[var(--color-border)]"
+      >
+        {TABS.map((tab, idx) => {
           const isActive = active === tab.key;
           return (
             <button
               key={tab.key}
+              ref={(el) => {
+                tabRefs.current[idx] = el;
+              }}
               role="tab"
+              id={`sanctions-tab-${tab.key}`}
               aria-selected={isActive}
+              aria-controls={`sanctions-panel-${tab.key}`}
+              tabIndex={isActive ? 0 : -1}
               type="button"
               onClick={() => setActive(tab.key)}
+              onKeyDown={(e) => onTabKey(e, idx)}
               className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
                 isActive
                   ? "border-[var(--color-primary)] text-[var(--color-primary)]"
@@ -96,7 +132,7 @@ function TabbedSurface() {
           );
         })}
       </div>
-      <TabPanel show={active === "self"}>
+      <TabPanel tabKey="self" show={active === "self"}>
         <CurrentSetTable address={SANCTIONS_LIST_ADDRESS} />
         <WritePanel />
         <section>
@@ -104,10 +140,10 @@ function TabbedSurface() {
           <BatchEditor address={SANCTIONS_LIST_ADDRESS} />
         </section>
       </TabPanel>
-      <TabPanel show={active === "oracle"}>
+      <TabPanel tabKey="oracle" show={active === "oracle"}>
         <ExternalOracleSection />
       </TabPanel>
-      <TabPanel show={active === "history"}>
+      <TabPanel tabKey="history" show={active === "history"}>
         <HistoryView />
       </TabPanel>
     </div>
@@ -116,10 +152,25 @@ function TabbedSurface() {
 
 /** Render with `display: none` instead of unmounting so the shared
  *  <SanctionsProvider> queryFilter result isn't refetched every time
- *  the operator flicks between tabs. */
-function TabPanel({ show, children }: { show: boolean; children: ReactNode }) {
+ *  the operator flicks between tabs. aria-labelledby + matching id
+ *  on the tab button complete the WAI-ARIA tab relationship. */
+function TabPanel({
+  tabKey,
+  show,
+  children,
+}: {
+  tabKey: TabKey;
+  show: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div role="tabpanel" hidden={!show} className={show ? "space-y-10" : ""}>
+    <div
+      role="tabpanel"
+      id={`sanctions-panel-${tabKey}`}
+      aria-labelledby={`sanctions-tab-${tabKey}`}
+      hidden={!show}
+      className={show ? "space-y-10" : ""}
+    >
       {children}
     </div>
   );
@@ -140,6 +191,27 @@ function ConfigBanner() {
 function ContractInfo() {
   const { currentSet, loading: eventsLoading, owner, externalOracle } = useSanctions();
 
+  // `null` means two different things depending on phase:
+  //   - while loading: "not fetched yet" → render "…"
+  //   - after loading: "RPC read failed" → render "Unavailable" so the
+  //     operator doesn't mistake a transient failure for the legitimate
+  //     on-chain value (e.g. address(0) for an explicitly disabled oracle).
+  const ownerLabel = owner ? shortAddr(owner) : eventsLoading ? "…" : "Unavailable";
+  const oracleLabel = isConfiguredAddress(externalOracle)
+    ? shortAddr(externalOracle)
+    : externalOracle === null
+      ? eventsLoading
+        ? "…"
+        : "Unavailable"
+      : "Disabled";
+  const oracleSub = isConfiguredAddress(externalOracle)
+    ? "Chainalysis OFAC fallback"
+    : externalOracle === null && !eventsLoading
+      ? "externalOracle() read failed"
+      : externalOracle === null
+        ? "Reading on-chain"
+        : "Self-list only";
+
   return (
     <section>
       <SectionHeader title="Contract" badge="live" />
@@ -152,20 +224,17 @@ function ContractInfo() {
         />
         <Stat
           label="Owner (multisig)"
-          value={owner ? shortAddr(owner) : "…"}
-          sub={owner ? "Holds add/remove rights" : "Reading on-chain"}
-          compact
-        />
-        <Stat
-          label="External oracle"
-          value={
-            isConfiguredAddress(externalOracle) ? shortAddr(externalOracle) : "Disabled"
-          }
+          value={ownerLabel}
           sub={
-            isConfiguredAddress(externalOracle) ? "Chainalysis OFAC fallback" : "Self-list only"
+            owner
+              ? "Holds add/remove rights"
+              : eventsLoading
+                ? "Reading on-chain"
+                : "owner() read failed"
           }
           compact
         />
+        <Stat label="External oracle" value={oracleLabel} sub={oracleSub} compact />
         <Stat
           label="Self-list size"
           value={eventsLoading ? "…" : `${currentSet.size}`}
