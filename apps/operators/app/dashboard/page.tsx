@@ -15,6 +15,7 @@ import {
 } from "../lib/dashboardHelpers";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { formatEth } from "../lib/adminUi";
+import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
 type Auth = AdminAuth | null;
 
@@ -342,17 +343,27 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
                 <tr>
                   <th className="px-5 py-3 text-left font-medium">Token</th>
                   <th className="px-5 py-3 text-right font-medium">Fills</th>
-                  <th className="px-5 py-3 text-right font-medium">Total (wei)</th>
+                  <th className="px-5 py-3 text-right font-medium">Total</th>
                 </tr>
               </thead>
               <tbody>
-                {feeTotals.totals.map((t) => (
-                  <tr key={t.token} className="border-t border-[var(--color-border)]">
-                    <td className="px-5 py-3 font-mono text-xs">{t.token}</td>
-                    <td className="px-5 py-3 text-right font-mono">{t.count}</td>
-                    <td className="px-5 py-3 text-right font-mono">{t.totalWei}</td>
-                  </tr>
-                ))}
+                {feeTotals.totals.map((t) => {
+                  const info = tokenInfo(t.token);
+                  return (
+                    <tr key={t.token} className="border-t border-[var(--color-border)]">
+                      <td className="px-5 py-3">
+                        <div className="font-medium">{info.symbol}</div>
+                        <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+                          {t.token}
+                        </div>
+                      </td>
+                      <td className="px-5 py-3 text-right font-mono">{t.count}</td>
+                      <td className="px-5 py-3 text-right font-mono">
+                        {formatAmount(t.totalWei, info.decimals)}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
