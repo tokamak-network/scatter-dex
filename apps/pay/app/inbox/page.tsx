@@ -349,10 +349,12 @@ function InboxRowActions({
             {!claimed && (
               <a
                 href={href}
+                target="_blank"
+                rel="noopener noreferrer"
                 onClick={onCloseMenu}
                 className="block px-3 py-1.5 hover:bg-[var(--color-primary-soft)]"
               >
-                Open claim page
+                Open claim page ↗
               </a>
             )}
             <button
