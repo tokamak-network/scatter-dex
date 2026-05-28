@@ -741,4 +741,80 @@ describe("PrivateOrderDB analytics aggregates", () => {
     expect(byToken[TOKEN_A]).toMatchObject({ totalSellWei: "100" });
     expect(byToken[TOKEN_B]).toMatchObject({ totalBuyWei: "200" });
   });
+
+  // ─── getFeesByTxHashes ──────────────────────────────────────────
+
+  it("getFeesByTxHashes returns empty map for empty input", () => {
+    expect(db.getFeesByTxHashes([]).size).toBe(0);
+  });
+
+  it("getFeesByTxHashes groups per-token + per-tx with bigint precision", () => {
+    db.recordSettlementEvent({
+      txHash: "0xtx1", type: "settleAuth", status: "confirmed",
+      fees: [
+        // Two same-token fees on the same tx (maker + taker both in
+        // the same buyToken) must sum, not duplicate. Use a value
+        // past 2^53 so SUM-precision loss in plain JS Number would
+        // be visible.
+        { side: "maker", token: TOKEN_A, amountWei: "9007199254740993" },
+        { side: "taker", token: TOKEN_A, amountWei: "9007199254740993" },
+      ],
+    });
+    db.recordSettlementEvent({
+      txHash: "0xtx2", type: "settleAuth", status: "confirmed",
+      fees: [
+        { side: "maker", token: TOKEN_A, amountWei: "100" },
+        { side: "taker", token: TOKEN_B, amountWei: "200" },
+      ],
+    });
+
+    const out = db.getFeesByTxHashes(["0xtx1", "0xtx2"]);
+    const tx1 = out.get("0xtx1")!;
+    expect(tx1).toHaveLength(1);
+    expect(tx1[0]).toEqual({ token: TOKEN_A, amountWei: "18014398509481986" });
+
+    const tx2Map = Object.fromEntries(out.get("0xtx2")!.map((f) => [f.token, f.amountWei]));
+    expect(tx2Map).toEqual({ [TOKEN_A]: "100", [TOKEN_B]: "200" });
+  });
+
+  it("getFeesByTxHashes normalises mixed-case token addresses into one entry", () => {
+    // Insert directly via a recordSettlementEvent call with the
+    // already-lowercased token, then bypass and insert a sibling
+    // fee_history row with a mixed-case token to simulate a row
+    // a backfill or legacy import wrote without normalising.
+    db.recordSettlementEvent({
+      txHash: "0xmix", type: "settleAuth", status: "confirmed",
+      fees: [{ side: "maker", token: TOKEN_A, amountWei: "100" }],
+    });
+    const inner = (db as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } }).db;
+    inner
+      .prepare(`INSERT INTO fee_history (tx_hash, side, token, amount_wei, block_number, created_at) VALUES (?,?,?,?,?,?)`)
+      .run("0xmix", "taker", TOKEN_A.toUpperCase(), "50", null, Date.now());
+
+    const fees = db.getFeesByTxHashes(["0xmix"]).get("0xmix")!;
+    expect(fees).toHaveLength(1);
+    expect(fees[0]).toEqual({ token: TOKEN_A, amountWei: "150" });
+  });
+
+  it("getFeesByTxHashes skips a malformed amount_wei row but keeps the rest", () => {
+    db.recordSettlementEvent({
+      txHash: "0xbad", type: "settleAuth", status: "confirmed",
+      fees: [{ side: "maker", token: TOKEN_A, amountWei: "50" }],
+    });
+    const inner = (db as unknown as { db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } } }).db;
+    inner
+      .prepare(`INSERT INTO fee_history (tx_hash, side, token, amount_wei, block_number, created_at) VALUES (?,?,?,?,?,?)`)
+      .run("0xbad", "taker", TOKEN_A, "not-a-number", null, Date.now());
+
+    const fees = db.getFeesByTxHashes(["0xbad"]).get("0xbad")!;
+    expect(fees).toEqual([{ token: TOKEN_A, amountWei: "50" }]);
+  });
+
+  it("getFeesByTxHashes omits tx hashes with no fee rows", () => {
+    // Settle with no fees array → fee_history empty for this tx.
+    db.recordSettlementEvent({
+      txHash: "0xnofees", type: "settleAuth", status: "failed",
+    });
+    expect(db.getFeesByTxHashes(["0xnofees"]).has("0xnofees")).toBe(false);
+  });
 });

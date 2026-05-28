@@ -27,8 +27,12 @@ export interface SettlementRow {
   /** Per-token fee accrual for this tx, attached by /api/admin/history.
    *  Multiple entries when a same-relayer match credited fees in two
    *  different tokens (one per side). Empty array on failed rows or
-   *  rows whose fee accruals never persisted. */
-  fees: Array<{ token: string; amountWei: string }>;
+   *  rows whose fee accruals never persisted.
+   *
+   *  Optional because an older relayer the dashboard happens to be
+   *  connected to won't include the field; consumers should treat
+   *  `undefined` and `[]` identically (default to "—"). */
+  fees?: Array<{ token: string; amountWei: string }>;
   error_reason: string | null;
   created_at: number;
 }

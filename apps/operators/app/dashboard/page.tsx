@@ -749,9 +749,9 @@ function RecentSettlementRow({ row }: { row: SettlementRow }) {
         </div>
         <div className="mt-0.5 font-mono text-xs">
           <span className="text-[var(--color-text-subtle)]">fee </span>
-          {row.fees.length === 0
+          {(row.fees ?? []).length === 0
             ? "—"
-            : row.fees
+            : (row.fees ?? [])
                 .map((f) => {
                   const fi = tokenInfo(f.token);
                   return `${formatAmount(f.amountWei, fi.decimals)} ${fi.symbol}`;
