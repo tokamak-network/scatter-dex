@@ -92,6 +92,15 @@ export default function TreasuryPage() {
         </p>
       </section>
 
+      <section>
+        <SectionHeader
+          title="Wallet ETH (gas pool)"
+          badge="live"
+          hint="Native ETH the relayer wallet holds to pay gas. Not part of FeeVault — fee accruals in ETH-pair trades land as WETH above."
+        />
+        <WalletEthRow vault={vault} placeholder={ph} />
+      </section>
+
       <FeeAccrualSection vault={vault} />
     </div>
   );
@@ -392,6 +401,56 @@ function EmptyRow({ message }: { message: string }) {
         {message}
       </td>
     </tr>
+  );
+}
+
+/** Native ETH balance row — gas pool, not a claimable FeeVault
+ *  accrual. Lives in its own section so the operator sees the full
+ *  asset picture in one place without conflating "what can I claim"
+ *  with "what do I have for gas." */
+function WalletEthRow({
+  vault,
+  placeholder,
+}: {
+  vault: FeeVaultState;
+  placeholder: VaultPlaceholder | null;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full text-sm">
+        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-5 py-3 text-left">Asset</th>
+            <th className="px-5 py-3 text-left">Address</th>
+            <th className="px-5 py-3 text-right">Balance</th>
+            <th className="px-5 py-3 text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-t border-[var(--color-border)] align-top">
+            <td className="px-5 py-3 font-medium">ETH</td>
+            <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">
+              {vault.account ? shortAddr(vault.account) : "—"}
+            </td>
+            <td className="px-5 py-3 text-right font-mono">
+              {placeholder
+                ? placeholder.value
+                : vault.walletEthWei === null
+                  ? "…"
+                  : `${formatTokenAmount(vault.walletEthWei, 18)} ETH`}
+            </td>
+            <td className="px-5 py-3 text-right">
+              <span
+                className="text-xs text-[var(--color-text-subtle)]"
+                title="Native ETH is held in the relayer wallet for gas — not a FeeVault accrual. Transfer out via your wallet if you need to drain the gas pool."
+              >
+                Wallet-held
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   );
 }
 

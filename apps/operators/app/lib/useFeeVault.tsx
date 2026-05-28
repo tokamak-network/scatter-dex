@@ -31,6 +31,12 @@ export interface FeeVaultState {
    *  balances are a list with per-row claim buttons). `null` while
    *  the read is in flight or has succeeded. */
   platformFeeError: string | null;
+  /** Native ETH balance in the relayer's wallet (gas pool), in wei.
+   *  `null` while loading / on RPC error. Shown alongside the
+   *  FeeVault claimable balances so the operator has one view of
+   *  their relayer's assets, but flagged as not-claimable since
+   *  FeeVault tracks ERC20 only. */
+  walletEthWei: bigint | null;
   /** Re-fetch every token balance. Call after a successful claim
    *  so the row drops back to zero without a page reload. */
   refresh: () => void;
@@ -45,6 +51,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [platformFeeBps, setPlatformFeeBps] = useState<number | null>(null);
   const [platformFeeError, setPlatformFeeError] = useState<string | null>(null);
+  const [walletEthWei, setWalletEthWei] = useState<bigint | null>(null);
   const [tick, setTick] = useState(0);
   const vaultAddress = DEMO_NETWORK.contracts.feeVault;
   const vaultDeployed = isConfiguredAddress(vaultAddress);
@@ -81,6 +88,24 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, [account, vaultDeployed, vaultAddress, readProvider, tick]);
 
+  // Native ETH balance — read alongside the vault balances (same
+  // tick trigger) so a successful claim that consumed gas refreshes
+  // the gas-pool reading too. Errors are swallowed to a null state
+  // because the wallet ETH balance is informational, not blocking;
+  // the FeeVault read above carries the user-facing error banner.
+  useEffect(() => {
+    if (!account || !readProvider) {
+      setWalletEthWei(null);
+      return;
+    }
+    let cancelled = false;
+    readProvider
+      .getBalance(account)
+      .then((wei) => { if (!cancelled) setWalletEthWei(wei); })
+      .catch(() => { if (!cancelled) setWalletEthWei(null); });
+    return () => { cancelled = true; };
+  }, [account, readProvider, tick]);
+
   // Platform-fee read is account-independent and rarely changes
   // (owner-only `applyFeeChange` with a timelock), so we fetch it
   // once per vault address rather than on every account switch or
@@ -107,11 +132,11 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   const value = useMemo<FeeVaultState>(
     () => ({
       account, loading, balances, error, vaultDeployed,
-      platformFeeBps, platformFeeError, refresh,
+      platformFeeBps, platformFeeError, walletEthWei, refresh,
     }),
     [
       account, loading, balances, error, vaultDeployed,
-      platformFeeBps, platformFeeError, refresh,
+      platformFeeBps, platformFeeError, walletEthWei, refresh,
     ],
   );
   return <FeeVaultCtx.Provider value={value}>{children}</FeeVaultCtx.Provider>;
