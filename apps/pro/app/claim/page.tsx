@@ -10,6 +10,7 @@ import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
   addClaimInboxEntry,
+  loadClaimInbox,
   markClaimInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
 import { buildExplorerTxUrl } from "@zkscatter/sdk/util";
@@ -136,6 +137,37 @@ function ClaimInner() {
   // recipient who clicks the link twice sees "Already claimed" instead
   // of being invited to burn another proof generation.
   const [alreadyClaimed, setAlreadyClaimed] = useState<boolean | null>(null);
+  // If the local Claims inbox carries a prior claim record for THIS
+  // package (matched by claimsRoot + leafIndex — unique per slot),
+  // surface the saved txHash on the already-claimed panel so the
+  // /claim page matches the inbox row's "Claimed · Tx 0x…" UI
+  // instead of just saying "already claimed" without a receipt.
+  const [priorClaimTxHash, setPriorClaimTxHash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!parsed || !folder.ready) {
+      setPriorClaimTxHash(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await loadClaimInbox();
+        const match = list.find(
+          (e) =>
+            e.status === "claimed" &&
+            !!e.txHash &&
+            e.pkg.claimsRoot === parsed.pkg.claimsRoot &&
+            e.pkg.leafIndex === parsed.pkg.leafIndex,
+        );
+        if (!cancelled) setPriorClaimTxHash(match?.txHash ?? null);
+      } catch {
+        if (!cancelled) setPriorClaimTxHash(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [parsed, folder.ready]);
   useEffect(() => {
     if (!parsed || !readProvider) {
       setAlreadyClaimed(null);
@@ -329,6 +361,48 @@ function ClaimInner() {
               {savedInboxId && (
                 <div className="mt-2 text-[10px]">
                   Saved to your{" "}
+                  <a
+                    href="/claims"
+                    className="font-medium underline-offset-2 hover:underline"
+                  >
+                    Claims inbox
+                  </a>
+                  .
+                </div>
+              )}
+            </div>
+          ) : alreadyClaimed === true && parsed ? (
+            // Match the inbox row's celebratory "Claimed" state instead
+            // of the prior gray dead-end notice + disabled button. Same
+            // green success panel shape as the post-claim `done` branch
+            // above; pulls the tx hash from the local inbox if a prior
+            // session recorded one for this slot.
+            <div className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] p-3 text-center text-xs text-[var(--color-success)]">
+              <div className="mb-1 font-semibold">✓ Already claimed</div>
+              {priorClaimTxHash ? (
+                explorerTxUrl ? (
+                  <a
+                    href={explorerTxUrl(priorClaimTxHash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono underline-offset-2 hover:underline"
+                  >
+                    {shortAddr(priorClaimTxHash)} ↗
+                  </a>
+                ) : (
+                  <div className="font-mono">{shortAddr(priorClaimTxHash)}</div>
+                )
+              ) : (
+                <div className="text-[10px] text-[var(--color-text-muted)]">
+                  This link&apos;s nullifier is spent on-chain.
+                </div>
+              )}
+              <div className="mt-2 text-[10px] text-[var(--color-text-muted)]">
+                Tokens are at {shortAddr(parsed.pkg.recipient)}.
+              </div>
+              {folder.ready && (
+                <div className="mt-2 text-[10px]">
+                  See it in your{" "}
                   <a
                     href="/claims"
                     className="font-medium underline-offset-2 hover:underline"
