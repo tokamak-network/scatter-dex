@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { VaultNote } from "../lib/vault";
 import { Button, Field } from "@zkscatter/ui";
+import { useFolder } from "../lib/folder";
 
 interface Props {
   /** Funding-side token address (sellToken). Notes whose `note.token`
@@ -39,6 +40,7 @@ export function NoteSelect({
   onSelect,
   onDeposit,
 }: Props) {
+  const { ready: folderReady } = useFolder();
   // BigInt(address.toLowerCase()) on every render added up — the
   // hash is hot when notes is large. Memo the parsed key so the
   // filter is a plain bigint compare per note.
@@ -85,8 +87,16 @@ export function NoteSelect({
             No {sellTokenSymbol} notes in your vault yet. Deposit{" "}
             {sellTokenSymbol} to fund this side of the order.
           </p>
-          <Button onClick={() => onDeposit(sellTokenSymbol)} size="sm" block>
-            + Deposit {sellTokenSymbol}
+          <Button
+            onClick={() => onDeposit(sellTokenSymbol)}
+            size="sm"
+            block
+            disabled={!folderReady}
+            title={folderReady ? undefined : "Pick a workspace folder first"}
+          >
+            {folderReady
+              ? `+ Deposit ${sellTokenSymbol}`
+              : `Pick a folder to deposit ${sellTokenSymbol}`}
           </Button>
         </div>
       </Field>
