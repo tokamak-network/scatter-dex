@@ -18,6 +18,18 @@ const FEE_VAULT_ABI = [
   "function treasury() external view returns (address)",
   "function owner() external view returns (address)",
   "function withdrawPlatformRevenue(address token) external",
+  // PlatformFeeFromRelayerClaim fires every time a relayer's claim
+  // skims `platformFeeBps`. Those funds bypass `platformRevenue` and
+  // ship straight to `treasury`, so summing this event is the only
+  // way the UI can show "how much revenue arrived via claims" — the
+  // accumulator slot stays 0 for that path.
+  "event PlatformFeeFromRelayerClaim(address indexed token, uint256 amount, address indexed relayer)",
+];
+
+// Minimal ERC20 balance read for the treasury wallet's current
+// holdings of each tracked token.
+const ERC20_BALANCE_ABI = [
+  "function balanceOf(address) external view returns (uint256)",
 ];
 
 // Minimal WETH9-compatible ABI. The native-ETH revenue row is stored
@@ -272,7 +284,24 @@ function PlatformRevenueTable({
           <tr>
             <th className="px-4 py-3">Token</th>
             <th className="px-4 py-3">Address</th>
-            <th className="px-4 py-3 text-right">Platform revenue</th>
+            <th
+              className="px-4 py-3 text-right"
+              title="All-time PlatformFeeFromRelayerClaim — relayer-claim fees ship straight to the treasury wallet, no withdraw needed."
+            >
+              From claims
+            </th>
+            <th
+              className="px-4 py-3 text-right"
+              title="FeeVault.platformRevenue — DEX-path fees waiting in the vault. Use Withdraw to move into the treasury wallet."
+            >
+              In vault
+            </th>
+            <th
+              className="px-4 py-3 text-right"
+              title="Treasury wallet's current ERC20 balance for this token. Reflects direct-claim revenue plus any pre-existing balance."
+            >
+              Wallet
+            </th>
             <th className="px-4 py-3 text-right">Action</th>
           </tr>
         </thead>
@@ -313,24 +342,62 @@ function TokenRevenueRow({
 }) {
   const { account, signer, connect, readProvider } = useWallet();
   const [revenue, setRevenue] = useState<bigint | null>(null);
+  // All-time direct revenue — sum of PlatformFeeFromRelayerClaim
+  // event `amount`s for this token. The "amount where did my claim
+  // fee go?" answer that the page silently omitted before this fix.
+  const [directClaimed, setDirectClaimed] = useState<bigint | null>(null);
+  // Treasury wallet's actual on-chain balance — answers "what
+  // does the treasury hold right now" without operators having to
+  // open a block explorer.
+  const [walletBalance, setWalletBalance] = useState<bigint | null>(null);
   const [phase, setPhase] = useState<RowPhase>({ kind: "idle" });
   const meta = rowMeta(row);
 
   useEffect(() => {
     let cancelled = false;
-    const contract = new Contract(feeVaultAddress, FEE_VAULT_ABI, readProvider);
-    void contract
+    const feeVault = new Contract(feeVaultAddress, FEE_VAULT_ABI, readProvider);
+    // platformRevenue mapping — the DEX-path accumulator that the
+    // Withdraw button drains. Stays 0 for the relayer-claim path
+    // (those funds ship direct to treasury).
+    void feeVault
       .platformRevenue(meta.address)
-      .then((v: bigint) => {
-        if (!cancelled) setRevenue(v);
+      .then((v: bigint) => { if (!cancelled) setRevenue(v); })
+      .catch(() => { if (!cancelled) setRevenue(null); });
+    // All-time direct-claim revenue via event log scan. Block-0 sweep
+    // is fine for dev / fresh testnets; a production indexer would
+    // start from FeeVault's deploy block to bound the scan. The same
+    // pattern is used by `apps/admin/app/sanctions/_components/SanctionsContext.tsx`.
+    void feeVault
+      .queryFilter(feeVault.filters.PlatformFeeFromRelayerClaim(meta.address))
+      .then((logs) => {
+        if (cancelled) return;
+        let sum = 0n;
+        for (const log of logs) {
+          // `queryFilter` returns `(EventLog | Log)[]` — the bare
+          // `Log` form has no decoded args. Skip those defensively
+          // rather than crashing the row on an undecoded log.
+          const args = (log as { args?: { amount?: bigint } }).args;
+          if (args?.amount !== undefined) sum += args.amount;
+        }
+        setDirectClaimed(sum);
       })
-      .catch(() => {
-        if (!cancelled) setRevenue(null);
-      });
+      .catch(() => { if (!cancelled) setDirectClaimed(null); });
+    // Treasury wallet's current ERC20 balance. For the native row
+    // this also reads the WETH slot (matching how the auto-unwrap
+    // Withdraw path treats it).
+    if (treasuryAddress) {
+      const erc20 = new Contract(meta.address, ERC20_BALANCE_ABI, readProvider);
+      void erc20
+        .balanceOf(treasuryAddress)
+        .then((v: bigint) => { if (!cancelled) setWalletBalance(v); })
+        .catch(() => { if (!cancelled) setWalletBalance(null); });
+    } else {
+      setWalletBalance(null);
+    }
     return () => {
       cancelled = true;
     };
-  }, [feeVaultAddress, meta.address, readProvider, phase.kind]);
+  }, [feeVaultAddress, meta.address, readProvider, treasuryAddress, phase.kind]);
 
   const submit = useCallback(async () => {
     if (!signer) return;
@@ -404,6 +471,11 @@ function TokenRevenueRow({
         {shortAddr(meta.address)}
       </td>
       <td className="px-4 py-3 text-right font-mono">
+        {directClaimed == null
+          ? "…"
+          : `${formatUnits(directClaimed, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
+      </td>
+      <td className="px-4 py-3 text-right font-mono">
         {revenue == null ? (
           "…"
         ) : isNative ? (
@@ -416,6 +488,11 @@ function TokenRevenueRow({
         ) : (
           `${formatUnits(revenue, meta.decimals)} ${meta.symbol}`
         )}
+      </td>
+      <td className="px-4 py-3 text-right font-mono">
+        {walletBalance == null
+          ? "…"
+          : `${formatUnits(walletBalance, meta.decimals)} ${isNative ? "WETH" : meta.symbol}`}
       </td>
       <td className="px-4 py-3 text-right">
         {!account || !signer ? (
