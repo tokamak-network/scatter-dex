@@ -207,8 +207,10 @@ const SEGMENT_OPTIONS: Array<{ id: Segment; label: string; hint: string }> = [
  *  segment's totals, and avgSettleTime / cross-relayer stay aggregate
  *  (no per-segment split yet — flagged in the caption).
  *
- *  Rows whose relayer build predates `byApp` (older zk-relayer) keep
- *  the aggregate stats so they still rank, just without the split. */
+ *  Rows whose relayer build predates `byApp` (older zk-relayer)
+ *  project to an EMPTY segment view in Pay/Pro mode — they sink to the
+ *  bottom of any "more is better" ranking rather than score with their
+ *  aggregate (Pay+Pro) totals against true segment-only rows. */
 function applySegment(rows: RelayerInfo[], segment: Segment): RelayerInfo[] {
   if (segment === "all") return rows;
   return rows.map((r) => {
@@ -808,7 +810,16 @@ function RelayerRow({
         <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
         <VolumeCell row={row} segment={segment} />
         <RevenueCell row={row} segment={segment} />
-        <StatCell row={row} value={row.stats?.successRate} render={(n) => `${n}%`} />
+        <StatCell
+          row={row}
+          // Suppress 0% when the row has no orders in the active
+          // segment — 0/0 is "no signal", not "failed everything".
+          // Particularly visible for Pro-only relayers in the Pay view
+          // (and vice versa) since applySegment projects them to
+          // totalOrders=0 / successRate=0.
+          value={row.stats && row.stats.totalOrders > 0 ? row.stats.successRate : undefined}
+          render={(n) => `${n}%`}
+        />
         <StatCell
           row={row}
           value={row.stats?.avgSettleTimeMs}

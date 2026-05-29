@@ -298,6 +298,11 @@ export class PrivateOrderDB {
   private statsCountsByType: ReturnType<Database.Database["prepare"]>;
   private statsSettledVolumeByType: ReturnType<Database.Database["prepare"]>;
   private statsFeeTotalsByType: ReturnType<Database.Database["prepare"]>;
+  // Shares the same TTL contract as `statsCache` — the /api/relayer/stats
+  // route runs both aggregate and by-app aggregations on every poll, so
+  // skipping the by-app GROUP BY between cache hits matters as much as
+  // skipping the aggregate one.
+  private byAppCache: { at: number; value: ReturnType<PrivateOrderDB["getStatsByApp"]> } | null = null;
   private upsertMeta: ReturnType<Database.Database["prepare"]>;
   private selectMeta: ReturnType<Database.Database["prepare"]>;
   // [R-6] Authorize order statements
@@ -1851,6 +1856,10 @@ export class PrivateOrderDB {
       feeTotals: Array<{ token: string; count: number; totalWei: string }>;
     };
   } {
+    const now = Date.now();
+    if (this.byAppCache && now - this.byAppCache.at < PrivateOrderDB.STATS_TTL_MS) {
+      return this.byAppCache.value;
+    }
     const empty = () => ({
       totalOrders: 0,
       settledOrders: 0,
@@ -1911,6 +1920,7 @@ export class PrivateOrderDB {
         totalWei: total.toString(),
       });
     }
+    this.byAppCache = { at: now, value: out };
     return out;
   }
 

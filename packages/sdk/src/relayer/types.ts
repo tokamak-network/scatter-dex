@@ -119,8 +119,12 @@ export interface RelayerStatsByApp {
   feeTotals?: Array<{ token: string; count: number; totalWei: string }>;
 }
 
-/** Which app segment the leaderboard is showing. `null` means "All"
- *  (aggregate view). Pay maps to scatterDirectAuth, Pro to settleAuth. */
+/** One of the two app flows the relayer surfaces in `byApp`:
+ *  Pay maps to `scatterDirectAuth` (single-party direct payouts) and
+ *  Pro maps to `settleAuth` (half-proof order matches). Callers
+ *  model the "All" / aggregate view at the UI layer, not via this
+ *  type — the aggregate stats already live on `RelayerStatsResponse`
+ *  itself, so no `null` member is needed here. */
 export type AppSegment = "pay" | "pro";
 
 /** Combined view: on-chain registry data + live `/api/info` probe.
