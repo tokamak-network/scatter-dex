@@ -100,7 +100,32 @@ export interface RelayerStatsResponse {
    *  analytics page's `/history/fees` aggregate. */
   feeTotals?: Array<{ token: string; count: number; totalWei: string }>;
   metrics?: RelayerRuntimeMetrics;
+  /** Per-app (Pay = scatterDirectAuth, Pro = settleAuth) breakdown of
+   *  counts / volume / fees. Optional: older relayers omit this field
+   *  and consumers degrade to the aggregate view for that row. */
+  byApp?: {
+    pay: RelayerStatsByApp;
+    pro: RelayerStatsByApp;
+  };
 }
+
+/** Per-app subset of RelayerStatsResponse. Mirrors the aggregate
+ *  fields the leaderboard ranks on (orders / volume / fees) so the
+ *  segmented control can re-rank using the same comparator logic. */
+export interface RelayerStatsByApp {
+  totalOrders: number;
+  settledOrders: number;
+  settledVolume?: RelayerSettledVolume[];
+  feeTotals?: Array<{ token: string; count: number; totalWei: string }>;
+}
+
+/** One of the two app flows the relayer surfaces in `byApp`:
+ *  Pay maps to `scatterDirectAuth` (single-party direct payouts) and
+ *  Pro maps to `settleAuth` (half-proof order matches). Callers
+ *  model the "All" / aggregate view at the UI layer, not via this
+ *  type — the aggregate stats already live on `RelayerStatsResponse`
+ *  itself, so no `null` member is needed here. */
+export type AppSegment = "pay" | "pro";
 
 /** Combined view: on-chain registry data + live `/api/info` probe.
  *  `api` is undefined when the relayer is offline / unreachable.

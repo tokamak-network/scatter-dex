@@ -9,7 +9,9 @@ import {
   loadRelayersWithApiInfo,
   loadRelayersWithSharedOrderbookStats,
   unwrapEthersError,
+  type AppSegment,
   type RelayerInfo,
+  type RelayerStatsByApp,
 } from "@zkscatter/sdk/relayer";
 import { Stat } from "../components/Stat";
 import { SectionHeader } from "../components/SectionHeader";
@@ -185,6 +187,62 @@ function criterionById(id: RankCriterionId): RankCriterion {
   return RANK_CRITERIA.find((c) => c.id === id) ?? RANK_CRITERIA[0];
 }
 
+/** Segmented control for the [All / Pay / Pro] view of the table.
+ *  - "all": aggregate stats (existing behaviour).
+ *  - "pay": scatterDirectAuth (single-party Pay payouts).
+ *  - "pro": settleAuth (Pro half-proof order matches).
+ *  Wider than a sort criterion because it changes which rows' columns
+ *  are populated, not just the ranking comparator. */
+type Segment = "all" | AppSegment;
+const SEGMENT_OPTIONS: Array<{ id: Segment; label: string; hint: string }> = [
+  { id: "all", label: "All",  hint: "Pay + Pro combined (default)" },
+  { id: "pay", label: "Pay",  hint: "scatterDirectAuth — single-party payouts" },
+  { id: "pro", label: "Pro",  hint: "settleAuth — half-proof order matches" },
+];
+
+/** Project a relayer's aggregate stats onto a single segment's view.
+ *  Returns the row unchanged for `segment === "all"`, the row with a
+ *  segment-derived `stats` object for "pay"/"pro" — counts/volume/fees
+ *  swap to the segment's subset, success rate is rederived from the
+ *  segment's totals, and avgSettleTime / cross-relayer stay aggregate
+ *  (no per-segment split yet — flagged in the caption).
+ *
+ *  Rows whose relayer build predates `byApp` (older zk-relayer)
+ *  project to an EMPTY segment view in Pay/Pro mode — they sink to the
+ *  bottom of any "more is better" ranking rather than score with their
+ *  aggregate (Pay+Pro) totals against true segment-only rows. */
+function applySegment(rows: RelayerInfo[], segment: Segment): RelayerInfo[] {
+  if (segment === "all") return rows;
+  return rows.map((r) => {
+    if (!r.stats) return r;
+    // Older relayer without byApp: project to an EMPTY segment view so
+    // the row's Settled / Volume / Revenue / Success cells render "—"
+    // and the row sinks to the bottom of any "more is better" ranking
+    // (compareNullable treats undefined/0 as worst). Returning the
+    // aggregate row instead would let an older relayer outrank true
+    // segment-only rows in Pay/Pro views — contradicting the caption.
+    const sub = r.stats.byApp?.[segment] ?? {
+      totalOrders: 0,
+      settledOrders: 0,
+      settledVolume: [],
+      feeTotals: [],
+    };
+    const total = sub.totalOrders;
+    const settled = sub.settledOrders;
+    return {
+      ...r,
+      stats: {
+        ...r.stats,
+        totalOrders: total,
+        settledOrders: settled,
+        successRate: total > 0 ? Math.round((settled / total) * 100) : 0,
+        settledVolume: sub.settledVolume ?? [],
+        feeTotals: sub.feeTotals ?? [],
+      },
+    };
+  });
+}
+
 export default function LeaderboardPage() {
   const { account, readProvider } = useWallet();
   const registryDeployed = isConfiguredAddress(REGISTRY);
@@ -228,11 +286,12 @@ export default function LeaderboardPage() {
   useTimedRefresh({ refresh, intervalMs: 30_000, enabled: registryDeployed });
 
   const [criterionId, setCriterionId] = useState<RankCriterionId>("volume");
+  const [segment, setSegment] = useState<Segment>("all");
   const criterion = criterionById(criterionId);
   const accountLc = account?.toLowerCase() ?? null;
   const ranked = useMemo(
-    () => rankRelayers(state.rows, criterion),
-    [state.rows, criterion],
+    () => rankRelayers(applySegment(state.rows, segment), criterion),
+    [state.rows, segment, criterion],
   );
   const placeholder = leaderboardPlaceholder(state, registryDeployed);
   const me = accountLc ? ranked.find((r) => r.address.toLowerCase() === accountLc) : undefined;
@@ -294,14 +353,16 @@ export default function LeaderboardPage() {
           badge="live"
           hint={`Click a column header to sort · ${criterion.description}`}
         />
+        <SegmentControl value={segment} onChange={setSegment} />
         <RelayerTable
           ranked={ranked}
           placeholder={placeholder}
           accountLc={accountLc}
           activeCriterion={criterionId}
           onSortChange={setCriterionId}
+          segment={segment}
         />
-        <NetworkTotalsStrip ranked={ranked} />
+        <NetworkTotalsStrip ranked={ranked} segment={segment} />
         <p className="mt-2 text-xs text-[var(--color-text-subtle)]">
           Status dot reflects a live <code className="font-mono">/api/info</code> probe.
           Settlement counters, volume, and avg-settle latency come from the shared
@@ -316,7 +377,13 @@ export default function LeaderboardPage() {
           fee minus the platform cut (
           <code className="font-mono">FeeVault.platformFeeBps</code>) at{" "}
           <code className="font-mono">claim()</code> time. See your own dashboard for
-          the post-cut figure.
+          the post-cut figure.{" "}
+          <strong>Pay / Pro split</strong> is sourced from each relayer&apos;s
+          per-flow settlement type (Pay = <code className="font-mono">scatterDirectAuth</code>,
+          Pro = <code className="font-mono">settleAuth</code>). Older relayers
+          without the <code className="font-mono">byApp</code> field show empty
+          cells under Pay / Pro and no mix bar under All — they still rank,
+          just without the split.
         </p>
       </section>
     </div>
@@ -499,18 +566,60 @@ const CRITERION_TO_COLUMN: Record<RankCriterionId, string> = {
   speed: "speed",
 };
 
+/** [All | Pay | Pro] segmented control. Stays a row above the table so
+ *  the sort headers (which act on the segment-projected stats) keep
+ *  their existing layout. Pressing the active segment is a no-op. */
+function SegmentControl({
+  value,
+  onChange,
+}: {
+  value: Segment;
+  onChange: (s: Segment) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Filter leaderboard by app"
+      className="mb-3 inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-0.5 text-xs"
+    >
+      {SEGMENT_OPTIONS.map((opt) => {
+        const active = opt.id === value;
+        return (
+          <button
+            key={opt.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            title={opt.hint}
+            onClick={() => onChange(opt.id)}
+            className={`px-3 py-1.5 rounded-md transition-colors ${
+              active
+                ? "bg-[var(--color-primary-soft)] font-semibold text-[var(--color-text)]"
+                : "text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function RelayerTable({
   ranked,
   placeholder,
   accountLc,
   activeCriterion,
   onSortChange,
+  segment,
 }: {
   ranked: RankedRelayer[];
   placeholder: Placeholder | null;
   accountLc: string | null;
   activeCriterion: RankCriterionId;
   onSortChange: (id: RankCriterionId) => void;
+  segment: Segment;
 }) {
   const activeColumn = CRITERION_TO_COLUMN[activeCriterion];
   // Header for a sortable column — clicking sets the sort criterion,
@@ -609,6 +718,7 @@ function RelayerTable({
               isMe={!!accountLc && r.address.toLowerCase() === accountLc}
               isExpanded={expanded.has(r.address.toLowerCase())}
               onToggle={() => toggle(r.address)}
+              segment={segment}
             />
           ))}
         </tbody>
@@ -632,11 +742,13 @@ function RelayerRow({
   isMe,
   isExpanded,
   onToggle,
+  segment,
 }: {
   row: RankedRelayer;
   isMe: boolean;
   isExpanded: boolean;
   onToggle: () => void;
+  segment: Segment;
 }) {
   // Only allow expansion when the per-token tables would actually
   // show something — a row whose peer's `/api/relayer/stats` returned
@@ -696,9 +808,18 @@ function RelayerRow({
         <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
         <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
         <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
-        <VolumeCell row={row} />
-        <RevenueCell row={row} />
-        <StatCell row={row} value={row.stats?.successRate} render={(n) => `${n}%`} />
+        <VolumeCell row={row} segment={segment} />
+        <RevenueCell row={row} segment={segment} />
+        <StatCell
+          row={row}
+          // Suppress 0% when the row has no orders in the active
+          // segment — 0/0 is "no signal", not "failed everything".
+          // Particularly visible for Pro-only relayers in the Pay view
+          // (and vice versa) since applySegment projects them to
+          // totalOrders=0 / successRate=0.
+          value={row.stats && row.stats.totalOrders > 0 ? row.stats.successRate : undefined}
+          render={(n) => `${n}%`}
+        />
         <StatCell
           row={row}
           value={row.stats?.avgSettleTimeMs}
@@ -715,7 +836,7 @@ function RelayerRow({
  *  Per-token breakdown lives in the expandable detail row so the
  *  cell stays one number. Peers without a `settledVolume` field
  *  (older builds / pre-migration rows) render the offline `—`. */
-function VolumeCell({ row }: { row: RankedRelayer }) {
+function VolumeCell({ row, segment }: { row: RankedRelayer; segment: Segment }) {
   const volumes = row.stats?.settledVolume ?? [];
   const status = relayerStatsCellStatus(row, volumes.length > 0 ? 1 : undefined);
   if (volumes.length === 0) {
@@ -728,6 +849,12 @@ function VolumeCell({ row }: { row: RankedRelayer }) {
   }
   const { total, missing } = sumUsd(volumes);
   const tokenCount = volumes.length;
+  // Mix bar — visible only in the aggregate "All" view, when the
+  // relayer's build supplies a `byApp` split. In Pay/Pro views the
+  // cell already represents that segment, so a mix bar would be
+  // redundant.
+  const byApp = row.stats?.byApp;
+  const showMix = segment === "all" && !!byApp;
   return (
     <td className="px-5 py-3 text-right">
       <div className="font-mono font-semibold">{fmtUsd(total)}</div>
@@ -735,7 +862,56 @@ function VolumeCell({ row }: { row: RankedRelayer }) {
         {tokenCount} token{tokenCount === 1 ? "" : "s"}
         {missing > 0 ? ` · ${missing} unpriced` : ""}
       </div>
+      {showMix && byApp && <PayProMixBar byApp={byApp} metric="volume" />}
     </td>
+  );
+}
+
+/** Two-segment horizontal bar showing the Pay vs Pro USD share for a
+ *  single relayer. Renders nothing when both halves are 0 USD (zero
+ *  signal vs noise) and a single-side bar when one segment is fully
+ *  empty (visually clear: the whole bar = the active side). */
+function PayProMixBar({
+  byApp,
+  metric,
+}: {
+  byApp: { pay: RelayerStatsByApp; pro: RelayerStatsByApp };
+  metric: "volume" | "fee";
+}) {
+  const pickRows = (sub: RelayerStatsByApp) =>
+    metric === "volume" ? sub.settledVolume ?? [] : sub.feeTotals ?? [];
+  const payUsd = sumUsd(pickRows(byApp.pay)).total;
+  const proUsd = sumUsd(pickRows(byApp.pro)).total;
+  const total = payUsd + proUsd;
+  if (total <= 0) return null;
+  const payPct = Math.round((payUsd / total) * 100);
+  const proPct = 100 - payPct;
+  return (
+    <div
+      className="mt-1 flex items-center justify-end gap-1.5"
+      title={`Pay ${fmtUsd(payUsd)} (${payPct}%) · Pro ${fmtUsd(proUsd)} (${proPct}%)`}
+    >
+      <span className="text-[10px] text-[var(--color-text-subtle)]">
+        Pay {payPct}% · Pro {proPct}%
+      </span>
+      <span
+        aria-hidden
+        className="inline-flex h-1.5 w-16 overflow-hidden rounded-full bg-slate-200"
+      >
+        {payPct > 0 && (
+          <span
+            className="block h-full bg-emerald-400"
+            style={{ width: `${payPct}%` }}
+          />
+        )}
+        {proPct > 0 && (
+          <span
+            className="block h-full bg-indigo-400"
+            style={{ width: `${proPct}%` }}
+          />
+        )}
+      </span>
+    </div>
   );
 }
 
@@ -765,7 +941,13 @@ function RankBadge({ rank }: { rank: number }) {
  *  is the network doing right now" number so they can read the table
  *  as their share of that pie rather than absolute amounts in a
  *  vacuum. */
-function NetworkTotalsStrip({ ranked }: { ranked: RankedRelayer[] }) {
+function NetworkTotalsStrip({
+  ranked,
+  segment,
+}: {
+  ranked: RankedRelayer[];
+  segment: Segment;
+}) {
   const vols = ranked.flatMap((r) => r.stats?.settledVolume ?? []);
   const fees = ranked.flatMap((r) => r.stats?.feeTotals ?? []);
   if (vols.length === 0 && fees.length === 0) return null;
@@ -775,17 +957,22 @@ function NetworkTotalsStrip({ ranked }: { ranked: RankedRelayer[] }) {
     (n, r) => n + (r.stats?.settledOrders ?? 0),
     0,
   );
+  // Strip reads from segment-projected `ranked`, so a Pay/Pro view's
+  // totals are segment-only — caption needs to say that or users will
+  // misread Pay totals as full-network.
+  const scope =
+    segment === "all" ? "Network" : segment === "pay" ? "Pay" : "Pro";
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-xs text-[var(--color-text-muted)]">
       <span>
         <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">
-          Network volume:{" "}
+          {scope} volume:{" "}
         </span>
         <strong className="font-mono text-[var(--color-text)]">{fmtUsd(vol.total)}</strong>
       </span>
       <span>
         <span className="uppercase tracking-wide text-[var(--color-text-subtle)]">
-          Network fee:{" "}
+          {scope} fee:{" "}
         </span>
         <strong className="font-mono text-[var(--color-success)]">{fmtUsd(fee.total)}</strong>
       </span>
@@ -829,7 +1016,7 @@ function safeBigInt(s: string): bigint {
  *  stacked vertically — so the "what did this relayer route" vs
  *  "what did it earn" columns line up token-by-token. Falls back to
  *  the same offline `—` shape when the peer doesn't expose feeTotals. */
-function RevenueCell({ row }: { row: RankedRelayer }) {
+function RevenueCell({ row, segment }: { row: RankedRelayer; segment: Segment }) {
   const totals = row.stats?.feeTotals ?? [];
   const status = relayerStatsCellStatus(row, totals.length > 0 ? 1 : undefined);
   if (totals.length === 0) {
@@ -842,6 +1029,8 @@ function RevenueCell({ row }: { row: RankedRelayer }) {
   }
   const { total, missing } = sumUsd(totals);
   const tokenCount = totals.length;
+  const byApp = row.stats?.byApp;
+  const showMix = segment === "all" && !!byApp;
   return (
     <td className="px-5 py-3 text-right">
       <div className="font-mono font-semibold text-[var(--color-success)]">{fmtUsd(total)}</div>
@@ -849,6 +1038,7 @@ function RevenueCell({ row }: { row: RankedRelayer }) {
         {tokenCount} token{tokenCount === 1 ? "" : "s"}
         {missing > 0 ? ` · ${missing} unpriced` : ""}
       </div>
+      {showMix && byApp && <PayProMixBar byApp={byApp} metric="fee" />}
     </td>
   );
 }

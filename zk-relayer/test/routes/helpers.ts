@@ -50,6 +50,10 @@ type DbStub = {
   getRelayerStats: () => { totalOrders: number; settledOrders: number; successRate: number; crossRelayerSettled: number; totalTradeOffers: number; settledTradeOffers: number; avgSettleTimeMs: number | null; uptimeSince: number | null };
   getSettledVolume: () => Array<{ sellToken: string; count: number; totalVolume: string }>;
   getFeeTotals: (since?: number, until?: number) => Array<{ token: string; count: number; totalWei: string }>;
+  getStatsByApp: () => {
+    pay: { totalOrders: number; settledOrders: number; settledVolume: Array<{ sellToken: string; count: number; totalVolume: string }>; feeTotals: Array<{ token: string; count: number; totalWei: string }> };
+    pro: { totalOrders: number; settledOrders: number; settledVolume: Array<{ sellToken: string; count: number; totalVolume: string }>; feeTotals: Array<{ token: string; count: number; totalWei: string }> };
+  };
   getTradeOffers: (limit?: number, offset?: number) => unknown[];
   getPendingTxs: () => unknown[];
   loadPendingAuthorizeOrders: () => unknown[];
@@ -71,6 +75,10 @@ export function makeDbStub(overrides: Partial<DbStub> = {}): PrivateOrderDB {
     }),
     getSettledVolume: () => [],
     getFeeTotals: () => [],
+    getStatsByApp: () => ({
+      pay: { totalOrders: 0, settledOrders: 0, settledVolume: [], feeTotals: [] },
+      pro: { totalOrders: 0, settledOrders: 0, settledVolume: [], feeTotals: [] },
+    }),
     getTradeOffers: () => [],
     getPendingTxs: () => [],
     loadPendingAuthorizeOrders: () => [],

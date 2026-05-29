@@ -292,6 +292,17 @@ export class PrivateOrderDB {
   private statsSettledTradeOffers: ReturnType<Database.Database["prepare"]>;
   private statsAvgSettleTime: ReturnType<Database.Database["prepare"]>;
   private statsSettledVolume: ReturnType<Database.Database["prepare"]>;
+  // Per-app (settleAuth=Pro, scatterDirectAuth=Pay) splits — same SQL
+  // shape as the aggregate variants above, just GROUP BY type so the
+  // route can report `byApp.{pay,pro}` without scanning twice.
+  private statsCountsByType: ReturnType<Database.Database["prepare"]>;
+  private statsSettledVolumeByType: ReturnType<Database.Database["prepare"]>;
+  private statsFeeTotalsByType: ReturnType<Database.Database["prepare"]>;
+  // Shares the same TTL contract as `statsCache` — the /api/relayer/stats
+  // route runs both aggregate and by-app aggregations on every poll, so
+  // skipping the by-app GROUP BY between cache hits matters as much as
+  // skipping the aggregate one.
+  private byAppCache: { at: number; value: ReturnType<PrivateOrderDB["getStatsByApp"]> } | null = null;
   private upsertMeta: ReturnType<Database.Database["prepare"]>;
   private selectMeta: ReturnType<Database.Database["prepare"]>;
   // [R-6] Authorize order statements
@@ -484,6 +495,45 @@ export class PrivateOrderDB {
           AND sell_token IS NOT NULL
           AND sell_amount IS NOT NULL
         GROUP BY sell_token`,
+    );
+    // Per-app aggregates. settlement_history.type is the discriminator:
+    //   - 'settleAuth'        → Pro (half-proof order book settlement)
+    //   - 'scatterDirectAuth' → Pay (single-party direct payout)
+    // Rows with any other type (or NULL) are ignored — the route maps
+    // only those two into byApp.{pay,pro}.
+    this.statsCountsByType = this.db.prepare(
+      `SELECT type,
+              COUNT(*)                                          AS total,
+              SUM(CASE WHEN status = 'confirmed' THEN 1 ELSE 0 END) AS settled
+         FROM settlement_history
+        WHERE type IN ('settleAuth', 'scatterDirectAuth')
+        GROUP BY type`,
+    );
+    this.statsSettledVolumeByType = this.db.prepare(
+      `SELECT type, sell_token,
+              COUNT(*) AS count,
+              COALESCE(GROUP_CONCAT(sell_amount), '') AS amounts
+         FROM settlement_history
+        WHERE status = 'confirmed'
+          AND sell_token IS NOT NULL
+          AND sell_amount IS NOT NULL
+          AND type IN ('settleAuth', 'scatterDirectAuth')
+        GROUP BY type, sell_token`,
+    );
+    // fee_history has no `type` of its own; join through tx_hash to
+    // settlement_history so the same row's settlement type tags its
+    // fee. The fh→sh join can multi-match only if a tx records both
+    // 'settleAuth' AND 'scatterDirectAuth' — impossible by design
+    // (one tx, one entrypoint), so plain INNER JOIN is precise.
+    this.statsFeeTotalsByType = this.db.prepare(
+      `SELECT sh.type     AS type,
+              fh.token    AS token,
+              COUNT(*)    AS count,
+              GROUP_CONCAT(fh.amount_wei) AS amounts
+         FROM fee_history fh
+         JOIN settlement_history sh ON sh.tx_hash = fh.tx_hash
+        WHERE sh.type IN ('settleAuth', 'scatterDirectAuth')
+        GROUP BY sh.type, fh.token`,
     );
     this.upsertMeta = this.db.prepare(
       "INSERT OR REPLACE INTO relayer_meta (key, value) VALUES (@key, @value)",
@@ -1782,6 +1832,96 @@ export class PrivateOrderDB {
         totalVolume: total.toString(),
       };
     });
+  }
+
+  /** Per-app (Pay / Pro) breakdown of order counts, settled volume,
+   *  and fee revenue. Pay = scatterDirectAuth, Pro = settleAuth. The
+   *  leaderboard surfaces these alongside the aggregate stats so a
+   *  visitor can re-rank by segment without losing the "All" view.
+   *
+   *  Volume and fee strings are BigInt-summed in JS (same precision
+   *  contract as getSettledVolume / getFeeTotals). Tokens with zero
+   *  rows for a segment simply don't appear under that segment. */
+  getStatsByApp(): {
+    pay: {
+      totalOrders: number;
+      settledOrders: number;
+      settledVolume: Array<{ sellToken: string; count: number; totalVolume: string }>;
+      feeTotals: Array<{ token: string; count: number; totalWei: string }>;
+    };
+    pro: {
+      totalOrders: number;
+      settledOrders: number;
+      settledVolume: Array<{ sellToken: string; count: number; totalVolume: string }>;
+      feeTotals: Array<{ token: string; count: number; totalWei: string }>;
+    };
+  } {
+    const now = Date.now();
+    if (this.byAppCache && now - this.byAppCache.at < PrivateOrderDB.STATS_TTL_MS) {
+      return this.byAppCache.value;
+    }
+    const empty = () => ({
+      totalOrders: 0,
+      settledOrders: 0,
+      settledVolume: [] as Array<{ sellToken: string; count: number; totalVolume: string }>,
+      feeTotals: [] as Array<{ token: string; count: number; totalWei: string }>,
+    });
+    const out = { pay: empty(), pro: empty() };
+    const bucket = (t: string) =>
+      t === "scatterDirectAuth" ? out.pay : t === "settleAuth" ? out.pro : null;
+
+    for (const row of this.statsCountsByType.all({}) as Array<{
+      type: string;
+      total: number;
+      settled: number;
+    }>) {
+      const b = bucket(row.type);
+      if (!b) continue;
+      b.totalOrders = row.total;
+      b.settledOrders = row.settled ?? 0;
+    }
+    for (const row of this.statsSettledVolumeByType.all({}) as Array<{
+      type: string;
+      sell_token: string;
+      count: number;
+      amounts: string;
+    }>) {
+      const b = bucket(row.type);
+      if (!b) continue;
+      const total = row.amounts
+        .split(",")
+        .filter(Boolean)
+        .reduce((sum, a) => {
+          try { return sum + BigInt(a); } catch { return sum; }
+        }, 0n);
+      b.settledVolume.push({
+        sellToken: row.sell_token,
+        count: row.count,
+        totalVolume: total.toString(),
+      });
+    }
+    for (const row of this.statsFeeTotalsByType.all({}) as Array<{
+      type: string;
+      token: string;
+      count: number;
+      amounts: string | null;
+    }>) {
+      const b = bucket(row.type);
+      if (!b) continue;
+      const total = (row.amounts ?? "")
+        .split(",")
+        .filter(Boolean)
+        .reduce((sum, a) => {
+          try { return sum + BigInt(a); } catch { return sum; }
+        }, 0n);
+      b.feeTotals.push({
+        token: row.token,
+        count: row.count,
+        totalWei: total.toString(),
+      });
+    }
+    this.byAppCache = { at: now, value: out };
+    return out;
   }
 
   setMeta(key: string, value: string): void {

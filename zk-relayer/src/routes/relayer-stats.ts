@@ -39,12 +39,18 @@ export function createRelayerStatsRoutes(
       // ships through the same endpoint — fees are no more sensitive
       // than that, and operators routinely benchmark against each other.
       const feeTotals = db.getFeeTotals(0);
+      // Per-app (Pay / Pro) split — sourced from the same
+      // settlement_history rows, just GROUP BY type. Exposed publicly
+      // for the operators leaderboard's segmented [All / Pay / Pro]
+      // view; older relayers (no `byApp`) degrade to the aggregate.
+      const byApp = db.getStatsByApp();
       res.json({
         address: submitter.getAddress(),
         ...stats,
         pendingOrders,
         settledVolume: volume,
         feeTotals,
+        byApp,
         metrics: getMetrics(),
       });
     } catch (err) {
