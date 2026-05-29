@@ -18,7 +18,30 @@ const FEE_VAULT_ABI = [
   "function treasury() external view returns (address)",
   "function owner() external view returns (address)",
   "function withdrawPlatformRevenue(address token) external",
+  // PlatformFeeFromRelayerClaim fires every time a relayer's claim
+  // skims `platformFeeBps`. Those funds bypass `platformRevenue` and
+  // ship straight to `treasury`, so summing this event is the only
+  // way the UI can show "how much revenue arrived via claims" — the
+  // accumulator slot stays 0 for that path.
+  "event PlatformFeeFromRelayerClaim(address indexed token, uint256 amount, address indexed relayer)",
 ];
+
+/** Format a (wei, decimals) pair with thousand-separator commas on
+ *  the integer part and a trimmed fractional part. Replaces the bare
+ *  `formatUnits(...)` which produced strings like "1000002.31825" or
+ *  "100000.0" — readable as raw numbers, but easy to misread at a
+ *  glance when scanning a column. Keeps 4 significant fractional
+ *  digits so dust isn't hidden ("0.00012" stays visible). */
+function prettyAmount(wei: bigint, decimals: number): string {
+  const raw = formatUnits(wei, decimals);
+  const [intPart, fracPartRaw = ""] = raw.split(".");
+  const intWithCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  // Trim trailing zeros but keep at least 2 digits for sub-1 values,
+  // so "0.00" reads as "0" rather than "0." while "0.00123" keeps
+  // its precision.
+  const frac = fracPartRaw.replace(/0+$/, "");
+  return frac === "" ? intWithCommas : `${intWithCommas}.${frac}`;
+}
 
 // Minimal WETH9-compatible ABI. The native-ETH revenue row is stored
 // on-chain as WETH balance held by `treasury` after withdraw; calling
@@ -90,6 +113,17 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
   const { readProvider } = useWallet();
   const [snap, setSnap] = useState<FeeVaultSnapshot>(EMPTY_SNAPSHOT);
   const [reloadKey, setReloadKey] = useState(0);
+
+  // Auto-poll every 15s so a new relayer claim shows up without the
+  // operator having to hit refresh manually. 15s is a compromise
+  // between "live enough that an audit doesn't trail by minutes" and
+  // not hammering the RPC + event log scan on a busy chain. The
+  // existing `reloadKey` bump is reused so the per-row event +
+  // platformRevenue refetch happens automatically.
+  useEffect(() => {
+    const id = setInterval(() => setReloadKey((k) => k + 1), 15_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -172,8 +206,14 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           stretching to the tall Platform-revenue table; `min-w-0`
           on each child lets the inner table shrink instead of
           blowing the column past the viewport on long addresses. */}
-      <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2">
-        <section className="min-w-0">
+      {/* Stacked layout — Platform revenue gets the full width so the
+          per-token table doesn't get cramped (FROM CLAIMS / IN VAULT
+          / ACTION columns squeezed under the side-by-side md:grid-cols-2
+          version), and the Treasury writes section sits below it on
+          its own row. User feedback on PR #872 — side-by-side made
+          the revenue table hard to read at a glance. */}
+      <div className="space-y-10">
+        <section>
           <SectionHeader
             title="Platform revenue"
             badge="live"
@@ -183,11 +223,12 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
             feeVaultAddress={feeVaultAddress}
             treasuryAddress={snap.treasury}
             rows={tokenRows}
+            reloadKey={reloadKey}
             onWithdrawn={() => setReloadKey((k) => k + 1)}
           />
         </section>
 
-        <section className="min-w-0">
+        <section>
           <SectionHeader title="Treasury writes" badge="live" />
           <FeeVaultWrites
             feeVaultAddress={feeVaultAddress}
@@ -250,11 +291,16 @@ function PlatformRevenueTable({
   feeVaultAddress,
   treasuryAddress,
   rows,
+  reloadKey,
   onWithdrawn,
 }: {
   feeVaultAddress: string;
   treasuryAddress: string | null;
   rows: TokenRow[];
+  /** Bumped by the parent's auto-poll interval and the post-withdraw
+   *  `onWithdrawn` callback. Each TokenRevenueRow watches it so a
+   *  new relayer-claim event surfaces without a manual refresh. */
+  reloadKey: number;
   onWithdrawn: () => void;
 }) {
   if (rows.length === 0) {
@@ -271,8 +317,24 @@ function PlatformRevenueTable({
         <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
           <tr>
             <th className="px-4 py-3">Token</th>
-            <th className="px-4 py-3">Address</th>
-            <th className="px-4 py-3 text-right">Platform revenue</th>
+            <th
+              className="px-4 py-3 text-right"
+              title="Sum of PlatformFeeFromRelayerClaim event amounts (all-time). Relayer-claim platform fees ship straight to the treasury wallet — already received."
+            >
+              From claims
+              <div className="text-[10px] font-normal normal-case tracking-normal text-[var(--color-text-muted)]">
+                already in treasury
+              </div>
+            </th>
+            <th
+              className="px-4 py-3 text-right"
+              title="FeeVault.platformRevenue — DEX-path fees still held in the vault. Use Withdraw to move them into the treasury wallet."
+            >
+              In vault
+              <div className="text-[10px] font-normal normal-case tracking-normal text-[var(--color-text-muted)]">
+                pending withdraw
+              </div>
+            </th>
             <th className="px-4 py-3 text-right">Action</th>
           </tr>
         </thead>
@@ -283,6 +345,7 @@ function PlatformRevenueTable({
               feeVaultAddress={feeVaultAddress}
               treasuryAddress={treasuryAddress}
               row={row}
+              reloadKey={reloadKey}
               onWithdrawn={onWithdrawn}
             />
           ))}
@@ -302,6 +365,7 @@ function TokenRevenueRow({
   feeVaultAddress,
   treasuryAddress,
   row,
+  reloadKey,
   onWithdrawn,
 }: {
   feeVaultAddress: string;
@@ -309,28 +373,52 @@ function TokenRevenueRow({
    *  WETH balance for the auto-unwrap step on the native ETH row. */
   treasuryAddress: string | null;
   row: TokenRow;
+  /** Auto-poll trigger from the parent (15s tick + post-withdraw bump). */
+  reloadKey: number;
   onWithdrawn: () => void;
 }) {
   const { account, signer, connect, readProvider } = useWallet();
   const [revenue, setRevenue] = useState<bigint | null>(null);
+  // All-time direct revenue — sum of PlatformFeeFromRelayerClaim
+  // event `amount`s for this token. The "where did my claim fee
+  // go?" answer that the page silently omitted before this fix.
+  const [directClaimed, setDirectClaimed] = useState<bigint | null>(null);
   const [phase, setPhase] = useState<RowPhase>({ kind: "idle" });
   const meta = rowMeta(row);
 
   useEffect(() => {
     let cancelled = false;
-    const contract = new Contract(feeVaultAddress, FEE_VAULT_ABI, readProvider);
-    void contract
+    const feeVault = new Contract(feeVaultAddress, FEE_VAULT_ABI, readProvider);
+    // platformRevenue mapping — the DEX-path accumulator that the
+    // Withdraw button drains. Stays 0 for the relayer-claim path
+    // (those funds ship direct to treasury).
+    void feeVault
       .platformRevenue(meta.address)
-      .then((v: bigint) => {
-        if (!cancelled) setRevenue(v);
+      .then((v: bigint) => { if (!cancelled) setRevenue(v); })
+      .catch(() => { if (!cancelled) setRevenue(null); });
+    // All-time direct-claim revenue via event log scan. Block-0 sweep
+    // is fine for dev / fresh testnets; a production indexer would
+    // start from FeeVault's deploy block to bound the scan. The same
+    // pattern is used by `apps/admin/app/sanctions/_components/SanctionsContext.tsx`.
+    void feeVault
+      .queryFilter(feeVault.filters.PlatformFeeFromRelayerClaim(meta.address))
+      .then((logs) => {
+        if (cancelled) return;
+        let sum = 0n;
+        for (const log of logs) {
+          // `queryFilter` returns `(EventLog | Log)[]` — the bare
+          // `Log` form has no decoded args. Skip those defensively
+          // rather than crashing the row on an undecoded log.
+          const args = (log as { args?: { amount?: bigint } }).args;
+          if (args?.amount !== undefined) sum += args.amount;
+        }
+        setDirectClaimed(sum);
       })
-      .catch(() => {
-        if (!cancelled) setRevenue(null);
-      });
+      .catch(() => { if (!cancelled) setDirectClaimed(null); });
     return () => {
       cancelled = true;
     };
-  }, [feeVaultAddress, meta.address, readProvider, phase.kind]);
+  }, [feeVaultAddress, meta.address, readProvider, phase.kind, reloadKey]);
 
   const submit = useCallback(async () => {
     if (!signer) return;
@@ -400,22 +488,15 @@ function TokenRevenueRow({
           {isNative ? "Native ETH (auto-unwrap from WETH on withdraw)" : "ERC20"}
         </div>
       </td>
-      <td className="px-4 py-3 font-mono text-xs text-[var(--color-text-muted)]">
-        {shortAddr(meta.address)}
+      <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
+        {directClaimed == null
+          ? "…"
+          : `${prettyAmount(directClaimed, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
       </td>
-      <td className="px-4 py-3 text-right font-mono">
-        {revenue == null ? (
-          "…"
-        ) : isNative ? (
-          <>
-            <div>{formatUnits(revenue, meta.decimals)} ETH</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">
-              ({formatUnits(revenue, meta.decimals)} WETH on-chain)
-            </div>
-          </>
-        ) : (
-          `${formatUnits(revenue, meta.decimals)} ${meta.symbol}`
-        )}
+      <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
+        {revenue == null
+          ? "…"
+          : `${prettyAmount(revenue, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
       </td>
       <td className="px-4 py-3 text-right">
         {!account || !signer ? (
