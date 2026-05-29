@@ -26,15 +26,18 @@ contract TreasuryTest is Test {
     MockERC20 internal token;
 
     address internal owner = makeAddr("owner");
-    address internal alice = makeAddr("alice");  // allowlisted beneficiary
-    address internal bob = makeAddr("bob");      // NOT allowlisted
+    address internal alice = makeAddr("alice");       // allowlisted beneficiary
+    address internal bob = makeAddr("bob");           // NOT allowlisted
+    address internal reporter_ = makeAddr("reporter"); // allowlisted reporter
     address internal stranger = makeAddr("stranger");
 
     function setUp() public {
         treasury = ProxyDeployer.deployTreasury(owner, owner);
         token = new MockERC20();
-        vm.prank(owner);
+        vm.startPrank(owner);
         treasury.setBeneficiary(alice, true);
+        treasury.setReporter(reporter_, true);
+        vm.stopPrank();
     }
 
     // ─── Initialize ──────────────────────────────────────────
@@ -65,7 +68,7 @@ contract TreasuryTest is Test {
         vm.prank(stranger);
         (bool ok, ) = address(treasury).call{value: 1 ether}("");
         assertTrue(ok);
-        assertEq(treasury.totalReceivedETH(), 1 ether);
+        assertEq(treasury.attributedETH(), 1 ether);
         assertEq(address(treasury).balance, 1 ether);
     }
 
@@ -73,7 +76,29 @@ contract TreasuryTest is Test {
         vm.prank(stranger);
         (bool ok, ) = address(treasury).call{value: 0}("");
         assertTrue(ok);
-        assertEq(treasury.totalReceivedETH(), 0);
+        assertEq(treasury.attributedETH(), 0);
+    }
+
+    // ─── setReporter / recordRevenue gating ──────────────────
+
+    function test_setReporter_ownerCan() public {
+        vm.expectEmit(true, false, false, true, address(treasury));
+        emit Treasury.ReporterUpdated(stranger, true);
+        vm.prank(owner);
+        treasury.setReporter(stranger, true);
+        assertTrue(treasury.reporter(stranger));
+    }
+
+    function test_setReporter_nonOwnerReverts() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        treasury.setReporter(bob, true);
+    }
+
+    function test_setReporter_rejectsZeroAddress() public {
+        vm.prank(owner);
+        vm.expectRevert(Treasury.ZeroAddress.selector);
+        treasury.setReporter(address(0), true);
     }
 
     // ─── recordRevenue ───────────────────────────────────────
@@ -82,34 +107,46 @@ contract TreasuryTest is Test {
         token.mint(address(treasury), 1_000);
         vm.expectEmit(true, false, false, true, address(treasury));
         emit Treasury.SourcedRevenue(address(token), 1_000, "claim-skim");
+        vm.prank(reporter_);
         treasury.recordRevenue(address(token), 1_000, "claim-skim");
-        assertEq(treasury.totalReceivedERC20(address(token)), 1_000);
+        assertEq(treasury.attributedERC20(address(token)), 1_000);
+    }
+
+    function test_recordRevenue_nonReporterReverts() public {
+        token.mint(address(treasury), 1_000);
+        // The exact griefing vector Gemini flagged: a random address
+        // tries to inflate the attributed counter to block rescue.
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(Treasury.NotReporter.selector, stranger));
+        treasury.recordRevenue(address(token), 1_000, "rogue");
     }
 
     function test_recordRevenue_rejectsAmountAboveBalance() public {
         token.mint(address(treasury), 100);
-        // Counter would jump above on-chain balance — must revert so an
-        // attacker can't inflate the recorded inflow figure.
-        vm.expectRevert(Treasury.CountedAmountExceedsBalance.selector);
+        vm.prank(reporter_);
+        vm.expectRevert(Treasury.AttributedExceedsBalance.selector);
         treasury.recordRevenue(address(token), 101, "claim-skim");
     }
 
     function test_recordRevenue_acceptsIncrementalRecordsUpToBalance() public {
         token.mint(address(treasury), 1_000);
+        vm.startPrank(reporter_);
         treasury.recordRevenue(address(token), 600, "claim-skim");
         treasury.recordRevenue(address(token), 400, "dex-withdraw");
-        assertEq(treasury.totalReceivedERC20(address(token)), 1_000);
-        // One more wei beyond and we should fail
-        vm.expectRevert(Treasury.CountedAmountExceedsBalance.selector);
+        assertEq(treasury.attributedERC20(address(token)), 1_000);
+        vm.expectRevert(Treasury.AttributedExceedsBalance.selector);
         treasury.recordRevenue(address(token), 1, "claim-skim");
+        vm.stopPrank();
     }
 
     function test_recordRevenue_rejectsZeroAmount() public {
+        vm.prank(reporter_);
         vm.expectRevert(Treasury.ZeroAmount.selector);
         treasury.recordRevenue(address(token), 0, "claim-skim");
     }
 
     function test_recordRevenue_rejectsZeroToken() public {
+        vm.prank(reporter_);
         vm.expectRevert(Treasury.ZeroAddress.selector);
         treasury.recordRevenue(address(0), 1, "claim-skim");
     }
@@ -126,7 +163,7 @@ contract TreasuryTest is Test {
 
     function test_setBeneficiary_nonOwnerReverts() public {
         vm.prank(stranger);
-        vm.expectRevert(); // OwnableUnauthorizedAccount
+        vm.expectRevert();
         treasury.setBeneficiary(bob, true);
     }
 
@@ -158,7 +195,7 @@ contract TreasuryTest is Test {
     function test_withdraw_nonOwnerReverts() public {
         token.mint(address(treasury), 1_000);
         vm.prank(stranger);
-        vm.expectRevert(); // OwnableUnauthorizedAccount
+        vm.expectRevert();
         treasury.withdraw(address(token), alice, 100);
     }
 
@@ -180,8 +217,35 @@ contract TreasuryTest is Test {
         vm.prank(owner);
         treasury.pause();
         vm.prank(owner);
-        vm.expectRevert(); // EnforcedPause
+        vm.expectRevert();
         treasury.withdraw(address(token), alice, 100);
+    }
+
+    /// @notice The exact DoS Gemini flagged as critical: counter
+    ///         must drop on withdraw so the next `recordRevenue` /
+    ///         `rescue` can still operate.
+    function test_withdraw_decrementsAttributed_keepsCounterAlive() public {
+        token.mint(address(treasury), 1_000);
+        vm.prank(reporter_);
+        treasury.recordRevenue(address(token), 1_000, "claim-skim");
+        assertEq(treasury.attributedERC20(address(token)), 1_000);
+        vm.prank(owner);
+        treasury.withdraw(address(token), alice, 400);
+        assertEq(treasury.attributedERC20(address(token)), 600);
+        // recordRevenue still works after withdrawal
+        token.mint(address(treasury), 200);
+        vm.prank(reporter_);
+        treasury.recordRevenue(address(token), 200, "dex-withdraw");
+        assertEq(treasury.attributedERC20(address(token)), 800);
+    }
+
+    function test_withdraw_unattributedSliceFloorsAt0() public {
+        // Stray transfer of 1_000 (un-attributed). Owner withdraws
+        // 600 — attributed was 0 so should clamp to 0, not underflow.
+        token.mint(address(treasury), 1_000);
+        vm.prank(owner);
+        treasury.withdraw(address(token), alice, 600);
+        assertEq(treasury.attributedERC20(address(token)), 0);
     }
 
     // ─── withdrawETH ─────────────────────────────────────────
@@ -223,12 +287,23 @@ contract TreasuryTest is Test {
         treasury.withdrawETH(payable(alice), 1 ether);
     }
 
-    // ─── rescue ──────────────────────────────────────────────
+    function test_withdrawETH_decrementsAttributed_keepsCounterAlive() public {
+        // Send 2 ether via receive() — counter = 2 ether.
+        vm.deal(stranger, 2 ether);
+        vm.prank(stranger);
+        (bool sent, ) = address(treasury).call{value: 2 ether}("");
+        assertTrue(sent);
+        // Withdraw 1 ether. Counter must drop to 1 ether so
+        // `rescueETH` and future `receive` calls still work.
+        vm.prank(owner);
+        treasury.withdrawETH(payable(alice), 1 ether);
+        assertEq(treasury.attributedETH(), 1 ether);
+    }
+
+    // ─── rescue (ERC20) ──────────────────────────────────────
 
     function test_rescue_untaggedBalance() public {
-        // 1000 tokens land via stray transfer, none tagged.
         token.mint(address(treasury), 1_000);
-        // The rescue surface is exactly the unattributed balance.
         vm.prank(owner);
         treasury.rescue(address(token), alice, 1_000);
         assertEq(token.balanceOf(alice), 1_000);
@@ -236,13 +311,11 @@ contract TreasuryTest is Test {
 
     function test_rescue_cannotEatTaggedRevenue() public {
         token.mint(address(treasury), 1_000);
-        // 700 attributed as platform revenue. Only 300 is rescue-eligible.
+        vm.prank(reporter_);
         treasury.recordRevenue(address(token), 700, "claim-skim");
-        // 300 rescue OK.
         vm.prank(owner);
         treasury.rescue(address(token), alice, 300);
         assertEq(token.balanceOf(alice), 300);
-        // 1-wei more would dip into tagged revenue — must revert.
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(Treasury.InsufficientBalance.selector, 1, 0));
         treasury.rescue(address(token), alice, 1);
@@ -255,13 +328,27 @@ contract TreasuryTest is Test {
         treasury.rescue(address(token), bob, 100);
     }
 
+    function test_rescue_survivesWithdrawal() public {
+        // Tag 600, leave 400 un-attributed. Withdraw 200 from
+        // the tagged slice (attributed drops to 400, balance drops
+        // to 800 — un-attributed slice still 400). Rescue must
+        // still claw 400.
+        token.mint(address(treasury), 1_000);
+        vm.prank(reporter_);
+        treasury.recordRevenue(address(token), 600, "claim-skim");
+        vm.startPrank(owner);
+        treasury.withdraw(address(token), alice, 200);
+        assertEq(treasury.attributedERC20(address(token)), 400);
+        treasury.rescue(address(token), alice, 400);
+        vm.stopPrank();
+        assertEq(token.balanceOf(alice), 600);
+    }
+
     // ─── rescueETH ───────────────────────────────────────────
 
     function test_rescueETH_untaggedBalance() public {
-        // `receive()` bumps `totalReceivedETH`; we simulate a
-        // selfdestruct push by using `vm.deal` (which sets balance
-        // directly, without firing receive). The slot above the
-        // counter is rescue-eligible.
+        // `vm.deal` pushes ETH without firing receive() — simulating
+        // a selfdestruct push. All of it is rescuable.
         vm.deal(address(treasury), 3 ether);
         vm.prank(owner);
         treasury.rescueETH(payable(alice), 3 ether);
@@ -269,15 +356,14 @@ contract TreasuryTest is Test {
     }
 
     function test_rescueETH_cannotEatCountedReceive() public {
-        // First a real receive() — counter = 2 ether. Then a stealth
-        // push via vm.deal that bumps balance to 5 ether without
-        // touching the counter. Only the 3-ether slice above the
-        // counter is rescuable.
+        // Honest receive of 2 ether bumps attributed.
         vm.deal(stranger, 2 ether);
         vm.prank(stranger);
         (bool ok, ) = address(treasury).call{value: 2 ether}("");
         assertTrue(ok);
-        assertEq(treasury.totalReceivedETH(), 2 ether);
+        assertEq(treasury.attributedETH(), 2 ether);
+        // Stealth push lifts balance to 5 ether without touching
+        // the counter — 3 ether rescuable.
         vm.deal(address(treasury), 5 ether);
         vm.prank(owner);
         treasury.rescueETH(payable(alice), 3 ether);
@@ -294,6 +380,23 @@ contract TreasuryTest is Test {
         treasury.rescueETH(payable(bob), 1 ether);
     }
 
+    function test_rescueETH_survivesWithdrawal() public {
+        // 2 ether via receive (attributed = 2). Push 3 more stealth.
+        // Withdraw 1 (attributed → 1, balance → 4). Rescue surface
+        // is balance − attributed = 3 ether. Still rescuable.
+        vm.deal(stranger, 2 ether);
+        vm.prank(stranger);
+        (bool ok, ) = address(treasury).call{value: 2 ether}("");
+        assertTrue(ok);
+        vm.deal(address(treasury), 5 ether);
+        vm.startPrank(owner);
+        treasury.withdrawETH(payable(alice), 1 ether);
+        assertEq(treasury.attributedETH(), 1 ether);
+        treasury.rescueETH(payable(alice), 3 ether);
+        vm.stopPrank();
+        assertEq(alice.balance, 4 ether);
+    }
+
     // ─── pause / unpause ─────────────────────────────────────
 
     function test_pause_unpause_flow() public {
@@ -305,7 +408,7 @@ contract TreasuryTest is Test {
         treasury.unpause();
         assertFalse(treasury.paused());
         vm.prank(owner);
-        treasury.withdraw(address(token), alice, 100); // works after unpause
+        treasury.withdraw(address(token), alice, 100);
         assertEq(token.balanceOf(alice), 100);
     }
 

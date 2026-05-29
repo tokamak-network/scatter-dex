@@ -66,26 +66,42 @@ contract Treasury is
     ///         contract only enforces it.
     mapping(address => bool) public beneficiary;
 
-    /// @notice All-time ERC20 inflow counter, per token. Bumped by
-    ///         `recordRevenue` (caller MUST already have transferred
-    ///         the tokens to this contract). Untagged plain transfers
-    ///         do NOT increment this — they're visible only via the
-    ///         contract's raw `balanceOf` and the rescue path can
-    ///         claw them out without double-counting.
-    mapping(address => uint256) public totalReceivedERC20;
+    /// @notice Addresses allowed to call `recordRevenue`. Owner-curated.
+    ///         A permissionless `recordRevenue` was a griefing vector:
+    ///         any caller could inflate `attributedERC20[token]` up to
+    ///         the on-chain balance, blocking `rescue` of accidentally-
+    ///         sent tokens and polluting the `SourcedRevenue` event log
+    ///         with arbitrary `source` strings. The allowlist makes
+    ///         `source` a trusted signal (only callers the owner has
+    ///         vetted can stamp tags) and protects `rescue`.
+    mapping(address => bool) public reporter;
 
-    /// @notice All-time native ETH inflow counter, bumped by the
-    ///         `receive()` fallback. Native ETH has no per-token
-    ///         dimension so a single scalar suffices.
-    uint256 public totalReceivedETH;
+    /// @notice ERC20 balance currently held that has been explicitly
+    ///         "attributed" via `recordRevenue` — i.e. the slice of
+    ///         the on-chain balance the platform considers tagged
+    ///         revenue rather than an un-attributed stray transfer.
+    ///         Bumped by `recordRevenue`, decremented by `withdraw`
+    ///         (with a floor of zero so this never underflows when
+    ///         the owner withdraws more than was attributed, e.g.
+    ///         clearing a stray-deposit balance via `withdraw` after
+    ///         tagging it).
+    mapping(address => uint256) public attributedERC20;
+
+    /// @notice Native ETH counterpart of `attributedERC20`. Bumped by
+    ///         the `receive()` fallback (an explicit push from a
+    ///         caller, e.g. `FeeVault.claimAsEth`), decremented by
+    ///         `withdrawETH`. Native ETH has no per-token dimension
+    ///         so a single scalar suffices.
+    uint256 public attributedETH;
 
     /// @dev Reserved storage for future upgrades — same pattern as
     ///      `RelayerRegistry`. Decrement when new state lands.
-    uint256[47] private __gap;
+    uint256[46] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────
 
     event BeneficiaryUpdated(address indexed addr, bool allowed);
+    event ReporterUpdated(address indexed addr, bool allowed);
     /// @notice Fired when ERC20 revenue is explicitly tagged via
     ///         `recordRevenue`. The `source` string lets off-chain
     ///         indexers split totals (e.g. "claim-skim" vs
@@ -101,10 +117,11 @@ contract Treasury is
     error ZeroAddress();
     error ZeroAmount();
     error NotAllowlisted(address to);
+    error NotReporter(address caller);
     error InsufficientBalance(uint256 requested, uint256 available);
     error EthTransferFailed();
     error RenounceOwnershipDisabled();
-    error CountedAmountExceedsBalance();
+    error AttributedExceedsBalance();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -134,7 +151,7 @@ contract Treasury is
     ///         have to scrape `Transfer` events for ETH.
     receive() external payable {
         if (msg.value > 0) {
-            totalReceivedETH += msg.value;
+            attributedETH += msg.value;
             emit Received(msg.sender, msg.value);
         }
     }
@@ -142,33 +159,33 @@ contract Treasury is
     // ─── Inflow tagging ─────────────────────────────────────────
 
     /// @notice Tag an already-arrived ERC20 deposit with a source
-    ///         string + bump the per-token counter. Caller MUST have
-    ///         transferred `amount` of `token` to this contract first;
-    ///         this function only records, it doesn't pull.
-    /// @dev    Anyone can call — the contract's ERC20 balance is the
-    ///         floor of truth, and `recordRevenue` only lets a caller
-    ///         credit revenue they've already pushed in. The check
-    ///         `totalReceived + amount <= balanceOf(this)` blocks an
-    ///         attacker from inflating the counter beyond what's
-    ///         actually present. `nonReentrant` is defence in depth:
-    ///         a malicious `balanceOf` implementation can't re-enter
+    ///         string + bump the per-token attributed counter. Caller
+    ///         MUST have transferred `amount` of `token` to this
+    ///         contract first; this function only records, it doesn't
+    ///         pull.
+    /// @dev    Reporter-only. A permissionless `recordRevenue` was a
+    ///         griefing vector: any caller could inflate the attributed
+    ///         counter up to the on-chain balance, blocking `rescue` of
+    ///         accidentally-sent tokens and polluting the
+    ///         `SourcedRevenue` event log with arbitrary `source` tags.
+    ///         The allowlist makes `source` a trusted signal and
+    ///         keeps the rescue surface intact. `nonReentrant` is
+    ///         defence in depth: a malicious `balanceOf` can't re-enter
     ///         to race the counter write past the just-read balance.
-    ///         The `source` tag is best-effort / untrusted — anyone
-    ///         can submit one, so indexers consuming `SourcedRevenue`
-    ///         should treat the string as advisory. A future revision
-    ///         can restrict the caller set (e.g. allowlist FeeVault)
-    ///         without breaking storage layout.
+    ///
+    ///         The balance floor `attributedERC20 + amount <= onHand`
+    ///         pairs with `withdraw`'s symmetric decrement to keep the
+    ///         invariant `attributedERC20[token] <= balanceOf(this)`
+    ///         true after every state transition.
     function recordRevenue(address token, uint256 amount, string calldata source) external nonReentrant {
+        if (!reporter[msg.sender]) revert NotReporter(msg.sender);
         if (token == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
         uint256 onHand = IERC20(token).balanceOf(address(this));
-        // Counter floor: counted + new amount cannot exceed the
-        // current on-chain balance — otherwise an attacker could
-        // book revenue that doesn't exist.
-        if (totalReceivedERC20[token] + amount > onHand) {
-            revert CountedAmountExceedsBalance();
+        if (attributedERC20[token] + amount > onHand) {
+            revert AttributedExceedsBalance();
         }
-        totalReceivedERC20[token] += amount;
+        attributedERC20[token] += amount;
         emit SourcedRevenue(token, amount, source);
     }
 
@@ -189,6 +206,15 @@ contract Treasury is
         if (!beneficiary[to]) revert NotAllowlisted(to);
         uint256 onHand = IERC20(token).balanceOf(address(this));
         if (amount > onHand) revert InsufficientBalance(amount, onHand);
+        // Keep the `attributedERC20[token] <= balanceOf(this)`
+        // invariant under withdrawal. Without this, the counter
+        // stays cumulative while the balance falls, and the next
+        // `recordRevenue` or `rescue` permanently reverts. Floor at
+        // zero so a withdraw that exceeds the attributed slice
+        // (e.g. owner clearing a stray-token balance after rescue
+        // tagging) doesn't underflow.
+        uint256 attributed = attributedERC20[token];
+        attributedERC20[token] = attributed > amount ? attributed - amount : 0;
         IERC20(token).safeTransfer(to, amount);
         emit Withdrawn(token, to, amount);
     }
@@ -205,6 +231,11 @@ contract Treasury is
         if (amount == 0) revert ZeroAmount();
         if (!beneficiary[to]) revert NotAllowlisted(to);
         if (amount > address(this).balance) revert InsufficientBalance(amount, address(this).balance);
+        // Symmetric with `withdraw`: keep `attributedETH <= balance`
+        // so `rescueETH` and future `recordRevenue`-style ETH hooks
+        // stay live after withdrawals.
+        uint256 attributed = attributedETH;
+        attributedETH = attributed > amount ? attributed - amount : 0;
         (bool ok, ) = to.call{value: amount}("");
         if (!ok) revert EthTransferFailed();
         emit WithdrawnETH(to, amount);
@@ -216,6 +247,18 @@ contract Treasury is
         if (addr == address(0)) revert ZeroAddress();
         beneficiary[addr] = allowed;
         emit BeneficiaryUpdated(addr, allowed);
+    }
+
+    /// @notice Add or remove a permitted `recordRevenue` caller.
+    ///         Production wiring: the platform's `FeeVault` (and
+    ///         eventually `PrivateSettlement`) should be the only
+    ///         allowlisted reporters so the `source` tag on
+    ///         `SourcedRevenue` events is trustworthy and the rescue
+    ///         surface stays intact.
+    function setReporter(address addr, bool allowed) external onlyOwner {
+        if (addr == address(0)) revert ZeroAddress();
+        reporter[addr] = allowed;
+        emit ReporterUpdated(addr, allowed);
     }
 
     function pause() external onlyOwner {
@@ -244,8 +287,8 @@ contract Treasury is
         if (amount == 0) revert ZeroAmount();
         if (!beneficiary[to]) revert NotAllowlisted(to);
         uint256 onHand = address(this).balance;
-        uint256 counted = totalReceivedETH;
-        uint256 rescuable = onHand > counted ? onHand - counted : 0;
+        uint256 attributed = attributedETH;
+        uint256 rescuable = onHand > attributed ? onHand - attributed : 0;
         if (amount > rescuable) revert InsufficientBalance(amount, rescuable);
         (bool ok, ) = to.call{value: amount}("");
         if (!ok) revert EthTransferFailed();
@@ -268,12 +311,12 @@ contract Treasury is
         if (amount == 0) revert ZeroAmount();
         if (!beneficiary[to]) revert NotAllowlisted(to);
         uint256 onHand = IERC20(token).balanceOf(address(this));
-        uint256 counted = totalReceivedERC20[token];
-        // The slice above the counted-in inflows is unattributed; only
-        // that slice is rescue-eligible. counted >= onHand means
-        // every token here was deliberately attributed, so the rescue
-        // surface is empty.
-        uint256 rescuable = onHand > counted ? onHand - counted : 0;
+        uint256 attributed = attributedERC20[token];
+        // The slice above the attributed amount is un-tagged; only
+        // that slice is rescue-eligible. attributed >= onHand means
+        // every token here was deliberately tagged via
+        // recordRevenue, so the rescue surface is empty.
+        uint256 rescuable = onHand > attributed ? onHand - attributed : 0;
         if (amount > rescuable) revert InsufficientBalance(amount, rescuable);
         IERC20(token).safeTransfer(to, amount);
         emit Rescued(token, to, amount);
