@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@zkscatter/ui";
+import { useFolder } from "../lib/folder";
 import { useVault } from "../lib/vault";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { aggregateBySymbol } from "../lib/noteStatus";
@@ -34,6 +35,10 @@ interface Props {
 export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Props) {
   const { notes } = useVault();
   const { orders } = useOrders();
+  // Workspace folder gate — without a picked folder a successful
+  // deposit can't persist its note, so block the entry-point button
+  // here too (the modal's submit button is gated separately).
+  const { ready: folderReady } = useFolder();
 
   // Three live buckets for the left panel:
   //   * open      — matching AND expiry in the future
@@ -99,9 +104,11 @@ export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Pro
         <div className="mt-3 flex gap-2">
           <button
             onClick={onDeposit}
-            className="flex-1 rounded-md border border-[var(--color-border-strong)] bg-white py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]"
+            disabled={!folderReady}
+            title={folderReady ? undefined : "Pick a workspace folder first"}
+            className="flex-1 rounded-md border border-[var(--color-border-strong)] bg-white py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white"
           >
-            + Deposit
+            {folderReady ? "+ Deposit" : "+ Deposit · pick folder first"}
           </button>
           <Link
             href="/notes"
