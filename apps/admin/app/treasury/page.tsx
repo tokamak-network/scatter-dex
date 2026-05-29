@@ -114,6 +114,17 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
   const [snap, setSnap] = useState<FeeVaultSnapshot>(EMPTY_SNAPSHOT);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Auto-poll every 15s so a new relayer claim shows up without the
+  // operator having to hit refresh manually. 15s is a compromise
+  // between "live enough that an audit doesn't trail by minutes" and
+  // not hammering the RPC + event log scan on a busy chain. The
+  // existing `reloadKey` bump is reused so the per-row event +
+  // platformRevenue refetch happens automatically.
+  useEffect(() => {
+    const id = setInterval(() => setReloadKey((k) => k + 1), 15_000);
+    return () => clearInterval(id);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const contract = new Contract(feeVaultAddress, FEE_VAULT_ABI, readProvider);
@@ -212,6 +223,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
             feeVaultAddress={feeVaultAddress}
             treasuryAddress={snap.treasury}
             rows={tokenRows}
+            reloadKey={reloadKey}
             onWithdrawn={() => setReloadKey((k) => k + 1)}
           />
         </section>
@@ -279,11 +291,16 @@ function PlatformRevenueTable({
   feeVaultAddress,
   treasuryAddress,
   rows,
+  reloadKey,
   onWithdrawn,
 }: {
   feeVaultAddress: string;
   treasuryAddress: string | null;
   rows: TokenRow[];
+  /** Bumped by the parent's auto-poll interval and the post-withdraw
+   *  `onWithdrawn` callback. Each TokenRevenueRow watches it so a
+   *  new relayer-claim event surfaces without a manual refresh. */
+  reloadKey: number;
   onWithdrawn: () => void;
 }) {
   if (rows.length === 0) {
@@ -300,7 +317,6 @@ function PlatformRevenueTable({
         <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
           <tr>
             <th className="px-4 py-3">Token</th>
-            <th className="px-4 py-3">Address</th>
             <th
               className="px-4 py-3 text-right"
               title="Sum of PlatformFeeFromRelayerClaim event amounts (all-time). Relayer-claim platform fees ship straight to the treasury wallet — already received."
@@ -329,6 +345,7 @@ function PlatformRevenueTable({
               feeVaultAddress={feeVaultAddress}
               treasuryAddress={treasuryAddress}
               row={row}
+              reloadKey={reloadKey}
               onWithdrawn={onWithdrawn}
             />
           ))}
@@ -348,6 +365,7 @@ function TokenRevenueRow({
   feeVaultAddress,
   treasuryAddress,
   row,
+  reloadKey,
   onWithdrawn,
 }: {
   feeVaultAddress: string;
@@ -355,6 +373,8 @@ function TokenRevenueRow({
    *  WETH balance for the auto-unwrap step on the native ETH row. */
   treasuryAddress: string | null;
   row: TokenRow;
+  /** Auto-poll trigger from the parent (15s tick + post-withdraw bump). */
+  reloadKey: number;
   onWithdrawn: () => void;
 }) {
   const { account, signer, connect, readProvider } = useWallet();
@@ -398,7 +418,7 @@ function TokenRevenueRow({
     return () => {
       cancelled = true;
     };
-  }, [feeVaultAddress, meta.address, readProvider, phase.kind]);
+  }, [feeVaultAddress, meta.address, readProvider, phase.kind, reloadKey]);
 
   const submit = useCallback(async () => {
     if (!signer) return;
@@ -467,9 +487,6 @@ function TokenRevenueRow({
         <div className="text-xs text-[var(--color-text-muted)]">
           {isNative ? "Native ETH (auto-unwrap from WETH on withdraw)" : "ERC20"}
         </div>
-      </td>
-      <td className="px-4 py-3 font-mono text-xs text-[var(--color-text-muted)]">
-        {shortAddr(meta.address)}
       </td>
       <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
         {directClaimed == null
