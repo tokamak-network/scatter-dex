@@ -58,6 +58,12 @@ export interface SettlementPushPayload {
   buyToken?: string;
   sellAmount?: string;
   buyAmount?: string;
+  /** PrivateSettlement entry-point — "settleAuth" for two-sided
+   *  matches (Pro), "scatterDirectAuth" for single-party payouts
+   *  (Pay). Optional for wire back-compat; shared-OB stores NULL
+   *  when absent and the operators leaderboard treats those rows
+   *  as "unknown" (counted in aggregate, skipped in byApp). */
+  type?: "settleAuth" | "scatterDirectAuth";
 }
 
 export interface SharedOrderbookConfig {

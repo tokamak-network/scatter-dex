@@ -9,6 +9,13 @@
  * choose whether to expose unverified rows.
  */
 
+/** Which settlement entry-point produced this row, used downstream to
+ *  split Pay vs Pro on the operators leaderboard. Pre-PR rows store
+ *  NULL — the byApp aggregator treats those as "unknown" and skips
+ *  them, so older history doesn't fabricate a Pay/Pro attribution. */
+export type SettlementType = "settleAuth" | "scatterDirectAuth";
+export const SETTLEMENT_TYPES: readonly SettlementType[] = ["settleAuth", "scatterDirectAuth"];
+
 export interface SettlementInsert {
   txHash: string;
   blockNumber: number;
@@ -30,12 +37,18 @@ export interface SettlementInsert {
   buyToken?: string;
   sellAmount?: string;
   buyAmount?: string;
+  /** Settlement entry-point on PrivateSettlement.sol. Optional for wire
+   *  back-compat with relayers that pre-date this field. */
+  type?: SettlementType;
 }
 
 export interface StoredSettlement extends SettlementInsert {
   submitter: string;
   verified: boolean;
   createdAt: number;
+  /** Inherited from SettlementInsert as optional; pre-byApp rows in
+   *  the DB persist as NULL → `undefined` here. */
+  type?: SettlementType;
 }
 
 export interface SettlementListFilter {
@@ -202,6 +215,9 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (r.buyAmount !== undefined && !isNonNegativeBigInt(r.buyAmount)) {
     throw new Error("buyAmount: must be a non-negative decimal string when provided");
   }
+  if (r.type !== undefined && !(SETTLEMENT_TYPES as readonly string[]).includes(r.type as string)) {
+    throw new Error(`type: must be one of ${SETTLEMENT_TYPES.join("|")} when provided`);
+  }
 
   const out: SettlementInsert = {
     txHash: r.txHash.toLowerCase(),
@@ -222,6 +238,7 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (r.buyToken) out.buyToken = (r.buyToken as string).toLowerCase();
   if (r.sellAmount) out.sellAmount = r.sellAmount as string;
   if (r.buyAmount) out.buyAmount = r.buyAmount as string;
+  if (r.type) out.type = r.type as SettlementType;
 
   return out;
 }

@@ -4,6 +4,7 @@ import { config } from "../config.js";
 import type { OrderSummary, OrderStatus, StoredOrder, MatchResult } from "../types/order.js";
 import type {
   SettlementInsert,
+  SettlementType,
   StoredSettlement,
   SettlementListFilter,
   TokenVolumeRow,
@@ -102,6 +103,7 @@ export class OrderbookDB {
         user_maxfee_maker  INTEGER NOT NULL,
         user_maxfee_taker  INTEGER NOT NULL,
         verified           INTEGER NOT NULL DEFAULT 0,
+        type               TEXT,
         created_at         INTEGER NOT NULL
       );
 
@@ -125,6 +127,18 @@ export class OrderbookDB {
       CREATE INDEX IF NOT EXISTS idx_settle_time_coalesce
         ON settlements(COALESCE(block_time, created_at));
     `);
+
+    // Lightweight ALTER for pre-byApp databases — adds the `type`
+    // column to settlements tables that were created before the
+    // column existed. SQLite has no `IF NOT EXISTS` on ALTER, so we
+    // probe column metadata first via better-sqlite3's `.pragma()`
+    // helper. Rows that pre-date the change keep NULL — the byApp
+    // aggregator treats those as "unknown" and skips them instead
+    // of fabricating a Pay/Pro attribution.
+    const columns = this.db.pragma("table_info(settlements)") as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === "type")) {
+      this.db.exec("ALTER TABLE settlements ADD COLUMN type TEXT");
+    }
   }
 
   private prepareStatements(): void {
@@ -216,8 +230,8 @@ export class OrderbookDB {
         maker_nullifier, taker_nullifier,
         sell_token, buy_token, sell_amount, buy_amount,
         fee_maker, fee_taker, user_maxfee_maker, user_maxfee_taker,
-        verified, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?)
+        verified, type, created_at
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
     `);
 
     this.stmtGetSettlement = this.db.prepare(`SELECT * FROM settlements WHERE tx_hash = ?`);
@@ -444,6 +458,7 @@ export class OrderbookDB {
       payload.feeTaker,
       payload.userMaxFeeMaker,
       payload.userMaxFeeTaker,
+      payload.type ?? null,
       Math.floor(Date.now() / 1000),
     );
     return result.changes > 0;
@@ -575,6 +590,7 @@ export class OrderbookDB {
       userMaxFeeMaker: row.user_maxfee_maker as number,
       userMaxFeeTaker: row.user_maxfee_taker as number,
       verified: ((row.verified as number) ?? 0) === 1,
+      type: (row.type as SettlementType | null) ?? undefined,
       createdAt: row.created_at as number,
     };
   }
