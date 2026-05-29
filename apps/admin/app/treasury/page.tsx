@@ -26,11 +26,22 @@ const FEE_VAULT_ABI = [
   "event PlatformFeeFromRelayerClaim(address indexed token, uint256 amount, address indexed relayer)",
 ];
 
-// Minimal ERC20 balance read for the treasury wallet's current
-// holdings of each tracked token.
-const ERC20_BALANCE_ABI = [
-  "function balanceOf(address) external view returns (uint256)",
-];
+/** Format a (wei, decimals) pair with thousand-separator commas on
+ *  the integer part and a trimmed fractional part. Replaces the bare
+ *  `formatUnits(...)` which produced strings like "1000002.31825" or
+ *  "100000.0" — readable as raw numbers, but easy to misread at a
+ *  glance when scanning a column. Keeps 4 significant fractional
+ *  digits so dust isn't hidden ("0.00012" stays visible). */
+function prettyAmount(wei: bigint, decimals: number): string {
+  const raw = formatUnits(wei, decimals);
+  const [intPart, fracPartRaw = ""] = raw.split(".");
+  const intWithCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  // Trim trailing zeros but keep at least 2 digits for sub-1 values,
+  // so "0.00" reads as "0" rather than "0." while "0.00123" keeps
+  // its precision.
+  const frac = fracPartRaw.replace(/0+$/, "");
+  return frac === "" ? intWithCommas : `${intWithCommas}.${frac}`;
+}
 
 // Minimal WETH9-compatible ABI. The native-ETH revenue row is stored
 // on-chain as WETH balance held by `treasury` after withdraw; calling
@@ -286,21 +297,21 @@ function PlatformRevenueTable({
             <th className="px-4 py-3">Address</th>
             <th
               className="px-4 py-3 text-right"
-              title="All-time PlatformFeeFromRelayerClaim — relayer-claim fees ship straight to the treasury wallet, no withdraw needed."
+              title="Sum of PlatformFeeFromRelayerClaim event amounts (all-time). Relayer-claim platform fees ship straight to the treasury wallet — already received."
             >
               From claims
+              <div className="text-[10px] font-normal normal-case tracking-normal text-[var(--color-text-muted)]">
+                already in treasury
+              </div>
             </th>
             <th
               className="px-4 py-3 text-right"
-              title="FeeVault.platformRevenue — DEX-path fees waiting in the vault. Use Withdraw to move into the treasury wallet."
+              title="FeeVault.platformRevenue — DEX-path fees still held in the vault. Use Withdraw to move them into the treasury wallet."
             >
               In vault
-            </th>
-            <th
-              className="px-4 py-3 text-right"
-              title="Treasury wallet's current ERC20 balance for this token. Reflects direct-claim revenue plus any pre-existing balance."
-            >
-              Wallet
+              <div className="text-[10px] font-normal normal-case tracking-normal text-[var(--color-text-muted)]">
+                pending withdraw
+              </div>
             </th>
             <th className="px-4 py-3 text-right">Action</th>
           </tr>
@@ -343,13 +354,9 @@ function TokenRevenueRow({
   const { account, signer, connect, readProvider } = useWallet();
   const [revenue, setRevenue] = useState<bigint | null>(null);
   // All-time direct revenue — sum of PlatformFeeFromRelayerClaim
-  // event `amount`s for this token. The "amount where did my claim
-  // fee go?" answer that the page silently omitted before this fix.
+  // event `amount`s for this token. The "where did my claim fee
+  // go?" answer that the page silently omitted before this fix.
   const [directClaimed, setDirectClaimed] = useState<bigint | null>(null);
-  // Treasury wallet's actual on-chain balance — answers "what
-  // does the treasury hold right now" without operators having to
-  // open a block explorer.
-  const [walletBalance, setWalletBalance] = useState<bigint | null>(null);
   const [phase, setPhase] = useState<RowPhase>({ kind: "idle" });
   const meta = rowMeta(row);
 
@@ -382,22 +389,10 @@ function TokenRevenueRow({
         setDirectClaimed(sum);
       })
       .catch(() => { if (!cancelled) setDirectClaimed(null); });
-    // Treasury wallet's current ERC20 balance. For the native row
-    // this also reads the WETH slot (matching how the auto-unwrap
-    // Withdraw path treats it).
-    if (treasuryAddress) {
-      const erc20 = new Contract(meta.address, ERC20_BALANCE_ABI, readProvider);
-      void erc20
-        .balanceOf(treasuryAddress)
-        .then((v: bigint) => { if (!cancelled) setWalletBalance(v); })
-        .catch(() => { if (!cancelled) setWalletBalance(null); });
-    } else {
-      setWalletBalance(null);
-    }
     return () => {
       cancelled = true;
     };
-  }, [feeVaultAddress, meta.address, readProvider, treasuryAddress, phase.kind]);
+  }, [feeVaultAddress, meta.address, readProvider, phase.kind]);
 
   const submit = useCallback(async () => {
     if (!signer) return;
@@ -470,29 +465,15 @@ function TokenRevenueRow({
       <td className="px-4 py-3 font-mono text-xs text-[var(--color-text-muted)]">
         {shortAddr(meta.address)}
       </td>
-      <td className="px-4 py-3 text-right font-mono">
+      <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
         {directClaimed == null
           ? "…"
-          : `${formatUnits(directClaimed, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
+          : `${prettyAmount(directClaimed, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
       </td>
-      <td className="px-4 py-3 text-right font-mono">
-        {revenue == null ? (
-          "…"
-        ) : isNative ? (
-          <>
-            <div>{formatUnits(revenue, meta.decimals)} ETH</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">
-              ({formatUnits(revenue, meta.decimals)} WETH on-chain)
-            </div>
-          </>
-        ) : (
-          `${formatUnits(revenue, meta.decimals)} ${meta.symbol}`
-        )}
-      </td>
-      <td className="px-4 py-3 text-right font-mono">
-        {walletBalance == null
+      <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
+        {revenue == null
           ? "…"
-          : `${formatUnits(walletBalance, meta.decimals)} ${isNative ? "WETH" : meta.symbol}`}
+          : `${prettyAmount(revenue, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
       </td>
       <td className="px-4 py-3 text-right">
         {!account || !signer ? (
