@@ -217,6 +217,18 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
       });
       return;
     }
+    // Defense-in-depth: the button is already gated on folderReady,
+    // but a programmatic submit() / race condition that fires the
+    // on-chain deposit without a folder would leave the user with
+    // a confirmed tx and no place to persist the note — the
+    // commitment would be effectively lost. Hard-block here.
+    if (!folderReady) {
+      setPhase({
+        kind: "error",
+        message: "Pick a workspace folder before depositing.",
+      });
+      return;
+    }
 
     let amountWei: bigint;
     try {
@@ -344,7 +356,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
     } finally {
       setAbortCtrl(null);
     }
-  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast, commitmentTree]);
+  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast, commitmentTree, folderReady]);
 
   if (!open) return null;
 
@@ -484,11 +496,13 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
                     ? "Working…"
                     : isDeriving
                       ? "Awaiting signature…"
-                      : !folderReady
-                        ? "Pick a folder first"
-                        : insufficient
-                          ? "Insufficient balance"
-                          : "Deposit"}
+                      : !account
+                        ? "Connect wallet first"
+                        : !folderReady
+                          ? "Pick a folder first"
+                          : insufficient
+                            ? "Insufficient balance"
+                            : "Deposit"}
                 </Button>
               );
             })()}
