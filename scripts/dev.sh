@@ -440,6 +440,10 @@ if [ "$MOCK_MODE" = true ]; then
   PRIVATE_SETTLEMENT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *PrivateSettlement( proxy)?:" | tail -1 | awk '{print $NF}')
   IDENTITY_GATE=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *IdentityGate( proxy)?:" | tail -1 | awk '{print $NF}')
   FEE_VAULT=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *FeeVault( proxy)?:" | tail -1 | awk '{print $NF}')
+  # Treasury proxy — receives platform-fee skims from FeeVault. Surfaced
+  # so the admin UI and future indexers can reach it without operator
+  # hand-editing env files.
+  TREASURY=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *Treasury proxy:" | tail -1 | awk '{print $NF}')
   # SanctionsList lives behind TransparentUpgradeableProxy — DeployLocal
   # emits "SanctionsList proxy: 0x…" via console.log. Parse it so admin
   # can manage the self-multisig list without operator hand-editing the
@@ -790,6 +794,7 @@ NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
+NEXT_PUBLIC_TREASURY_ADDRESS=$TREASURY
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
@@ -874,6 +879,7 @@ cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
     "identityGate": "$IDENTITY_GATE",
     "relayerRegistry": "$RELAYER_REGISTRY",
     "feeVault": "$FEE_VAULT",
+    "treasury": "$TREASURY",
     "batchExecutor": "$BATCH_EXECUTOR",
 ${MOBILE_TOKENS_LINE}    "relayerUrl": "http://localhost:3002",
     "sharedOrderbookUrl": "http://localhost:4000"
@@ -953,6 +959,7 @@ echo "  RelayerRegistry:     $RELAYER_REGISTRY"
 [ -n "$PRIVATE_SETTLEMENT" ] && echo "  PrivateSettlement:   $PRIVATE_SETTLEMENT"
 [ -n "$IDENTITY_GATE" ] && echo "  IdentityGate:        $IDENTITY_GATE"
 [ -n "$FEE_VAULT" ] && echo "  FeeVault:            $FEE_VAULT"
+[ -n "$TREASURY" ] && echo "  Treasury:            $TREASURY"
 [ -n "$SANCTIONS_LIST" ] && echo "  SanctionsList:       $SANCTIONS_LIST"
 echo ""
 echo "  Logs:      $LOG_DIR/"

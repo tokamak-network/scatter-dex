@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 import {FeeVault} from "../../src/FeeVault.sol";
+import {Treasury} from "../../src/Treasury.sol";
 import {SanctionsList} from "../../src/SanctionsList.sol";
 import {IdentityGate} from "../../src/IdentityGate.sol";
 import {RelayerRegistry} from "../../src/RelayerRegistry.sol";
@@ -24,6 +25,13 @@ library ProxyDeployer {
         bytes memory initData = abi.encodeCall(FeeVault.initialize, (initialOwner, treasury, platformFeeBps));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
         return FeeVault(payable(address(proxy)));
+    }
+
+    function deployTreasury(address proxyAdminOwner, address initialOwner) internal returns (Treasury) {
+        Treasury impl = new Treasury();
+        bytes memory initData = abi.encodeCall(Treasury.initialize, (initialOwner));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), proxyAdminOwner, initData);
+        return Treasury(payable(address(proxy)));
     }
 
     function deploySanctionsList(address proxyAdminOwner, address initialOwner) internal returns (SanctionsList) {

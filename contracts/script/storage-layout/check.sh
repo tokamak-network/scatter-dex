@@ -22,6 +22,7 @@ CONTRACTS=(
   RelayerRegistry
   CommitmentPool
   PrivateSettlement
+  Treasury
 )
 
 normalize() {

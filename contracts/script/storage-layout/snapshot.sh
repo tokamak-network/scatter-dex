@@ -16,6 +16,7 @@ CONTRACTS=(
   RelayerRegistry
   CommitmentPool
   PrivateSettlement
+  Treasury
 )
 
 for c in "${CONTRACTS[@]}"; do

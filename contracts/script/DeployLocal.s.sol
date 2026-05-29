@@ -8,6 +8,7 @@ import {IssuanceApprovalRegistry} from "../src/IssuanceApprovalRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {Treasury} from "../src/Treasury.sol";
 import {SanctionsList} from "../src/SanctionsList.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
@@ -58,6 +59,7 @@ contract DeployLocal is Script {
         address privateSettlement;
         address gate;
         address vault;
+        address treasury;
         address batchExecutor;
         // OFAC SDN-style address blocklist behind TransparentUpgradeableProxy.
         // Empty by default in local deploys; owner can `addSanction(addr)` or
@@ -168,10 +170,19 @@ contract DeployLocal is Script {
             privateSettlement.setTokenWhitelist(wtonAddr, true);
         }
 
-        // 11. Deploy FeeVault behind TransparentUpgradeableProxy (5% platform fee, treasury = deployer).
-        //     Vault owner = deployer so this script can wire setAuthorizedDepositor below.
-        //     ProxyAdmin owner = UPGRADE_OWNER env (multisig on mainnet); falls back to deployer.
-        FeeVault vault = _deployFeeVaultProxy(deployer);
+        // 11. Deploy Treasury behind TransparentUpgradeableProxy, then
+        //     deploy FeeVault pointing at it as the platform-fee recipient.
+        //     - Treasury owner: TREASURY_ADDRESS env if a non-zero address
+        //       is provided (production: external multisig such as Safe;
+        //       its address can be a contract — Treasury.initialize only
+        //       guards `!= address(0)`). Falls back to `deployer` on local
+        //       dev so the script can finish wiring without operator help.
+        //     - Vault owner: deployer (so this script can wire
+        //       setAuthorizedDepositor below). ProxyAdmin owner =
+        //       UPGRADE_OWNER env (multisig on mainnet); falls back to
+        //       deployer.
+        Treasury treasury = _deployTreasuryProxy(deployer);
+        FeeVault vault = _deployFeeVaultProxy(deployer, address(treasury));
         vault.setAuthorizedDepositor(address(privateSettlement), true);
         // Enable the WETH auto-unwrap path so relayer claims paid in WETH
         // arrive as native ETH. Skipping this would not break claim()
@@ -248,6 +259,7 @@ contract DeployLocal is Script {
         d.privateSettlement = address(privateSettlement);
         d.gate = address(gate);
         d.vault = address(vault);
+        d.treasury = address(treasury);
         d.batchExecutor = address(batchExecutor);
         // Read the sanctions proxy address back from the contract that
         // was wired with it — no `run()`-local needed.
@@ -293,6 +305,7 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_RPC_URL=http://localhost:8545"));
         console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
         console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(vault)));
+        console.log(string.concat("NEXT_PUBLIC_TREASURY_ADDRESS=", vm.toString(d.treasury)));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
         _printSanctionsAndVerifiers(d);
@@ -408,14 +421,60 @@ contract DeployLocal is Script {
 
     /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.
     ///      Vault owner = deployer (so the script can finish wiring).
+    ///      `treasury_` is the address that receives platform-fee skims
+    ///      on claim()/withdrawPlatformRevenue — pre-Treasury this was
+    ///      hardcoded to `deployer`; now it's the dedicated Treasury proxy.
     ///      ProxyAdmin owner = `_upgradeOwner` resolved in `_resolveUpgradeOwner`.
-    function _deployFeeVaultProxy(address deployer) internal returns (FeeVault) {
+    function _deployFeeVaultProxy(address deployer, address treasury_) internal returns (FeeVault) {
         FeeVault impl = new FeeVault();
-        bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, deployer, 500));
+        bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, treasury_, 500));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("FeeVault impl:", address(impl));
         console.log("FeeVault proxy:", address(proxy));
         return FeeVault(payable(address(proxy)));
+    }
+
+    /// @dev Deploy Treasury behind a TransparentUpgradeableProxy.
+    ///      Treasury owner = `TREASURY_ADDRESS` env (multisig in
+    ///      production; the contract only enforces `!= address(0)`),
+    ///      else `deployer` on local dev. ProxyAdmin owner =
+    ///      `_upgradeOwner` so the upgrade authority is consistent
+    ///      across every contract this script deploys.
+    function _deployTreasuryProxy(address deployer) internal returns (Treasury) {
+        // Mirror `_resolveUpgradeOwner`'s guard exactly so a non-local
+        // deploy can't silently land treasury ownership on the
+        // deployer EOA — the original failure mode this whole PR
+        // exists to eliminate. Falls back to deployer only on the
+        // explicit local-dev chain ids (anvil 31337, hardhat 1337,
+        // dev-fork.sh 31338); any other chain hard-reverts.
+        address envOwner = vm.envOr("TREASURY_ADDRESS", address(0));
+        address treasuryOwner;
+        if (envOwner == address(0)) {
+            uint256 cid = block.chainid;
+            bool isLocalDevChain = cid == 31337 || cid == 1337 || cid == 31338;
+            require(
+                isLocalDevChain,
+                string.concat(
+                    "TREASURY_ADDRESS unset on non-local chain (chainid=",
+                    vm.toString(cid),
+                    "). Set TREASURY_ADDRESS to a multisig before deploy."
+                )
+            );
+            console.log("");
+            console.log("[WARN] TREASURY_ADDRESS unset - defaulting Treasury owner to deployer");
+            console.log("       OK for local anvil/hardhat only; ANY non-local chain hard-reverts here.");
+            console.log("");
+            treasuryOwner = deployer;
+        } else {
+            treasuryOwner = envOwner;
+        }
+        Treasury impl = new Treasury();
+        bytes memory initData = abi.encodeCall(Treasury.initialize, (treasuryOwner));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        console.log("Treasury impl:", address(impl));
+        console.log("Treasury proxy:", address(proxy));
+        console.log("Treasury owner:", treasuryOwner);
+        return Treasury(payable(address(proxy)));
     }
 
     function _deployIdentityGateProxy(address deployer, address initialRegistry) internal returns (IdentityGate) {
