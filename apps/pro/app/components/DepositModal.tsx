@@ -9,6 +9,7 @@ import {
 } from "@zkscatter/sdk/zk";
 import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
+import { useFolder } from "../lib/folder";
 import { useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useVault } from "../lib/vault";
@@ -85,6 +86,11 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   const { add: addNote } = useVault();
   const commitmentTree = useCommitmentTree();
   const { account, signer } = useWallet();
+  // Folder gate — depositing persists a note to the active workspace
+  // folder, so the button stays disabled until a folder is picked.
+  // Otherwise a successful on-chain deposit would have nowhere to
+  // write the note and the commitment would be unrecoverable.
+  const { ready: folderReady } = useFolder();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState(initialTokenSymbol ?? "ETH");
@@ -454,11 +460,13 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
                 balance !== null && amountWei !== null && amountWei > balance;
               const disableReason = !account
                 ? "Connect a wallet first"
-                : !tokenConfigured
-                  ? `${tokenSymbol} isn't deployed on this network yet`
-                  : insufficient
-                    ? `Insufficient ${tokenSymbol} balance`
-                    : undefined;
+                : !folderReady
+                  ? "Pick a workspace folder first"
+                  : !tokenConfigured
+                    ? `${tokenSymbol} isn't deployed on this network yet`
+                    : insufficient
+                      ? `Insufficient ${tokenSymbol} balance`
+                      : undefined;
               return (
                 <Button
                   onClick={submit}
@@ -466,6 +474,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
                     busy ||
                     isDeriving ||
                     !account ||
+                    !folderReady ||
                     !tokenConfigured ||
                     insufficient
                   }
@@ -475,9 +484,11 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
                     ? "Working…"
                     : isDeriving
                       ? "Awaiting signature…"
-                      : insufficient
-                        ? "Insufficient balance"
-                        : "Deposit"}
+                      : !folderReady
+                        ? "Pick a folder first"
+                        : insufficient
+                          ? "Insufficient balance"
+                          : "Deposit"}
                 </Button>
               );
             })()}
