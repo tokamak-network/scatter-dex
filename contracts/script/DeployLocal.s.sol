@@ -59,6 +59,7 @@ contract DeployLocal is Script {
         address privateSettlement;
         address gate;
         address vault;
+        address treasury;
         address batchExecutor;
         // OFAC SDN-style address blocklist behind TransparentUpgradeableProxy.
         // Empty by default in local deploys; owner can `addSanction(addr)` or
@@ -258,6 +259,7 @@ contract DeployLocal is Script {
         d.privateSettlement = address(privateSettlement);
         d.gate = address(gate);
         d.vault = address(vault);
+        d.treasury = address(treasury);
         d.batchExecutor = address(batchExecutor);
         // Read the sanctions proxy address back from the contract that
         // was wired with it — no `run()`-local needed.
@@ -303,6 +305,7 @@ contract DeployLocal is Script {
         console.log(string.concat("NEXT_PUBLIC_RPC_URL=http://localhost:8545"));
         console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
         console.log(string.concat("NEXT_PUBLIC_FEE_VAULT_ADDRESS=", vm.toString(vault)));
+        console.log(string.concat("NEXT_PUBLIC_TREASURY_ADDRESS=", vm.toString(d.treasury)));
         console.log(string.concat("NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002"));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(batchExecutor)));
         _printSanctionsAndVerifiers(d);
@@ -438,7 +441,33 @@ contract DeployLocal is Script {
     ///      `_upgradeOwner` so the upgrade authority is consistent
     ///      across every contract this script deploys.
     function _deployTreasuryProxy(address deployer) internal returns (Treasury) {
-        address treasuryOwner = vm.envOr("TREASURY_ADDRESS", deployer);
+        // Mirror `_resolveUpgradeOwner`'s guard exactly so a non-local
+        // deploy can't silently land treasury ownership on the
+        // deployer EOA — the original failure mode this whole PR
+        // exists to eliminate. Falls back to deployer only on the
+        // explicit local-dev chain ids (anvil 31337, hardhat 1337,
+        // dev-fork.sh 31338); any other chain hard-reverts.
+        address envOwner = vm.envOr("TREASURY_ADDRESS", address(0));
+        address treasuryOwner;
+        if (envOwner == address(0)) {
+            uint256 cid = block.chainid;
+            bool isLocalDevChain = cid == 31337 || cid == 1337 || cid == 31338;
+            require(
+                isLocalDevChain,
+                string.concat(
+                    "TREASURY_ADDRESS unset on non-local chain (chainid=",
+                    vm.toString(cid),
+                    "). Set TREASURY_ADDRESS to a multisig before deploy."
+                )
+            );
+            console.log("");
+            console.log("[WARN] TREASURY_ADDRESS unset - defaulting Treasury owner to deployer");
+            console.log("       OK for local anvil/hardhat only; ANY non-local chain hard-reverts here.");
+            console.log("");
+            treasuryOwner = deployer;
+        } else {
+            treasuryOwner = envOwner;
+        }
         Treasury impl = new Treasury();
         bytes memory initData = abi.encodeCall(Treasury.initialize, (treasuryOwner));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
