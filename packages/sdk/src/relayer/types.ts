@@ -100,7 +100,28 @@ export interface RelayerStatsResponse {
    *  analytics page's `/history/fees` aggregate. */
   feeTotals?: Array<{ token: string; count: number; totalWei: string }>;
   metrics?: RelayerRuntimeMetrics;
+  /** Per-app (Pay = scatterDirectAuth, Pro = settleAuth) breakdown of
+   *  counts / volume / fees. Optional: older relayers omit this field
+   *  and consumers degrade to the aggregate view for that row. */
+  byApp?: {
+    pay: RelayerStatsByApp;
+    pro: RelayerStatsByApp;
+  };
 }
+
+/** Per-app subset of RelayerStatsResponse. Mirrors the aggregate
+ *  fields the leaderboard ranks on (orders / volume / fees) so the
+ *  segmented control can re-rank using the same comparator logic. */
+export interface RelayerStatsByApp {
+  totalOrders: number;
+  settledOrders: number;
+  settledVolume?: RelayerSettledVolume[];
+  feeTotals?: Array<{ token: string; count: number; totalWei: string }>;
+}
+
+/** Which app segment the leaderboard is showing. `null` means "All"
+ *  (aggregate view). Pay maps to scatterDirectAuth, Pro to settleAuth. */
+export type AppSegment = "pay" | "pro";
 
 /** Combined view: on-chain registry data + live `/api/info` probe.
  *  `api` is undefined when the relayer is offline / unreachable.
