@@ -201,7 +201,15 @@ async function main() {
       const { singleParty, ...rest } = ctx;
       const ourAddr = authSubmitter.getAddress().toLowerCase();
       const takerRelayer = singleParty ? undefined : (ctx.takerRelayer ?? ourAddr);
-      const payload = { ...rest, makerRelayer: ourAddr, takerRelayer };
+      // `singleParty` is the local routing signal; the shared-OB
+      // wire format uses the entry-point name directly so the
+      // indexer can split byApp without re-deriving "is this a
+      // single-party flow?" from row shape. Pay (scatterDirectAuth)
+      // and Pro (settleAuth) match the on-chain function names.
+      const type: "settleAuth" | "scatterDirectAuth" = singleParty
+        ? "scatterDirectAuth"
+        : "settleAuth";
+      const payload = { ...rest, makerRelayer: ourAddr, takerRelayer, type };
       // Persist before attempting delivery — local DB is the trusted
       // source. If the immediate push drops (transient indexer outage,
       // network blip), SettlementPushWorker will replay from the

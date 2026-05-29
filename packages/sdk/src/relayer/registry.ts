@@ -88,6 +88,11 @@ interface SharedObSettlement {
   buyAmount?: string | null;
   feeMaker: string;
   feeTaker: string;
+  /** Pay = scatterDirectAuth, Pro = settleAuth. Absent for rows
+   *  pushed by older relayers or pre-byApp indexer state — the
+   *  aggregator counts those in the all-segment totals but skips
+   *  them in byApp so the split doesn't fabricate attribution. */
+  type?: "settleAuth" | "scatterDirectAuth" | null;
 }
 
 interface SharedObListResponse {
@@ -215,6 +220,17 @@ interface RelayerAggregate {
   txCount: number;
   volByToken: Map<string, { count: number; totalVolume: bigint }>;
   feeByToken: Map<string, { count: number; totalWei: bigint }>;
+  /** Same shape as the top-level fields, but partitioned by the
+   *  settlement's entry-point (`scatterDirectAuth` → pay,
+   *  `settleAuth` → pro). Rows whose indexer record lacks a `type`
+   *  (older relayer push / pre-migration backfill) contribute to
+   *  the top-level totals only — they're invisible here, which is
+   *  why the operators leaderboard's segment view shows "—" for
+   *  them rather than crediting an unknown side. */
+  byApp: {
+    pay: { txCount: number; volByToken: Map<string, { count: number; totalVolume: bigint }>; feeByToken: Map<string, { count: number; totalWei: bigint }> };
+    pro: { txCount: number; volByToken: Map<string, { count: number; totalVolume: bigint }>; feeByToken: Map<string, { count: number; totalWei: bigint }> };
+  };
 }
 
 /** Single-pass index of the shared-OB settlement list into per-relayer
@@ -235,44 +251,81 @@ function buildAllStatsFromSharedOb(
   const ensure = (addr: string): RelayerAggregate => {
     let agg = byAddr.get(addr);
     if (!agg) {
-      agg = { txCount: 0, volByToken: new Map(), feeByToken: new Map() };
+      agg = {
+        txCount: 0,
+        volByToken: new Map(),
+        feeByToken: new Map(),
+        byApp: {
+          pay: { txCount: 0, volByToken: new Map(), feeByToken: new Map() },
+          pro: { txCount: 0, volByToken: new Map(), feeByToken: new Map() },
+        },
+      };
       byAddr.set(addr, agg);
     }
     return agg;
   };
+  // Bucket selector — undefined when the row's `type` is unknown
+  // (older relayer push / pre-migration row). Callers fall back to
+  // counting in aggregate only.
+  const subFor = (
+    agg: RelayerAggregate,
+    type: SharedObSettlement["type"],
+  ): RelayerAggregate["byApp"]["pay"] | undefined =>
+    type === "scatterDirectAuth"
+      ? agg.byApp.pay
+      : type === "settleAuth"
+      ? agg.byApp.pro
+      : undefined;
+  // Token-volume / fee accumulators that take an explicit sub-map so
+  // the caller can fan-out a single (token, amount) pair into both
+  // the aggregate map and the byApp sub-map without re-parsing the
+  // BigInt twice.
+  const addVolTo = (
+    map: Map<string, { count: number; totalVolume: bigint }>,
+    tok: string,
+    v: bigint,
+  ) => {
+    const cur = map.get(tok) ?? { count: 0, totalVolume: 0n };
+    cur.totalVolume += v;
+    cur.count += 1;
+    map.set(tok, cur);
+  };
+  const addFeeTo = (
+    map: Map<string, { count: number; totalWei: bigint }>,
+    tok: string,
+    v: bigint,
+  ) => {
+    if (v === 0n) return;
+    const cur = map.get(tok) ?? { count: 0, totalWei: 0n };
+    cur.totalWei += v;
+    cur.count += 1;
+    map.set(tok, cur);
+  };
   const addVol = (
     agg: RelayerAggregate,
+    sub: RelayerAggregate["byApp"]["pay"] | undefined,
     tok: string | null | undefined,
     amt: string | null | undefined,
   ) => {
     if (!tok || !amt) return;
     const k = tok.toLowerCase();
-    const cur = agg.volByToken.get(k) ?? { count: 0, totalVolume: 0n };
-    try {
-      cur.totalVolume += BigInt(amt);
-      cur.count += 1;
-      agg.volByToken.set(k, cur);
-    } catch {
-      /* malformed wei string — drop the row instead of crashing the page */
-    }
+    let v: bigint;
+    try { v = BigInt(amt); } catch { return; /* malformed wei string — drop the row */ }
+    addVolTo(agg.volByToken, k, v);
+    if (sub) addVolTo(sub.volByToken, k, v);
   };
   const addFee = (
     agg: RelayerAggregate,
+    sub: RelayerAggregate["byApp"]["pay"] | undefined,
     tok: string | null | undefined,
     amt: string | null | undefined,
   ) => {
     if (!tok || !amt) return;
     const k = tok.toLowerCase();
-    const cur = agg.feeByToken.get(k) ?? { count: 0, totalWei: 0n };
-    try {
-      const v = BigInt(amt);
-      if (v === 0n) return;
-      cur.totalWei += v;
-      cur.count += 1;
-      agg.feeByToken.set(k, cur);
-    } catch {
-      /* same — skip on parse failure */
-    }
+    let v: bigint;
+    try { v = BigInt(amt); } catch { return; }
+    addFeeTo(agg.feeByToken, k, v);
+    if (sub) addFeeTo(sub.feeByToken, k, v);
   };
   for (const row of rows) {
     const maker = row.makerRelayer?.toLowerCase();
@@ -291,18 +344,25 @@ function buildAllStatsFromSharedOb(
     //      branch fires.
     if (maker) {
       const agg = ensure(maker);
+      const sub = subFor(agg, row.type);
       agg.txCount += 1;
-      addVol(agg, row.sellToken, row.sellAmount);
-      addFee(agg, row.buyToken, row.feeMaker);
+      if (sub) sub.txCount += 1;
+      addVol(agg, sub, row.sellToken, row.sellAmount);
+      addFee(agg, sub, row.buyToken, row.feeMaker);
     }
     if (taker) {
       const agg = ensure(taker);
+      const sub = subFor(agg, row.type);
       // Avoid double-counting the tx itself when both sides credit
       // the same relayer; only the legs (different tokens) accrue
-      // a second time.
-      if (taker !== maker) agg.txCount += 1;
-      addVol(agg, row.buyToken, row.buyAmount);
-      addFee(agg, row.sellToken, row.feeTaker);
+      // a second time. Same rule applies inside the byApp sub-agg
+      // so a self-self match doesn't inflate Pro txCount.
+      if (taker !== maker) {
+        agg.txCount += 1;
+        if (sub) sub.txCount += 1;
+      }
+      addVol(agg, sub, row.buyToken, row.buyAmount);
+      addFee(agg, sub, row.sellToken, row.feeTaker);
     }
   }
   return byAddr;
@@ -352,5 +412,41 @@ function finalizeStats(
           totalWei: totalWei.toString(),
         }))
       : [],
+    // Emit byApp only when at least one segment has counted a
+    // settlement — matches the optional jsdoc on
+    // `RelayerStatsResponse.byApp` and lets the operators
+    // leaderboard's "older relayer / no split" path fire for
+    // never-active relayers (rather than render a 0%·0% mix bar).
+    // PayProMixBar already returns null when both sides are zero,
+    // so the visual outcome is the same — this just keeps the
+    // wire payload honest about whether per-app data exists.
+    byApp: agg && hasByAppActivity(agg.byApp) ? materializeByApp(agg.byApp) : undefined,
   };
+}
+
+function hasByAppActivity(byApp: RelayerAggregate["byApp"]): boolean {
+  return byApp.pay.txCount > 0 || byApp.pro.txCount > 0;
+}
+
+function materializeByApp(
+  byApp: RelayerAggregate["byApp"],
+): NonNullable<RelayerStatsResponse["byApp"]> {
+  const one = (sub: RelayerAggregate["byApp"]["pay"]) => ({
+    // shared-OB only sees confirmed settlements (relayers push after
+    // the receipt), so totalOrders === settledOrders here — same
+    // shape contract as the aggregate fields above.
+    totalOrders: sub.txCount,
+    settledOrders: sub.txCount,
+    settledVolume: Array.from(sub.volByToken, ([sellToken, { count, totalVolume }]) => ({
+      sellToken,
+      count,
+      totalVolume: totalVolume.toString(),
+    })),
+    feeTotals: Array.from(sub.feeByToken, ([token, { count, totalWei }]) => ({
+      token,
+      count,
+      totalWei: totalWei.toString(),
+    })),
+  });
+  return { pay: one(byApp.pay), pro: one(byApp.pro) };
 }

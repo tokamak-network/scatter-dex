@@ -114,6 +114,47 @@ describe("/api/settlements", () => {
     expect(stored!.verified).toBe(false);
   });
 
+  it("round-trips `type` through INSERT → getSettlement → GET /api/settlements", async () => {
+    // settleAuth + scatterDirectAuth — the two values the operators
+    // leaderboard's byApp aggregator splits on. A row with no `type`
+    // also round-trips (older relayer) and must persist as
+    // undefined/null so the aggregator's "skip unknown" branch fires.
+    await post(
+      basePayload({ txHash: "0x" + "01".repeat(32), type: "settleAuth" }),
+      makerW,
+    );
+    await post(
+      basePayload({
+        txHash: "0x" + "02".repeat(32),
+        type: "scatterDirectAuth",
+      }),
+      makerW,
+    );
+    const noType = basePayload({ txHash: "0x" + "03".repeat(32) });
+    delete (noType as Partial<SettlementInsert>).type;
+    await post(noType, makerW);
+
+    expect(db.getSettlement("0x" + "01".repeat(32))!.type).toBe("settleAuth");
+    expect(db.getSettlement("0x" + "02".repeat(32))!.type).toBe("scatterDirectAuth");
+    expect(db.getSettlement("0x" + "03".repeat(32))!.type).toBeUndefined();
+
+    const res = await fetch(`http://localhost:${PORT}/api/settlements`);
+    const body = (await res.json()) as { settlements: Array<{ txHash: string; type?: string }> };
+    const byHash = Object.fromEntries(body.settlements.map((s) => [s.txHash, s.type]));
+    expect(byHash["0x" + "01".repeat(32)]).toBe("settleAuth");
+    expect(byHash["0x" + "02".repeat(32)]).toBe("scatterDirectAuth");
+    expect(byHash["0x" + "03".repeat(32)]).toBeUndefined();
+  });
+
+  it("400 on unknown `type` value", async () => {
+    const r = await post(
+      basePayload({ type: "claimDirectAuth" as unknown as "settleAuth" }),
+      makerW,
+    );
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatch(/type/);
+  });
+
   it("idempotent on duplicate tx_hash — returns 200 with inserted:false", async () => {
     await post(basePayload(), makerW);
     const r = await post(basePayload(), makerW);
