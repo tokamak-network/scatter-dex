@@ -8,6 +8,7 @@ import {IssuanceApprovalRegistry} from "../src/IssuanceApprovalRegistry.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
+import {Treasury} from "../src/Treasury.sol";
 import {SanctionsList} from "../src/SanctionsList.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
@@ -168,10 +169,19 @@ contract DeployLocal is Script {
             privateSettlement.setTokenWhitelist(wtonAddr, true);
         }
 
-        // 11. Deploy FeeVault behind TransparentUpgradeableProxy (5% platform fee, treasury = deployer).
-        //     Vault owner = deployer so this script can wire setAuthorizedDepositor below.
-        //     ProxyAdmin owner = UPGRADE_OWNER env (multisig on mainnet); falls back to deployer.
-        FeeVault vault = _deployFeeVaultProxy(deployer);
+        // 11. Deploy Treasury behind TransparentUpgradeableProxy, then
+        //     deploy FeeVault pointing at it as the platform-fee recipient.
+        //     - Treasury owner: TREASURY_ADDRESS env if a non-zero address
+        //       is provided (production: external multisig such as Safe;
+        //       its address can be a contract — Treasury.initialize only
+        //       guards `!= address(0)`). Falls back to `deployer` on local
+        //       dev so the script can finish wiring without operator help.
+        //     - Vault owner: deployer (so this script can wire
+        //       setAuthorizedDepositor below). ProxyAdmin owner =
+        //       UPGRADE_OWNER env (multisig on mainnet); falls back to
+        //       deployer.
+        Treasury treasury = _deployTreasuryProxy(deployer);
+        FeeVault vault = _deployFeeVaultProxy(deployer, address(treasury));
         vault.setAuthorizedDepositor(address(privateSettlement), true);
         // Enable the WETH auto-unwrap path so relayer claims paid in WETH
         // arrive as native ETH. Skipping this would not break claim()
@@ -408,14 +418,34 @@ contract DeployLocal is Script {
 
     /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.
     ///      Vault owner = deployer (so the script can finish wiring).
+    ///      `treasury_` is the address that receives platform-fee skims
+    ///      on claim()/withdrawPlatformRevenue — pre-Treasury this was
+    ///      hardcoded to `deployer`; now it's the dedicated Treasury proxy.
     ///      ProxyAdmin owner = `_upgradeOwner` resolved in `_resolveUpgradeOwner`.
-    function _deployFeeVaultProxy(address deployer) internal returns (FeeVault) {
+    function _deployFeeVaultProxy(address deployer, address treasury_) internal returns (FeeVault) {
         FeeVault impl = new FeeVault();
-        bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, deployer, 500));
+        bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, treasury_, 500));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("FeeVault impl:", address(impl));
         console.log("FeeVault proxy:", address(proxy));
         return FeeVault(payable(address(proxy)));
+    }
+
+    /// @dev Deploy Treasury behind a TransparentUpgradeableProxy.
+    ///      Treasury owner = `TREASURY_ADDRESS` env (multisig in
+    ///      production; the contract only enforces `!= address(0)`),
+    ///      else `deployer` on local dev. ProxyAdmin owner =
+    ///      `_upgradeOwner` so the upgrade authority is consistent
+    ///      across every contract this script deploys.
+    function _deployTreasuryProxy(address deployer) internal returns (Treasury) {
+        address treasuryOwner = vm.envOr("TREASURY_ADDRESS", deployer);
+        Treasury impl = new Treasury();
+        bytes memory initData = abi.encodeCall(Treasury.initialize, (treasuryOwner));
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        console.log("Treasury impl:", address(impl));
+        console.log("Treasury proxy:", address(proxy));
+        console.log("Treasury owner:", treasuryOwner);
+        return Treasury(payable(address(proxy)));
     }
 
     function _deployIdentityGateProxy(address deployer, address initialRegistry) internal returns (IdentityGate) {
