@@ -195,8 +195,14 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           stretching to the tall Platform-revenue table; `min-w-0`
           on each child lets the inner table shrink instead of
           blowing the column past the viewport on long addresses. */}
-      <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2">
-        <section className="min-w-0">
+      {/* Stacked layout — Platform revenue gets the full width so the
+          per-token table doesn't get cramped (FROM CLAIMS / IN VAULT
+          / ACTION columns squeezed under the side-by-side md:grid-cols-2
+          version), and the Treasury writes section sits below it on
+          its own row. User feedback on PR #872 — side-by-side made
+          the revenue table hard to read at a glance. */}
+      <div className="space-y-10">
+        <section>
           <SectionHeader
             title="Platform revenue"
             badge="live"
@@ -210,7 +216,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           />
         </section>
 
-        <section className="min-w-0">
+        <section>
           <SectionHeader title="Treasury writes" badge="live" />
           <FeeVaultWrites
             feeVaultAddress={feeVaultAddress}
