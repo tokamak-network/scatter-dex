@@ -131,15 +131,13 @@ export class OrderbookDB {
     // Lightweight ALTER for pre-byApp databases — adds the `type`
     // column to settlements tables that were created before the
     // column existed. SQLite has no `IF NOT EXISTS` on ALTER, so we
-    // probe pragma_table_info first; a successful probe-and-add is a
-    // single statement either way. Rows that pre-date the change
-    // keep NULL — the byApp aggregator treats those as "unknown" and
-    // skips them instead of fabricating a Pay/Pro attribution.
-    const hasTypeColumn = this.db
-      .prepare(`SELECT 1 FROM pragma_table_info('settlements') WHERE name = 'type'`)
-      .get();
-    if (!hasTypeColumn) {
-      this.db.exec(`ALTER TABLE settlements ADD COLUMN type TEXT`);
+    // probe column metadata first via better-sqlite3's `.pragma()`
+    // helper. Rows that pre-date the change keep NULL — the byApp
+    // aggregator treats those as "unknown" and skips them instead
+    // of fabricating a Pay/Pro attribution.
+    const columns = this.db.pragma("table_info(settlements)") as Array<{ name: string }>;
+    if (!columns.some((c) => c.name === "type")) {
+      this.db.exec("ALTER TABLE settlements ADD COLUMN type TEXT");
     }
   }
 
