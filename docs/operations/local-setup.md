@@ -230,7 +230,16 @@ cd <scatter-dex>
 ./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry from step 3>
 ```
 
-After the swap, `isVerified(user)` calls from **both Pay and Pro** route through the same zk-X509 registry (they share the on-chain `IdentityGate`). The registry already has the test CA loaded (from step 3) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity through the zk-X509 dashboard at http://localhost:3000 (Identity → pick the registry → submit a proof against the seeded test CA). The CA itself should already be visible in the registry's Explorer tab; if it's not, re-run step 3 — `caMerkleRoot` in the script output should not be all-zeros.
+After the swap, `isVerified(user)` calls from **both Pay and Pro** route through the same zk-X509 registry (they share the on-chain `IdentityGate`). The registry already has the test CA loaded (from step 3) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity. Do that **interactively** through either:
+
+- the zk-X509 dashboard at http://localhost:3000 (Identity → pick the registry → submit a proof against the seeded test CA), or
+- the **zk-X509 desktop app** — the CA-verification client that generates the attestation proof from a real X.509 cert. Build it once (`cd <zk-X509> && make desktop`), then launch:
+
+  ```bash
+  <zk-X509>/target/release/bundle/macos/zk-X509.app/Contents/MacOS/zk-x509-desktop 2>&1 | tee /tmp/zkx509-app.log
+  ```
+
+The CA itself should already be visible in the registry's Explorer tab; if it's not, re-run step 3 — `caMerkleRoot` in the script output should not be all-zeros. (The desktop app's proof generation uses the SP1 prover, which needs Docker.)
 
 ### Ports at a glance (integration + zk-X509)
 
