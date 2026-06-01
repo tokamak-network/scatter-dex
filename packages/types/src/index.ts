@@ -123,3 +123,8 @@ export function clampLimit(value: unknown, max: number, defaultValue: number): n
   const n = Number.isFinite(raw) ? raw : defaultValue;
   return Math.min(Math.max(Math.trunc(n), 1), max);
 }
+
+// Wallet-signature admin auth core (server-only). Shared by the Node
+// backends (zk-relayer, shared-orderbook); each injects its own admin probe.
+export { AdminSiweAuth, formatChallengeMessage } from "./admin-siwe.js";
+export type { AdminSiweMessageOptions } from "./admin-siwe.js";

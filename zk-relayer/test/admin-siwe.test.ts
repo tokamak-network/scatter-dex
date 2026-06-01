@@ -50,9 +50,13 @@ describe("AdminSiweAuth", () => {
     const auth = buildAuth(new Set([operator.address]));
     const { nonce, message } = auth.issueChallenge();
     const signature = await attacker.signMessage(message);
+    // buildAuth constructs the shared AdminSiweAuth with default options, so the
+    // rejection carries the shared default wording. Production
+    // (makeAdminSiweAuthFromChain) overrides it with the registry-specific
+    // message; this test only asserts that a non-admin signer is rejected.
     await expect(
       auth.createSession({ nonce, message, signature }),
-    ).rejects.toThrow(/not an active relayer/i);
+    ).rejects.toThrow(/not an authorized admin/i);
   });
 
   it("burns the nonce even when the signature does not verify", async () => {
