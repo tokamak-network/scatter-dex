@@ -9,8 +9,10 @@ import {
   type CertificateRequest,
   type GeneratedKeypair,
 } from "../../lib/x509";
+import { encryptPrivateKeyPem, type EncryptedKeystore } from "../../lib/keystore";
 
 const DEFAULT_VALIDITY = 365;
+const MIN_PASSPHRASE = 12;
 
 export interface IssuedRecord {
   walletAddress: string;
@@ -20,7 +22,8 @@ export interface IssuedRecord {
   validityDays: number;
   publicKeyFingerprint: string;
   request: CertificateRequest;
-  privateKeyPem: string;
+  /** The operator private key, passphrase-encrypted — never plaintext. */
+  encryptedPrivateKey: EncryptedKeystore;
   publicKeyPem: string;
   issuedAt: string;
 }
@@ -35,6 +38,8 @@ interface FormState {
   country: string;
   walletAddress: string;
   validityDays: number;
+  passphrase: string;
+  passphraseConfirm: string;
 }
 
 const INITIAL: FormState = {
@@ -43,11 +48,14 @@ const INITIAL: FormState = {
   country: "KR",
   walletAddress: "",
   validityDays: DEFAULT_VALIDITY,
+  passphrase: "",
+  passphraseConfirm: "",
 };
 
 export function IssueForm({ onIssued }: Props) {
   const [form, setForm] = useState<FormState>(INITIAL);
   const [busy, setBusy] = useState(false);
+  const [issuing, setIssuing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<
     | {
@@ -100,23 +108,49 @@ export function IssueForm({ onIssued }: Props) {
     }
   }
 
-  function handleIssue() {
+  function passphraseError(): string | null {
+    if (form.passphrase.length < MIN_PASSPHRASE)
+      return `Passphrase must be at least ${MIN_PASSPHRASE} characters`;
+    if (form.passphrase !== form.passphraseConfirm) return "Passphrases do not match";
+    return null;
+  }
+
+  async function handleIssue() {
     if (!preview) return;
-    const record: IssuedRecord = {
-      walletAddress: preview.request.walletAddress,
-      commonName: preview.request.commonName,
-      organization: preview.request.organization,
-      country: preview.request.country,
-      validityDays: preview.request.validityDays,
-      publicKeyFingerprint: preview.kp.publicKeyFingerprint,
-      request: preview.request,
-      privateKeyPem: preview.kp.privateKeyPem,
-      publicKeyPem: preview.kp.publicKeyPem,
-      issuedAt: new Date().toISOString(),
-    };
-    onIssued(record);
-    setPreview(null);
-    setForm(INITIAL);
+    const pe = passphraseError();
+    if (pe) {
+      setError(pe);
+      return;
+    }
+    setError(null);
+    setIssuing(true);
+    try {
+      // Encrypt the private key with the passphrase before it leaves this
+      // component — the issued bundle never carries plaintext key material.
+      const encryptedPrivateKey = await encryptPrivateKeyPem(
+        preview.kp.privateKeyPem,
+        form.passphrase,
+      );
+      const record: IssuedRecord = {
+        walletAddress: preview.request.walletAddress,
+        commonName: preview.request.commonName,
+        organization: preview.request.organization,
+        country: preview.request.country,
+        validityDays: preview.request.validityDays,
+        publicKeyFingerprint: preview.kp.publicKeyFingerprint,
+        request: preview.request,
+        encryptedPrivateKey,
+        publicKeyPem: preview.kp.publicKeyPem,
+        issuedAt: new Date().toISOString(),
+      };
+      onIssued(record);
+      setPreview(null);
+      setForm(INITIAL);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Encryption failed");
+    } finally {
+      setIssuing(false);
+    }
   }
 
   return (
@@ -172,10 +206,40 @@ export function IssueForm({ onIssued }: Props) {
         </div>
       )}
 
+      {preview && (
+        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Field label="Key passphrase" hint={`min ${MIN_PASSPHRASE} chars`}>
+            <input
+              type="password"
+              autoComplete="new-password"
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+              placeholder="encrypts the private key"
+              value={form.passphrase}
+              onChange={(e) => update("passphrase", e.target.value)}
+            />
+          </Field>
+          <Field label="Confirm passphrase">
+            <input
+              type="password"
+              autoComplete="new-password"
+              className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+              value={form.passphraseConfirm}
+              onChange={(e) => update("passphraseConfirm", e.target.value)}
+            />
+          </Field>
+          <p className="text-xs text-[var(--color-text-muted)] md:col-span-2">
+            The private key is encrypted with this passphrase (PBKDF2-HMAC-SHA256 +
+            AES-256-GCM) before download — the bundle never contains a plaintext key.
+            Deliver the passphrase to the operator out-of-band; it is never stored or sent
+            to a server and cannot be recovered if lost.
+          </p>
+        </div>
+      )}
+
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || issuing}
           onClick={handleGenerate}
           className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
@@ -184,10 +248,11 @@ export function IssueForm({ onIssued }: Props) {
         {preview && (
           <button
             type="button"
+            disabled={busy || issuing || passphraseError() !== null}
             onClick={handleIssue}
-            className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-4 py-2 text-sm font-medium text-[var(--color-success)] hover:bg-[var(--color-success)] hover:text-white"
+            className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-4 py-2 text-sm font-medium text-[var(--color-success)] hover:bg-[var(--color-success)] hover:text-white disabled:opacity-50"
           >
-            Issue cert ↗
+            {issuing ? "Encrypting…" : "Issue cert ↗"}
           </button>
         )}
       </div>
@@ -204,12 +269,12 @@ export function IssueForm({ onIssued }: Props) {
             hint={`SHA-256 fingerprint: ${preview.kp.publicKeyFingerprint}`}
             value={preview.kp.publicKeyPem}
           />
-          <Preview
-            label="Operator private key (PKCS#8 PEM) — hand off securely"
-            hint="Never store this on the server. Deliver to the operator over an out-of-band secure channel."
-            value={preview.kp.privateKeyPem}
-            danger
-          />
+          <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-text-muted)]">
+            The private key is held in memory only and is{" "}
+            <strong>encrypted with your passphrase on “Issue cert”</strong> — the downloaded
+            bundle contains the encrypted keystore, never plaintext. It is not shown here to
+            avoid on-screen exposure.
+          </div>
         </div>
       )}
     </div>
