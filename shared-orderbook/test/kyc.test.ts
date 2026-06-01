@@ -282,9 +282,10 @@ describe("KYC routes", () => {
     expect(vbody.notes).toBe("docs look good");
     expect(vbody.reviewedAt).toBeGreaterThan(0);
 
-    // verified → approved, then approved is terminal
+    // verified → approved; from approved the only move is → revoked
     expect((await (await postStatus(sub.id, { status: "approved" })).json()).status).toBe("approved");
-    expect((await postStatus(sub.id, { status: "rejected" })).status).toBe(400);
+    expect((await postStatus(sub.id, { status: "rejected" })).status).toBe(400); // approved↛rejected
+    expect((await postStatus(sub.id, { status: "verified" })).status).toBe(400); // no re-open
 
     // unknown id
     expect((await postStatus("nope", { status: "verified" })).status).toBe(404);
@@ -292,6 +293,33 @@ describe("KYC routes", () => {
     // public status endpoint reflects the final decision
     const pub = await (await fetch(`${base}/api/kyc/status?wallet=${wallet}`)).json();
     expect(pub.status).toBe("approved");
+  });
+
+  it("admin POST /submissions/:id/status — approved → revoked (post-approval), terminal, with reason", async () => {
+    const wallet = "0x" + "7".repeat(40);
+    const sub = await (await submitForm({ wallet, email: "7@example.com", video: true, idDoc: true })).json();
+
+    // revoke is only reachable from approved — not from pending.
+    expect((await postStatus(sub.id, { status: "revoked" })).status).toBe(400);
+
+    await postStatus(sub.id, { status: "verified" });
+    await postStatus(sub.id, { status: "approved" });
+
+    // approved → revoked with the revocation reason carried in notes.
+    const revoked = await postStatus(sub.id, { status: "revoked", notes: "key compromised" });
+    expect(revoked.status).toBe(200);
+    const rbody = await revoked.json();
+    expect(rbody.status).toBe("revoked");
+    expect(rbody.notes).toBe("key compromised");
+
+    // revoked is terminal — no further transitions.
+    expect((await postStatus(sub.id, { status: "approved" })).status).toBe(400);
+    expect((await postStatus(sub.id, { status: "rejected" })).status).toBe(400);
+
+    // public status + DB reflect the revocation.
+    const pub = await (await fetch(`${base}/api/kyc/status?wallet=${wallet}`)).json();
+    expect(pub.status).toBe("revoked");
+    expect(db.getKycById(sub.id)?.status).toBe("revoked");
   });
 
   it("admin routes are disabled (503) when ADMIN_TOKEN is unset", async () => {

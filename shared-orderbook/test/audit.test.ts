@@ -132,6 +132,25 @@ describe("audit log wiring (KYC + Root CA → /api/admin/audit)", () => {
     expect(JSON.parse(audit.entries[0].detail)).toMatchObject({ from: "pending", to: "verified", notes: "ok" });
   });
 
+  it("records a post-approval revoke as kyc.revoked", async () => {
+    const wallet = "0x" + "d2".repeat(20);
+    const sub = await (await submitForm(wallet)).json();
+    const token = await getSession(adminWallet);
+    const hdr = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const post = (body: unknown) =>
+      fetch(`http://localhost:${port}/api/kyc/submissions/${sub.id}/status`, { method: "POST", headers: hdr, body: JSON.stringify(body) });
+
+    await post({ status: "verified" });
+    await post({ status: "approved" });
+    expect((await post({ status: "revoked", notes: "compromised" })).status).toBe(200);
+
+    const audit = await (await fetch(`http://localhost:${port}/api/admin/audit?action=kyc.revoked&targetId=${sub.id}`, {
+      headers: { authorization: `Bearer ${token}` },
+    })).json();
+    expect(audit.entries).toHaveLength(1);
+    expect(JSON.parse(audit.entries[0].detail)).toMatchObject({ from: "approved", to: "revoked", notes: "compromised" });
+  });
+
   it("records a Root CA publication, and the static-token actor is null", async () => {
     // Publish via the static token → actor should be null.
     const res = await fetch(`http://localhost:${port}/api/ca/root`, {
