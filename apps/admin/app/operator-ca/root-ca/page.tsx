@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { SectionHeader } from "../../components/SectionHeader";
+import { TestOnlyBanner } from "../../components/TestOnlyBanner";
 import { GenerateRootCa } from "./_components/GenerateRootCa";
 
 const ORDERBOOK_URL = (
@@ -67,6 +68,8 @@ export default function RootCaPage() {
           leaves the admin device that generated it.
         </p>
       </header>
+
+      <TestOnlyBanner context="The Root CA is generated in this browser." />
 
       <section>
         <SectionHeader
