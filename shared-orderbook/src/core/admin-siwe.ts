@@ -63,8 +63,15 @@ interface SessionEntry {
 export function makeAdminSiweFromAllowlist(addresses: Iterable<string>): AdminSiweAuth | null {
   const allow = new Set<string>();
   for (const a of addresses) {
-    const trimmed = a.trim().toLowerCase();
-    if (trimmed) allow.add(trimmed);
+    const trimmed = a.trim();
+    if (!trimmed) continue;
+    // Fail loud at boot on a malformed entry — a typo'd address would
+    // otherwise become a silently-never-matching allowlist row, locking the
+    // admin out with no signal.
+    if (!ethers.isAddress(trimmed)) {
+      throw new Error(`Invalid ADMIN_ADDRESSES entry: "${trimmed}"`);
+    }
+    allow.add(trimmed.toLowerCase());
   }
   if (allow.size === 0) return null;
   return new AdminSiweAuth((addr: string) => allow.has(addr.toLowerCase()));

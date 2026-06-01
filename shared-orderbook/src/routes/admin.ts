@@ -8,6 +8,7 @@ import { Router, type Request, type Response, type RequestHandler } from "expres
 import type { OrderbookDB } from "../core/db.js";
 import type { VerifyMonitor } from "../core/verify-runtime.js";
 import type { AdminSiweAuth } from "../core/admin-siwe.js";
+import { bearerOf } from "../middleware/admin-auth.js";
 
 export interface AdminDeps {
   db: OrderbookDB;
@@ -53,13 +54,12 @@ export function createAdminRoutes(deps: AdminDeps): Router {
       }
     });
 
-    // Explicit logout. Idempotent. Reads the bearer token directly rather than
-    // going through adminAuth (a stale token should still be revocable).
+    // Explicit logout. Idempotent. Reads the bearer token directly (via the
+    // same `bearerOf` parse the gate uses) rather than going through adminAuth
+    // — a stale token should still be revocable.
     router.post("/session/revoke", (req: Request, res: Response) => {
-      const header = req.headers.authorization;
-      if (header?.startsWith("Bearer ")) {
-        siwe.revokeSession(header.slice("Bearer ".length).trim());
-      }
+      const token = bearerOf(req);
+      if (token) siwe.revokeSession(token);
       res.status(204).end();
     });
   }

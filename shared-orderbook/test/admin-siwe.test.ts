@@ -34,6 +34,13 @@ describe("AdminSiweAuth", () => {
     expect(makeAdminSiweFromAllowlist(["", "  "])).toBeNull();
   });
 
+  it("makeAdminSiweFromAllowlist throws on a malformed address (fail loud)", () => {
+    expect(() => makeAdminSiweFromAllowlist(["0xnot-an-address"])).toThrow(/invalid admin_addresses/i);
+    expect(() => makeAdminSiweFromAllowlist([adminWallet.address, "deadbeef"])).toThrow(/invalid admin_addresses/i);
+    // Surrounding whitespace on a valid address is tolerated.
+    expect(makeAdminSiweFromAllowlist([`  ${adminWallet.address}  `])).not.toBeNull();
+  });
+
   it("issues a challenge whose message is the canonical format bound to the nonce", () => {
     const siwe = makeAdminSiweFromAllowlist([adminWallet.address])!;
     const ch = siwe.issueChallenge();

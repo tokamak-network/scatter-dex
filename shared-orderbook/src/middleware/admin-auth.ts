@@ -22,7 +22,10 @@ interface AdminAuthOptions {
 
 const BEARER_PREFIX = "Bearer ";
 
-function bearerOf(req: Request): string | null {
+/** Extract the bearer token from `Authorization`, trimming surrounding
+ *  whitespace. Exported so the SIWE revoke route parses headers identically
+ *  to this gate (a leading-space header must auth and revoke consistently). */
+export function bearerOf(req: Request): string | null {
   const header = (req.headers.authorization ?? "").trim();
   if (!header.startsWith(BEARER_PREFIX)) return null;
   const token = header.slice(BEARER_PREFIX.length).trim();
