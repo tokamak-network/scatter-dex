@@ -18,6 +18,11 @@
 const KDF_ITERATIONS = 600_000;
 const SALT_BYTES = 16;
 const IV_BYTES = 12;
+// Bounds for the iteration count read back from a keystore. A modified bundle
+// could otherwise set it astronomically high and freeze the UI in PBKDF2
+// (client-side DoS); too low would be a weak-KDF downgrade.
+const MIN_ITERATIONS = 100_000;
+const MAX_ITERATIONS = 10_000_000;
 
 export interface EncryptedKeystore {
   version: 1;
@@ -34,7 +39,9 @@ function b64(buf: ArrayBuffer | Uint8Array): string {
   return btoa(bin);
 }
 
-function unb64(s: string): Uint8Array<ArrayBuffer> {
+// Return type is inferred as Uint8Array<ArrayBuffer> (narrow) so it satisfies
+// WebCrypto's BufferSource without an explicit `<ArrayBuffer>` generic.
+function unb64(s: string) {
   const bin = atob(s);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
@@ -43,7 +50,7 @@ function unb64(s: string): Uint8Array<ArrayBuffer> {
 
 async function deriveKey(
   passphrase: string,
-  salt: Uint8Array<ArrayBuffer>,
+  salt: BufferSource,
   iterations: number,
 ): Promise<CryptoKey> {
   const baseKey = await crypto.subtle.importKey(
@@ -90,9 +97,23 @@ export async function decryptPrivateKeyPem(
   keystore: EncryptedKeystore,
   passphrase: string,
 ): Promise<string> {
+  // The keystore JSON is untrusted input (a file the user opened). Validate
+  // the header before doing any expensive work.
+  const iterations = keystore?.kdf?.iterations;
+  if (
+    keystore?.kdf?.name !== "PBKDF2" ||
+    !Number.isInteger(iterations) ||
+    iterations < MIN_ITERATIONS ||
+    iterations > MAX_ITERATIONS
+  ) {
+    throw new Error("Invalid keystore: bad or out-of-range KDF parameters");
+  }
+  if (!keystore.kdf.salt || !keystore.cipher?.iv || !keystore.ciphertext) {
+    throw new Error("Invalid keystore: missing salt, IV, or ciphertext");
+  }
   const salt = unb64(keystore.kdf.salt);
   const iv = unb64(keystore.cipher.iv);
-  const key = await deriveKey(passphrase, salt, keystore.kdf.iterations);
+  const key = await deriveKey(passphrase, salt, iterations);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv },
     key,
