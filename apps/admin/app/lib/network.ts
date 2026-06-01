@@ -26,15 +26,10 @@ function resolveNetwork(): NetworkConfig {
 
 export const DEMO_NETWORK: NetworkConfig = resolveNetwork();
 
-/** Address of the Relayer-CA IdentityRegistry. The admin app uses
- *  this for the on-chain attestation step after issuing an X.509
- *  cert — leaving it unset disables the on-chain leg and surfaces
- *  the cert artifacts only.
- */
-export const IDENTITY_REGISTRY_ADDRESS: string = pick(
-  process.env.NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS,
-  "",
-);
+// The Relayer-CA IdentityRegistry used by the Operator-CA attestation step is
+// no longer read from an env var — it's read on-chain from
+// RelayerRegistry.identityRegistry() (see app/lib/useRelayerIdentityRegistry.ts)
+// so the page always reflects what the Identity (relayer) tab set.
 
 /** Address of the project's `SanctionsList` (the self-managed
  *  multisig-governed list, not the Chainalysis OFAC oracle).

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
-import { DEMO_NETWORK, IDENTITY_REGISTRY_ADDRESS } from "../lib/network";
+import { DEMO_NETWORK } from "../lib/network";
+import { useRelayerIdentityRegistry } from "../lib/useRelayerIdentityRegistry";
 import { AttestationPanel } from "./_components/AttestationPanel";
 import { IssueForm, type IssuedRecord } from "./_components/IssueForm";
 import { IssuedList, type LedgerEntry } from "./_components/IssuedList";
@@ -97,7 +98,11 @@ export default function OperatorCaPage() {
     });
   }, []);
 
-  const registryConfigured = isConfiguredAddress(IDENTITY_REGISTRY_ADDRESS);
+  // The attestation registry is read on-chain from
+  // RelayerRegistry.identityRegistry() (set on the Identity (relayer) tab),
+  // not from a static env var — so this page always reflects the live wiring.
+  const { address: identityRegistry, loading: registryLoading } = useRelayerIdentityRegistry();
+  const registryConfigured = isConfiguredAddress(identityRegistry ?? "");
 
   return (
     <div className="space-y-10">
@@ -121,14 +126,18 @@ export default function OperatorCaPage() {
           <Stat
             label="IdentityRegistry"
             value={
-              registryConfigured
-                ? `${IDENTITY_REGISTRY_ADDRESS.slice(0, 8)}…${IDENTITY_REGISTRY_ADDRESS.slice(-4)}`
-                : "Not configured"
+              registryConfigured && identityRegistry
+                ? `${identityRegistry.slice(0, 8)}…${identityRegistry.slice(-4)}`
+                : registryLoading
+                  ? "Loading…"
+                  : "Not set"
             }
             sub={
               registryConfigured
-                ? "On-chain attestation enabled"
-                : "Set NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS"
+                ? "From RelayerRegistry.identityRegistry()"
+                : registryLoading
+                  ? "Reading on-chain…"
+                  : "Set it on the Identity (relayer) tab"
             }
           />
           <Stat
@@ -157,9 +166,9 @@ export default function OperatorCaPage() {
         <SectionHeader
           title="On-chain attestation"
           badge={registryConfigured ? "live" : "mock"}
-          hint={registryConfigured ? undefined : "set NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS"}
+          hint={registryConfigured ? undefined : "set RelayerRegistry.identityRegistry() on the Identity (relayer) tab"}
         />
-        <AttestationPanel />
+        <AttestationPanel registryAddress={identityRegistry} />
       </section>
     </div>
   );
