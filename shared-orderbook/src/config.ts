@@ -52,10 +52,20 @@ export const config = {
   // Total max orders in memory
   maxOrders: envInt("MAX_ORDERS", "50000"),
 
-  // Admin endpoints (currently just /api/admin/verify-stats). Unset =
-  // disabled. We never default this to a fixed value — an unset env
-  // must mean "off" or every default deployment exposes the surface.
+  // Admin endpoints (verify-stats + KYC review). Static bearer token —
+  // unset = disabled (the legacy / fallback path). We never default this to
+  // a fixed value: an unset env must mean "off" or every default deployment
+  // exposes the surface.
   adminToken: process.env.ADMIN_TOKEN?.trim() || undefined,
+
+  // Wallet-signature (SIWE) admin auth. Comma-separated allowlist of admin
+  // EOA addresses; a signer must be on this list to mint a session. Empty =
+  // SIWE disabled (challenge/session endpoints 404, only the static token
+  // works). For local dev, set this to the anvil #0 deployer address.
+  adminAddresses: (process.env.ADMIN_ADDRESSES ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
 
   // Relayer operator KYC onboarding (Stage 1). Uploaded liveness videos +
   // ID documents land under `kycUploadDir/<submissionId>/`. Kept out of the

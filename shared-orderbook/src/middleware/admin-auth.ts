@@ -1,44 +1,70 @@
 import { timingSafeEqual } from "crypto";
 import type { Request, Response, NextFunction, RequestHandler } from "express";
+import type { AdminSiweAuth } from "../core/admin-siwe.js";
 
 /**
- * Static bearer-token auth for operator-only endpoints (/api/admin, KYC
- * review). Meant for a single ops/monitoring user, not end-user-facing. If
- * the token is unset, every guarded endpoint returns 503 (disabled); an empty
- * token also disables it — a non-empty token is required to enable.
+ * Auth for operator-only endpoints (/api/admin, KYC review). Accepts a
+ * `Authorization: Bearer <token>` that is **either**:
  *
- * Lives in middleware/ (alongside `auth.ts`) so multiple route modules can
- * share one implementation instead of importing it from a sibling route file.
+ *   - a SIWE session token (wallet-signature flow, when ADMIN_ADDRESSES is
+ *     configured), tried first — a cheap Map.get; or
+ *   - the static `ADMIN_TOKEN` bearer (legacy / CI path), compared in
+ *     constant time.
+ *
+ * Both can be enabled at once so a deployment can migrate to the wallet flow
+ * at its own pace. If neither is configured, every guarded endpoint returns
+ * 503 (disabled). Meant for a small set of ops users, not end-user-facing.
  */
-export function makeAdminAuth(token: string | undefined): RequestHandler {
+interface AdminAuthOptions {
+  siwe?: AdminSiweAuth | null;
+  staticToken?: string;
+}
+
+const BEARER_PREFIX = "Bearer ";
+
+function bearerOf(req: Request): string | null {
+  const header = (req.headers.authorization ?? "").trim();
+  if (!header.startsWith(BEARER_PREFIX)) return null;
+  const token = header.slice(BEARER_PREFIX.length).trim();
+  return token || null;
+}
+
+/** Constant-time string compare that never short-circuits on length. */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  const len = Math.max(ab.length, bb.length);
+  const ap = Buffer.alloc(len);
+  ab.copy(ap);
+  const bp = Buffer.alloc(len);
+  bb.copy(bp);
+  return timingSafeEqual(ap, bp) && ab.length === bb.length;
+}
+
+export function makeAdminAuth(opts: AdminAuthOptions): RequestHandler {
+  const { siwe, staticToken } = opts;
   return (req: Request, res: Response, next: NextFunction): void => {
-    if (!token) {
-      res.status(503).json({ error: "admin endpoints disabled (set ADMIN_TOKEN to enable)" });
+    if (!siwe && !staticToken) {
+      res.status(503).json({
+        error: "admin endpoints disabled (set ADMIN_TOKEN or ADMIN_ADDRESSES to enable)",
+      });
       return;
     }
-    const header = (req.headers.authorization ?? "").trim();
-    const supplied = header.startsWith("Bearer ") ? header.slice(7) : "";
-    if (!supplied) {
+    const token = bearerOf(req);
+    if (!token) {
       res.status(401).json({ error: "missing bearer token" });
       return;
     }
-    // Constant-time compare. Pad both sides to the same length and ALWAYS
-    // run `timingSafeEqual` regardless of length so a prefix/short token
-    // doesn't return earlier than a same-length wrong token. The length
-    // check is folded into the final boolean, not into control flow.
-    const a = Buffer.from(supplied);
-    const b = Buffer.from(token);
-    const len = Math.max(a.length, b.length);
-    const ap = Buffer.alloc(len);
-    a.copy(ap);
-    const bp = Buffer.alloc(len);
-    b.copy(bp);
-    const bytesEq = timingSafeEqual(ap, bp);
-    const lenEq = a.length === b.length;
-    if (!(bytesEq && lenEq)) {
-      res.status(401).json({ error: "invalid bearer token" });
+    // SIWE session token (wallet flow) — tried first; a plain Map.get.
+    if (siwe && siwe.verifySession(token) !== null) {
+      next();
       return;
     }
-    next();
+    // Static token (legacy / CI) — constant-time compare.
+    if (staticToken && timingSafeEqualStr(token, staticToken)) {
+      next();
+      return;
+    }
+    res.status(401).json({ error: "invalid or expired bearer token" });
   };
 }

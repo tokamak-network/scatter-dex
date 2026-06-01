@@ -9,6 +9,7 @@ import http from "http";
 import express from "express";
 import { OrderbookDB } from "../src/core/db.js";
 import { createAdminRoutes } from "../src/routes/admin.js";
+import { makeAdminAuth } from "../src/middleware/admin-auth.js";
 import { VerifyMonitor } from "../src/core/verify-runtime.js";
 
 const TEST_DB = "/tmp/shared-ob-admin.db";
@@ -17,7 +18,8 @@ const PORT = 14630;
 function startApp(token: string | undefined, monitor: VerifyMonitor, db: OrderbookDB): http.Server {
   const app = express();
   app.use(express.json());
-  app.use("/api/admin", createAdminRoutes({ db, monitor, adminToken: token }));
+  const adminAuth = makeAdminAuth({ staticToken: token });
+  app.use("/api/admin", createAdminRoutes({ db, monitor, adminAuth }));
   return app.listen(PORT);
 }
 
@@ -60,7 +62,7 @@ describe("/api/admin/verify-stats", () => {
     server = startApp("secret-token", monitor, db);
     const r = await getStats({ Authorization: "Bearer wrong" });
     expect(r.status).toBe(401);
-    expect(r.json.error).toBe("invalid bearer token");
+    expect(r.json.error).toBe("invalid or expired bearer token");
   });
 
   it("returns 401 when the supplied token is a prefix of the real one (constant-time)", async () => {

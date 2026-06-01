@@ -6,7 +6,6 @@ import path from "path";
 import multer from "multer";
 import { config } from "../config.js";
 import type { OrderbookDB } from "../core/db.js";
-import { makeAdminAuth } from "../middleware/admin-auth.js";
 import {
   isKycStatus,
   isKycReviewStatus,
@@ -88,10 +87,9 @@ export function createKycRoutes(
   db: OrderbookDB,
   writeLimiter: RequestHandler,
   readLimiter: RequestHandler,
-  adminToken: string | undefined,
+  adminAuth: RequestHandler,
 ): Router {
   const router = Router();
-  const adminAuth = makeAdminAuth(adminToken);
   const stagingDir = path.join(config.kycUploadDir, ".staging");
 
   // Disk storage (not memoryStorage): stream uploads straight to a staging
