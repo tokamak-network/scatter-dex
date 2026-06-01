@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
+import { TestOnlyBanner } from "../components/TestOnlyBanner";
 import { DEMO_NETWORK } from "../lib/network";
 import { useRelayerIdentityRegistry } from "../lib/useRelayerIdentityRegistry";
 import { AttestationPanel } from "./_components/AttestationPanel";
@@ -114,6 +115,8 @@ export default function OperatorCaPage() {
           IdentityRegistry that <code className="font-mono">RelayerRegistry.identityRegistry()</code> trusts.
         </p>
       </header>
+
+      <TestOnlyBanner context="Operator keypairs are generated in this browser." />
 
       <section>
         <SectionHeader title="Active deployment" badge="live" />
