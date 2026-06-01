@@ -228,12 +228,26 @@ bash script/start-services.sh                           # frontend :3000, backen
 > cd <zk-X509> && bash script/stop-services.sh && bash script/start-services.sh
 > ```
 
-**4. Swap the mock registry out of `IdentityGate`** using the helper script — it reads `IdentityGate` from `apps/pay/.env.local`, adds the zk-X509 registry, and removes every other registry (the mock from step 1). Pro shares the same on-chain `IdentityGate` so this one swap covers both apps:
+**4. Register the zk-X509 registry on `IdentityGate`** (replacing the mock from step 1). Two equivalent ways:
+
+**CLI** — the helper script reads `IdentityGate` from `apps/pay/.env.local`, adds the zk-X509 registry, and removes every other registry (the mock). Pro shares the same on-chain `IdentityGate`, so one swap covers both apps:
 
 ```bash
 cd <scatter-dex>
 ./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry from step 2>
 ```
+
+**Admin UI** — open **Protocol → Identity (user)** (`http://localhost:4005/protocol/identity-user`), connect the wallet as the `IdentityGate` owner (anvil account #0, `0xf39F…2266`), paste the registry into **Registry address → Add registry**, then **Remove registry** on the old mock. (The relayer-CA analogue is **Protocol → Identity (relayer)** → *Set identity registry*, which sets `RelayerRegistry.identityRegistry()`.)
+
+**Verify the swap took effect** — `getRegistries()` should list *only* your zk-X509 registry. A real zk-X509 registry answers `effectiveProgramVKey()`; the mock reverts:
+
+```bash
+GATE=<IdentityGate>
+cast call $GATE "getRegistries()(address[])" --rpc-url http://localhost:8545
+cast call <returned-registry> "effectiveProgramVKey()(bytes32)" --rpc-url http://localhost:8545   # must NOT revert
+```
+
+If `getRegistries()` still shows the mock (the call above reverts), the swap didn't run — redo it.
 
 After the swap, `isVerified(user)` calls from **both Pay and Pro** route through the same zk-X509 registry (they share the on-chain `IdentityGate`). The registry already has the test CA loaded (from step 2) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity. Do that **interactively** through either:
 
@@ -245,6 +259,14 @@ After the swap, `isVerified(user)` calls from **both Pay and Pro** route through
   ```
 
 The CA itself should already be visible in the registry's Explorer tab; if it's not, re-run step 3 — `caMerkleRoot` in the script output should not be all-zeros. (The desktop app's proof generation uses the SP1 prover, which needs Docker.)
+
+**Admin `/operator-ca` page:** its on-chain attestation leg reads `NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS` (the **Relayer-CA** registry). `dev.sh` leaves this unset in mock mode (there's no zk-X509 registry until you do the steps above), so `/operator-ca` and `/protocol/identity-*` show **"Set NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS"** — the contract-address panels still render; only the attestation button is disabled. To enable it, add the registry to `apps/admin/.env.local` and **restart admin** (Next inlines `NEXT_PUBLIC_*` only at boot):
+
+```bash
+echo "NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS=<relayer-CA registry>" >> apps/admin/.env.local
+# restart admin so it picks the value up
+lsof -tiTCP:4005 -sTCP:LISTEN | xargs kill 2>/dev/null; ( cd apps/admin && npm run dev & )
+```
 
 ### Ports at a glance (integration + zk-X509)
 
