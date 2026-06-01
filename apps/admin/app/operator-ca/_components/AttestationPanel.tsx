@@ -29,8 +29,14 @@ type Phase =
 
 /** `registryAddress` is read on-chain from `RelayerRegistry.identityRegistry()`
  *  by the parent page (see useRelayerIdentityRegistry) — null/zero means the
- *  relayer CA isn't wired yet. */
-export function AttestationPanel({ registryAddress }: { registryAddress: string | null }) {
+ *  relayer CA isn't wired yet. `loading` is that read in flight. */
+export function AttestationPanel({
+  registryAddress,
+  loading,
+}: {
+  registryAddress: string | null;
+  loading?: boolean;
+}) {
   const { account, signer, connect } = useWallet();
   const [address, setAddress] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -49,6 +55,14 @@ export function AttestationPanel({ registryAddress }: { registryAddress: string 
       setPhase({ kind: "error", msg: explainError(err) });
     }
   }, [signer, registryConfigured, registryAddress, addressValid, address]);
+
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
+        <p>Reading the relayer CA registry on-chain…</p>
+      </div>
+    );
+  }
 
   if (!registryConfigured || !registryAddress) {
     return (

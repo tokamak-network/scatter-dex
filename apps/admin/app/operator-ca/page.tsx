@@ -166,9 +166,15 @@ export default function OperatorCaPage() {
         <SectionHeader
           title="On-chain attestation"
           badge={registryConfigured ? "live" : "mock"}
-          hint={registryConfigured ? undefined : "set RelayerRegistry.identityRegistry() on the Identity (relayer) tab"}
+          hint={
+            registryLoading
+              ? "reading on-chain…"
+              : registryConfigured
+                ? undefined
+                : "set RelayerRegistry.identityRegistry() on the Identity (relayer) tab"
+          }
         />
-        <AttestationPanel registryAddress={identityRegistry} />
+        <AttestationPanel registryAddress={identityRegistry} loading={registryLoading} />
       </section>
     </div>
   );

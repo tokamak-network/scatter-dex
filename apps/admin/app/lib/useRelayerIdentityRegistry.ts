@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Contract } from "ethers";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "./network";
 
@@ -25,7 +26,11 @@ export function useRelayerIdentityRegistry(): { address: string | null; loading:
   useEffect(() => {
     let cancelled = false;
     const relayerRegistry = DEMO_NETWORK.contracts.relayerRegistry;
-    if (!readProvider || !relayerRegistry) {
+    // `relayerRegistry` falls back to the zero address when unconfigured, so
+    // guard with isConfiguredAddress (a plain truthiness check would let the
+    // zero address through and revert the call).
+    if (!readProvider || !isConfiguredAddress(relayerRegistry)) {
+      setAddress(null);
       setLoading(false);
       return;
     }
@@ -35,7 +40,8 @@ export function useRelayerIdentityRegistry(): { address: string | null; loading:
       .then((addr) => {
         if (!cancelled) setAddress(addr);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn("Failed to read RelayerRegistry.identityRegistry() on-chain:", err);
         if (!cancelled) setAddress(null);
       })
       .finally(() => {
