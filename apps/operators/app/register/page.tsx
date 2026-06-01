@@ -308,7 +308,11 @@ export default function RegisterPage() {
   // reviews + approves (onboarding steps 2-3). Distinguish that wait
   // from the "approved — go issue your cert" state so the wizard
   // doesn't present Verify as if it were the operator's next action.
-  const awaitingAdmin = kycDone && !step1Done && approval.status !== "approved";
+  // Only "waiting on the admin" when the wallet is genuinely pending the
+  // on-chain approval. `checking` is a transient load, and
+  // revoked/expired/error/idle (registry unset) are surfaced by the
+  // Verify card's own CTA — not as "keep waiting".
+  const awaitingAdmin = kycDone && !step1Done && approval.status === "not-approved";
   const approvedNotVerified = approval.status === "approved" && !step1Done;
 
   const stepperSteps = useMemo(
