@@ -243,6 +243,19 @@ describe("KYC routes", () => {
     expect(new Uint8Array(await dres.arrayBuffer())).toEqual(new Uint8Array([4, 5, 6]));
   });
 
+  it("admin file routes treat a missing-on-disk document as absent (present:false / 404)", async () => {
+    const sub = await (await submitForm({ wallet: "0x" + "9".repeat(40), email: "9@example.com", video: true, idDoc: true })).json();
+    const row = db.getKycById(sub.id)!;
+    fs.rmSync(row.videoPath!, { force: true }); // file vanishes after submission
+
+    const detail = await (await fetch(`${base}/api/kyc/submissions/${sub.id}`, { headers: adminAuth })).json();
+    expect(detail.files.video.present).toBe(false);
+    expect(detail.files.idDoc.present).toBe(true); // the other file is intact
+
+    expect((await fetch(`${base}/api/kyc/submissions/${sub.id}/file/video`, { headers: adminAuth })).status).toBe(404);
+    expect((await fetch(`${base}/api/kyc/submissions/${sub.id}/file/idDoc`, { headers: adminAuth })).status).toBe(200);
+  });
+
   it("admin POST /submissions/:id/status — auth, validation, and the two-step transition", async () => {
     const wallet = "0x" + "f".repeat(40);
     const sub = await (await submitForm({ wallet, email: "f@example.com", video: true, idDoc: true })).json();
@@ -286,9 +299,12 @@ describe("KYC routes", () => {
     noTokenApp.use(express.json());
     noTokenApp.use("/api/kyc", createKycRoutes(db, noopLimiter, noopLimiter, undefined));
     const srv = http.createServer(noTokenApp);
-    await new Promise<void>((resolve) => srv.listen(PORT + 1, resolve));
+    // Bind an ephemeral port (listen(0)) to avoid collisions on CI runners.
+    await new Promise<void>((resolve) => srv.listen(0, resolve));
+    const addr = srv.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
     try {
-      const res = await fetch(`http://localhost:${PORT + 1}/api/kyc/submissions`, { headers: adminAuth });
+      const res = await fetch(`http://localhost:${port}/api/kyc/submissions`, { headers: adminAuth });
       expect(res.status).toBe(503);
     } finally {
       await new Promise<void>((resolve) => srv.close(() => resolve()));

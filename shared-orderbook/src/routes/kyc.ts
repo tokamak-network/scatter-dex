@@ -253,6 +253,9 @@ export function createKycRoutes(
     if (!safe) return null;
     try {
       const st = await stat(safe);
+      // Treat a non-regular file (directory, socket, …) as absent so the
+      // stream route can't EISDIR-500 on a corrupted DB path.
+      if (!st.isFile()) return null;
       return {
         path: safe,
         contentType: EXT_CONTENT_TYPE[path.extname(safe)] ?? "application/octet-stream",
@@ -299,54 +302,66 @@ export function createKycRoutes(
     m ? { present: true as const, contentType: m.contentType, sizeBytes: m.sizeBytes } : { present: false as const };
 
   router.get("/submissions/:id", adminAuth, async (req, res) => {
-    const sub = db.getKycById(req.params.id);
-    if (!sub) {
-      res.status(404).json({ error: "submission not found" });
-      return;
+    try {
+      const sub = db.getKycById(req.params.id);
+      if (!sub) {
+        res.status(404).json({ error: "submission not found" });
+        return;
+      }
+      // Document availability + content type so the review UI can render links
+      // without ever seeing a server path.
+      const [video, idDoc] = await Promise.all([describeFile(sub.videoPath), describeFile(sub.idDocPath)]);
+      res.json({
+        id: sub.id,
+        wallet: sub.wallet,
+        email: sub.email,
+        status: sub.status,
+        notes: sub.notes,
+        createdAt: sub.createdAt,
+        reviewedAt: sub.reviewedAt,
+        files: { video: fileAvailability(video), idDoc: fileAvailability(idDoc) },
+      });
+    } catch (err) {
+      console.error("[kyc] get submission failed:", err);
+      res.status(500).json({ error: "failed to load submission" });
     }
-    // Document availability + content type so the review UI can render links
-    // without ever seeing a server path.
-    const [video, idDoc] = await Promise.all([describeFile(sub.videoPath), describeFile(sub.idDocPath)]);
-    res.json({
-      id: sub.id,
-      wallet: sub.wallet,
-      email: sub.email,
-      status: sub.status,
-      notes: sub.notes,
-      createdAt: sub.createdAt,
-      reviewedAt: sub.reviewedAt,
-      files: { video: fileAvailability(video), idDoc: fileAvailability(idDoc) },
-    });
   });
 
   router.get("/submissions/:id/file/:kind", adminAuth, async (req, res) => {
-    const kind = req.params.kind;
-    if (!Object.hasOwn(FILE_KIND_TO_PATH, kind)) {
-      res.status(400).json({ error: "kind: must be 'video' or 'idDoc'" });
-      return;
+    try {
+      const kind = req.params.kind;
+      if (!Object.hasOwn(FILE_KIND_TO_PATH, kind)) {
+        res.status(400).json({ error: "kind: must be 'video' or 'idDoc'" });
+        return;
+      }
+      const sub = db.getKycById(req.params.id);
+      if (!sub) {
+        res.status(404).json({ error: "submission not found" });
+        return;
+      }
+      const meta = await describeFile(sub[FILE_KIND_TO_PATH[kind as FileKind]]);
+      if (!meta) {
+        res.status(404).json({ error: "file not found" });
+        return;
+      }
+      res.setHeader("Content-Type", meta.contentType);
+      res.setHeader("Content-Length", meta.sizeBytes);
+      res.setHeader("Content-Disposition", `inline; filename="${kind}${path.extname(meta.path)}"`);
+      // KYC documents are PII — never let a shared cache retain them.
+      res.setHeader("Cache-Control", "private, no-store");
+      const stream = createReadStream(meta.path);
+      // Free the file descriptor if the client disconnects mid-download.
+      res.on("close", () => stream.destroy());
+      stream.on("error", (err) => {
+        console.error("[kyc] file stream failed:", err);
+        if (!res.headersSent) res.status(500).json({ error: "stream failed" });
+        else res.destroy();
+      });
+      stream.pipe(res);
+    } catch (err) {
+      console.error("[kyc] get file failed:", err);
+      if (!res.headersSent) res.status(500).json({ error: "failed to load file" });
     }
-    const sub = db.getKycById(req.params.id);
-    if (!sub) {
-      res.status(404).json({ error: "submission not found" });
-      return;
-    }
-    const meta = await describeFile(sub[FILE_KIND_TO_PATH[kind as FileKind]]);
-    if (!meta) {
-      res.status(404).json({ error: "file not found" });
-      return;
-    }
-    res.setHeader("Content-Type", meta.contentType);
-    res.setHeader("Content-Length", meta.sizeBytes);
-    res.setHeader("Content-Disposition", `inline; filename="${kind}${path.extname(meta.path)}"`);
-    // KYC documents are PII — never let a shared cache retain them.
-    res.setHeader("Cache-Control", "private, no-store");
-    const stream = createReadStream(meta.path);
-    stream.on("error", (err) => {
-      console.error("[kyc] file stream failed:", err);
-      if (!res.headersSent) res.status(500).json({ error: "stream failed" });
-      else res.destroy();
-    });
-    stream.pipe(res);
   });
 
   router.post("/submissions/:id/status", adminAuth, (req, res) => {
@@ -375,7 +390,14 @@ export function createKycRoutes(
     }
     const reviewedAt = Math.floor(Date.now() / 1000);
     try {
-      db.updateKycStatus(sub.id, next, notes, reviewedAt);
+      // updateKycStatus returns false when no row matched — i.e. the row was
+      // deleted between the read above and this write. Report 404 rather than
+      // a misleading 200 that claims a transition that didn't happen.
+      const updated = db.updateKycStatus(sub.id, next, notes, reviewedAt);
+      if (!updated) {
+        res.status(404).json({ error: "submission not found" });
+        return;
+      }
       res.json({ id: sub.id, status: next, notes, reviewedAt });
     } catch (err) {
       console.error("[kyc] status update failed:", err);
