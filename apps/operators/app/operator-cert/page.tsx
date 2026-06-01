@@ -20,7 +20,7 @@
  *  an HSM-backed Issuing CA (§12).
  */
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { eqAddr, isConfiguredAddress } from "@zkscatter/sdk";
 import { LiveFreshness, useWallet } from "@zkscatter/sdk/react";
@@ -165,7 +165,7 @@ function OperatorCertBody() {
             targetWallet={targetWallet}
             walletMatches={walletMatches}
             approval={approval}
-            onConnect={() => void connect()}
+            onConnect={() => connect().catch(() => {})}
           />
 
           {subject && approved && walletMatches && (
@@ -181,7 +181,7 @@ function OperatorCertBody() {
               </div>
               <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <ReadOnly label="Common Name (CN)" value={subject.commonName} />
-                <ReadOnly label="Organisation (O)" value={subject.organization} />
+                <ReadOnly label="Organization (O)" value={subject.organization} />
                 <ReadOnly label="Country (C)" value={subject.country} />
                 <ReadOnly
                   label="Validity"
@@ -227,7 +227,7 @@ function OperatorCertBody() {
               <button
                 type="button"
                 disabled={busy || !canIssue || passphraseError() !== null}
-                onClick={() => void handleGenerate()}
+                onClick={() => handleGenerate().catch(() => {})}
                 className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
               >
                 {busy ? "Generating…" : "Generate key & CSR"}
@@ -347,7 +347,7 @@ function Freshness({ approval }: { approval: ReturnType<typeof useIssuanceApprov
   );
 }
 
-function Banner({ tone, children }: { tone: "ok" | "warn" | "danger"; children: React.ReactNode }) {
+function Banner({ tone, children }: { tone: "ok" | "warn" | "danger"; children: ReactNode }) {
   const cls =
     tone === "ok"
       ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
@@ -373,7 +373,7 @@ function ReadOnly({ label, value, hint }: { label: string; value: string; hint?:
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="block text-sm">
       <span className="mb-1 block text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
@@ -394,7 +394,7 @@ function Preview({ label, value }: { label: string; value: string }) {
         </div>
         <button
           type="button"
-          onClick={() => void navigator.clipboard.writeText(value)}
+          onClick={() => navigator.clipboard.writeText(value).catch(() => {})}
           className="text-xs text-[var(--color-primary)] hover:underline"
         >
           Copy
