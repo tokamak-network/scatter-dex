@@ -4,16 +4,19 @@ import { useCallback, useState } from "react";
 import { Contract, type Signer } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
-import { IDENTITY_REGISTRY_ADDRESS, DEMO_NETWORK } from "../../lib/network";
+import { DEMO_NETWORK } from "../../lib/network";
 import { explainError } from "../../lib/format";
 import { isValidEvmAddress } from "../../lib/x509";
 
 // Minimal write ABI matching MockIdentityRegistry (the in-repo test
 // registry the local + Sepolia dev deployments use). The production
-// zk-X509 registry exposes a richer attestation surface; that wiring
-// lives in the zk-X509 project. Targeting the boolean form here keeps
-// the admin console testable end-to-end against the mock without
-// pulling in the external project's ABI.
+// zk-X509 registry exposes a richer attestation surface (proof-based
+// `register()`, not an admin boolean); that wiring lives in the zk-X509
+// project. Targeting the boolean form here keeps the admin console
+// testable end-to-end against the mock without pulling in the external
+// project's ABI — against a real zk-X509 registry the write reverts and
+// surfaces in the error banner, which is the signal to verify operators
+// via the zk-X509 desktop app / dashboard instead.
 const REGISTRY_ABI = [
   "function setVerified(address user, bool status) external",
 ];
@@ -24,35 +27,52 @@ type Phase =
   | { kind: "success"; txHash: string }
   | { kind: "error"; msg: string };
 
-export function AttestationPanel() {
+/** `registryAddress` is read on-chain from `RelayerRegistry.identityRegistry()`
+ *  by the parent page (see useRelayerIdentityRegistry) — null/zero means the
+ *  relayer CA isn't wired yet. `loading` is that read in flight. */
+export function AttestationPanel({
+  registryAddress,
+  loading,
+}: {
+  registryAddress: string | null;
+  loading?: boolean;
+}) {
   const { account, signer, connect } = useWallet();
   const [address, setAddress] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
 
-  const registryConfigured = isConfiguredAddress(IDENTITY_REGISTRY_ADDRESS);
+  const registryConfigured = isConfiguredAddress(registryAddress ?? "");
   const addressValid = isValidEvmAddress(address.trim());
 
   const submit = useCallback(async () => {
-    if (!signer || !registryConfigured || !addressValid) return;
+    if (!signer || !registryConfigured || !registryAddress || !addressValid) return;
     setPhase({ kind: "submitting" });
     try {
-      const tx = await writeAttestation(signer, address.trim(), true);
+      const tx = await writeAttestation(signer, registryAddress, address.trim(), true);
       const receipt = await tx.wait();
       setPhase({ kind: "success", txHash: receipt?.hash ?? tx.hash });
     } catch (err) {
       setPhase({ kind: "error", msg: explainError(err) });
     }
-  }, [signer, registryConfigured, addressValid, address]);
+  }, [signer, registryConfigured, registryAddress, addressValid, address]);
 
-  if (!registryConfigured) {
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
+        <p>Reading the relayer CA registry on-chain…</p>
+      </div>
+    );
+  }
+
+  if (!registryConfigured || !registryAddress) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
         <p>
-          On-chain attestation disabled. Set{" "}
-          <code className="font-mono">NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS</code> in this
-          app's environment to enable direct{" "}
-          <code className="font-mono">setVerified()</code> writes from the connected admin
-          wallet.
+          On-chain attestation disabled —{" "}
+          <code className="font-mono">RelayerRegistry.identityRegistry()</code> isn't set.
+          Wire the relayer CA on the <strong>Identity (relayer)</strong> tab to enable
+          direct <code className="font-mono">setVerified()</code> writes from the connected
+          admin wallet.
         </p>
       </div>
     );
@@ -63,10 +83,12 @@ export function AttestationPanel() {
       <div className="mb-3 text-xs text-[var(--color-text-muted)]">
         Calls{" "}
         <code className="font-mono">
-          IdentityRegistry({IDENTITY_REGISTRY_ADDRESS.slice(0, 10)}…).setVerified(operator, true)
+          IdentityRegistry({registryAddress.slice(0, 10)}…).setVerified(operator, true)
         </code>{" "}
         on <strong>{DEMO_NETWORK.name}</strong>. The connected wallet must hold the
-        registry's admin key.
+        registry's admin key. (A real zk-X509 registry has no admin
+        <code className="font-mono">setVerified</code> — verify operators via the zk-X509
+        desktop app / dashboard instead; this boolean form is for the mock registry.)
       </div>
 
       <label className="block text-sm">
@@ -113,8 +135,13 @@ export function AttestationPanel() {
   );
 }
 
-async function writeAttestation(signer: Signer, addr: string, status: boolean) {
-  const registry = new Contract(IDENTITY_REGISTRY_ADDRESS, REGISTRY_ABI, signer);
+async function writeAttestation(
+  signer: Signer,
+  registryAddress: string,
+  addr: string,
+  status: boolean,
+) {
+  const registry = new Contract(registryAddress, REGISTRY_ABI, signer);
   return (await registry.setVerified(addr, status)) as {
     hash: string;
     wait(): Promise<{ hash?: string } | null>;
