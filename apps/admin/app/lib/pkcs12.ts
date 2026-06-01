@@ -2,6 +2,7 @@
 
 import * as pkijs from "pkijs";
 import type { ContentEncryptionAlgorithm } from "pkijs";
+import { pemToDer } from "./pem";
 
 /**
  * Export an operator PKCS#8 private key as a standard, passphrase-protected
@@ -18,18 +19,8 @@ import type { ContentEncryptionAlgorithm } from "pkijs";
  */
 
 const SHROUDED_KEY_BAG_OID = "1.2.840.113549.1.12.10.1.2";
+const CERT_BAG_OID = "1.2.840.113549.1.12.10.1.3";
 const KDF_ITERATIONS = 600_000;
-
-function pemToDer(pem: string): ArrayBuffer {
-  const body = pem
-    .replace(/-----BEGIN [^-]+-----/, "")
-    .replace(/-----END [^-]+-----/, "")
-    .replace(/\s+/g, "");
-  const bin = atob(body);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
-  return out.buffer;
-}
 
 export async function exportOperatorPkcs12(
   privateKeyPem: string,
@@ -86,4 +77,85 @@ export async function exportOperatorPkcs12(
   });
 
   return pfx.toSchema().toBER();
+}
+
+export interface ImportedPkcs12 {
+  /** The recovered private key, usable for signing (ECDSA P-256). */
+  privateKey: CryptoKey;
+  /** The bundled certificate, if the .p12 carried a CertBag. The Root CA
+   *  `.p12` from the generator holds only the key (the public cert ships as a
+   *  separate `rootCA.der`), so this is usually null and the caller supplies
+   *  the CA certificate out-of-band. */
+  certificate: pkijs.Certificate | null;
+}
+
+/**
+ * Inverse of {@link exportOperatorPkcs12}: decrypt a passphrase-protected
+ * PKCS#12 and recover its private key (and certificate, if present). Used by
+ * the CA-signing flow to load the Root CA private key for signing operator
+ * CSRs. Client-only; the passphrase never leaves the browser.
+ *
+ * Throws on a wrong passphrase / malformed container (PKIjs raises during
+ * integrity check or bag decryption).
+ */
+export async function importCaPkcs12(
+  p12: ArrayBuffer,
+  passphrase: string,
+): Promise<ImportedPkcs12> {
+  pkijs.setEngine(
+    "webcrypto",
+    new pkijs.CryptoEngine({ name: "webcrypto", crypto: globalThis.crypto }),
+  );
+
+  const password = new TextEncoder().encode(passphrase).buffer;
+  const pfx = pkijs.PFX.fromBER(p12);
+
+  // Verify the HMAC integrity MAC (detects wrong passphrase / tampering) and
+  // decrypt the authenticated safe. Guard the nested structure explicitly so a
+  // malformed container throws a descriptive error rather than a bare TypeError.
+  await pfx.parseInternalValues({ password, checkIntegrity: true });
+  const authenticatedSafe = pfx.parsedValue?.authenticatedSafe;
+  if (!authenticatedSafe) {
+    throw new Error("Invalid PKCS#12: missing authenticated safe");
+  }
+  await authenticatedSafe.parseInternalValues({ safeContents: [{ password }] });
+  if (!authenticatedSafe.parsedValue) {
+    throw new Error("Invalid PKCS#12: authenticated safe could not be parsed");
+  }
+
+  const bags = authenticatedSafe.parsedValue.safeContents.flatMap(
+    (sc: { value: { safeBags: pkijs.SafeBag[] } }) => sc.value.safeBags,
+  );
+
+  const keyBag = bags.find((b: pkijs.SafeBag) => b.bagId === SHROUDED_KEY_BAG_OID)?.bagValue as
+    | pkijs.PKCS8ShroudedKeyBag
+    | undefined;
+  if (!keyBag) {
+    throw new Error("PKCS#12 contains no private key bag");
+  }
+  // `parseInternalValues` is typed protected in PKIjs but is the documented way
+  // to decrypt a bag's contents; call it through a narrow structural cast.
+  await (keyBag as unknown as {
+    parseInternalValues(p: { password: ArrayBuffer }): Promise<void>;
+  }).parseInternalValues({ password });
+  const privateKeyInfo = keyBag.parsedValue;
+  if (!privateKeyInfo) {
+    throw new Error("PKCS#12 private key bag could not be decrypted");
+  }
+
+  const certBag = bags.find((b: pkijs.SafeBag) => b.bagId === CERT_BAG_OID)?.bagValue as
+    | pkijs.CertBag
+    | undefined;
+  const certificate =
+    certBag?.parsedValue instanceof pkijs.Certificate ? certBag.parsedValue : null;
+
+  const privateKey = await globalThis.crypto.subtle.importKey(
+    "pkcs8",
+    privateKeyInfo.toSchema().toBER(),
+    { name: "ECDSA", namedCurve: "P-256" },
+    false, // non-extractable: the recovered CA key is used only to sign
+    ["sign"],
+  );
+
+  return { privateKey, certificate };
 }
