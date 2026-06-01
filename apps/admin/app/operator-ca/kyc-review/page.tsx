@@ -34,6 +34,7 @@ const ORDERBOOK_URL =
 const ISSUANCE_REGISTRY = process.env.NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS ?? "";
 const APPROVE_ABI = [
   "function approve(address operator, string commonName, string organization, string country, uint32 validityDays, uint64 expiresAt)",
+  "function revoke(address operator, string reason)",
 ];
 
 /** Dev/interim bearer, read from env so the page authenticates without a
@@ -45,7 +46,7 @@ function authHeaders(): HeadersInit {
   return ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {};
 }
 
-type KycStatus = "pending" | "verified" | "approved" | "rejected";
+type KycStatus = "pending" | "verified" | "approved" | "rejected" | "revoked";
 
 interface SubmissionSummary {
   id: string;
@@ -73,7 +74,10 @@ interface SubmissionDetail extends SubmissionSummary {
 function canTransition(from: KycStatus, to: KycStatus): boolean {
   if (from === "pending") return to === "verified" || to === "rejected";
   if (from === "verified") return to === "approved" || to === "rejected";
-  return false; // approved / rejected are terminal
+  // `approved` can still be revoked (after-the-fact identity invalidation,
+  // mirrored on-chain); rejected / revoked are terminal.
+  if (from === "approved") return to === "revoked";
+  return false;
 }
 
 export default function KycReviewPage() {
@@ -231,6 +235,7 @@ function StatusBadge({ status }: { status: KycStatus }) {
     verified: "bg-[var(--color-primary-soft)] text-[var(--color-primary)]",
     approved: "bg-[var(--color-success-soft)] text-[var(--color-success)]",
     rejected: "bg-[var(--color-danger-soft)] text-[var(--color-danger)]",
+    revoked: "bg-[var(--color-danger-soft)] text-[var(--color-danger)]",
   };
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${tone[status]}`}>
@@ -408,6 +413,44 @@ function SubmissionPanel({
     }
   }, [detail, signer, cn, org, country, validityDays, id, notes, onChanged]);
 
+  /** Revoke = invalidate an already-approved identity on-chain
+   *  (IssuanceApprovalRegistry.revoke, owner-only) + record it. The
+   *  on-chain revoke is what the issuance gate reads; the DB status
+   *  mirrors it for the review queue. */
+  const onRevoke = useCallback(async () => {
+    setErr("");
+    if (!detail) return;
+    if (!ISSUANCE_REGISTRY) {
+      setErr("Issuance registry not configured (NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS).");
+      return;
+    }
+    if (!signer) { setErr("Connect the admin (owner) wallet to revoke on-chain."); return; }
+    const reason = notes.trim();
+    if (!reason) { setErr("Enter a revocation reason in the notes field."); return; }
+    if (!window.confirm(`Revoke ${detail.wallet}? Their certificate identity will be invalidated.`)) return;
+    setBusy(true);
+    try {
+      const reg = new Contract(ISSUANCE_REGISTRY, APPROVE_ABI, signer);
+      const tx = await reg.revoke(detail.wallet, reason);
+      await tx.wait();
+      const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "revoked", notes: reason }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `Status update failed (${res.status})`);
+      }
+      setDetail((d) => (d ? { ...d, status: "revoked" } : d));
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Revoke failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [detail, signer, id, notes, onChanged]);
+
   if (err && !detail) {
     return <div className="px-4 py-3 text-xs text-[var(--color-danger)]">{err}</div>;
   }
@@ -504,11 +547,26 @@ function SubmissionPanel({
         >
           Reject
         </button>
+        <button
+          type="button"
+          disabled={busy || !canTransition(status, "revoked")}
+          onClick={() => void onRevoke()}
+          className="rounded-md bg-[var(--color-danger)] px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+        >
+          Revoke approval
+        </button>
       </div>
       {status === "approved" && (
         <p className="text-xs text-[var(--color-success)]">
           Approved on-chain — the operator can now issue their certificate from
-          the emailed link.
+          the emailed link. To invalidate it later, enter a reason in notes and
+          use Revoke approval.
+        </p>
+      )}
+      {status === "revoked" && (
+        <p className="text-xs text-[var(--color-danger)]">
+          Revoked on-chain — this operator&apos;s certificate identity is no
+          longer valid.
         </p>
       )}
     </div>
