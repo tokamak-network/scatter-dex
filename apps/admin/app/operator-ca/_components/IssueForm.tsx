@@ -9,11 +9,13 @@ import {
   type CertificateRequest,
   type GeneratedKeypair,
 } from "../../lib/x509";
-import { encryptPrivateKeyPem, type EncryptedKeystore } from "../../lib/keystore";
+import { exportOperatorPkcs12 } from "../../lib/pkcs12";
 
 const DEFAULT_VALIDITY = 365;
 const MIN_PASSPHRASE = 12;
 
+/** Metadata for the issuance ledger / bundle. The private key is NOT here —
+ *  it is delivered as a separate passphrase-protected `.p12` file. */
 export interface IssuedRecord {
   walletAddress: string;
   commonName: string;
@@ -22,10 +24,20 @@ export interface IssuedRecord {
   validityDays: number;
   publicKeyFingerprint: string;
   request: CertificateRequest;
-  /** The operator private key, passphrase-encrypted — never plaintext. */
-  encryptedPrivateKey: EncryptedKeystore;
   publicKeyPem: string;
   issuedAt: string;
+}
+
+function downloadP12(filename: string, bytes: ArrayBuffer) {
+  const blob = new Blob([bytes], { type: "application/x-pkcs12" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 interface Props {
@@ -125,11 +137,14 @@ export function IssueForm({ onIssued }: Props) {
     setError(null);
     setIssuing(true);
     try {
-      // Encrypt the private key with the passphrase before it leaves this
-      // component — the issued bundle never carries plaintext key material.
-      const encryptedPrivateKey = await encryptPrivateKeyPem(
-        preview.kp.privateKeyPem,
-        form.passphrase,
+      const issuedAt = new Date().toISOString();
+      // Package the private key as a passphrase-protected PKCS#12 (.p12) and
+      // download it as a separate file — the key never leaves this component
+      // in plaintext, and the metadata bundle below carries no key material.
+      const p12 = await exportOperatorPkcs12(preview.kp.privateKeyPem, form.passphrase);
+      downloadP12(
+        `operator-${preview.request.walletAddress.slice(0, 10)}-${issuedAt.slice(0, 10)}.p12`,
+        p12,
       );
       const record: IssuedRecord = {
         walletAddress: preview.request.walletAddress,
@@ -139,15 +154,14 @@ export function IssueForm({ onIssued }: Props) {
         validityDays: preview.request.validityDays,
         publicKeyFingerprint: preview.kp.publicKeyFingerprint,
         request: preview.request,
-        encryptedPrivateKey,
         publicKeyPem: preview.kp.publicKeyPem,
-        issuedAt: new Date().toISOString(),
+        issuedAt,
       };
       onIssued(record);
       setPreview(null);
       setForm(INITIAL);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Encryption failed");
+      setError(e instanceof Error ? e.message : "Keystore (.p12) export failed");
     } finally {
       setIssuing(false);
     }
@@ -270,10 +284,11 @@ export function IssueForm({ onIssued }: Props) {
             value={preview.kp.publicKeyPem}
           />
           <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-text-muted)]">
-            The private key is held in memory only and is{" "}
-            <strong>encrypted with your passphrase on “Issue cert”</strong> — the downloaded
-            bundle contains the encrypted keystore, never plaintext. It is not shown here to
-            avoid on-screen exposure.
+            The private key is held in memory only. On “Issue cert” it is packaged into a{" "}
+            <strong>passphrase-protected <code className="font-mono">.p12</code> (PKCS#12)</strong>{" "}
+            and downloaded as a separate file — never shown on screen or written in plaintext.
+            Deliver the <code className="font-mono">.p12</code> and its passphrase to the
+            operator over separate out-of-band channels.
           </div>
         </div>
       )}
