@@ -256,3 +256,58 @@
 | 메일링크 발급화면(?wallet, subject read-only) | K1 | ⏳ |
 | SIWE 어드민 인증 | K2 | ⏳ |
 | Root CA 앵커 + ZK proof(SP1) | 사람/zk-X509(Docker) | 외부 |
+
+---
+
+## 12. 상용(은행)급 PKI 아키텍처 — 프로덕션 목표 (2026-06-01)
+
+§11까지의 구현은 **로컬/테스트넷 PoC**다(브라우저 Root CA 생성, 단일 키, min-8 비번, Root 직접 서명, 폐기 없음). 상용 배포 전 아래로 격상한다. ⚠ 현재 코드의 브라우저 Root CA 생성은 **테스트 전용**이며 운영에서 사용 금지.
+
+### 12.1 CA 계층 = 3-tier (Root 직접 leaf 서명 폐지)
+```
+Root CA   (오프라인·에어갭·HSM, M-of-N key ceremony, 20~30y) ── zk-X509 앵커(caMerkleRoot)
+   │ Intermediate만 가끔 서명
+Issuing CA (온라인·HSM, non-exportable, 3~5y, 회전 가능)     ── 발급 서비스가 leaf 서명에 사용
+   │
+Operator leaf cert (지갑·subject 바인딩, 짧은 validity, 갱신)
+```
+Root는 오프라인 보관 → Root 노출면 제거, Root 손상 ≠ Issuing 손상.
+
+### 12.2 키 관리
+- **모든 CA 키 = HSM/KMS** (CloudHSM·Cloud KMS·YubiHSM/Thales, FIPS 140-2 L3), non-exportable, 서명은 HSM API로만.
+- **Root**: 오프라인 HSM + 문서화 key ceremony(증인/녹화) + M-of-N(예 3/5) + 지리분산 암호화 백업.
+- **operator 키**: 현행 클라이언트 생성(zero-knowledge) 유지 → WebAuthn/passkey·Secure Enclave로 하드웨어 바인딩 업그레이드. CA는 operator 개인키를 영원히 못 봄.
+
+### 12.3 발급 플로우(HSM 백엔드 서명)
+1. operator: 클라(또는 본인 HSM) keygen → CSR + proof-of-possession(자기서명).
+2. 발급 서비스: KYC 온체인 approved ∧ **CSR subject == 온체인 승인값** ∧ PoP 검증.
+3. **Issuing CA(HSM)** 가 CSR 서명 → leaf cert. (어드민 브라우저가 `.p12` 푸는 방식 폐지)
+4. operator: zk-X509 ZK proof(SP1) → IdentityRegistry → isVerified.
+
+### 12.4 접근통제·이중통제
+- **SoD**: KYC 검토자 ≠ 승인자 ≠ CA 운영자.
+- 고위험(Root anchor/교체, 발급키 회전): **멀티시그(Safe)+타임락**, 온체인 승인.
+- admin 인증: SIWE + 온체인 role. 불변 감사로그(온체인 이벤트 + SIEM).
+
+### 12.5 폐기·라이프사이클 (현재 없음 → 필수)
+- **CRL + OCSP** + **온체인 폐기**: `IssuanceApprovalRegistry.revoke(wallet)` + 폐기 레지스트리/caMerkleRoot 갱신 → IdentityGate·슬래싱 즉시 반영.
+- 만료 전 자동 갱신, CA 회전(중첩기간). 손상 대응: Issuing CA만 폐기·재발급(Root 무손상 유지).
+
+### 12.6 컴플라이언스
+WebTrust for CA / CA-Browser Forum BR, SOC2 Type II, 정기 pen-test, key ceremony 감사.
+
+---
+
+## 13. 개발 계획 (PoC → 상용 단계별 로드맵)
+
+| Phase | 범위 | 로컬 코드 가능? | 소유(제안) |
+|---|---|---|---|
+| **0** ✅ | PoC: 브라우저 Root CA, 클라 keygen, 온체인 approve, KYC 검토, 발급 게이트 | 완료(#888~#898) | K0/K1/K2 |
+| **1** 하드닝 | (a) **CSR subject==온체인 승인** 검증 후 서명 (b) **온체인 revoke** 훅(revoke + 게이트 반영) (c) 폼/페이지 **"테스트 전용·운영 HSM 필요" 경고** (d) 발급/승인/폐기 **온체인 감사 이벤트** | **예** | (a)(d) K1, (b) 컨트랙트+K2, (c) K0/K1 |
+| **2** Issuing CA | Issuing CA tier 도입: Root는 Issuing만 서명, **백엔드 서명 서비스**(HSM 인터페이스 mock), leaf는 Issuing이 서명. 브라우저 생성=dev 모드 분기 | **부분**(인터페이스+mock) | K1 + 백엔드 K2 |
+| **3** HSM/KMS | CA 키를 HSM/KMS로(non-exportable), 서명 API 전환, 키 백업/ceremony | 인프라(인터페이스만) | infra/ops |
+| **4** 거버넌스 | Root anchor/교체·발급키 회전에 **멀티시그(Safe)+타임락**, M-of-N, SoD 강제 | 컨트랙트 일부 가능 | 컨트랙트 |
+| **5** 폐기 인프라 | **CRL/OCSP** responder, cert 갱신/회전 자동화 | 백엔드 가능 | K2 |
+| **6** 컴플라이언스 | WebTrust/CA-B BR, SOC2, pen-test, key ceremony 문서 | 운영 | ops |
+
+**즉시 착수(Phase 1, 코드 가능)**: (a) CSR subject 검증, (b) 온체인 revoke 연동, (c) 테스트 전용 경고, (d) 감사 이벤트. 나머지(HSM/멀티시그/CRL 인프라)는 인터페이스·로드맵 확보 후 운영 단계.
