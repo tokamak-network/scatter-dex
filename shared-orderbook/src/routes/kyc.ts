@@ -6,6 +6,8 @@ import path from "path";
 import multer from "multer";
 import { config } from "../config.js";
 import type { OrderbookDB } from "../core/db.js";
+import type { AdminAuthedRequest } from "../middleware/admin-auth.js";
+import { recordAuditSafe } from "../core/audit.js";
 import {
   isKycStatus,
   isKycReviewStatus,
@@ -396,6 +398,16 @@ export function createKycRoutes(
         res.status(404).json({ error: "submission not found" });
         return;
       }
+      // Audit the review decision — best-effort, never fails the (already
+      // committed) status change.
+      recordAuditSafe(db, {
+        ts: reviewedAt,
+        actor: (req as AdminAuthedRequest).adminAddress ?? null,
+        action: `kyc.${next}`,
+        targetType: "kyc",
+        targetId: sub.id,
+        detail: JSON.stringify({ from: sub.status, to: next, notes }),
+      });
       res.json({ id: sub.id, status: next, notes, reviewedAt });
     } catch (err) {
       console.error("[kyc] status update failed:", err);

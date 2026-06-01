@@ -170,6 +170,7 @@ async function main() {
       console.log(`  GET    /api/admin/challenge          — admin SIWE: request nonce`);
       console.log(`  POST   /api/admin/session            — admin SIWE: exchange signature for token`);
     }
+    console.log(`  GET    /api/admin/audit              — admin: append-only audit log`);
     console.log(`  POST   /api/ca/root                  — admin: publish public Root CA (.der)`);
     console.log(`  GET    /api/ca/root                  — download active Root CA`);
     console.log(`  GET    /api/ca/root/info             — Root CA metadata`);

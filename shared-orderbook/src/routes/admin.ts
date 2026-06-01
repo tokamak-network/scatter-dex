@@ -72,6 +72,29 @@ export function createAdminRoutes(deps: AdminDeps): Router {
    * hours, something upstream is broken. `oldestUnverifiedBlock` adds the
    * leading edge so ops can correlate against chain head.
    */
+  /**
+   * GET /api/admin/audit?action=&targetType=&targetId=&limit=&offset=
+   *
+   * The append-only admin audit trail (KYC review decisions, Root CA
+   * publications), newest-first. Optional filters compose with AND.
+   */
+  router.get("/audit", adminAuth, (req, res) => {
+    const q = req.query as Record<string, unknown>;
+    const action = typeof q.action === "string" ? q.action : undefined;
+    const targetType = typeof q.targetType === "string" ? q.targetType : undefined;
+    const targetId = typeof q.targetId === "string" ? q.targetId : undefined;
+    const limit = q.limit !== undefined ? Number(q.limit) : undefined;
+    const rawOffset = Math.trunc(Number(q.offset ?? 0));
+    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+    try {
+      const entries = db.listAudit({ action, targetType, targetId, limit, offset });
+      res.json({ entries, count: entries.length, offset });
+    } catch (err) {
+      console.error("[admin] list audit failed:", err);
+      res.status(500).json({ error: "audit query failed" });
+    }
+  });
+
   router.get("/verify-stats", adminAuth, (_req, res) => {
     const monSnap = monitor.snapshot();
     const unverifiedCount = db.countUnverifiedSettlements();

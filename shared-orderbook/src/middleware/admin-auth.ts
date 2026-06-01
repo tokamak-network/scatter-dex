@@ -58,16 +58,30 @@ export function makeAdminAuth(opts: AdminAuthOptions): RequestHandler {
       res.status(401).json({ error: "missing bearer token" });
       return;
     }
-    // SIWE session token (wallet flow) — tried first; a plain Map.get.
-    if (siwe && siwe.verifySession(token) !== null) {
-      next();
-      return;
+    // SIWE session token (wallet flow) — tried first; a plain Map.get. On hit,
+    // the bound admin address is stamped on the request for audit logging.
+    if (siwe) {
+      const address = siwe.verifySession(token);
+      if (address !== null) {
+        (req as AdminAuthedRequest).adminAddress = address;
+        next();
+        return;
+      }
     }
-    // Static token (legacy / CI) — constant-time compare.
+    // Static token (legacy / CI) — constant-time compare. No per-admin
+    // identity, so the audit actor is null.
     if (staticToken && timingSafeEqualStr(token, staticToken)) {
+      (req as AdminAuthedRequest).adminAddress = null;
       next();
       return;
     }
     res.status(401).json({ error: "invalid or expired bearer token" });
   };
+}
+
+/** Request after `makeAdminAuth` has run: carries the authenticated admin's
+ *  wallet address (SIWE flow) or null (static-token flow). Routes read this
+ *  to attribute audit-log entries. */
+export interface AdminAuthedRequest extends Request {
+  adminAddress: string | null;
 }

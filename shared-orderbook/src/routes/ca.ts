@@ -1,6 +1,8 @@
 import express, { Router, type Request, type Response, type RequestHandler } from "express";
 import { X509Certificate, createHash } from "crypto";
 import type { OrderbookDB } from "../core/db.js";
+import type { AdminAuthedRequest } from "../middleware/admin-auth.js";
+import { recordAuditSafe } from "../core/audit.js";
 
 /**
  * Public Root CA endpoints (relayer operator onboarding, X.509 anchor).
@@ -119,7 +121,17 @@ export function createCaRoutes(
       return;
     }
     try {
-      db.saveRootCa({ ...parsed, createdAt: Math.floor(Date.now() / 1000) });
+      const createdAt = Math.floor(Date.now() / 1000);
+      db.saveRootCa({ ...parsed, createdAt });
+      // Audit the publication — best-effort, never fails the (already saved) cert.
+      recordAuditSafe(db, {
+        ts: createdAt,
+        actor: (req as AdminAuthedRequest).adminAddress ?? null,
+        action: "rootca.published",
+        targetType: "root_ca",
+        targetId: parsed.fingerprint,
+        detail: JSON.stringify({ commonName: parsed.commonName, notAfter: parsed.notAfter }),
+      });
       res.status(201).json({ fingerprint: parsed.fingerprint });
     } catch (err) {
       console.error("[ca] save root CA failed:", err);
