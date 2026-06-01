@@ -135,14 +135,15 @@
 
 ## 7. 구현 단계 (PR 분할)
 
-### 진행 현황 (2026-06-01, 갱신)
-KYC/CA 온보딩 PoC + Phase 1 대부분 머지 완료 (18+ PR):
-- **KYC 라인**: #888 백엔드 · #889 operators 폼 · #890 영문 · #892 admin 라우트 · #895 검토UI(drawer)+온체인approve(subject고정) · #900 대기UX.
-- **CA/키 라인**: #886 온체인read · #887 키암호화 · #891 PKCS#12 · #893 승인게이트 · #896 RootCA엔드포인트 · #897 RootCA모듈 · #898 RootCA생성UI.
-- **인프라/하드닝(Phase 1)**: #894 SIWE인증 · #899 SIWE코어추출 · #901 감사로그 · #902/#903 폐기(revoke)경로 · #904 테스트전용 경고배너.
-- **진행 중**: operators 자가 발급화면(keygen+CSR, #3+#5+Phase1a, K1) + CSR/leaf 발급 백엔드(K2). 메일 cert 링크를 operators URL로 수정(K0, 라우트 확정 후).
-- **남음(로드맵 §13)**: Phase 2 Issuing CA → 3 HSM → 4 거버넌스(멀티시그/타임락) → 5 CRL/OCSP → 6 컴플라이언스.
+### 진행 현황 (2026-06-01 최종) — 발급 라인 코드 완성
+KYC/CA 온보딩 PoC + Phase 1 + 발급(CA서명) 라인 전부 머지 (~23 PR). E2E 로컬 검증 통과: KYC제출→어드민검토(동영상/신분증 스트림)→온체인approve(subject고정)→발급화면게이트→폐기(revoke,감사로그) 전 구간 동작.
 
+- **KYC**: #888 백엔드 · #889 operators 폼 · #890 영문 · #892 admin 라우트 · #895 검토UI(drawer)+온체인approve · #900 대기UX · #906/#908 메일링크·URL검증.
+- **CA/키/발급**: #886 온체인read · #887 키암호화 · #891 PKCS#12 · #893 승인게이트 · #896 RootCA엔드포인트 · #897 RootCA모듈 · #898 RootCA생성UI · **#905 operators 자가발급(keygen+CSR)** · **#907 CSR/leaf 백엔드** · **#909 CA가 CSR 서명→leaf(권위적 subject 게이트, CsrSubjectMismatchError)**.
+- **하드닝(Phase 1)**: #894 SIWE · #899 SIWE코어추출 · #901 감사로그 · #902/#903 폐기경로 · #904 테스트전용 경고.
+- **남은 배선**: operators #905 화면의 CSR POST(signMessage) 실연결 + leaf cert 수령(GET /api/cert/issued) — K1 follow-up.
+- **외부 의존(코드 아님)**: zk-X509 ZK proof = SP1 prover(Docker) → IdentityRegistry → isVerified. Docker 환경 필요.
+- **상용화(로드맵 §13)**: Phase 2 Issuing CA → 3 HSM → 4 거버넌스(멀티시그/타임락) → 5 CRL/OCSP → 6 컴플라이언스.
 ### Stage 0 — 설계 문서 (= 본 문서) ✅ 완료 (commit 21ae17fb)
 - `docs/design/relayer-kyc-onboarding/design.md` (본 파일) + `MEMORY.md` 한 줄 포인터.
 - `docs/operations/` 런북에서 링크(선택).
