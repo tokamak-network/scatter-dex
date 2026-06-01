@@ -657,7 +657,7 @@ function KycSubmittedBanner({ kycStatus }: { kycStatus: KycStatus }) {
   const copy: Record<string, { title: string; body: string; tone: string }> = {
     pending: {
       title: "Submitted — under review",
-      body: "The admin is reviewing your documents. You'll get an email with your certificate-issuance link once your wallet is approved.",
+      body: "The admin is reviewing your documents — this usually takes 1–2 business days. You'll get an email with your certificate-issuance link once your wallet is approved.",
       tone: "var(--color-primary)",
     },
     verified: {
