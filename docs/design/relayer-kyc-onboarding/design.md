@@ -135,13 +135,13 @@
 
 ## 7. 구현 단계 (PR 분할)
 
-### 진행 현황 (2026-06-01)
-- **Stage 0** 설계 문서 ✅ (commit 21ae17fb, branch docs/relayer-kyc-onboarding-design).
-- **PR1-A** shared-orderbook KYC 백엔드 → **PR #888** (K2). 봇 리뷰 대기.
-- **PR1-B** operators register Step0 KYC 폼 → **PR #889** (K0). 봇 리뷰 대기.
-- **개인키 암호화 코어** → **PR #887** (K1, interim JSON 봉투 → PKCS#12로 교체 예정).
-- **PR2** admin 검토+approve+메일 → K0 착수 예정 (PR1-A의 admin 501 stub 위에).
-- **PR3 발급 게이트+키스토어** → K1 (apps/admin/app/operator-ca, PKCS#12).
+### 진행 현황 (2026-06-01, 갱신)
+KYC/CA 온보딩 PoC + Phase 1 대부분 머지 완료 (18+ PR):
+- **KYC 라인**: #888 백엔드 · #889 operators 폼 · #890 영문 · #892 admin 라우트 · #895 검토UI(drawer)+온체인approve(subject고정) · #900 대기UX.
+- **CA/키 라인**: #886 온체인read · #887 키암호화 · #891 PKCS#12 · #893 승인게이트 · #896 RootCA엔드포인트 · #897 RootCA모듈 · #898 RootCA생성UI.
+- **인프라/하드닝(Phase 1)**: #894 SIWE인증 · #899 SIWE코어추출 · #901 감사로그 · #902/#903 폐기(revoke)경로 · #904 테스트전용 경고배너.
+- **진행 중**: operators 자가 발급화면(keygen+CSR, #3+#5+Phase1a, K1) + CSR/leaf 발급 백엔드(K2). 메일 cert 링크를 operators URL로 수정(K0, 라우트 확정 후).
+- **남음(로드맵 §13)**: Phase 2 Issuing CA → 3 HSM → 4 거버넌스(멀티시그/타임락) → 5 CRL/OCSP → 6 컴플라이언스.
 
 ### Stage 0 — 설계 문서 (= 본 문서) ✅ 완료 (commit 21ae17fb)
 - `docs/design/relayer-kyc-onboarding/design.md` (본 파일) + `MEMORY.md` 한 줄 포인터.
