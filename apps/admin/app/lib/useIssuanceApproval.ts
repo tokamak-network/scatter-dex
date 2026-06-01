@@ -6,12 +6,11 @@ import { isConfiguredAddress, ISSUANCE_APPROVAL_REGISTRY_ABI } from "@zkscatter/
 import { useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "./network";
 
-/** What the operators app needs to know about a wallet's issuance
- *  approval state to gate the "Open Relayer-CA portal" CTA.
- *  Stay closed: the hook never returns the admin's KYC metadata
- *  beyond what the connected operator already implicitly knows (CN
- *  is typically their own org email; O / C are the values they
- *  submitted offline). */
+/** A connected wallet's issuance-approval state, used by the admin
+ *  Operator-CA issuance gate (this app) and the operators "Open Relayer-CA
+ *  portal" CTA to decide whether issuance is permitted. The struct fields
+ *  mirror what the connected operator already implicitly knows (CN is
+ *  typically their own org email; O / C are values they submitted offline). */
 export interface IssuanceApprovalState {
   status:
     | "idle"           // no wallet connected, or registry not configured
@@ -101,11 +100,11 @@ export interface UseIssuanceApprovalResult extends IssuanceApprovalState {
    *  registry / provider isn't set (mirrors the effect's gates). */
   refetch: () => void;
   /** Unix-ms timestamp of the most recent SUCCESSFUL read, or
-   *  `null` before the first one settles or while in `idle`. Used
-   *  by the operator's `/register` Step 1 to drive a LiveFreshness
-   *  pill so the operator can see polling is alive. Not stamped on
-   *  RPC errors — failure leaves the prior value visibly ticking
-   *  stale instead of optimistically freezing. */
+   *  `null` before the first one settles or while in `idle`. Drives a
+   *  LiveFreshness pill (e.g. the operators `/register` Step 1) so the user
+   *  can see polling is alive. Not stamped on RPC errors — failure leaves
+   *  the prior value visibly ticking stale instead of optimistically
+   *  freezing. */
   lastRefreshedAt: number | null;
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   buildCertificateRequest,
   generateOperatorKeypair,
@@ -9,7 +9,7 @@ import {
   type CertificateRequest,
   type GeneratedKeypair,
 } from "../../lib/x509";
-import { isConfiguredAddress } from "@zkscatter/sdk";
+import { eqAddr, isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { exportOperatorPkcs12 } from "../../lib/pkcs12";
 import { DEMO_NETWORK } from "../../lib/network";
@@ -92,7 +92,18 @@ export function IssueForm({ onIssued }: Props) {
   const { account } = useWallet();
   const approval = useIssuanceApproval();
   const gateActive = isConfiguredAddress(DEMO_NETWORK.contracts.issuanceApprovalRegistry);
-  const issuanceAllowed = !gateActive || approval.status === "approved";
+  // When the gate is active, the cert MUST be issued for the connected,
+  // approved wallet — otherwise an approved wallet could mint a cert bound to
+  // any unapproved address, bypassing the gate. Bind the wallet field to the
+  // connected account and require they match.
+  useEffect(() => {
+    if (gateActive && account) {
+      setForm((f) => (eqAddr(f.walletAddress, account) ? f : { ...f, walletAddress: account }));
+    }
+  }, [gateActive, account]);
+  const issuanceAllowed =
+    !gateActive ||
+    (approval.status === "approved" && !!account && eqAddr(account, form.walletAddress));
 
   function validate(): string | null {
     if (!form.commonName.trim()) return "Common Name is required";
@@ -108,6 +119,12 @@ export function IssueForm({ onIssued }: Props) {
 
   async function handleGenerate() {
     setError(null);
+    // Defense-in-depth: the buttons are disabled when !issuanceAllowed, but
+    // guard the callback too so a programmatic invocation can't bypass the gate.
+    if (!issuanceAllowed) {
+      setError("Issuance is not permitted: the connected wallet must be approved.");
+      return;
+    }
     const v = validate();
     if (v) {
       setError(v);
@@ -143,6 +160,10 @@ export function IssueForm({ onIssued }: Props) {
 
   async function handleIssue() {
     if (!preview) return;
+    if (!issuanceAllowed) {
+      setError("Issuance is not permitted: the connected wallet must be approved.");
+      return;
+    }
     const pe = passphraseError();
     if (pe) {
       setError(pe);
@@ -219,12 +240,19 @@ export function IssueForm({ onIssued }: Props) {
             onChange={(e) => update("validityDays", Number(e.target.value))}
           />
         </Field>
-        <Field label="Operator wallet" full>
+        <Field
+          label="Operator wallet"
+          hint={gateActive ? "bound to the connected, approved wallet" : undefined}
+          full
+        >
           <input
-            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm read-only:opacity-70"
             placeholder="0x…"
             value={form.walletAddress}
             onChange={(e) => update("walletAddress", e.target.value)}
+            // Under the on-chain gate the cert must be for the connected wallet,
+            // so the field is locked to it (prevents issuing for another address).
+            readOnly={gateActive}
           />
         </Field>
       </div>
@@ -354,18 +382,18 @@ function GateBanner({
     }
   }
 
-  const border =
+  const cls =
     tone === "ok"
-      ? "border-[var(--color-success)]"
+      ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
       : tone === "danger"
-        ? "border-[var(--color-danger)]"
-        : "border-[var(--color-warning)]";
+        ? "border-[var(--color-danger)] bg-[var(--color-danger-soft)] text-[var(--color-danger)]"
+        : "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-text-muted)]";
 
   return (
     <div
-      className={`mb-4 flex items-center justify-between gap-3 rounded-md border ${border} px-3 py-2 text-sm`}
+      className={`mb-4 flex items-center justify-between gap-3 rounded-md border ${cls} px-3 py-2 text-sm`}
     >
-      <span className="text-[var(--color-text-muted)]">{text}</span>
+      <span>{text}</span>
       {showRefresh && (
         <button
           type="button"
