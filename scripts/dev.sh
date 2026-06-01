@@ -43,20 +43,22 @@ RELAYER_B_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
 RELAYER_FEE_BPS=30
 RPC_URL="http://localhost:8545"
 MOCK_MODE=false
+BACKGROUND=false
+STOP=false
 MOBILE_BUNDLE_ID="io.scatterdex.mobile"
 PIDS=()
 CLEANED_UP=false
 
 # Per-app dev ports come from each app's `next dev -p …` script.
-# `hub` is intentionally excluded — it shares port 4000 with the
-# shared-orderbook this script always starts, so it must be run from
-# a separate terminal (it's a static landing site that doesn't need
-# the relayer/anvil stack anyway).
+# `hub` runs on 4006 (its package.json default was moved off 4000 so it no
+# longer collides with the shared-orderbook this script always starts on 4000).
 declare -A APP_PORTS=(
   [pay]=4001
   [drop]=4002
   [pro]=4003
   [operators]=4004
+  [admin]=4005
+  [hub]=4006
 )
 # Comma-separated app list from --apps. Empty means "start frontend"
 # (the legacy default).
@@ -77,21 +79,25 @@ for _port in "${APP_PORTS[@]}"; do
 done
 
 usage() {
-  echo "Usage: $0 [--mock] [--apps <a,b,c>]"
+  echo "Usage: $0 [--mock] [--apps <a,b,c>] [--background] [--stop]"
   echo ""
-  echo "  Default:    Connects to running anvil with zk-X509 deployed."
-  echo "              Requires IDENTITY_REGISTRY env var or prompts for it."
-  echo "  --mock:     Starts own anvil with MockIdentityRegistry (no zk-X509 needed)."
-  echo "  --apps L:   Comma-separated app names to run instead of \`frontend/\`."
-  echo "              Valid: ${!APP_PORTS[*]}"
-  echo "              Example: --apps pro,pay"
-  echo "              Note: hub is excluded (port 4000 collides with shared-orderbook)."
+  echo "  Default:        Connects to running anvil with zk-X509 deployed."
+  echo "                  Requires IDENTITY_REGISTRY env var or prompts for it."
+  echo "  --mock:         Starts own anvil with MockIdentityRegistry (no zk-X509 needed)."
+  echo "  --apps L:       Comma-separated app names to run instead of \`frontend/\`."
+  echo "                  Valid: ${!APP_PORTS[*]}"
+  echo "                  Example: --apps pay,pro,operators,admin,hub"
+  echo "  --background,-d: Start everything, then detach and leave it running"
+  echo "                  (terminal is freed; closing the window won't stop it)."
+  echo "  --stop:         Stop services started by a previous --background run."
   exit 0
 }
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --mock) MOCK_MODE=true; shift ;;
+    --background|-d) BACKGROUND=true; shift ;;
+    --stop) STOP=true; shift ;;
     --apps)
       # Without this guard, `--apps` as the last arg or before another
       # flag would silently consume the wrong value (or `shift 2` would
@@ -108,6 +114,30 @@ while [ $# -gt 0 ]; do
     *) echo "ERROR: unknown argument '$1' (try --help)" >&2; exit 1 ;;
   esac
 done
+
+# Stop a previous --background run and exit. Kills the tracked PIDs from the
+# pidfile, then sweeps the well-known dev ports for anything left behind
+# (npm/next spawn grandchildren the pidfile doesn't capture).
+PIDFILE="$LOG_DIR/dev.pids"
+stop_services() {
+  local killed=0
+  if [ -f "$PIDFILE" ]; then
+    while read -r pid; do
+      [ -n "$pid" ] && kill "$pid" 2>/dev/null && killed=1
+    done < "$PIDFILE"
+    rm -f "$PIDFILE"
+  fi
+  local p pids
+  for p in 8545 3002 3003 4000 4001 4002 4003 4004 4005 4006; do
+    pids=$(lsof -tiTCP:"$p" -sTCP:LISTEN 2>/dev/null || true)
+    [ -n "$pids" ] && kill $pids 2>/dev/null && killed=1
+  done
+  if [ "$killed" = 1 ]; then echo "Stopped background dev services."; else echo "No running dev services found."; fi
+}
+if [ "$STOP" = true ]; then
+  stop_services
+  exit 0
+fi
 
 # Validate --apps entries against APP_PORTS so a typo fails fast
 # instead of silently skipping the app or starting the wrong port.
@@ -133,7 +163,10 @@ cleanup() {
   wait 2>/dev/null
   echo "Done. Logs saved in $LOG_DIR/"
 }
-trap cleanup EXIT
+# INT/TERM/HUP in addition to EXIT so Ctrl+C *and* closing the terminal window
+# (SIGHUP) tear down every child. In --background mode this trap is cleared
+# right before we detach so the services survive our exit (see the tail).
+trap cleanup INT TERM HUP EXIT
 
 # Wait for a URL to respond, with timeout. Returns 1 on failure.
 wait_for() {
@@ -1015,6 +1048,20 @@ if [ "$MOCK_MODE" = true ]; then
   echo "    Bob:   0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
   echo ""
 fi
+if [ "$BACKGROUND" = true ]; then
+  # Detach: record the PIDs, clear the teardown trap so our exit does NOT
+  # kill the children, and return the terminal. The services keep running
+  # (reparented to init) until `--stop`.
+  printf '%s\n' "${PIDS[@]}" > "$PIDFILE"
+  trap - INT TERM HUP EXIT
+  echo "  Running in the BACKGROUND — this terminal is free and closing it"
+  echo "  will NOT stop the services. PIDs saved to $PIDFILE"
+  echo ""
+  echo "  Stop everything:  $0 --stop"
+  echo ""
+  exit 0
+fi
+
 echo "  Press Ctrl+C to stop all services."
 echo ""
 
