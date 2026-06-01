@@ -116,6 +116,23 @@ ensure_sqlite_arch() {
   fi
 }
 
+# Rebuild @scatter-dex/types when its built output is missing or stale.
+# It resolves to dist/index.js (not src), and its `prepare` hook only builds
+# when dist is absent — so a `git pull` that adds an export to src leaves a
+# stale dist and the shared-orderbook / zk-relayer tsx processes crash at
+# startup with "does not provide an export named …". Gate on a cheap
+# src-newer-than-dist check so a fresh pull always boots against current types.
+ensure_types_built() {
+  local pkg="$ROOT_DIR/packages/types"
+  local dist="$pkg/dist/index.js"
+  [ -d "$pkg" ] || return 0
+  if [ ! -f "$dist" ] || [ -n "$(find "$pkg/src" -name '*.ts' -newer "$dist" 2>/dev/null | head -1)" ]; then
+    echo "  Building @scatter-dex/types (source changed since last build)..."
+    ( cd "$pkg" && npm run build ) > "$LOG_DIR/types-build.log" 2>&1 \
+      || { echo "  ERROR: @scatter-dex/types build failed. See $LOG_DIR/types-build.log"; exit 1; }
+  fi
+}
+
 # Uninstall the mobile app from all booted simulators/emulators. Fresh contract
 # addresses on every run make cached commitments/claim notes stale; wallet
 # mnemonic must be re-imported after reset.
@@ -387,6 +404,9 @@ wait "$USDC_PID" 2>/dev/null || true
 # ── 3. Start shared orderbook ──────────────────────────────
 echo ""
 echo "[3/6] Starting shared orderbook (port 4000)..."
+# shared-orderbook AND zk-relayer both import @scatter-dex/types' built
+# output — keep it fresh before either boots.
+ensure_types_built
 if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
   echo "  Installing shared-orderbook dependencies (first run)..."
   ( cd "$ROOT_DIR/shared-orderbook" && npm install --no-audit --no-fund ) > "$LOG_DIR/shared-orderbook-install.log" 2>&1

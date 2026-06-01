@@ -194,6 +194,29 @@ ensure_sqlite_arch() {
   fi
 }
 
+# Rebuild the @scatter-dex/types workspace package when its built output is
+# missing or stale. Unlike the @zkscatter/* packages (which resolve straight
+# to ./src/index.ts), @scatter-dex/types resolves to dist/index.js — the
+# shared-orderbook and zk-relayer tsx processes import from that built copy.
+# Its `prepare` hook only builds when dist is ABSENT (`test -d dist || tsc`),
+# so a `git pull` that adds an export (e.g. `clampLimit`) to src leaves the
+# old dist in place and the consumers crash at startup with
+# "does not provide an export named …". Building here on every dev start —
+# gated on a cheap src-newer-than-dist check — keeps the built copy in lock-
+# step with source for anyone who just pulled. Production is unaffected: the
+# Docker images build the package fresh from an empty dist.
+ensure_types_built() {
+  local pkg="$ROOT_DIR/packages/types"
+  local dist="$pkg/dist/index.js"
+  [ -d "$pkg" ] || return 0
+  # Rebuild when dist is missing, or any .ts under src/ is newer than it.
+  if [ ! -f "$dist" ] || [ -n "$(find "$pkg/src" -name '*.ts' -newer "$dist" 2>/dev/null | head -1)" ]; then
+    echo "  Building @scatter-dex/types (source changed since last build)..."
+    ( cd "$pkg" && npm run build ) > "$LOG_DIR/types-build.log" 2>&1 \
+      || { echo "  ERROR: @scatter-dex/types build failed. See $LOG_DIR/types-build.log"; exit 1; }
+  fi
+}
+
 # Wipe the mobile app from any booted iOS simulator / Android emulator.
 # Fresh anvil means fresh contract addresses, so any cached commitment
 # notes / claim notes / trade history in the app are stale. Full uninstall
@@ -601,6 +624,9 @@ fi
 # ── 3. Start shared orderbook ──────────────────────────────
 echo ""
 echo "[3/6] Starting shared orderbook (port 4000)..."
+# shared-orderbook AND zk-relayer (started below) both import from the
+# @scatter-dex/types built output — keep it fresh before either boots.
+ensure_types_built
 if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
   echo "  Installing shared-orderbook dependencies (first run)..."
   ( cd "$ROOT_DIR/shared-orderbook" && npm install --no-audit --no-fund ) > "$LOG_DIR/shared-orderbook-install.log" 2>&1
