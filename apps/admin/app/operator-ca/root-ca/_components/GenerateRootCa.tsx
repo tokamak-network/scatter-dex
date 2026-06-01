@@ -8,6 +8,11 @@ import { exportOperatorPkcs12 } from "../../../lib/pkcs12";
 const MIN_PASSPHRASE = 12;
 const DEFAULT_VALIDITY_YEARS = 10;
 
+/** Dev/interim bearer for the orderbook admin endpoints (same as the KYC
+ *  review console) — replaced by a SIWE session header once the orderbook's
+ *  signature auth lands. */
+const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ORDERBOOK_ADMIN_TOKEN ?? "";
+
 interface FormState {
   commonName: string;
   organization: string;
@@ -29,7 +34,7 @@ const INITIAL: FormState = {
 type Phase =
   | { kind: "idle" }
   | { kind: "working" }
-  | { kind: "done"; published: boolean; note?: string }
+  | { kind: "done"; published: boolean; note?: string; certDer: ArrayBuffer }
   | { kind: "error"; msg: string };
 
 function download(filename: string, data: BlobPart, type: string) {
@@ -73,7 +78,7 @@ export function GenerateRootCa({
   function validate(): string | null {
     if (!form.commonName.trim()) return "Common Name is required";
     if (!form.organization.trim()) return "Organisation is required";
-    if (!isValidCountryCode(form.country))
+    if (!isValidCountryCode(form.country.trim()))
       return "Country must be an ISO-3166 alpha-2 code (e.g. KR, US)";
     if (
       !Number.isInteger(form.validityYears) ||
@@ -98,37 +103,49 @@ export function GenerateRootCa({
       const { certDer, privateKeyPem } = await generateRootCa({
         commonName: form.commonName.trim(),
         organization: form.organization.trim(),
-        country: form.country.toUpperCase(),
+        country: form.country.trim().toUpperCase(),
         validityYears: form.validityYears,
       });
 
-      // 1. Download the CA private key as an encrypted .p12 (local only).
+      // Auto-download ONLY the encrypted CA private key (.p12) — the one
+      // secret the admin must keep. Browsers block multiple programmatic
+      // downloads, so the public .der is offered as a manual button in the
+      // done banner (and is published to the orderbook below).
       const p12 = await exportOperatorPkcs12(privateKeyPem, form.passphrase);
       download("rootCA.p12", p12, "application/x-pkcs12");
-      // 2. Download the public cert too (so the admin always has it locally).
-      download("rootCA.der", certDer, "application/pkix-cert");
 
-      // 3. Publish the public DER to the orderbook. The POST endpoint may not
-      //    be deployed yet — treat a failure as non-fatal (the files are
-      //    already saved locally) and tell the admin to retry once it's up.
+      // Publish the public DER to the orderbook. The POST endpoint is admin-
+      // guarded (Bearer/SIWE) and may not be deployed yet — treat any failure
+      // as non-fatal (the key .p12 is already saved, and .der is downloadable
+      // from the banner) and give actionable guidance per status.
       let published = false;
       let note: string | undefined;
       try {
         const res = await fetch(`${orderbookUrl}/api/ca/root`, {
           method: "POST",
-          headers: { "Content-Type": "application/pkix-cert" },
+          headers: {
+            "Content-Type": "application/pkix-cert",
+            ...(ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {}),
+          },
           body: certDer,
         });
         if (res.ok) {
           published = true;
+        } else if (res.status === 401) {
+          note =
+            "Publish unauthorized (401). Admin auth isn't configured — set NEXT_PUBLIC_ORDERBOOK_ADMIN_TOKEN (or sign in once SIWE admin auth lands), then download the .der below and re-publish.";
+        } else if (res.status === 503) {
+          note =
+            "Root CA service is disabled (503) on the orderbook. Download the .der below and publish once it's enabled.";
         } else {
-          note = `Publish failed (HTTP ${res.status}). The .p12 and .der were downloaded; retry publish once the Root CA service is available.`;
+          note = `Publish failed (HTTP ${res.status}). Download the .der below and retry once the Root CA service is available.`;
         }
       } catch {
-        note = "Publish endpoint unreachable. The .p12 and .der were downloaded; publish once the Root CA service is available.";
+        note =
+          "Publish endpoint unreachable. Download the .der below and publish once the Root CA service is available.";
       }
 
-      setPhase({ kind: "done", published, note });
+      setPhase({ kind: "done", published, note, certDer });
       setForm(INITIAL);
       if (published) onPublished();
     } catch (e) {
@@ -230,15 +247,26 @@ export function GenerateRootCa({
       )}
       {phase.kind === "done" && (
         <div
-          className={`rounded-md border px-3 py-2 text-sm ${
+          className={`space-y-2 rounded-md border px-3 py-2 text-sm ${
             phase.published
               ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
               : "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-text-muted)]"
           }`}
         >
-          {phase.published
-            ? "Root CA generated and published. rootCA.p12 (private) and rootCA.der (public) were downloaded."
-            : phase.note}
+          <div>
+            {phase.published
+              ? "Root CA generated and published. rootCA.p12 (private key) was downloaded — store it and its passphrase securely."
+              : phase.note}
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              download("rootCA.der", phase.certDer, "application/pkix-cert")
+            }
+            className="text-xs text-[var(--color-primary)] hover:underline"
+          >
+            Download rootCA.der
+          </button>
         </div>
       )}
     </div>

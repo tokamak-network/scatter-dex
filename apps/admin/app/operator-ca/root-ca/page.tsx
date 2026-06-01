@@ -22,8 +22,9 @@ import { useCallback, useEffect, useState } from "react";
 import { SectionHeader } from "../../components/SectionHeader";
 import { GenerateRootCa } from "./_components/GenerateRootCa";
 
-const ORDERBOOK_URL =
-  process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "http://localhost:4000";
+const ORDERBOOK_URL = (
+  process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "http://localhost:4000"
+).replace(/\/+$/, "");
 
 interface RootCaInfo {
   commonName: string;
