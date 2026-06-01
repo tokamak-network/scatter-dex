@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import http from "http";
 import express from "express";
 import fs from "fs";
@@ -33,7 +33,10 @@ describe("OrderbookDB — KYC submissions", () => {
     db = new OrderbookDB(TEST_DB);
   });
 
-  afterAll(() => { db.close(); cleanDb(); });
+  // Close the handle after every test so cleanDb() never races an open
+  // connection and SQLite file handles don't leak across cases.
+  afterEach(() => { db.close(); });
+  afterAll(() => { cleanDb(); });
 
   it("inserts and reads back a submission by id and wallet", () => {
     db.insertKycSubmission({
@@ -154,6 +157,19 @@ describe("KYC routes", () => {
     expect(db.getKycById(first.id)?.email).toBe("b2@example.com");
     // exactly one row for the wallet
     expect(db.listKycSubmissions().filter((r) => r.wallet === WALLET_B.toLowerCase())).toHaveLength(1);
+  });
+
+  it("POST /submit — re-record with a different extension removes the orphaned file", async () => {
+    const wallet = "0x" + "c".repeat(40);
+    const first = await (await submitForm({ wallet, email: "c@example.com", video: true, idDoc: true })).json();
+    const oldVideo = db.getKycById(first.id)!.videoPath!;
+    expect(oldVideo.endsWith("/video.webm")).toBe(true);
+
+    await submitForm({ wallet, email: "c@example.com", video: true, idDoc: true, videoType: "video/mp4" });
+    const newVideo = db.getKycById(first.id)!.videoPath!;
+    expect(newVideo.endsWith("/video.mp4")).toBe(true);
+    expect(fs.existsSync(newVideo)).toBe(true);
+    expect(fs.existsSync(oldVideo)).toBe(false); // orphan cleaned up
   });
 
   it("POST /submit — rejects bad wallet, missing email, missing files, bad type", async () => {

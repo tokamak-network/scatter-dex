@@ -47,6 +47,8 @@ export class OrderbookDB {
   private stmtGetKycByWallet!: Database.Statement;
   private stmtUpdateKycFiles!: Database.Statement;
   private stmtUpdateKycStatus!: Database.Statement;
+  private stmtListKycAll!: Database.Statement;
+  private stmtListKycByStatus!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -313,6 +315,16 @@ export class OrderbookDB {
     this.stmtUpdateKycStatus = this.db.prepare(`
       UPDATE kyc_submissions SET status = ?, notes = ?, reviewed_at = ? WHERE id = ?
     `);
+
+    // Admin review queue (PR2). Two fixed shapes — all rows vs one status
+    // bucket — so they pre-prepare cleanly (cf. stmtListAll/stmtListByStatus
+    // for orders) rather than compiling inline per call.
+    this.stmtListKycAll = this.db.prepare(
+      `SELECT * FROM kyc_submissions ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    );
+    this.stmtListKycByStatus = this.db.prepare(
+      `SELECT * FROM kyc_submissions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    );
   }
 
   insertOrder(o: OrderSummary): void {
@@ -974,17 +986,14 @@ export class OrderbookDB {
 
   /** Admin review queue (PR2). Optional status filter, newest-first. */
   listKycSubmissions(filter: KycListFilter = {}): KycSubmission[] {
-    const limit = Math.min(filter.limit ?? 100, 500);
-    const offset = Math.max(filter.offset ?? 0, 0);
+    // clampLimit truncates + bounds to [1, 500]; without it a negative limit
+    // reaches SQLite as "no limit" and returns the whole table.
+    const limit = clampLimit(filter.limit, 500, 100);
+    const rawOffset = Math.trunc(Number(filter.offset ?? 0));
+    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
     const rows = filter.status
-      ? (this.db
-          .prepare(
-            `SELECT * FROM kyc_submissions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-          )
-          .all(filter.status, limit, offset) as Record<string, unknown>[])
-      : (this.db
-          .prepare(`SELECT * FROM kyc_submissions ORDER BY created_at DESC LIMIT ? OFFSET ?`)
-          .all(limit, offset) as Record<string, unknown>[]);
+      ? (this.stmtListKycByStatus.all(filter.status, limit, offset) as Record<string, unknown>[])
+      : (this.stmtListKycAll.all(limit, offset) as Record<string, unknown>[]);
     return rows.map((r) => this.rowToKyc(r));
   }
 
