@@ -22,6 +22,14 @@ import type {
 } from "../types/kyc.js";
 import type { RootCaRecord } from "../types/ca.js";
 import type { AuditEntry, AuditEntryInsert, AuditListFilter } from "../types/audit.js";
+import type {
+  CsrSubmission,
+  CsrSubmissionInsert,
+  CsrStatus,
+  CsrListFilter,
+  IssuedCert,
+  IssuedCertInsert,
+} from "../types/cert.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -55,6 +63,13 @@ export class OrderbookDB {
   private stmtUpsertRootCa!: Database.Statement;
   private stmtGetActiveRootCa!: Database.Statement;
   private stmtInsertAudit!: Database.Statement;
+  private stmtInsertCsr!: Database.Statement;
+  private stmtGetCsrById!: Database.Statement;
+  private stmtGetLatestCsrByWallet!: Database.Statement;
+  private stmtSetCsrStatus!: Database.Statement;
+  private stmtUpdateCsrContent!: Database.Statement;
+  private stmtInsertIssuedCert!: Database.Statement;
+  private stmtGetIssuedCertByWallet!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -208,6 +223,36 @@ export class OrderbookDB {
       -- standalone ts index — nothing sorts or filters on ts alone.
       CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action, id);
       CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id, id);
+
+      -- Operator leaf-cert issuance (X.509). Operators submit a public CSR
+      -- after KYC approval; the CA admin signs it and the leaf cert (public)
+      -- is recorded. Only public material is stored — never a private key.
+      -- wallet is lowercased.
+      CREATE TABLE IF NOT EXISTS csr_submissions (
+        id          TEXT PRIMARY KEY,
+        wallet      TEXT NOT NULL,
+        csr_pem     TEXT NOT NULL,
+        common_name TEXT,
+        organization TEXT,
+        country     TEXT,
+        status      TEXT NOT NULL DEFAULT 'pending',
+        notes       TEXT,
+        created_at  INTEGER NOT NULL,
+        reviewed_at INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_csr_wallet ON csr_submissions(wallet, created_at);
+      CREATE INDEX IF NOT EXISTS idx_csr_status ON csr_submissions(status, created_at);
+
+      CREATE TABLE IF NOT EXISTS issued_certs (
+        id         TEXT PRIMARY KEY,
+        csr_id     TEXT NOT NULL,
+        wallet     TEXT NOT NULL,
+        cert_pem   TEXT NOT NULL,
+        serial     TEXT,
+        not_after  INTEGER,
+        issued_at  INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_issued_wallet ON issued_certs(wallet, issued_at);
     `);
 
     // Lightweight ALTER for pre-byApp databases — adds the `type`
@@ -394,6 +439,31 @@ export class OrderbookDB {
       INSERT INTO audit_log (ts, actor, action, target_type, target_id, detail)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
+
+    this.stmtInsertCsr = this.db.prepare(`
+      INSERT INTO csr_submissions
+        (id, wallet, csr_pem, common_name, organization, country, status, notes, created_at, reviewed_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+    `);
+    this.stmtGetCsrById = this.db.prepare(`SELECT * FROM csr_submissions WHERE id = ?`);
+    this.stmtGetLatestCsrByWallet = this.db.prepare(
+      `SELECT * FROM csr_submissions WHERE wallet = ? ORDER BY created_at DESC LIMIT 1`,
+    );
+    this.stmtSetCsrStatus = this.db.prepare(
+      `UPDATE csr_submissions SET status = ?, notes = ?, reviewed_at = ? WHERE id = ?`,
+    );
+    this.stmtUpdateCsrContent = this.db.prepare(`
+      UPDATE csr_submissions
+         SET csr_pem = ?, common_name = ?, organization = ?, country = ?, created_at = ?
+       WHERE id = ?
+    `);
+    this.stmtInsertIssuedCert = this.db.prepare(`
+      INSERT INTO issued_certs (id, csr_id, wallet, cert_pem, serial, not_after, issued_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.stmtGetIssuedCertByWallet = this.db.prepare(
+      `SELECT * FROM issued_certs WHERE wallet = ? ORDER BY issued_at DESC LIMIT 1`,
+    );
   }
 
   insertOrder(o: OrderSummary): void {
@@ -1162,6 +1232,100 @@ export class OrderbookDB {
       targetId: (r.target_id as string | null) ?? null,
       detail: (r.detail as string | null) ?? null,
     }));
+  }
+
+  // ── Operator leaf-cert issuance (CSR + issued certs) ───────────────────
+
+  insertCsr(s: CsrSubmissionInsert): void {
+    this.stmtInsertCsr.run(
+      s.id, s.wallet, s.csrPem, s.commonName, s.organization, s.country, s.createdAt,
+    );
+  }
+
+  getCsrById(id: string): CsrSubmission | null {
+    const row = this.stmtGetCsrById.get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToCsr(row) : null;
+  }
+
+  /** Newest CSR for a wallet (case-insensitive), or null. */
+  getLatestCsrByWallet(wallet: string): CsrSubmission | null {
+    const row = this.stmtGetLatestCsrByWallet.get(wallet.toLowerCase()) as Record<string, unknown> | undefined;
+    return row ? this.rowToCsr(row) : null;
+  }
+
+  /** Admin review action: set CSR status + optional notes + reviewed_at. */
+  setCsrStatus(id: string, status: CsrStatus, notes: string | null, reviewedAt: number): boolean {
+    const result = this.stmtSetCsrStatus.run(status, notes, reviewedAt, id);
+    return result.changes > 0;
+  }
+
+  /** Refresh a still-pending CSR's content when the operator re-submits, so a
+   *  re-generated request replaces the old one instead of cluttering the queue. */
+  updateCsrContent(
+    id: string,
+    c: { csrPem: string; commonName: string | null; organization: string | null; country: string | null; createdAt: number },
+  ): void {
+    this.stmtUpdateCsrContent.run(c.csrPem, c.commonName, c.organization, c.country, c.createdAt, id);
+  }
+
+  /** Admin CSR queue. Optional status / wallet filters, newest-first. */
+  listCsr(filter: CsrListFilter = {}): CsrSubmission[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.status) {
+      where.push("status = ?");
+      params.push(filter.status);
+    }
+    if (filter.wallet) {
+      where.push("wallet = ?");
+      params.push(filter.wallet.toLowerCase());
+    }
+    const limit = clampLimit(filter.limit, 500, 100);
+    const offset = this.clampOffset(filter.offset);
+    const sql = `SELECT * FROM csr_submissions ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+    const rows = this.db.prepare(sql).all(...params, limit, offset) as Record<string, unknown>[];
+    return rows.map((r) => this.rowToCsr(r));
+  }
+
+  /** Record a signed leaf cert and flip its CSR to 'issued' in one txn. */
+  recordIssuedCert(cert: IssuedCertInsert, reviewedAt: number): void {
+    const txn = this.db.transaction(() => {
+      this.stmtInsertIssuedCert.run(
+        cert.id, cert.csrId, cert.wallet, cert.certPem, cert.serial, cert.notAfter, cert.issuedAt,
+      );
+      this.stmtSetCsrStatus.run("issued", null, reviewedAt, cert.csrId);
+    });
+    txn();
+  }
+
+  /** Newest issued leaf cert for a wallet (case-insensitive), or null. */
+  getIssuedCertByWallet(wallet: string): IssuedCert | null {
+    const row = this.stmtGetIssuedCertByWallet.get(wallet.toLowerCase()) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: row.id as string,
+      csrId: row.csr_id as string,
+      wallet: row.wallet as string,
+      certPem: row.cert_pem as string,
+      serial: (row.serial as string | null) ?? null,
+      notAfter: (row.not_after as number | null) ?? null,
+      issuedAt: row.issued_at as number,
+    };
+  }
+
+  private rowToCsr(row: Record<string, unknown>): CsrSubmission {
+    return {
+      id: row.id as string,
+      wallet: row.wallet as string,
+      csrPem: row.csr_pem as string,
+      commonName: (row.common_name as string | null) ?? null,
+      organization: (row.organization as string | null) ?? null,
+      country: (row.country as string | null) ?? null,
+      status: row.status as CsrStatus,
+      notes: (row.notes as string | null) ?? null,
+      createdAt: row.created_at as number,
+      reviewedAt: (row.reviewed_at as number | null) ?? null,
+    };
   }
 
   /** Truncate the settlements table — for tests only. Faster than dropping
