@@ -223,7 +223,14 @@ This mode points Pay's `IdentityGate` at a **real** zk-X509 `IdentityRegistry` i
 
 ### Prerequisite
 
-A local zk-X509 checkout with `make elf` already run (the prebuilt ELF lives at `<zk-X509>/elf/zk-x509-program`). Below, `<zk-X509>` and `<scatter-dex>` are the absolute paths to each checkout.
+A local **zk-X509** checkout (a separate repo from scatter-dex) with `make elf` already run (the prebuilt ELF lives at `<zk-X509>/elf/zk-x509-program`):
+
+```bash
+git clone https://github.com/tokamak-network/zk-X509.git
+cd zk-X509 && make elf
+```
+
+Below, `<zk-X509>` and `<scatter-dex>` are the **absolute paths to each checkout on your machine** — substitute your own (the docs use placeholders because the location differs per developer; e.g. `~/tokamak-projects/zk-X509`).
 
 ### Step-by-step
 
