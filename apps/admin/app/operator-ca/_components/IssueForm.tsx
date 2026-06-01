@@ -9,7 +9,11 @@ import {
   type CertificateRequest,
   type GeneratedKeypair,
 } from "../../lib/x509";
+import { isConfiguredAddress } from "@zkscatter/sdk";
+import { useWallet } from "@zkscatter/sdk/react";
 import { exportOperatorPkcs12 } from "../../lib/pkcs12";
+import { DEMO_NETWORK } from "../../lib/network";
+import { useIssuanceApproval } from "../../lib/useIssuanceApproval";
 
 const DEFAULT_VALIDITY = 365;
 const MIN_PASSPHRASE = 12;
@@ -80,6 +84,15 @@ export function IssueForm({ onIssued }: Props) {
 
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // Issuance gate: only allow issuance when the connected wallet is approved
+  // on-chain (IssuanceApprovalRegistry). When the registry isn't configured
+  // (env unset, e.g. plain dev), the gate stays open so local issuance still
+  // works — set NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS to enforce it.
+  const { account } = useWallet();
+  const approval = useIssuanceApproval();
+  const gateActive = isConfiguredAddress(DEMO_NETWORK.contracts.issuanceApprovalRegistry);
+  const issuanceAllowed = !gateActive || approval.status === "approved";
 
   function validate(): string | null {
     if (!form.commonName.trim()) return "Common Name is required";
@@ -170,6 +183,7 @@ export function IssueForm({ onIssued }: Props) {
 
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-6">
+      {gateActive && <GateBanner account={account} approval={approval} />}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field label="Common Name (CN)">
           <input
@@ -254,7 +268,7 @@ export function IssueForm({ onIssued }: Props) {
       <div className="mt-5 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={busy || issuing}
+          disabled={busy || issuing || !issuanceAllowed}
           onClick={handleGenerate}
           className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
         >
@@ -263,7 +277,7 @@ export function IssueForm({ onIssued }: Props) {
         {preview && (
           <button
             type="button"
-            disabled={busy || issuing || passphraseError() !== null}
+            disabled={busy || issuing || !issuanceAllowed || passphraseError() !== null}
             onClick={handleIssue}
             className="rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-4 py-2 text-sm font-medium text-[var(--color-success)] hover:bg-[var(--color-success)] hover:text-white disabled:opacity-50"
           >
@@ -292,6 +306,74 @@ export function IssueForm({ onIssued }: Props) {
             operator over separate out-of-band channels.
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function GateBanner({
+  account,
+  approval,
+}: {
+  account: string | null | undefined;
+  approval: ReturnType<typeof useIssuanceApproval>;
+}) {
+  let tone: "ok" | "warn" | "danger" = "warn";
+  let text = "Checking issuance approval…";
+  let showRefresh = false;
+
+  if (!account) {
+    text = "Connect the operator wallet to check issuance approval.";
+  } else {
+    switch (approval.status) {
+      case "approved":
+        tone = "ok";
+        text = "Wallet approved for issuance.";
+        break;
+      case "checking":
+        text = "Checking issuance approval…";
+        break;
+      case "not-approved":
+        text = "This wallet isn't approved for issuance yet — an admin must approve it first.";
+        showRefresh = true;
+        break;
+      case "revoked":
+        tone = "danger";
+        text = `Issuance approval was revoked: ${approval.revokeReason ?? "(no reason)"}.`;
+        showRefresh = true;
+        break;
+      case "expired":
+        text = "Issuance approval has expired — request re-approval.";
+        showRefresh = true;
+        break;
+      case "error":
+        tone = "danger";
+        text = `Couldn't read issuance approval: ${approval.message ?? "RPC error"}.`;
+        showRefresh = true;
+        break;
+    }
+  }
+
+  const border =
+    tone === "ok"
+      ? "border-[var(--color-success)]"
+      : tone === "danger"
+        ? "border-[var(--color-danger)]"
+        : "border-[var(--color-warning)]";
+
+  return (
+    <div
+      className={`mb-4 flex items-center justify-between gap-3 rounded-md border ${border} px-3 py-2 text-sm`}
+    >
+      <span className="text-[var(--color-text-muted)]">{text}</span>
+      {showRefresh && (
+        <button
+          type="button"
+          onClick={() => approval.refetch()}
+          className="shrink-0 text-xs text-[var(--color-primary)] hover:underline"
+        >
+          Refresh
+        </button>
       )}
     </div>
   );
