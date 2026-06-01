@@ -54,6 +54,13 @@ const FLOW_STEP_GROUPS = {
   registered: [7, 8, 9],
 } as const;
 
+/** Client-side upload ceilings — a pre-check that mirrors the
+ *  shared-orderbook's KYC_MAX_FILE_BYTES so an oversized file is
+ *  rejected before the (slow, doomed) upload rather than after. */
+const MAX_KYC_VIDEO_BYTES = 100 * 1024 * 1024; // 100 MB
+const MAX_KYC_DOC_BYTES = 15 * 1024 * 1024; // 15 MB
+const MAX_EMAIL_LEN = 254; // RFC 5321 forward-path limit
+
 type Phase =
   | "idle"
   | "checking"
@@ -552,6 +559,17 @@ function Step0Kyc({
         <KycSubmittedBanner kycStatus={kycStatus} />
       ) : (
         <div className="space-y-4">
+          {kycStatus === "rejected" && (
+            <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-surface)] px-4 py-3 text-sm">
+              <div className="font-medium text-[var(--color-danger)]">
+                Previous submission rejected
+              </div>
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                The reviewer rejected your earlier documents. Re-submit below with
+                corrected documents.
+              </p>
+            </div>
+          )}
           <Field label="Wallet address" hint="The address this relayer will register and post bond from.">
             <input
               type="text"
@@ -566,6 +584,7 @@ function Step0Kyc({
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              maxLength={MAX_EMAIL_LEN}
               placeholder="you@company.com"
               className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
             />
@@ -574,13 +593,13 @@ function Step0Kyc({
             label="Identity video"
             hint="A short clip of you holding a paper that shows your resident-registration number and address."
           >
-            <FileInput accept="video/*" file={video} onPick={setVideo} cta="Choose video" />
+            <FileInput accept="video/*" file={video} onPick={setVideo} cta="Choose video" maxBytes={MAX_KYC_VIDEO_BYTES} />
           </Field>
           <Field
             label="ID document"
             hint="A copy of your 주민등록증 or 사업자등록증 (image or PDF)."
           >
-            <FileInput accept="image/*,application/pdf" file={idDoc} onPick={setIdDoc} cta="Choose document" />
+            <FileInput accept="image/*,application/pdf" file={idDoc} onPick={setIdDoc} cta="Choose document" maxBytes={MAX_KYC_DOC_BYTES} />
           </Field>
           <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
             These documents contain sensitive personal data. They are sent over the
@@ -636,33 +655,52 @@ function KycSubmittedBanner({ kycStatus }: { kycStatus: KycStatus }) {
 
 /** Minimal file picker matching the wizard's input styling — a hidden
  *  native <input type=file> behind a styled label so the control reads
- *  consistently with the text inputs above. */
+ *  consistently with the text inputs above. Enforces `maxBytes`
+ *  client-side and shows an inline error for oversized picks. */
 function FileInput({
   accept,
   file,
   onPick,
   cta,
+  maxBytes,
 }: {
   accept: string;
   file: File | null;
   onPick: (f: File | null) => void;
   cta: string;
+  maxBytes: number;
 }) {
+  const [tooLarge, setTooLarge] = useState(false);
+  const onChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = e.target.files?.[0] ?? null;
+    // Clear the input value so re-picking the SAME file (after a
+    // size rejection or a clear) still fires onChange.
+    e.target.value = "";
+    if (picked && picked.size > maxBytes) {
+      setTooLarge(true);
+      onPick(null);
+      return;
+    }
+    setTooLarge(false);
+    onPick(picked);
+  };
   return (
-    <label className="flex cursor-pointer items-center gap-3">
-      <span className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]">
-        {cta}
-      </span>
-      <span className="truncate text-xs text-[var(--color-text-muted)]">
-        {file ? `${file.name} (${Math.round(file.size / 1024)} KB)` : "No file selected"}
-      </span>
-      <input
-        type="file"
-        accept={accept}
-        onChange={(e) => onPick(e.target.files?.[0] ?? null)}
-        className="hidden"
-      />
-    </label>
+    <div>
+      <label className="flex cursor-pointer items-center gap-3">
+        <span className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]">
+          {cta}
+        </span>
+        <span className="truncate text-xs text-[var(--color-text-muted)]">
+          {file ? `${file.name} (${Math.round(file.size / 1024)} KB)` : "No file selected"}
+        </span>
+        <input type="file" accept={accept} onChange={onChange} className="hidden" />
+      </label>
+      {tooLarge && (
+        <p className="mt-1 text-xs text-[var(--color-danger)]">
+          File too large (max {Math.round(maxBytes / (1024 * 1024))} MB).
+        </p>
+      )}
+    </div>
   );
 }
 
