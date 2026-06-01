@@ -194,22 +194,28 @@ contract DeployLocal is Script {
         privateSettlement.setRelayerRegistry(address(relayerRegistry));
         privateSettlement.setFeeVault(address(vault));
 
-        // 13. Whitelist DEX routers for settleWithDex (market orders)
-        //     1inch Aggregation Router V6 — same address on all EVM chains
-        address ONEINCH_ROUTER = 0x111111125421cA6dc452d289314280a0f8842A65;
-        if (ONEINCH_ROUTER.code.length > 0) {
-            privateSettlement.setDexRouterWhitelist(ONEINCH_ROUTER, true);
-            console.log("1inch Router whitelisted:", ONEINCH_ROUTER);
-        } else {
-            console.log("1inch Router not deployed on this chain (skipped)");
-        }
-        //     Uniswap V3 SwapRouter02 — frontend fallback when 1inch unavailable
-        address UNISWAP_ROUTER02 = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
-        if (UNISWAP_ROUTER02.code.length > 0) {
-            privateSettlement.setDexRouterWhitelist(UNISWAP_ROUTER02, true);
-            console.log("Uniswap SwapRouter02 whitelisted:", UNISWAP_ROUTER02);
-        } else {
-            console.log("Uniswap SwapRouter02 not deployed on this chain (skipped)");
+        // 13. Whitelist DEX routers for settleWithDex (market orders).
+        //     Scoped in a block so the two router-address locals are
+        //     reclaimed before the run() tail builds the summary struct —
+        //     run() is at the 16-slot "stack too deep" limit and these two
+        //     slots are exactly what tips it over (see _wireIdentityGate).
+        {
+            //     1inch Aggregation Router V6 — same address on all EVM chains
+            address oneInchRouter = 0x111111125421cA6dc452d289314280a0f8842A65;
+            if (oneInchRouter.code.length > 0) {
+                privateSettlement.setDexRouterWhitelist(oneInchRouter, true);
+                console.log("1inch Router whitelisted:", oneInchRouter);
+            } else {
+                console.log("1inch Router not deployed on this chain (skipped)");
+            }
+            //     Uniswap V3 SwapRouter02 — frontend fallback when 1inch unavailable
+            address uniswapRouter02 = 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45;
+            if (uniswapRouter02.code.length > 0) {
+                privateSettlement.setDexRouterWhitelist(uniswapRouter02, true);
+                console.log("Uniswap SwapRouter02 whitelisted:", uniswapRouter02);
+            } else {
+                console.log("Uniswap SwapRouter02 not deployed on this chain (skipped)");
+            }
         }
         console.log("ZK contracts configured (relayer gate + fee vault + DEX routers)");
 
