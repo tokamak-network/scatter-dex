@@ -142,8 +142,11 @@ export class AdminSiweAuth {
     }
     const token = randomBytes(SESSION_TOKEN_BYTES).toString("hex");
     const expiresAt = Date.now() + SESSION_TTL_MS;
-    this.sessions.set(token, { address: recovered.toLowerCase(), expiresAt });
-    return { token, address: recovered, expiresAt };
+    // Normalize to lowercase so the address returned here matches what
+    // verifySession returns — consumers can compare the two with === safely.
+    const address = recovered.toLowerCase();
+    this.sessions.set(token, { address, expiresAt });
+    return { token, address, expiresAt };
   }
 
   /** Returns the bound address on hit, null when the token is unknown or has
