@@ -40,7 +40,12 @@ function parseConfigUrl(value: string | undefined, fallback: string): string {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`URL must be http(s): "${raw}"`);
   }
-  return url.toString().replace(/\/+$/, "");
+  // A base URL must not carry a query or fragment — these become broken
+  // when we append paths/params (e.g. `${base}/operator-cert?wallet=…`).
+  if (url.search || url.hash) {
+    throw new Error(`Base URL must not include a query or fragment: "${raw}"`);
+  }
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
 }
 
 const ORDERBOOK_URL = parseConfigUrl(
