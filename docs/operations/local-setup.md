@@ -200,14 +200,7 @@ SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock --apps pay,pro
 
 Note the `IdentityGate` address from the deploy summary (`NEXT_PUBLIC_IDENTITY_GATE_ADDRESS` is also written to each app's `.env.local`). `IdentityGate` is a **single on-chain contract** that both Pay and Pro point at, so the registry swap in step 4 below applies to both apps — register a wallet once in the zk-X509 dashboard and it's verified everywhere.
 
-**2. Start zk-X509 frontend + backend** in a separate terminal. scatter-dex no longer starts a service on port 3000, so zk-X509 can take its default port:
-
-```bash
-cd <zk-X509>
-bash script/start-services.sh                           # frontend :3000, backend :4444
-```
-
-**3. Deploy a zk-X509 `IdentityRegistry` onto the same anvil** that `dev.sh --mock` started. The script also auto-seeds the test CA from `certs/ca_pub.der` so the registry isn't stuck at `caMerkleRoot = 0` (which would block every `register()` call):
+**2. Deploy a zk-X509 `IdentityRegistry` onto the same anvil** that `dev.sh --mock` started — **do this _before_ starting the zk-X509 frontend.** The deploy writes the freshly-deployed factory/registry addresses into `<zk-X509>/frontend/.env.local`, and the Next dev server reads that file **only at boot**. The script also auto-seeds the test CA from `certs/ca_pub.der` so the registry isn't stuck at `caMerkleRoot = 0` (which would block every `register()` call):
 
 ```bash
 cd <zk-X509>
@@ -223,14 +216,26 @@ Optional environment variables:
 
 Note the printed `IdentityRegistry (proxy)` address — that's the registry Pay will route through. The script also prints the resulting `caMerkleRoot`, which should be non-zero (= `sha256` of the seeded CA cert).
 
+**3. Start the zk-X509 frontend + backend** — now that the factory/registry addresses are written to `frontend/.env.local`. scatter-dex no longer starts a service on port 3000, so zk-X509 can take its default port:
+
+```bash
+cd <zk-X509>
+bash script/start-services.sh                           # frontend :3000, backend :4444
+```
+
+> **`Failed to load services from factory contract` on the web page?** The frontend booted with a stale/empty factory address — almost always because it was started **before** the deploy in step 2 (Next reads `frontend/.env.local` only at boot). Fix: re-run step 2, then restart the frontend so it picks up the new factory:
+> ```bash
+> cd <zk-X509> && bash script/stop-services.sh && bash script/start-services.sh
+> ```
+
 **4. Swap the mock registry out of `IdentityGate`** using the helper script — it reads `IdentityGate` from `apps/pay/.env.local`, adds the zk-X509 registry, and removes every other registry (the mock from step 1). Pro shares the same on-chain `IdentityGate` so this one swap covers both apps:
 
 ```bash
 cd <scatter-dex>
-./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry from step 3>
+./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry from step 2>
 ```
 
-After the swap, `isVerified(user)` calls from **both Pay and Pro** route through the same zk-X509 registry (they share the on-chain `IdentityGate`). The registry already has the test CA loaded (from step 3) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity. Do that **interactively** through either:
+After the swap, `isVerified(user)` calls from **both Pay and Pro** route through the same zk-X509 registry (they share the on-chain `IdentityGate`). The registry already has the test CA loaded (from step 2) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity. Do that **interactively** through either:
 
 - the zk-X509 dashboard at http://localhost:3000 (Identity → pick the registry → submit a proof against the seeded test CA), or
 - the **zk-X509 desktop app** — the CA-verification client that generates the attestation proof from a real X.509 cert. Build it once (`cd <zk-X509> && make desktop`), then launch:

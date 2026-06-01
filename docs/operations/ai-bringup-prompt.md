@@ -45,15 +45,18 @@ pieces and adds the verification + zk-X509 steps. Run it from the repo root.
 > 최초 1회 `make elf`). 이미 받은 체크아웃 경로를 `<zk-X509>`로 쓴다(이 머신: `~/tokamak-projects/zk-X509`).
 > 아래 3a~3e까지가 **AI 작업 범위**다.
 > ```bash
-> # 3a. 프론트(:3000 대시보드) + 백엔드(:4444) 기동
-> cd <zk-X509> && bash script/start-services.sh
-> # 3b. 같은 anvil에 IdentityRegistry 배포 (테스트 CA 자동 seed). "IdentityRegistry (proxy)" 주소를 받아둬라.
+> # 3a. 같은 anvil에 IdentityRegistry 배포 (테스트 CA 자동 seed). "IdentityRegistry (proxy)" 주소를 받아둬라.
+> #     반드시 프론트 기동(3b)보다 먼저! 배포가 <zk-X509>/frontend/.env.local 에 factory 주소를 쓰고,
+> #     Next는 그 파일을 부팅 때만 읽는다. 순서가 바뀌면 웹에서 "Failed to load services from factory contract".
 > cd <zk-X509> && MAX_WALLETS_PER_CERT=10 SERVICE_NAME="User CA" bash script/deploy-on-existing-anvil.sh
+> # 3b. 프론트(:3000 대시보드) + 백엔드(:4444) 기동 (이제 .env.local 에 factory 주소가 들어가 있음)
+> cd <zk-X509> && bash script/start-services.sh
+> #     (이미 deploy 전에 프론트를 띄웠었다면 재시작: bash script/stop-services.sh && bash script/start-services.sh)
 > # 3c. 배포/vkey 검증: ELF VK == factory/registry.effectiveProgramVKey, caMerkleRoot != 0, paused == false.
 > #     Rust/Docker가 없으면 --quick 로 cargo·SP1 캐시 검사를 건너뛰고 온체인 wiring만 검증한다.
 > cd <zk-X509> && bash script/verify-deployment.sh --quick
 > # 3d. scatter-dex IdentityGate를 그 레지스트리로 swap (검증 통과 후)
-> cd <scatter-dex> && ./scripts/swap-identity-registry.sh <3b의 IdentityRegistry 주소>
+> cd <scatter-dex> && ./scripts/swap-identity-registry.sh <3a의 IdentityRegistry 주소>
 > # 3e. 프론트/백엔드 헬스체크
 > curl -fsS -o /dev/null -w "zkx509-frontend %{http_code}\n" http://localhost:3000
 > curl -fsS -o /dev/null -w "zkx509-backend %{http_code}\n" http://localhost:4444
