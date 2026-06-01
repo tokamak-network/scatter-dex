@@ -109,6 +109,10 @@ type Phase =
 export default function RegisterPage() {
   const { account, signer, chainId, readProvider, connect, connectError } = useWallet();
   const refreshIdentity = useOperatorIdentityRefresh();
+  // Lifted to the page so the wizard can surface the "waiting on the
+  // admin" state (onboarding steps 2-3) and the "approved — go get your
+  // cert" state, not just inside the Verify card. Step1Verify reuses it.
+  const approval = useIssuanceApproval();
 
   const [url, setUrl] = useState("");
   const [name, setName] = useState("");
@@ -300,6 +304,13 @@ export default function RegisterPage() {
     return s;
   }, [kycDone, step1Done, step3Done]);
 
+  // After KYC is submitted the operator can't act until the admin
+  // reviews + approves (onboarding steps 2-3). Distinguish that wait
+  // from the "approved — go issue your cert" state so the wizard
+  // doesn't present Verify as if it were the operator's next action.
+  const awaitingAdmin = kycDone && !step1Done && approval.status !== "approved";
+  const approvedNotVerified = approval.status === "approved" && !step1Done;
+
   const stepperSteps = useMemo(
     () => [
       {
@@ -384,13 +395,24 @@ export default function RegisterPage() {
         </p>
       </header>
 
-      <FlowContextPanel currentWizardStep={currentStep} doneSteps={doneFlowSteps} />
+      <FlowContextPanel
+        currentWizardStep={currentStep}
+        doneSteps={doneFlowSteps}
+        adminInProgress={awaitingAdmin}
+      />
 
       {!deployed && <NotDeployedBanner />}
       {!account && <ConnectPrompt onConnect={connect} connectError={connectError} />}
       {!!account && wrongChain && <WrongChainBanner />}
 
       <Stepper steps={stepperSteps} current={currentStep} />
+
+      {(awaitingAdmin || approvedNotVerified) && (
+        <AdminReviewBanner
+          approvedNotVerified={approvedNotVerified}
+          onRefresh={() => { approval.refetch(); refreshIdentity(); refreshStatus(); }}
+        />
+      )}
 
       <Step0Kyc
         account={account}
@@ -412,6 +434,7 @@ export default function RegisterPage() {
         account={account}
         wrongChain={wrongChain}
         gated={!kycDone}
+        approval={approval}
         onRefresh={() => { refreshIdentity(); refreshStatus(); }}
         defaultOpen={currentStep === 2}
       />
@@ -741,6 +764,7 @@ function Step1Verify({
   account,
   wrongChain,
   gated,
+  approval,
   onRefresh,
   defaultOpen,
 }: {
@@ -748,16 +772,15 @@ function Step1Verify({
   account: string | null;
   wrongChain: boolean;
   gated: boolean;
+  approval: UseIssuanceApprovalResult;
   onRefresh: () => void;
   defaultOpen: boolean;
 }) {
   const verified = !!status?.isVerified;
-  // Read the admin-recorded issuance approval for the connected
-  // wallet. When set, replaces the generic "Get verified" warning
-  // card with a tailored "You're approved — go get your cert"
-  // banner that surfaces the metadata (CN / O / C / validity) the
-  // admin recorded for this wallet.
-  const approval = useIssuanceApproval();
+  // `approval` (admin-recorded issuance approval for the connected
+  // wallet) is lifted to the page and passed in — when set it replaces
+  // the generic "Get verified" warning card with a tailored
+  // "You're approved — go get your cert" banner.
   return (
     <StepSection
       step={2}
@@ -1483,12 +1506,55 @@ const FLOW_STEPS: Array<{
   { n: 9, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
 ];
 
+/** Banner shown once KYC is submitted: makes explicit that the next
+ *  move is the ADMIN's (review + approve, steps 2-3) and the operator
+ *  should wait for the issuance email — rather than the wizard quietly
+ *  advancing the highlight to Verify as if it were actionable. */
+function AdminReviewBanner({
+  approvedNotVerified,
+  onRefresh,
+}: {
+  approvedNotVerified: boolean;
+  onRefresh: () => void;
+}) {
+  if (approvedNotVerified) {
+    return (
+      <div className="rounded-xl border border-[var(--color-success)] bg-[var(--color-success-soft)] px-4 py-3 text-sm">
+        <div className="font-medium">Approved — issue your certificate</div>
+        <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+          The admin approved your wallet. Open the certificate-issuance link from
+          your email (or the Verify step below), issue your certificate, then{" "}
+          <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">
+            refresh
+          </button>
+          .
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-3 text-sm">
+      <div className="font-medium">Submitted — waiting on the admin</div>
+      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+        Your KYC is in. The admin now reviews your documents and approves your
+        wallet (onboarding steps 2-3). You&apos;ll get a certificate-issuance
+        email once approved — no action is needed here until then.{" "}
+        <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">
+          Check now
+        </button>
+      </p>
+    </div>
+  );
+}
+
 function FlowContextPanel({
   currentWizardStep,
   doneSteps,
+  adminInProgress,
 }: {
   currentWizardStep: 1 | 2 | 3 | 4;
   doneSteps: Set<number>;
+  adminInProgress?: boolean;
 }) {
   return (
     <details
@@ -1504,7 +1570,11 @@ function FlowContextPanel({
       <ol className="mt-3 space-y-1.5 text-xs">
         {FLOW_STEPS.map((s) => {
           const done = doneSteps.has(s.n);
-          const isHere = !done && s.wizardStep === currentWizardStep;
+          // While the admin reviews (steps 2-3), highlight THEIR rows as
+          // the in-progress ones instead of the operator's next card.
+          const isHere = !done && (adminInProgress
+            ? s.who === "admin"
+            : s.wizardStep === currentWizardStep);
           const palette = done
             ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-text)]"
             : isHere
