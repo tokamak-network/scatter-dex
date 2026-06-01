@@ -14,10 +14,13 @@ export const AUDIT_ACTIONS = [
   "kyc.rejected",
   "kyc.revoked",
   "rootca.published",
+  "cert.csr_submitted",
+  "cert.issued",
+  "cert.rejected",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export type AuditTargetType = "kyc" | "root_ca";
+export type AuditTargetType = "kyc" | "root_ca" | "cert";
 
 /** A stored audit row. */
 export interface AuditEntry {

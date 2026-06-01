@@ -14,6 +14,9 @@ import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/se
 import { createAdminRoutes } from "./routes/admin.js";
 import { createKycRoutes } from "./routes/kyc.js";
 import { createCaRoutes } from "./routes/ca.js";
+import { createCertRoutes } from "./routes/cert.js";
+import { makeOnchainApprovalReader, type ApprovalReader } from "./core/issuance-approval.js";
+import { JsonRpcProvider } from "ethers";
 import { VerifyMonitor } from "./core/verify-runtime.js";
 import { makeAdminSiweFromAllowlist } from "./core/admin-siwe.js";
 import { makeAdminAuth } from "./middleware/admin-auth.js";
@@ -45,14 +48,19 @@ async function main() {
   // middleware needs to hash the exact bytes the client signed; the
   // `verify` callback fires before JSON.parse and gets us those
   // bytes verbatim. See `middleware/auth.ts` for why this matters.
-  app.use(
-    express.json({
-      limit: "10kb",
-      verify: (req, _res, buf) => {
-        (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf);
-      },
-    }),
-  );
+  const globalJson = express.json({
+    limit: "10kb",
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    },
+  });
+  // /api/cert carries CSR / leaf-cert PEMs that exceed 10 KB, so it parses with
+  // its own larger limit inside the cert router — skip the global parser there
+  // to avoid a 413 before the route runs. (Cert routes don't need rawBody.)
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/cert")) return next();
+    globalJson(req, res, next);
+  });
 
   // Rate limiters — two layers to mitigate multi-IP bypass.
   const writeLimiter = rateLimit({
@@ -105,6 +113,22 @@ async function main() {
   // Public Root CA store: admin publishes the public .der, anyone downloads it
   // (X.509 anchor for operator cert-chain verification).
   app.use("/api/ca", createCaRoutes(db, adminAuth, readLimiter, writeLimiter));
+
+  // Operator leaf-cert issuance. The CSR subject is re-verified against the
+  // on-chain IssuanceApprovalRegistry approval; the reader is injected so the
+  // on-chain-vs-DB source is a wiring choice. Disabled (503) until both
+  // CERT_RPC_URL and ISSUANCE_REGISTRY_ADDRESS are set.
+  let approvalReader: ApprovalReader | null = null;
+  if (config.certRpcUrl && config.issuanceRegistryAddress) {
+    approvalReader = makeOnchainApprovalReader(
+      config.issuanceRegistryAddress,
+      new JsonRpcProvider(config.certRpcUrl),
+    );
+    console.log(`Cert issuance enabled (registry ${config.issuanceRegistryAddress})`);
+  } else {
+    console.warn("[WARN] Cert issuance disabled — set CERT_RPC_URL + ISSUANCE_REGISTRY_ADDRESS to enable.");
+  }
+  app.use("/api/cert", createCertRoutes(db, adminAuth, readLimiter, writeLimiter, approvalReader));
 
   // Operator-only — single shared monitor instance. The verifier daemon
   // (`src/verify.ts`) is the writer; this server is the read-side
