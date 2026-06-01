@@ -20,8 +20,13 @@ function pemToDer(pem: string): ArrayBuffer {
   return Uint8Array.from(Buffer.from(b64, "base64")).buffer;
 }
 
-/** Build a signed PKCS#10 CSR with separated CN/O/C RDNs, returning the PEM. */
-async function makeCsr(subject: { commonName: string; organization: string; country: string }) {
+/** Build a signed PKCS#10 CSR with separated CN/O/C RDNs, returning the PEM.
+ *  `opts.extraCommonName` appends a second CN RDN (to test duplicate-attribute
+ *  smuggling rejection). */
+async function makeCsr(
+  subject: { commonName: string; organization: string; country: string },
+  opts: { extraCommonName?: string } = {},
+) {
   const kp = await crypto.subtle.generateKey(
     { name: "ECDSA", namedCurve: "P-256" },
     true,
@@ -29,13 +34,15 @@ async function makeCsr(subject: { commonName: string; organization: string; coun
   );
   const atv = (oid: string, v: asn1js.BaseBlock) =>
     new pkijs.AttributeTypeAndValue({ type: oid, value: v as never }).toSchema();
-  const schema = new asn1js.Sequence({
-    value: [
-      new asn1js.Set({ value: [atv(OID.CN, new asn1js.Utf8String({ value: subject.commonName }))] }),
-      new asn1js.Set({ value: [atv(OID.O, new asn1js.Utf8String({ value: subject.organization }))] }),
-      new asn1js.Set({ value: [atv(OID.C, new asn1js.PrintableString({ value: subject.country }))] }),
-    ],
-  });
+  const rdns = [
+    new asn1js.Set({ value: [atv(OID.CN, new asn1js.Utf8String({ value: subject.commonName }))] }),
+    new asn1js.Set({ value: [atv(OID.O, new asn1js.Utf8String({ value: subject.organization }))] }),
+    new asn1js.Set({ value: [atv(OID.C, new asn1js.PrintableString({ value: subject.country }))] }),
+  ];
+  if (opts.extraCommonName) {
+    rdns.push(new asn1js.Set({ value: [atv(OID.CN, new asn1js.Utf8String({ value: opts.extraCommonName }))] }));
+  }
+  const schema = new asn1js.Sequence({ value: rdns });
   const csr = new pkijs.CertificationRequest();
   csr.version = 0;
   csr.subject = new pkijs.RelativeDistinguishedNames();
@@ -126,5 +133,36 @@ describe("signOperatorCsr", () => {
         validityDays: 90,
       }),
     ).rejects.toThrow();
+  });
+
+  it("rejects a CSR with duplicate CN attributes (smuggling)", async () => {
+    const { caCertDer, caPrivateKey } = await makeRootCa();
+    // CSR with TWO CNs: the first matches the approval, the second differs.
+    const csrPem = await makeCsr(APPROVED, { extraCommonName: "attacker@evil.io" });
+    await expect(
+      signOperatorCsr({ csrPem, caCertDer, caPrivateKey, approved: APPROVED, validityDays: 90 }),
+    ).rejects.toThrow(/exactly one CN/);
+  });
+
+  it("refuses to sign with a non-CA certificate", async () => {
+    const { caCertDer, caPrivateKey } = await makeRootCa();
+    // A freshly issued leaf is cA=false — using it as the "CA" must be rejected.
+    const csrPem = await makeCsr(APPROVED);
+    const { certDer: leafDer } = await signOperatorCsr({
+      csrPem,
+      caCertDer,
+      caPrivateKey,
+      approved: APPROVED,
+      validityDays: 90,
+    });
+    await expect(
+      signOperatorCsr({
+        csrPem: await makeCsr(APPROVED),
+        caCertDer: leafDer,
+        caPrivateKey,
+        approved: APPROVED,
+        validityDays: 90,
+      }),
+    ).rejects.toThrow(/not a CA/);
   });
 });

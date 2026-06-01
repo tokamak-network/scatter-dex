@@ -111,13 +111,19 @@ export async function importCaPkcs12(
   const pfx = pkijs.PFX.fromBER(p12);
 
   // Verify the HMAC integrity MAC (detects wrong passphrase / tampering) and
-  // decrypt the authenticated safe.
+  // decrypt the authenticated safe. Guard the nested structure explicitly so a
+  // malformed container throws a descriptive error rather than a bare TypeError.
   await pfx.parseInternalValues({ password, checkIntegrity: true });
-  await pfx.parsedValue!.authenticatedSafe!.parseInternalValues({
-    safeContents: [{ password }],
-  });
+  const authenticatedSafe = pfx.parsedValue?.authenticatedSafe;
+  if (!authenticatedSafe) {
+    throw new Error("Invalid PKCS#12: missing authenticated safe");
+  }
+  await authenticatedSafe.parseInternalValues({ safeContents: [{ password }] });
+  if (!authenticatedSafe.parsedValue) {
+    throw new Error("Invalid PKCS#12: authenticated safe could not be parsed");
+  }
 
-  const bags = pfx.parsedValue!.authenticatedSafe!.parsedValue!.safeContents.flatMap(
+  const bags = authenticatedSafe.parsedValue.safeContents.flatMap(
     (sc: { value: { safeBags: pkijs.SafeBag[] } }) => sc.value.safeBags,
   );
 

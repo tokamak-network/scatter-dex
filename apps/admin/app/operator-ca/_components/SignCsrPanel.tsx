@@ -54,9 +54,15 @@ export function SignCsrPanel() {
   const [result, setResult] = useState<{ certPem: string; serialHex: string; notAfter: number } | null>(null);
 
   const fileToBuffer =
-    (setter: (b: ArrayBuffer) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    (setter: (b: ArrayBuffer | null) => void) => (e: React.ChangeEvent<HTMLInputElement>) => {
       const f = e.target.files?.[0];
-      if (f) void f.arrayBuffer().then(setter);
+      if (!f) {
+        setter(null); // input cleared — drop any stale buffer
+        return;
+      }
+      f.arrayBuffer()
+        .then(setter)
+        .catch((err) => setError(err instanceof Error ? err.message : "Failed to read file"));
     };
 
   async function readApproval(addr: string): Promise<IssuanceApprovalState> {

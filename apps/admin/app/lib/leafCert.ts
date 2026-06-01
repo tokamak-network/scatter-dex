@@ -94,12 +94,19 @@ function makeName(s: ApprovedSubject): pkijs.RelativeDistinguishedNames {
   return name;
 }
 
-/** Read CN/O/C out of a parsed Name (flattened typesAndValues is fine here —
- *  we only need the values, regardless of RDN grouping). */
+/** Read CN/O/C out of a parsed Name, requiring **exactly one** of each. A CSR
+ *  with duplicate attributes (e.g. two CNs, where the first matches the approval
+ *  and a second smuggles a different identity) is rejected — otherwise the gate
+ *  would compare only the first while a downstream parser might honour the last. */
 function readSubject(name: pkijs.RelativeDistinguishedNames): ApprovedSubject {
-  const get = (oid: string) =>
-    name.typesAndValues.find((tv) => tv.type === oid)?.value.valueBlock.value ?? "";
-  return { commonName: get(OID.CN), organization: get(OID.O), country: get(OID.C) };
+  const one = (oid: string, label: string): string => {
+    const matches = name.typesAndValues.filter((tv) => tv.type === oid);
+    if (matches.length !== 1) {
+      throw new Error(`CSR subject must contain exactly one ${label} (found ${matches.length})`);
+    }
+    return String(matches[0].value.valueBlock.value);
+  };
+  return { commonName: one(OID.CN, "CN"), organization: one(OID.O, "O"), country: one(OID.C, "C") };
 }
 
 async function keyIdentifier(spki: pkijs.PublicKeyInfo): Promise<ArrayBuffer> {
@@ -128,15 +135,25 @@ export async function signOperatorCsr(params: SignCsrParams): Promise<LeafCertRe
     throw new Error("CSR self-signature is invalid (proof-of-possession failed)");
   }
 
-  // 2. AUTHORITATIVE subject binding: every subject field must equal the approval.
+  // 2. AUTHORITATIVE subject binding: every subject field must equal the
+  //    approval. Trim both sides so incidental whitespace doesn't spuriously
+  //    reject; the comparison stays case-sensitive (the gate must be exact, and
+  //    both sources are already normalized — CN/O from the approval, C as
+  //    uppercase ISO-3166).
   const csrSubject = readSubject(csr.subject);
   for (const field of ["commonName", "organization", "country"] as const) {
-    if (csrSubject[field] !== approved[field]) {
+    if (csrSubject[field].trim() !== approved[field].trim()) {
       throw new CsrSubjectMismatchError(field, csrSubject[field], approved[field]);
     }
   }
 
   const caCert = pkijs.Certificate.fromBER(caCertDer);
+  // The "CA cert" must actually be a CA, else the leaf won't chain.
+  const caBc = caCert.extensions?.find((e) => e.extnID === EXT.basicConstraints)
+    ?.parsedValue as pkijs.BasicConstraints | undefined;
+  if (!caBc?.cA) {
+    throw new Error("Provided CA certificate is not a CA (BasicConstraints cA is not true)");
+  }
 
   // 3. Assemble the leaf.
   const leaf = new pkijs.Certificate();
@@ -191,8 +208,16 @@ export async function signOperatorCsr(params: SignCsrParams): Promise<LeafCertRe
     }),
   ];
 
-  // 4. Sign with the CA private key.
+  // 4. Sign with the CA private key, then sanity-check the result actually
+  //    verifies against the CA cert — catches a .p12 whose key doesn't match
+  //    the supplied CA certificate (an easy mistake in the manual UI flow)
+  //    instead of emitting a leaf that silently won't chain.
   await leaf.sign(caPrivateKey, "SHA-256");
+  if (!(await leaf.verify(caCert))) {
+    throw new Error(
+      "Signed leaf does not verify against the CA certificate — the .p12 key likely doesn't match the provided CA cert",
+    );
+  }
 
   const certDer = leaf.toSchema().toBER();
   const serialHex = Array.from(serial)
