@@ -4,7 +4,7 @@ zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-C
 
 ## Prerequisite: ZK circuit artifacts
 
-The apps load six `.wasm` / `_final.zkey` pairs from their `public/zk/` directories at proof time (deposit, withdraw, settle, claim, authorize, cancel) and `DeployLocal` deploys six matching `*Verifier.sol` contracts from `contracts/src/zk/`. **None of these are tracked in git** — both `dev.sh` and `dev-fork.sh` rebuild them automatically before the deploy step and mirror them into the app surfaces (`frontend/public/zk/`, `apps/pro/public/zk/`; Pay pulls from `apps/pro` via its `predev` hook).
+The apps load `.wasm` / `_final.zkey` pairs from their `public/zk/` directories at proof time — `deposit`, `withdraw`, `claim`, `authorize`, `cancel`, plus the tiered batch variants `claim_64` / `claim_128` and `authorize_64` / `authorize_128` — and `DeployLocal` deploys the matching `*Verifier.sol` contracts from `contracts/src/zk/`. **None of these are tracked in git** — both `dev.sh` and `dev-fork.sh` rebuild them automatically before the deploy step and mirror them into the app surfaces (`frontend/public/zk/`, `apps/pro/public/zk/`; Pay pulls from `apps/pro` via its `predev` hook).
 
 ### Why generated artifacts are gitignored
 
@@ -14,7 +14,7 @@ Each Groth16 phase-2 setup uses a fresh random beacon (`scripts/build.sh` lines 
 |---|---|---|
 | `circuits/build/*_final.zkey`, `*.wasm` | local build cache | no — `circuits/build/` ignored |
 | `frontend/public/zk/*` | copied during build | no — `frontend/public/zk/` ignored |
-| `contracts/src/zk/{Authorize,Cancel,Claim,Deposit,Settle,Withdraw}Verifier.sol` | rebuilt from same beacon | no — listed in `.gitignore` |
+| `contracts/src/zk/{Authorize,Cancel,Claim,Deposit,Withdraw}Verifier.sol` | rebuilt from same beacon | no — listed in `.gitignore` |
 | `contracts/src/zk/I*Verifier.sol`, `BatchAuthorizeVerifier.sol` | hand-written | yes |
 
 ### Building manually
@@ -59,7 +59,7 @@ Starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and
 Relayer CA), mock tokens, the shared orderbook, **both relayers**, and the
 selected apps in one terminal. Press `Ctrl+C` to stop all services.
 
-Services started:
+Services and ports (relayers + orderbook always start; each app starts only when named in `--apps`, except admin/hub — see below):
 | Service | Port | Description |
 |---------|------|-------------|
 | Anvil | 8545 | Local Ethereum node |
@@ -179,14 +179,14 @@ EOF
 npm run dev
 ```
 
-**4. Start an app (e.g. Pay):**
+**4. Start an app (e.g. Pro):**
 
 Write the deployed addresses into the app's `.env.local`, then start it. (`dev.sh`
 does this automatically via `write_app_env`; the block below is the manual
-equivalent for `apps/pay` — adjust the path for `apps/pro`, `apps/operators`, etc.)
+equivalent for `apps/pro`, which reads the generic `NEXT_PUBLIC_*` keys.)
 
 ```bash
-cd apps/pay
+cd apps/pro
 cat > .env.local <<EOF
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=<RELAYER_REGISTRY>
 NEXT_PUBLIC_WETH_ADDRESS=<WETH>
@@ -199,8 +199,12 @@ NEXT_PUBLIC_RPC_URL=http://localhost:8545
 NEXT_PUBLIC_CHAIN_ID=31337
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
-npm run dev          # Pay on http://localhost:4001
+npm run dev          # Pro on http://localhost:4003
 ```
+
+> **Pay is different:** `apps/pay` reads `NEXT_PUBLIC_PAY_*`-prefixed keys (see
+> `apps/pay/app/_lib/network.ts`), not the generic ones above. Let `dev.sh
+> --apps pay` write its `.env.local` rather than hand-rolling it.
 
 ## Integration Mode (with zk-X509)
 
@@ -445,9 +449,9 @@ Fork-mode failure modes fall into four buckets. Diagnose in this order:
 | MetaMask: `This Chain ID is currently used by the Ethereum network` | You tried to add the fork as chain ID `1`, which MetaMask reserves for its built-in Mainnet. | `dev-fork.sh` uses chain ID `31338` by default for exactly this reason — don't override `FORK_CHAIN_ID=1`. The Add Fork Network header button uses 31338 automatically. |
 | `ONEINCH_API_KEY` present but 1inch path still not taken | Fork mode defaults `NEXT_PUBLIC_DISABLE_AGGREGATOR=true` to sidestep state-drift reverts (the env-var comment block and "1inch Swap API key" paragraph both mention this). | `NEXT_PUBLIC_DISABLE_AGGREGATOR=false ./scripts/dev-fork.sh` — also pin `FORK_BLOCK` near tip so 1inch's routing matches fork state. |
 
-**App UI (non-fork-specific):** invisible text on mint-green buttons after editing `globals.css` is Tailwind v4's `@theme inline` block compiling into CSS custom properties at dev-server startup — HMR doesn't always pick up edits inside `@theme`. Kill the dev server, `rm -rf <app>/.next` (e.g. `apps/pay/.next`), restart `npm run dev`, hard-reload the browser tab (⌘⇧R).
+**App UI (non-fork-specific):** invisible text on mint-green buttons after editing `globals.css` is Tailwind v4's `@theme inline` block compiling into CSS custom properties at dev-server startup — HMR doesn't always pick up edits inside `@theme`. Kill the dev server, clear the affected app's build cache (`rm -rf apps/<name>/.next` for a native app, or `frontend/.next` in fork mode, which runs the legacy `frontend/`), restart `npm run dev`, hard-reload the browser tab (⌘⇧R).
 
-When all else fails, `rm -rf .dev-logs zk-relayer/zk-relayer.db frontend/.next` wipes the moving parts; rerun the circuits build once and `./scripts/dev-fork.sh`.
+When all else fails in fork mode, `rm -rf .dev-logs zk-relayer/zk-relayer.db frontend/.next` wipes the moving parts; rerun the circuits build once and `./scripts/dev-fork.sh`.
 
 ## E2E Test Runbook
 
