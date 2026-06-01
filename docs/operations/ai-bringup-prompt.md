@@ -57,10 +57,17 @@ pieces and adds the verification + zk-X509 steps. Run it from the repo root.
 > # 3e. 프론트/백엔드 헬스체크
 > curl -fsS -o /dev/null -w "zkx509-frontend %{http_code}\n" http://localhost:3000
 > curl -fsS -o /dev/null -w "zkx509-backend %{http_code}\n" http://localhost:4444
+> # 3f. CA 검증용 데스크탑 앱을 사람을 위해 띄워준다 (실제 검증 조작은 사람이 함).
+> #     먼저 빌드돼 있어야 한다: cd <zk-X509> && make desktop
+> #     GUI라 떠 있는 동안 블록되므로 백그라운드로 띄우고 로그만 남긴다:
+> ( <zk-X509>/target/release/bundle/macos/zk-X509.app/Contents/MacOS/zk-x509-desktop \
+>     > /tmp/zkx509-app.log 2>&1 & )
 > ```
-> **여기서 AI는 멈춘다.** 실제 **CA 등록과 지갑 신원검증(`register`)은 사람이 대시보드(http://localhost:3000)에서
-> 인터랙티브로 직접 한다** — AI가 대신 하지 마라. (사람: Identity → 레지스트리 선택 → seed된 테스트 CA에 대한
-> 증명 제출.) AI는 "대시보드가 떴고 레지스트리가 swap됐고 verify가 통과했다"까지만 보장하고, 그 사실을 보고해라.
+> **여기서 AI는 멈춘다.** 실제 **CA 등록과 지갑 신원검증(`register`)은 사람이** 한다 — 위에서 띄운
+> **데스크탑 앱(zk-x509-desktop)** 또는 대시보드(http://localhost:3000)에서 인터랙티브로 직접. AI가 대신 하지 마라.
+> (사람: 데스크탑 앱에서 실제 X.509 인증서로 CA 증명 생성/검증, 또는 대시보드 Identity → 레지스트리 선택 →
+> seed된 테스트 CA에 대한 증명 제출.) AI는 "대시보드·데스크탑 앱이 떴고 레지스트리가 swap됐고 verify가
+> 통과했다"까지만 보장하고, 그 사실을 보고해라.
 > 주의: zk-X509의 실제 증명 생성(SP1 prover)은 Docker가 필요하다 — Docker 없이는 배포 + swap + (--quick) 검증까지만 된다.
 >
 > **종료**: `./scripts/dev.sh --stop` (저장된 PID kill + 8545/3002/3003/4000–4006 포트 스윕).
@@ -79,7 +86,7 @@ pieces and adds the verification + zk-X509 steps. Run it from the repo root.
 | Fund testers ETH/USDC/USDT/TON | automatic in `DeployLocal.s.sol` (mock mode) → anvil #0–#10 get 100 WETH / 1M USDC / 1M USDT / 100k TON; ETH from anvil prefund | extra wallets: `apps/pay/e2e/_helpers/fund-wallet.ts` |
 | zkey **offline** verify | `scripts/check-zk-artifacts.sh` | hashes local zkeys vs the deploy-time manifest; no chain needed |
 | zkey **online** verify | submit a real proof to the deployed Verifier (e.g. a `zk-relayer/test/e2e-*.ts` proof flow, or browser deposit) | mismatch surfaces as `InvalidProof()` |
-| zk-X509 on same anvil (front/back + verify) | `<zk-X509>/script/start-services.sh` → `deploy-on-existing-anvil.sh` → `verify-deployment.sh --quick` → `./scripts/swap-identity-registry.sh <reg>` | separate repo: `github.com/tokamak-network/zk-X509`; SP1 prover needs Docker. **CA registration + wallet identity verification is the human's interactive step** at the dashboard (:3000) — the AI only stands the dashboard up and confirms verify passes |
+| zk-X509 on same anvil (front/back + verify) | `<zk-X509>/script/start-services.sh` → `deploy-on-existing-anvil.sh` → `verify-deployment.sh --quick` → `./scripts/swap-identity-registry.sh <reg>` | separate repo: `github.com/tokamak-network/zk-X509`; SP1 prover needs Docker. **CA registration + wallet identity verification is the human's interactive step** — via the dashboard (:3000) or the desktop app (build: `make desktop`; run: `<zk-X509>/target/release/bundle/macos/zk-X509.app/Contents/MacOS/zk-x509-desktop`). The AI only stands these up and confirms verify passes |
 | Stop everything | `./scripts/dev.sh --stop` | kills tracked PIDs + sweeps dev ports |
 
 See [local-setup.md](local-setup.md) for the full native runbook and the
