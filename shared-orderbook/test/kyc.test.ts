@@ -6,6 +6,7 @@ import path from "path";
 import os from "os";
 import { OrderbookDB } from "../src/core/db.js";
 import { createKycRoutes } from "../src/routes/kyc.js";
+import { makeAdminAuth } from "../src/middleware/admin-auth.js";
 import { config } from "../src/config.js";
 
 const PORT = 14622;
@@ -113,7 +114,7 @@ describe("KYC routes", () => {
 
     const app = express();
     app.use(express.json());
-    app.use("/api/kyc", createKycRoutes(db, noopLimiter, noopLimiter, ADMIN_TOKEN));
+    app.use("/api/kyc", createKycRoutes(db, noopLimiter, noopLimiter, makeAdminAuth({ staticToken: ADMIN_TOKEN })));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(PORT, resolve));
   });
@@ -297,7 +298,7 @@ describe("KYC routes", () => {
     // A second app with no admin token — the shared auth should 503, not 401.
     const noTokenApp = express();
     noTokenApp.use(express.json());
-    noTokenApp.use("/api/kyc", createKycRoutes(db, noopLimiter, noopLimiter, undefined));
+    noTokenApp.use("/api/kyc", createKycRoutes(db, noopLimiter, noopLimiter, makeAdminAuth({})));
     const srv = http.createServer(noTokenApp);
     // Bind an ephemeral port (listen(0)) to avoid collisions on CI runners.
     await new Promise<void>((resolve) => srv.listen(0, resolve));

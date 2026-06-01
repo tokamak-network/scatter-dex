@@ -14,6 +14,8 @@ import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/se
 import { createAdminRoutes } from "./routes/admin.js";
 import { createKycRoutes } from "./routes/kyc.js";
 import { VerifyMonitor } from "./core/verify-runtime.js";
+import { makeAdminSiweFromAllowlist } from "./core/admin-siwe.js";
+import { makeAdminAuth } from "./middleware/admin-auth.js";
 
 async function main() {
   const db = new OrderbookDB();
@@ -88,9 +90,16 @@ async function main() {
   // at root so the URLs read naturally (/api/relayers/:addr/stats etc).
   app.use("/api", createSettlementStatsRoutes(db, readLimiter));
 
-  // Relayer operator KYC onboarding (Stage 1). Public submit/status; admin
-  // review endpoints are stubbed for PR2.
-  app.use("/api/kyc", createKycRoutes(db, writeLimiter, readLimiter, config.adminToken));
+  // Admin auth — a single SIWE handle + a shared gate accepting a SIWE
+  // session token or the static ADMIN_TOKEN. Both /api/admin and the KYC
+  // review routes mount the same gate; the SIWE challenge/session endpoints
+  // live under /api/admin.
+  const adminSiwe = makeAdminSiweFromAllowlist(config.adminAddresses);
+  const adminAuth = makeAdminAuth({ siwe: adminSiwe, staticToken: config.adminToken });
+
+  // Relayer operator KYC onboarding. Public submit/status; admin review
+  // endpoints behind adminAuth.
+  app.use("/api/kyc", createKycRoutes(db, writeLimiter, readLimiter, adminAuth));
 
   // Operator-only — single shared monitor instance. The verifier daemon
   // (`src/verify.ts`) is the writer; this server is the read-side
@@ -99,7 +108,7 @@ async function main() {
   // production deployments rely on the DB (`hasUnverifiedRows`) for
   // alerting, not on `lastPass`.
   const verifyMonitor = new VerifyMonitor();
-  app.use("/api/admin", createAdminRoutes({ db, monitor: verifyMonitor, adminToken: config.adminToken }));
+  app.use("/api/admin", createAdminRoutes({ db, monitor: verifyMonitor, adminAuth, siwe: adminSiwe, writeLimiter }));
 
   // Health check
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
@@ -152,6 +161,10 @@ async function main() {
     console.log(`  GET    /api/kyc/submissions/:id      — admin: submission detail`);
     console.log(`  GET    /api/kyc/submissions/:id/file/:kind — admin: stream document`);
     console.log(`  POST   /api/kyc/submissions/:id/status     — admin: set review status`);
+    if (adminSiwe) {
+      console.log(`  GET    /api/admin/challenge          — admin SIWE: request nonce`);
+      console.log(`  POST   /api/admin/session            — admin SIWE: exchange signature for token`);
+    }
   });
 
   // Graceful shutdown

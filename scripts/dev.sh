@@ -694,7 +694,16 @@ cd "$ROOT_DIR/shared-orderbook"
 # 4001-4004 range, so without this an --apps caller (Pay, Pro, Drop,
 # Operators) fetching `/api/orders/…` gets blocked by the CORS
 # preflight with no Access-Control-Allow-Origin header.
+# `ADMIN_TOKEN` + `ADMIN_ADDRESSES` enable the KYC review admin surface
+# (/api/kyc/submissions*, /api/admin). Without them every admin call 503s.
+# - ADMIN_TOKEN: static bearer for CI / scripts (the legacy fallback path).
+# - ADMIN_ADDRESSES: SIWE allowlist — anvil #0 (the $DEPLOYER_KEY deployer,
+#   0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266) is the local admin, so the
+#   operator console can sign in with the dev wallet. Dev-only values; set
+#   real ones in production.
 CORS_ORIGINS="$DEV_CORS_ORIGINS" PORT=4000 ALLOW_PRIVATE_RELAYER_URLS=1 \
+  ADMIN_TOKEN="dev-kyc-admin" \
+  ADMIN_ADDRESSES="0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" \
   npm run dev > "$LOG_DIR/shared-orderbook.log" 2>&1 &
 last_pid=$!
 PIDS+=("$last_pid")
