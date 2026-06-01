@@ -37,7 +37,8 @@ function downloadP12(filename: string, bytes: ArrayBuffer) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  // Defer revoke: Safari can race a synchronous revoke against the download.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 interface Props {
