@@ -13,6 +13,7 @@ import { createPeerRoutes } from "./routes/peer.js";
 import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/settlements.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createKycRoutes } from "./routes/kyc.js";
+import { createCaRoutes } from "./routes/ca.js";
 import { VerifyMonitor } from "./core/verify-runtime.js";
 import { makeAdminSiweFromAllowlist } from "./core/admin-siwe.js";
 import { makeAdminAuth } from "./middleware/admin-auth.js";
@@ -101,6 +102,10 @@ async function main() {
   // endpoints behind adminAuth.
   app.use("/api/kyc", createKycRoutes(db, writeLimiter, readLimiter, adminAuth));
 
+  // Public Root CA store: admin publishes the public .der, anyone downloads it
+  // (X.509 anchor for operator cert-chain verification).
+  app.use("/api/ca", createCaRoutes(db, adminAuth, readLimiter, writeLimiter));
+
   // Operator-only — single shared monitor instance. The verifier daemon
   // (`src/verify.ts`) is the writer; this server is the read-side
   // surface that ops dashboards poll. The two processes don't share
@@ -165,6 +170,9 @@ async function main() {
       console.log(`  GET    /api/admin/challenge          — admin SIWE: request nonce`);
       console.log(`  POST   /api/admin/session            — admin SIWE: exchange signature for token`);
     }
+    console.log(`  POST   /api/ca/root                  — admin: publish public Root CA (.der)`);
+    console.log(`  GET    /api/ca/root                  — download active Root CA`);
+    console.log(`  GET    /api/ca/root/info             — Root CA metadata`);
   });
 
   // Graceful shutdown
