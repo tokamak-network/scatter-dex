@@ -37,5 +37,17 @@ describe("generateRootCa", () => {
     const years =
       cert.notAfter.value.getUTCFullYear() - cert.notBefore.value.getUTCFullYear();
     expect(years).toBe(10);
+
+    // RFC 5280: serial number must be positive (top bit of first byte clear).
+    const serialBytes = new Uint8Array(cert.serialNumber.valueBlock.valueHexView);
+    expect(serialBytes[0] & 0x80).toBe(0);
+  });
+
+  it("rejects bad inputs", async () => {
+    const ok = { commonName: "CA", organization: "Org", country: "KR", validityYears: 10 };
+    await expect(generateRootCa({ ...ok, country: "kr" })).rejects.toThrow(/ISO-3166/);
+    await expect(generateRootCa({ ...ok, country: "KOR" })).rejects.toThrow(/ISO-3166/);
+    await expect(generateRootCa({ ...ok, validityYears: 0 })).rejects.toThrow(/validityYears/);
+    await expect(generateRootCa({ ...ok, commonName: "  " })).rejects.toThrow(/commonName/);
   });
 });

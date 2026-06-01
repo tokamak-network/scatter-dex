@@ -71,6 +71,20 @@ function makeName(p: RootCaParams): pkijs.RelativeDistinguishedNames {
 }
 
 export async function generateRootCa(params: RootCaParams): Promise<RootCaResult> {
+  // Fail fast on bad inputs / missing WebCrypto rather than emitting a
+  // malformed CA cert.
+  if (!globalThis.crypto?.subtle) {
+    throw new Error("WebCrypto (crypto.subtle) is unavailable in this environment");
+  }
+  if (!params.commonName.trim()) throw new Error("Root CA commonName is required");
+  if (!params.organization.trim()) throw new Error("Root CA organization is required");
+  if (!/^[A-Z]{2}$/.test(params.country)) {
+    throw new Error("country must be an ISO-3166 alpha-2 code (e.g. KR, US)");
+  }
+  if (!Number.isInteger(params.validityYears) || params.validityYears <= 0 || params.validityYears > 50) {
+    throw new Error("validityYears must be an integer between 1 and 50");
+  }
+
   pkijs.setEngine(
     "webcrypto",
     new pkijs.CryptoEngine({ name: "webcrypto", crypto: globalThis.crypto }),
@@ -85,9 +99,11 @@ export async function generateRootCa(params: RootCaParams): Promise<RootCaResult
 
   const cert = new pkijs.Certificate();
   cert.version = 2; // X.509 v3
-  cert.serialNumber = new asn1js.Integer({
-    valueHex: globalThis.crypto.getRandomValues(new Uint8Array(16)).buffer,
-  });
+  // RFC 5280 §4.1.2.2: serialNumber is a positive INTEGER. ASN.1 INTEGERs are
+  // signed, so clear the top bit of the first byte to keep it non-negative.
+  const serial = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  serial[0] &= 0x7f;
+  cert.serialNumber = new asn1js.Integer({ valueHex: serial.buffer });
 
   // Self-signed: subject == issuer, as three separate RDNs.
   cert.subject = makeName(params);
