@@ -336,6 +336,10 @@ wipe_dev_dbs() {
       [ -f "${f}${ext}" ] && rm -f "${f}${ext}" && removed=1
     done
   done
+  # KYC onboarding uploads (liveness video + ID document) are keyed to the
+  # wiped submission rows — drop them alongside the DB so a reset starts clean.
+  local kyc_dir="$ROOT_DIR/shared-orderbook/kyc-uploads"
+  [ -d "$kyc_dir" ] && rm -rf "$kyc_dir" && removed=1
   [ "$removed" = 1 ] && echo "Wiped stale relayer/orderbook DBs from previous run." && echo ""
   return 0
 }

@@ -56,4 +56,14 @@ export const config = {
   // disabled. We never default this to a fixed value — an unset env
   // must mean "off" or every default deployment exposes the surface.
   adminToken: process.env.ADMIN_TOKEN?.trim() || undefined,
+
+  // Relayer operator KYC onboarding (Stage 1). Uploaded liveness videos +
+  // ID documents land under `kycUploadDir/<submissionId>/`. Kept out of the
+  // repo (.gitignore) and wiped by `scripts/dev.sh`'s DB reset.
+  kycUploadDir: env("KYC_UPLOAD_DIR", "kyc-uploads"),
+
+  // Per-file upload ceiling for KYC submissions. A liveness video is the
+  // largest piece; 25 MB covers a short clip without inviting abuse of the
+  // public submit endpoint. Applied per file by multer.
+  kycMaxFileBytes: envInt("KYC_MAX_FILE_BYTES", String(25 * 1024 * 1024)),
 };

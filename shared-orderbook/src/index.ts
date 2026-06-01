@@ -12,6 +12,7 @@ import { createStatsRoutes } from "./routes/stats.js";
 import { createPeerRoutes } from "./routes/peer.js";
 import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/settlements.js";
 import { createAdminRoutes } from "./routes/admin.js";
+import { createKycRoutes } from "./routes/kyc.js";
 import { VerifyMonitor } from "./core/verify-runtime.js";
 
 async function main() {
@@ -87,6 +88,10 @@ async function main() {
   // at root so the URLs read naturally (/api/relayers/:addr/stats etc).
   app.use("/api", createSettlementStatsRoutes(db, readLimiter));
 
+  // Relayer operator KYC onboarding (Stage 1). Public submit/status; admin
+  // review endpoints are stubbed for PR2.
+  app.use("/api/kyc", createKycRoutes(db, writeLimiter, readLimiter, config.adminToken));
+
   // Operator-only — single shared monitor instance. The verifier daemon
   // (`src/verify.ts`) is the writer; this server is the read-side
   // surface that ops dashboards poll. The two processes don't share
@@ -141,6 +146,8 @@ async function main() {
     console.log(`  GET    /api/relayers/:addr/stats     — per-relayer aggregates`);
     console.log(`  GET    /api/network/totals           — network-wide totals`);
     console.log(`  GET    /api/leaderboard              — top relayers by metric`);
+    console.log(`  POST   /api/kyc/submit               — submit operator KYC (multipart)`);
+    console.log(`  GET    /api/kyc/status?wallet=       — KYC submission status`);
   });
 
   // Graceful shutdown
