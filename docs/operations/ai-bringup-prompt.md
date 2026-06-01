@@ -40,19 +40,31 @@ pieces and adds the verification + zk-X509 steps. Run it from the repo root.
 >   증명 플로우를 사용해라(예: `cd zk-relayer && npx tsx test/e2e-scatter-direct-auth.ts`
 >   같은 e2e 프루프 테스트, 또는 브라우저 deposit). 결과를 요약 보고해.
 >
-> **3. (나중에) zk-X509를 같은 anvil에 붙이기**
+> **3. (나중에) zk-X509를 같은 anvil에 붙이기 — 프론트/백엔드 기동 + vkey 검증까지**
 > zk-X509는 별도 레포다(`git clone https://github.com/tokamak-network/zk-X509.git`,
 > 최초 1회 `make elf`). 이미 받은 체크아웃 경로를 `<zk-X509>`로 쓴다(이 머신: `~/tokamak-projects/zk-X509`).
+> 아래 3a~3e까지가 **AI 작업 범위**다.
 > ```bash
-> cd <zk-X509> && bash script/start-services.sh        # 프론트 3000, 백엔드 4444
+> # 3a. 프론트(:3000 대시보드) + 백엔드(:4444) 기동
+> cd <zk-X509> && bash script/start-services.sh
+> # 3b. 같은 anvil에 IdentityRegistry 배포 (테스트 CA 자동 seed). "IdentityRegistry (proxy)" 주소를 받아둬라.
 > cd <zk-X509> && MAX_WALLETS_PER_CERT=10 SERVICE_NAME="User CA" bash script/deploy-on-existing-anvil.sh
-> # 출력된 "IdentityRegistry (proxy)" 주소를 받아서, scatter-dex 루트에서:
-> ./scripts/swap-identity-registry.sh <그 IdentityRegistry 주소>
+> # 3c. 배포/vkey 검증: ELF VK == factory/registry.effectiveProgramVKey, caMerkleRoot != 0, paused == false.
+> #     Rust/Docker가 없으면 --quick 로 cargo·SP1 캐시 검사를 건너뛰고 온체인 wiring만 검증한다.
+> cd <zk-X509> && bash script/verify-deployment.sh --quick
+> # 3d. scatter-dex IdentityGate를 그 레지스트리로 swap (검증 통과 후)
+> cd <scatter-dex> && ./scripts/swap-identity-registry.sh <3b의 IdentityRegistry 주소>
+> # 3e. 프론트/백엔드 헬스체크
+> curl -fsS -o /dev/null -w "zkx509-frontend %{http_code}\n" http://localhost:3000
+> curl -fsS -o /dev/null -w "zkx509-backend %{http_code}\n" http://localhost:4444
 > ```
-> 주의: zk-X509의 실제 증명 생성(SP1 prover)은 Docker가 필요하다 — Docker 없이는 컨트랙트/
-> 레지스트리 배포 + swap까지만 된다.
+> **여기서 AI는 멈춘다.** 실제 **CA 등록과 지갑 신원검증(`register`)은 사람이 대시보드(http://localhost:3000)에서
+> 인터랙티브로 직접 한다** — AI가 대신 하지 마라. (사람: Identity → 레지스트리 선택 → seed된 테스트 CA에 대한
+> 증명 제출.) AI는 "대시보드가 떴고 레지스트리가 swap됐고 verify가 통과했다"까지만 보장하고, 그 사실을 보고해라.
+> 주의: zk-X509의 실제 증명 생성(SP1 prover)은 Docker가 필요하다 — Docker 없이는 배포 + swap + (--quick) 검증까지만 된다.
 >
 > **종료**: `./scripts/dev.sh --stop` (저장된 PID kill + 8545/3002/3003/4000–4006 포트 스윕).
+> zk-X509 서비스는 별도로: `cd <zk-X509> && bash script/stop-services.sh`
 >
 > 각 단계가 끝날 때마다 무엇이 떴고 어떤 URL로 접근하는지, 검증 결과가 통과/실패인지 한 줄로
 > 요약하고, 실패는 로그 근거와 함께 알려줘.
@@ -67,7 +79,7 @@ pieces and adds the verification + zk-X509 steps. Run it from the repo root.
 | Fund testers ETH/USDC/USDT/TON | automatic in `DeployLocal.s.sol` (mock mode) → anvil #0–#10 get 100 WETH / 1M USDC / 1M USDT / 100k TON; ETH from anvil prefund | extra wallets: `apps/pay/e2e/_helpers/fund-wallet.ts` |
 | zkey **offline** verify | `scripts/check-zk-artifacts.sh` | hashes local zkeys vs the deploy-time manifest; no chain needed |
 | zkey **online** verify | submit a real proof to the deployed Verifier (e.g. a `zk-relayer/test/e2e-*.ts` proof flow, or browser deposit) | mismatch surfaces as `InvalidProof()` |
-| zk-X509 on same anvil | `<zk-X509>/script/start-services.sh` → `deploy-on-existing-anvil.sh` → `./scripts/swap-identity-registry.sh <reg>` | separate repo: `github.com/tokamak-network/zk-X509`; SP1 prover needs Docker |
+| zk-X509 on same anvil (front/back + verify) | `<zk-X509>/script/start-services.sh` → `deploy-on-existing-anvil.sh` → `verify-deployment.sh --quick` → `./scripts/swap-identity-registry.sh <reg>` | separate repo: `github.com/tokamak-network/zk-X509`; SP1 prover needs Docker. **CA registration + wallet identity verification is the human's interactive step** at the dashboard (:3000) — the AI only stands the dashboard up and confirms verify passes |
 | Stop everything | `./scripts/dev.sh --stop` | kills tracked PIDs + sweeps dev ports |
 
 See [local-setup.md](local-setup.md) for the full native runbook and the
