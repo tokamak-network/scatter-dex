@@ -20,6 +20,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { SectionHeader } from "../../components/SectionHeader";
+import { GenerateRootCa } from "./_components/GenerateRootCa";
 
 const ORDERBOOK_URL =
   process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "http://localhost:4000";
@@ -105,15 +106,11 @@ export default function RootCaPage() {
 
       <section>
         <SectionHeader title="Generate Root CA" badge="live" />
-        <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm text-[var(--color-text-muted)]">
-          Admin-only. Generates a self-signed CA keypair in the browser, downloads
-          the CA private key as a password-encrypted{" "}
-          <code className="font-mono">.p12</code> (kept by the admin) and publishes
-          the public <code className="font-mono">rootCA.der</code>.
-          <p className="mt-2 text-xs">
-            The generation control is provided by the operator-CA X.509 module.
-          </p>
-        </div>
+        <GenerateRootCa
+          orderbookUrl={ORDERBOOK_URL}
+          hasExisting={state === "present"}
+          onPublished={() => void refresh()}
+        />
       </section>
     </div>
   );
