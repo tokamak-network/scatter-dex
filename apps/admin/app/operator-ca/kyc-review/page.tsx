@@ -25,8 +25,16 @@ import { Contract } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../../components/SectionHeader";
 
-const ORDERBOOK_URL =
-  process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "http://localhost:4000";
+const ORDERBOOK_URL = (
+  process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "http://localhost:4000"
+).replace(/\/+$/, "");
+
+/** Where the operator self-service certificate-issuance screen lives —
+ *  the OPERATORS app (operator keys are generated in the operator's own
+ *  context, never in the admin app). The approval email links here. */
+const OPERATORS_URL = (
+  process.env.NEXT_PUBLIC_OPERATORS_URL ?? "http://localhost:4004"
+).replace(/\/+$/, "");
 
 /** IssuanceApprovalRegistry — approving a KYC submission writes the cert
  *  subject here on-chain (owner-only), which the operator's issuance
@@ -603,7 +611,7 @@ function SubmissionPanel({
  *  pre-filled — the same Gmail web-compose pattern Pay uses for claim
  *  emails (no server-side SMTP). */
 function emailIssuanceLink(email: string, wallet: string) {
-  const certUrl = `${window.location.origin}/operator-ca?wallet=${encodeURIComponent(wallet)}`;
+  const certUrl = `${OPERATORS_URL}/operator-cert?wallet=${encodeURIComponent(wallet)}`;
   const subject = "Your relayer certificate-issuance link";
   const body = [
     "Hi,",
