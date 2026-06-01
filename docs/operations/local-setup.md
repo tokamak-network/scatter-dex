@@ -52,14 +52,14 @@ reload, per-app logs, easy restarts).
 ## Quick Start — dev.sh (host processes)
 
 ```bash
-./scripts/dev.sh --mock --apps pay,pro,operators
+./scripts/dev.sh --mock --apps pay,pro,operators,admin,hub
 ```
 
 Starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and
 Relayer CA), mock tokens, the shared orderbook, **both relayers**, and the
 selected apps in one terminal. Press `Ctrl+C` to stop all services.
 
-Services and ports (relayers + orderbook always start; each app starts only when named in `--apps`, except admin/hub — see below):
+Services and ports (relayers + orderbook always start; each app starts only when named in `--apps`):
 | Service | Port | Description |
 |---------|------|-------------|
 | Anvil | 8545 | Local Ethereum node |
@@ -70,25 +70,34 @@ Services and ports (relayers + orderbook always start; each app starts only when
 | Drop | 4002 | `--apps drop` |
 | Pro | 4003 | `--apps pro` |
 | Operators | 4004 | `--apps operators` |
-| Admin | 4005 | see "Admin & Hub" below — `dev.sh` writes its env but doesn't start it |
+| Admin | 4005 | `--apps admin` |
+| Hub | 4006 | `--apps hub` (static landing site) |
 
-`--apps` accepts `pay`, `drop`, `pro`, `operators` (comma-separated). Pick the
-subset you need; `dev.sh` writes each app's `.env.local` with the freshly
-deployed contract addresses.
+`--apps` accepts `pay`, `drop`, `pro`, `operators`, `admin`, `hub`
+(comma-separated). Pick the subset you need; `dev.sh` installs each app's deps
+on demand and writes its `.env.local` with the freshly deployed contract
+addresses. Hub moved off port 4000 (which the shared orderbook owns) to 4006.
 
-### Admin & Hub
+### Run in the background
 
-`dev.sh --apps` doesn't start `admin` or `hub`, but it does write
-`apps/admin/.env.local` on every run. Start them in their own terminals:
+By default `dev.sh` runs in the foreground and **closing the terminal stops
+everything** (it traps `SIGHUP`). To keep the stack running after you close the
+window — and free the terminal — start it detached:
 
 ```bash
-# Admin (reads the env dev.sh already wrote)
-cd apps/admin && npm run dev          # http://localhost:4005
-
-# Hub (static landing site — no contracts/relayer needed). Its default port is
-# 4000, which collides with shared-orderbook, so override the port:
-cd apps/hub && npx next dev -p 4006   # http://localhost:4006
+./scripts/dev.sh --mock --apps pay,pro,operators,admin,hub --background
 ```
+
+It brings every service up, prints the URLs, saves the PIDs to
+`.dev-logs/dev.pids`, and exits leaving the services running. Stop them later
+with:
+
+```bash
+./scripts/dev.sh --stop
+```
+
+`--stop` kills the recorded PIDs and sweeps the well-known dev ports
+(8545/3002/3003/4000–4006) for anything left behind.
 
 ### Monitoring (dev.sh)
 
