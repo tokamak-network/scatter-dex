@@ -88,8 +88,8 @@
 ### 5.1 운영자 인증서 키 관리 (최우선)
 - **개인키는 클라이언트에서만 생성·보관.** 서버/오더북/릴레이어/어드민 어디에도 평문 개인키·비밀번호가 가지 않는다(zero-knowledge). 서버엔 **공개키/CSR + zk-X509 ZK proof**만.
 - **KDF**: Argon2id(가능 시 WASM) 또는 PBKDF2-HMAC-SHA256 ≥ 600k iters (OWASP 2023). keystore마다 **랜덤 salt + IV**.
-- **대칭암호**: 비밀번호 유도키로 **AES-256-GCM**(AEAD → 변조 감지). 평문 개인키는 메모리에서만, 사용 후 폐기.
-- **키스토어 포맷 = PKCS#12 (.p12)** [2026-06-01 확정]. 발급 개인키는 EVM secp256k1이 아니라 **WebCrypto P-256 cert 키**라 keystore-v3(secp256k1 raw 전용)는 부적합. PKCS#12는 cert+키를 함께 담는 PKI 표준 컨테이너 + OS/브라우저/openssl native import. 인코딩은 **PBES2 표준 준수를 위해 pkijs/@peculiar** 사용(node-forge는 레거시 PBE에 묶임). 폴백: 브라우저 PBES2-PKCS12가 비현실적이면 dependency-free JSON 봉투(동일 KDF/AEAD)를 interim으로 유지하고 비표준임을 명시.
+- **대칭암호**: PKCS#12 컨테이너는 **AES-256-CBC + HMAC-SHA256 MAC**(PBES2 표준·상호운용); 의존성-0 JSON 봉투 폴백은 **AES-256-GCM**(AEAD). 평문 개인키는 메모리에서만, 사용 후 폐기.
+- **키스토어 포맷 = PKCS#12 (.p12)** [2026-06-01 확정, PR#891]. 발급 개인키는 EVM secp256k1이 아니라 **WebCrypto P-256 cert 키**라 keystore-v3(secp256k1 raw 전용)는 부적합. PKCS#12는 cert+키를 함께 담는 PKI 표준 컨테이너 + OS/브라우저/openssl native import. 인코딩은 **pkijs/@peculiar**(node-forge는 레거시 PBE). **PBES2 = PBKDF2-HMAC-SHA256 600k + AES-256-CBC + HMAC-SHA256 MAC** — openssl/OS importer가 GCM PKCS#12를 못 읽으므로 컨테이너 cipher는 GCM이 아닌 CBC+MAC(openssl `pkcs12 -info` 검증됨). 폴백: 브라우저 PBES2-PKCS12 비현실 시 dependency-free JSON 봉투(PBKDF2-600k + AES-256-GCM) interim 유지, 비표준 명시.
 - **저장**: 1차 **IndexedDB**(origin 격리 소프트 키스토어) + 선택적 **암호화 파일 내보내기**(백업). 브라우저 저장은 HW-backed 아님 — 향후 **WebAuthn/passkey·Secure Enclave** 로드맵.
 - **비밀번호 복구 불가**(은행과 동일): 분실 시 폐기 후 재발급.
 
