@@ -89,7 +89,7 @@
 - **개인키는 클라이언트에서만 생성·보관.** 서버/오더북/릴레이어/어드민 어디에도 평문 개인키·비밀번호가 가지 않는다(zero-knowledge). 서버엔 **공개키/CSR + zk-X509 ZK proof**만.
 - **KDF**: Argon2id(가능 시 WASM) 또는 PBKDF2-HMAC-SHA256 ≥ 600k iters (OWASP 2023). keystore마다 **랜덤 salt + IV**.
 - **대칭암호**: 비밀번호 유도키로 **AES-256-GCM**(AEAD → 변조 감지). 평문 개인키는 메모리에서만, 사용 후 폐기.
-- **키스토어 포맷**: Web3 Secret Storage(keystore-v3) 또는 PKCS#12(.p12) — 표준·상호운용. (Stage 3 착수 시 택1)
+- **키스토어 포맷 = PKCS#12 (.p12)** [2026-06-01 확정]. 발급 개인키는 EVM secp256k1이 아니라 **WebCrypto P-256 cert 키**라 keystore-v3(secp256k1 raw 전용)는 부적합. PKCS#12는 cert+키를 함께 담는 PKI 표준 컨테이너 + OS/브라우저/openssl native import. 인코딩은 **PBES2 표준 준수를 위해 pkijs/@peculiar** 사용(node-forge는 레거시 PBE에 묶임). 폴백: 브라우저 PBES2-PKCS12가 비현실적이면 dependency-free JSON 봉투(동일 KDF/AEAD)를 interim으로 유지하고 비표준임을 명시.
 - **저장**: 1차 **IndexedDB**(origin 격리 소프트 키스토어) + 선택적 **암호화 파일 내보내기**(백업). 브라우저 저장은 HW-backed 아님 — 향후 **WebAuthn/passkey·Secure Enclave** 로드맵.
 - **비밀번호 복구 불가**(은행과 동일): 분실 시 폐기 후 재발급.
 
@@ -135,11 +135,20 @@
 
 ## 7. 구현 단계 (PR 분할)
 
-### Stage 0 — 설계 문서 (= 본 문서) ✅ 진행 중
+### 진행 현황 (2026-06-01)
+- **Stage 0** 설계 문서 ✅ (commit 21ae17fb, branch docs/relayer-kyc-onboarding-design).
+- **PR1-A** shared-orderbook KYC 백엔드 → **PR #888** (K2). 봇 리뷰 대기.
+- **PR1-B** operators register Step0 KYC 폼 → **PR #889** (K0). 봇 리뷰 대기.
+- **개인키 암호화 코어** → **PR #887** (K1, interim JSON 봉투 → PKCS#12로 교체 예정).
+- **PR2** admin 검토+approve+메일 → K0 착수 예정 (PR1-A의 admin 501 stub 위에).
+- **PR3 발급 게이트+키스토어** → K1 (apps/admin/app/operator-ca, PKCS#12).
+
+### Stage 0 — 설계 문서 (= 본 문서) ✅ 완료 (commit 21ae17fb)
 - `docs/design/relayer-kyc-onboarding/design.md` (본 파일) + `MEMORY.md` 한 줄 포인터.
 - `docs/operations/` 런북에서 링크(선택).
 
 ### PR 1 — KYC 제출 폼(operators) + 중앙 KYC 백엔드(shared-orderbook)
+> 구현 시 위자드는 step0(0|1|2|3) 대신 **1-based 4스텝(1=KYC,2=Verify,3=Endpoint,4=Bond)** 으로 렌더(버블에 "0" 회피). PR1-A=#888, PR1-B=#889.
 **A. shared-orderbook (Express, better-sqlite3)**
 - `src/core/db.ts`: `kyc_submissions` 테이블 + insert/getByWallet/list/getById/updateStatus 스테이트먼트.
 - `config.ts`: `kycUploadDir = env("KYC_UPLOAD_DIR", "kyc-uploads")`.
@@ -170,7 +179,8 @@
 - **클라이언트 키 생성·암호화**: WebCrypto 키쌍 → 비밀번호 PBKDF2/Argon2id → AES-256-GCM 으로 개인키 암호화.
 - **저장**: IndexedDB 키스토어 + 선택적 암호화 파일 다운로드. 평문 개인키 비반출.
 - **발급**: 공개키/CSR + ZK proof만 zk-X509(:3000/:4444)로 → cert 발급 → `isVerified` true.
-- **미해결**: 발급 사이트 = zk-X509 포털 게이팅 vs scatter-dex 자체 페이지(`/operator-ca` 확장) / 키스토어 포맷·저장위치 / SP1 prover Docker(없으면 발급 mock).
+- **확정**: 발급 사이트 = **scatter-dex `apps/admin/app/operator-ca`** (K1 확인, 기존 발급 진입점). 키스토어 = **PKCS#12** (§5.1). 승인 게이트는 K1이 암호화 PR과 분리한 후속 PR로.
+- **미해결**: SP1 prover Docker(없으면 발급 mock).
 
 ---
 
@@ -190,8 +200,9 @@
 ---
 
 ## 9. 미해결 결정 (오픈)
-- 인증서 발급 사이트 위치: 외부 zk-X509 포털 게이팅 vs scatter-dex 자체 페이지.
-- 키스토어 포맷(.p12 vs keystore-v3) / 저장 위치(IndexedDB vs 파일 vs 둘 다).
+- ~~발급 사이트 위치~~ → **확정: apps/admin/app/operator-ca** (2026-06-01).
+- ~~키스토어 포맷~~ → **확정: PKCS#12 (PBES2, pkijs)** (2026-06-01).
+- 저장 위치(IndexedDB vs 파일 vs 둘 다) — 둘 다 권장, K1 구현 시 확정.
 - cert 링크 토큰/만료 스킴.
 - 주민등록번호 마스킹/해시 적용 범위.
 - zk-X509 ZK proof 생성 = SP1 prover(Docker) 필요 — 로컬 Docker 부재 시 발급 단계 mock.
