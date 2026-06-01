@@ -21,6 +21,15 @@ export function isCsrStatus(v: unknown): v is CsrStatus {
   return typeof v === "string" && (CSR_STATUSES as readonly string[]).includes(v);
 }
 
+/** Thrown by recordIssuedCert when the CSR is no longer pending (lost a race
+ *  or already decided) so the caller can map it to a 409. */
+export class CsrNotPendingError extends Error {
+  constructor() {
+    super("CSR is not in pending status");
+    this.name = "CsrNotPendingError";
+  }
+}
+
 /** A stored CSR submission. */
 export interface CsrSubmission {
   id: string;

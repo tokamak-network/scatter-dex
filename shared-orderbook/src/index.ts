@@ -48,14 +48,19 @@ async function main() {
   // middleware needs to hash the exact bytes the client signed; the
   // `verify` callback fires before JSON.parse and gets us those
   // bytes verbatim. See `middleware/auth.ts` for why this matters.
-  app.use(
-    express.json({
-      limit: "10kb",
-      verify: (req, _res, buf) => {
-        (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf);
-      },
-    }),
-  );
+  const globalJson = express.json({
+    limit: "10kb",
+    verify: (req, _res, buf) => {
+      (req as unknown as { rawBody?: Buffer }).rawBody = Buffer.from(buf);
+    },
+  });
+  // /api/cert carries CSR / leaf-cert PEMs that exceed 10 KB, so it parses with
+  // its own larger limit inside the cert router — skip the global parser there
+  // to avoid a 413 before the route runs. (Cert routes don't need rawBody.)
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api/cert")) return next();
+    globalJson(req, res, next);
+  });
 
   // Rate limiters — two layers to mitigate multi-IP bypass.
   const writeLimiter = rateLimit({

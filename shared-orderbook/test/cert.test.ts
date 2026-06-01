@@ -23,6 +23,11 @@ const CSR_PEM =
 const LEAF_PEM =
   "-----BEGIN CERTIFICATE-----\nMIIDQzCCAiugAwIBAgIUZjoxwM9v3oppkRk7WnDFZlVL69MwDQYJKoZIhvcNAQEL\nBQAwOzEaMBgGA1UEAwwRemtTY2F0dGVyIFJvb3QgQ0ExEDAOBgNVBAoMB1Rva2Ft\nYWsxCzAJBgNVBAYTAktSMB4XDTI2MDYwMTEyMzQzMVoXDTI3MDYwMTEyMzQzMVow\nODEXMBUGA1UEAwwOb3BAZXhhbXBsZS5jb20xEDAOBgNVBAoMB1Rva2FtYWsxCzAJ\nBgNVBAYTAktSMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA6Vn2Ye99\nIKV1cLHazvhksPM552ge6W/wPx5uQFI20RvCbXew28/Zpxy0LPwVW1ngwva3vJqz\nkz7p5nyqbGJJ88lRZSOMF7jwGePZVilCOuy+33rQneYziyGhoPyaaqTvwnWhxSIY\npSkusZveFKhD6hpup7QvWGgSL09E+xbwqoeI8BA0dLgT/GiG6N6EVgZ5/1DUxMMa\nA8qZVSBgCUDnMoGbk9uM+lC4N6+fow/r1wp//Zu+tZ/Nyb4OSFYY30F3AY+MNE+s\nU+BwS6VoFbUgeFvw+NxURBQcDc49dQ362kiSBf3L6n+KW9i03QL9GVE9UdDyL3J9\nuK/rSUs6C6UNpQIDAQABo0IwQDAdBgNVHQ4EFgQUjujpPVXlteUN2SV2BGbS75N1\nECswHwYDVR0jBBgwFoAUQvPsOizs16+K0hatFq8MWg52SVowDQYJKoZIhvcNAQEL\nBQADggEBAHGPOD2v923XBu0nqras6nNXh+V+0qsIjHo/raezFT2Zvg+QikqgBuNI\n5DiXVaQDsJfDddm+rn1EeuZRygaQPDvxP6PZea6U52rxG2GVJ9el32Bc0hbdelet\nPrb4Q852d2/6YpClIottVj4p1IMtBRIThKbLBPvEJNDVp64YTCDtk1VTguk8gkUI\ns0sK7xAEECgq2VefeQ9ufkLRBDY8c0zgUuqrdog5Si55gdahwRhykYH9DjXLelZX\n/+gcI6/tk9TXHoIkknrGi4BDtXmr3swJJK3NPSjIy7OX0QqXWjHEzsN0PT63S4qE\nEsOJ420pN0mTTRSp6MJn+W+Bc+ncrE4=\n-----END CERTIFICATE-----\n";
 
+// A leaf cert with a DIFFERENT subject (CN=attacker@evil.com) — must be
+// rejected when offered against the op@example.com CSR.
+const WRONG_LEAF_PEM =
+  "-----BEGIN CERTIFICATE-----\nMIIDUTCCAjmgAwIBAgIUGvrgTwCuZWidq1qgLdM1a9/6KtcwDQYJKoZIhvcNAQEL\nBQAwODEaMBgGA1UEAwwRYXR0YWNrZXJAZXZpbC5jb20xDTALBgNVBAoMBEV2aWwx\nCzAJBgNVBAYTAlVTMB4XDTI2MDYwMTEyNDk0MFoXDTI3MDYwMTEyNDk0MFowODEa\nMBgGA1UEAwwRYXR0YWNrZXJAZXZpbC5jb20xDTALBgNVBAoMBEV2aWwxCzAJBgNV\nBAYTAlVTMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx+YaQ97XARhW\nwL0bcNHkCnEik4FdT6UdtNQDyi+DsYf176G7Aa4B2kO08I6X6h6FIkBisv8wpsKc\na/am0Nqe4cRgLznIiGzbpmndTq3zwYAR4R/rha9+SZbjvnCZ8cnlFPm1RVcx0gYM\nMx4FCyoujIM9V0lShOK5/WZUYmbtV9uon4QIuA6gCoe6wSpLQclTtYJwrSzMAJaE\nGyLRnGB84V9pgpUIzk4KtDQk0rvl+txaRR2w94DKMD8dUQPGaGpHEcDwLa1sKB8/\nNbuXqI2SLXB69tBSkDxy8LAEDCREb5yT9PVyqvjUDW/MO1CF8MSLzJF+NnqB4Wjg\nLS0Bv/js2QIDAQABo1MwUTAdBgNVHQ4EFgQUhZqnlElFQssGzT3O1nl92qzAiyQw\nHwYDVR0jBBgwFoAUhZqnlElFQssGzT3O1nl92qzAiyQwDwYDVR0TAQH/BAUwAwEB\n/zANBgkqhkiG9w0BAQsFAAOCAQEAb8csu/CtJW3lkLg7xLuUfPAKHbVOE155yauJ\nfW4MzDufL+/QIs3GBpsh7pGGfUbr+JQAcB/8gvcxZyAb8Y/LJFoeAniKwtpyhN76\nyEeZPQNL7pJSXfdjNHeH6DKir9RWYOZO4txzpZ+hHnbRyQPlMcnKye1lixwI5b6Y\nsxaaRVMMDBcg7A/NE7kI+Yo3jigsO2qhoYMgrWMRa81I8d8GZMddiw8hzZ72a5o2\nbUjB0CUOwi2IaeYsDHHnAUmCZSCLUpn9Lb+ZtUWutgmIHOIhTEIu5GiR9+CtQs2x\nSb6vWk2hNRM9C3Ki00cfkdeR5/XOGibwqQU9aUi68AYfRRQVnA==\n-----END CERTIFICATE-----\n";
+
 const APPROVED: IssuanceApproval = {
   commonName: "op@example.com",
   organization: "Tokamak",
@@ -140,6 +145,16 @@ describe("cert routes", () => {
 
     // re-issuing the same CSR now conflicts (409)
     expect((await post("/api/cert/issued", { csrId, certPem: LEAF_PEM }, adminHdr)).status).toBe(409);
+  });
+
+  it("admin POST /issued rejects a cert whose subject doesn't match the CSR (400)", async () => {
+    approval = APPROVED;
+    const sub = await (await post("/api/cert/csr", await signedBody(opWallet, CSR_PEM))).json();
+    const res = await post("/api/cert/issued", { csrId: sub.id, certPem: WRONG_LEAF_PEM }, adminHdr);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/does not match/i);
+    // the CSR stays pending (no leaf recorded)
+    expect(db.getCsrById(sub.id)?.status).toBe("pending");
   });
 
   it("admin POST /csr/:id/reject moves a pending CSR to rejected", async () => {

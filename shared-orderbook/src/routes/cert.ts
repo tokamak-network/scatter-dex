@@ -1,11 +1,11 @@
-import { Router, type Request, type Response, type RequestHandler } from "express";
+import express, { Router, type Request, type Response, type RequestHandler } from "express";
 import { randomUUID, X509Certificate } from "crypto";
 import type { OrderbookDB } from "../core/db.js";
 import type { AdminAuthedRequest } from "../middleware/admin-auth.js";
 import type { ApprovalReader } from "../core/issuance-approval.js";
 import { parseCsrSubject, verifyCsrSignature } from "../core/csr.js";
 import { recordAuditSafe } from "../core/audit.js";
-import { isCsrStatus, type CsrStatus } from "../types/cert.js";
+import { isCsrStatus, CsrNotPendingError, type CsrStatus } from "../types/cert.js";
 
 /**
  * Operator leaf-certificate issuance.
@@ -13,7 +13,7 @@ import { isCsrStatus, type CsrStatus } from "../types/cert.js";
  * Public (operator self-service, signed by the operator wallet):
  *   POST /api/cert/csr             — submit a CSR (PKCS#10 PEM) for signing
  *   GET  /api/cert/csr/status?wallet — { status: none|pending|issued|rejected }
- *   GET  /api/cert/issued?wallet    — the signed leaf cert (public PEM)
+ *   GET  /api/cert/issued?wallet    — { cert(PEM), issuedAt, serial, notAfter }
  *
  * Admin (CA signer, behind adminAuth):
  *   GET  /api/cert/csr[?status=]    — the signing queue
@@ -39,6 +39,15 @@ function eqCi(a: string | null, b: string | null): boolean {
   return (a ?? "").trim().toLowerCase() === (b ?? "").trim().toLowerCase();
 }
 
+/** Pull one RDN value out of Node's newline-joined X509 DN ("CN=…\nO=…"). */
+function dnField(dn: string, key: string): string | null {
+  for (const line of dn.split("\n")) {
+    const eq = line.indexOf("=");
+    if (eq > 0 && line.slice(0, eq).trim() === key) return line.slice(eq + 1).trim() || null;
+  }
+  return null;
+}
+
 export function createCertRoutes(
   db: OrderbookDB,
   adminAuth: RequestHandler,
@@ -47,9 +56,13 @@ export function createCertRoutes(
   approvalReader: ApprovalReader | null,
 ): Router {
   const router = Router();
+  // CSR / leaf PEMs exceed the server-wide 10 KB JSON limit, so the JSON cert
+  // routes parse with their own larger ceiling (the global parser skips
+  // /api/cert — see index.ts) to avoid a 413 before the handler runs.
+  const certJson = express.json({ limit: "64kb" });
 
   // POST /api/cert/csr — operator submits a wallet-signed CSR.
-  router.post("/csr", writeLimiter, async (req: Request, res: Response) => {
+  router.post("/csr", writeLimiter, certJson, async (req: Request, res: Response) => {
     if (!approvalReader) {
       res.status(503).json({ error: "certificate issuance is not enabled on this server" });
       return;
@@ -80,8 +93,10 @@ export function createCertRoutes(
 
       // Approval gate: the wallet must hold a live (non-revoked, non-expired)
       // approval whose subject matches the CSR — defence-in-depth over the
-      // client's own on-chain read.
-      const approval = await approvalReader(wallet);
+      // client's own on-chain read. Pass the lowercased wallet so an injected
+      // reader that keys on lowercase (e.g. a DB-backed one) can't miss.
+      const walletLc = wallet.toLowerCase();
+      const approval = await approvalReader(walletLc);
       if (!approval || approval.revoked) {
         res.status(403).json({ error: "wallet is not approved for issuance" });
         return;
@@ -102,7 +117,6 @@ export function createCertRoutes(
 
       // Fold a re-submission into the still-pending row so the signing queue
       // doesn't accrete stale CSRs for the same wallet.
-      const walletLc = wallet.toLowerCase();
       const existing = db.getLatestCsrByWallet(walletLc);
       const reuse = existing && existing.status === "pending" ? existing : null;
       const id = reuse ? reuse.id : randomUUID();
@@ -137,8 +151,13 @@ export function createCertRoutes(
       res.status(400).json({ error: "wallet: must be a 0x-prefixed address" });
       return;
     }
-    const csr = db.getLatestCsrByWallet(wallet.toLowerCase());
-    res.json({ status: csr ? csr.status : "none" });
+    try {
+      const csr = db.getLatestCsrByWallet(wallet.toLowerCase());
+      res.json({ status: csr ? csr.status : "none" });
+    } catch (err) {
+      console.error("[cert] csr status failed:", err);
+      res.status(500).json({ error: "status lookup failed" });
+    }
   });
 
   router.get("/issued", readLimiter, (req, res) => {
@@ -147,12 +166,17 @@ export function createCertRoutes(
       res.status(400).json({ error: "wallet: must be a 0x-prefixed address" });
       return;
     }
-    const cert = db.getIssuedCertByWallet(wallet.toLowerCase());
-    if (!cert) {
-      res.status(404).json({ error: "no certificate issued for this wallet" });
-      return;
+    try {
+      const cert = db.getIssuedCertByWallet(wallet.toLowerCase());
+      if (!cert) {
+        res.status(404).json({ error: "no certificate issued for this wallet" });
+        return;
+      }
+      res.json({ cert: cert.certPem, issuedAt: cert.issuedAt, serial: cert.serial, notAfter: cert.notAfter });
+    } catch (err) {
+      console.error("[cert] issued lookup failed:", err);
+      res.status(500).json({ error: "issued lookup failed" });
     }
-    res.json({ cert: cert.certPem, issuedAt: cert.issuedAt, serial: cert.serial, notAfter: cert.notAfter });
   });
 
   // ── Admin (CA signer) ──────────────────────────────────────────────────
@@ -185,7 +209,7 @@ export function createCertRoutes(
     res.json(csr);
   });
 
-  router.post("/issued", adminAuth, writeLimiter, (req, res) => {
+  router.post("/issued", adminAuth, writeLimiter, certJson, (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const csrId = typeof body.csrId === "string" ? body.csrId : "";
     const certPem = typeof body.certPem === "string" ? body.certPem : "";
@@ -203,17 +227,26 @@ export function createCertRoutes(
       return;
     }
     // Parse the signed leaf to record serial + expiry (and reject junk).
-    let serial: string | null = null;
-    let notAfter: number | null = null;
+    let cert: X509Certificate;
     try {
-      const cert = new X509Certificate(certPem);
-      serial = cert.serialNumber ?? null;
-      const t = Date.parse(cert.validTo);
-      notAfter = Number.isFinite(t) ? Math.floor(t / 1000) : null;
+      cert = new X509Certificate(certPem);
     } catch {
       res.status(400).json({ error: "certPem: not a valid X.509 certificate" });
       return;
     }
+    // The leaf must be for THIS CSR — its subject has to match the CSR's, or an
+    // admin could accidentally attach the wrong operator's cert.
+    if (
+      !eqCi(dnField(cert.subject, "CN"), csr.commonName) ||
+      !eqCi(dnField(cert.subject, "O"), csr.organization) ||
+      !eqCi(dnField(cert.subject, "C"), csr.country)
+    ) {
+      res.status(400).json({ error: "certPem subject does not match the CSR" });
+      return;
+    }
+    const serial = cert.serialNumber ?? null;
+    const t = Date.parse(cert.validTo);
+    const notAfter = Number.isFinite(t) ? Math.floor(t / 1000) : null;
     const issuedAt = Math.floor(Date.now() / 1000);
     try {
       db.recordIssuedCert({ id: randomUUID(), csrId, wallet: csr.wallet, certPem, serial, notAfter, issuedAt }, issuedAt);
@@ -227,12 +260,17 @@ export function createCertRoutes(
       });
       res.status(201).json({ csrId, wallet: csr.wallet, serial, notAfter, issuedAt });
     } catch (err) {
+      // CAS lost the race — the CSR was issued/decided concurrently.
+      if (err instanceof CsrNotPendingError) {
+        res.status(409).json({ error: "CSR is no longer pending" });
+        return;
+      }
       console.error("[cert] record issued failed:", err);
       res.status(500).json({ error: "failed to record certificate" });
     }
   });
 
-  router.post("/csr/:id/reject", adminAuth, writeLimiter, (req, res) => {
+  router.post("/csr/:id/reject", adminAuth, writeLimiter, certJson, (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
     let notes: string | null = null;
     if (body.notes !== undefined && body.notes !== null) {

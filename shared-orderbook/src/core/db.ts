@@ -30,6 +30,7 @@ import type {
   IssuedCert,
   IssuedCertInsert,
 } from "../types/cert.js";
+import { CsrNotPendingError } from "../types/cert.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -253,6 +254,9 @@ export class OrderbookDB {
         issued_at  INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_issued_wallet ON issued_certs(wallet, issued_at);
+      -- One issued cert per CSR — a UNIQUE index makes a concurrent
+      -- double-issue fail at the DB layer (the second insert throws).
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_issued_csr ON issued_certs(csr_id);
     `);
 
     // Lightweight ALTER for pre-byApp databases — adds the `type`
@@ -449,13 +453,16 @@ export class OrderbookDB {
     this.stmtGetLatestCsrByWallet = this.db.prepare(
       `SELECT * FROM csr_submissions WHERE wallet = ? ORDER BY created_at DESC LIMIT 1`,
     );
+    // Both updates are guarded on `status = 'pending'` so a state transition
+    // only fires from pending — a concurrent issue/reject/re-submit on an
+    // already-decided CSR is a no-op (changes === 0), not an overwrite.
     this.stmtSetCsrStatus = this.db.prepare(
-      `UPDATE csr_submissions SET status = ?, notes = ?, reviewed_at = ? WHERE id = ?`,
+      `UPDATE csr_submissions SET status = ?, notes = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'`,
     );
     this.stmtUpdateCsrContent = this.db.prepare(`
       UPDATE csr_submissions
          SET csr_pem = ?, common_name = ?, organization = ?, country = ?, created_at = ?
-       WHERE id = ?
+       WHERE id = ? AND status = 'pending'
     `);
     this.stmtInsertIssuedCert = this.db.prepare(`
       INSERT INTO issued_certs (id, csr_id, wallet, cert_pem, serial, not_after, issued_at)
@@ -1287,13 +1294,20 @@ export class OrderbookDB {
     return rows.map((r) => this.rowToCsr(r));
   }
 
-  /** Record a signed leaf cert and flip its CSR to 'issued' in one txn. */
+  /**
+   * Record a signed leaf cert and flip its CSR to 'issued' in one txn. The
+   * status CAS runs FIRST: if the CSR isn't pending (already issued/rejected,
+   * or a concurrent issue won the race) it changes 0 rows and we throw to roll
+   * back, so the unique idx_issued_csr is never even reached. Returns nothing;
+   * the caller surfaces a thrown "not pending" as a 409.
+   */
   recordIssuedCert(cert: IssuedCertInsert, reviewedAt: number): void {
     const txn = this.db.transaction(() => {
+      const flipped = this.stmtSetCsrStatus.run("issued", null, reviewedAt, cert.csrId);
+      if (flipped.changes === 0) throw new CsrNotPendingError();
       this.stmtInsertIssuedCert.run(
         cert.id, cert.csrId, cert.wallet, cert.certPem, cert.serial, cert.notAfter, cert.issuedAt,
       );
-      this.stmtSetCsrStatus.run("issued", null, reviewedAt, cert.csrId);
     });
     txn();
   }

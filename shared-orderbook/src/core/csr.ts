@@ -30,7 +30,9 @@ function pemToDer(pem: string): Uint8Array | null {
   const b64 = m[1].replace(/\s+/g, "");
   if (!b64) return null;
   try {
-    return Uint8Array.from(Buffer.from(b64, "base64"));
+    // `new Uint8Array(buffer)` copies via the fast internal path and yields a
+    // clean, non-pooled ArrayBuffer (Buffer.from can share a pooled one).
+    return new Uint8Array(Buffer.from(b64, "base64"));
   } catch {
     return null;
   }
@@ -44,22 +46,23 @@ function pemToDer(pem: string): Uint8Array | null {
 export function parseCsrSubject(csrPem: string): CsrSubject | Error {
   const der = pemToDer(csrPem);
   if (!der) return new Error("csrPem: not a PEM-encoded certificate request");
-  let csr: CertificationRequest;
   try {
     const asn1 = asn1js.fromBER(der);
     if (asn1.offset === -1) return new Error("csrPem: malformed ASN.1");
-    csr = new CertificationRequest({ schema: asn1.result });
+    const csr = new CertificationRequest({ schema: asn1.result });
+    const out: CsrSubject = { commonName: null, organization: null, country: null };
+    // Optional-chain + string guard so an odd ASN.1 value can't throw here.
+    for (const tv of csr.subject.typesAndValues) {
+      const value = tv.value?.valueBlock?.value;
+      if (typeof value !== "string") continue;
+      if (tv.type === OID_CN) out.commonName = value;
+      else if (tv.type === OID_O) out.organization = value;
+      else if (tv.type === OID_C) out.country = value;
+    }
+    return out;
   } catch {
     return new Error("csrPem: not a valid PKCS#10 certificate request");
   }
-  const out: CsrSubject = { commonName: null, organization: null, country: null };
-  for (const tv of csr.subject.typesAndValues) {
-    const value = tv.value.valueBlock.value;
-    if (tv.type === OID_CN) out.commonName = value;
-    else if (tv.type === OID_O) out.organization = value;
-    else if (tv.type === OID_C) out.country = value;
-  }
-  return out;
 }
 
 /** sha256 of the CSR PEM bytes, lowercase hex (no 0x) — bound into the
