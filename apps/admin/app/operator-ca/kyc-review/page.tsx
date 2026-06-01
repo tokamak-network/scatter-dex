@@ -35,6 +35,10 @@ const ISSUANCE_REGISTRY = process.env.NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADD
 const APPROVE_ABI = [
   "function approve(address operator, string commonName, string organization, string country, uint32 validityDays, uint64 expiresAt)",
   "function revoke(address operator, string reason)",
+  // Read the current on-chain approval so the flow can be made idempotent
+  // (skip a redundant tx that would revert) and self-heal if a prior DB
+  // write failed after the chain already changed.
+  "function approvals(address operator) view returns (tuple(string commonName, string organization, string country, uint32 validityDays, address approvedBy, uint64 approvedAt, uint64 expiresAt, bool revoked, string revokeReason, uint64 revokedAt))",
 ];
 
 /** Dev/interim bearer, read from env so the page authenticates without a
@@ -71,6 +75,28 @@ interface SubmissionDetail extends SubmissionSummary {
 /** Allowed status transitions — mirrors the shared-orderbook's
  *  `canTransitionKyc` (kept inline since that helper lives in the
  *  orderbook package, not the shared types). */
+/** Record a KYC status transition in the orderbook. Called AFTER the
+ *  on-chain write (the source of truth for issuance gating), so a failure
+ *  here is a secondary, retryable record error — not a lost decision. */
+async function recordStatus(
+  id: string,
+  status: KycStatus,
+  notes: string | undefined,
+  authHeaders: () => HeadersInit,
+): Promise<void> {
+  const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ status, notes: notes || undefined }),
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(
+      `On-chain done, but recording failed (${j.error ?? res.status}). Click again to retry the record.`,
+    );
+  }
+}
+
 function canTransition(from: KycStatus, to: KycStatus): boolean {
   if (from === "pending") return to === "verified" || to === "rejected";
   if (from === "verified") return to === "approved" || to === "rejected";
@@ -385,25 +411,24 @@ function SubmissionPanel({
     setBusy(true);
     try {
       const reg = new Contract(ISSUANCE_REGISTRY, APPROVE_ABI, signer);
-      const tx = await reg.approve(
-        detail.wallet,
-        cn.trim(),
-        org.trim(),
-        country.trim().toUpperCase(),
-        days,
-        0, // expiresAt 0 = no expiry
-      );
-      await tx.wait();
-      const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "approved", notes: notes || undefined }),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `Status update failed (${res.status})`);
+      // Idempotent: skip the tx if this wallet is already approved (and
+      // not revoked) on-chain — e.g. a prior DB write failed after the
+      // chain changed. Just re-sync the record below.
+      const current = await reg.approvals(detail.wallet);
+      const alreadyApproved = current.approvedAt > 0n && !current.revoked;
+      if (!alreadyApproved) {
+        const tx = await reg.approve(
+          detail.wallet,
+          cn.trim(),
+          org.trim(),
+          country.trim().toUpperCase(),
+          days,
+          0, // expiresAt 0 = no expiry
+        );
+        await tx.wait();
       }
       setDetail((d) => (d ? { ...d, status: "approved" } : d));
+      await recordStatus(id, "approved", notes, authHeaders);
       emailIssuanceLink(detail.email, detail.wallet);
       await onChanged();
     } catch (e) {
@@ -431,18 +456,19 @@ function SubmissionPanel({
     setBusy(true);
     try {
       const reg = new Contract(ISSUANCE_REGISTRY, APPROVE_ABI, signer);
-      const tx = await reg.revoke(detail.wallet, reason);
-      await tx.wait();
-      const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "revoked", notes: reason }),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `Status update failed (${res.status})`);
+      // Idempotent: if a prior attempt already revoked on-chain (e.g. the
+      // DB write then failed), skip the tx that would revert with
+      // AlreadyRevoked and just re-sync the DB.
+      const current = await reg.approvals(detail.wallet);
+      if (!current.revoked) {
+        const tx = await reg.revoke(detail.wallet, reason);
+        await tx.wait();
       }
+      // On-chain (the source of truth for gating) is now revoked — reflect
+      // it immediately; a DB recording failure is a secondary, retryable
+      // error rather than a lost revocation.
       setDetail((d) => (d ? { ...d, status: "revoked" } : d));
+      await recordStatus(id, "revoked", reason, authHeaders);
       await onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Revoke failed");
