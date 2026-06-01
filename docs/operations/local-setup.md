@@ -1,6 +1,8 @@
 # Local Development Setup
 
-zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA architecture). This guide covers how to run the full stack locally.
+This is the **native (host-process)** runbook for the full local stack. (For Docker Compose, see [local-setup-docker.md](local-setup-docker.md).)
+
+In production zkScatter gates users through a **zk-X509 Identity Registry** (Dual-CA: User CA + Relayer CA). **For local dev the default is `--mock`** — a `MockIdentityRegistry` where every wallet passes, so **no zk-X509 is required**. Attaching a real zk-X509 registry is the optional [Integration Mode](#integration-mode-with-zk-x509) below.
 
 ## Prerequisite: ZK circuit artifacts
 
@@ -58,6 +60,11 @@ reload, per-app logs, easy restarts).
 Starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and
 Relayer CA), mock tokens, the shared orderbook, **both relayers**, and the
 selected apps in one terminal. Press `Ctrl+C` to stop all services.
+
+The contract deploy **auto-funds anvil accounts #0–#10** so any tester can
+deposit/settle/claim immediately: each gets 100 WETH, 1,000,000 USDC,
+1,000,000 USDT, and 100,000 TON (ETH comes from anvil's default prefund). To
+fund an extra wallet, use `apps/pay/e2e/_helpers/fund-wallet.ts`.
 
 Services and ports (relayers + orderbook always start; each app starts only when named in `--apps`):
 | Service | Port | Description |
@@ -141,79 +148,26 @@ rm -rf .dev-logs
 > Running via Docker Compose instead? The `make up` / `make logs` / `make down`
 > workflow lives in **[local-setup-docker.md](local-setup-docker.md)**.
 
-## Manual Setup (step by step)
+## Manual setup (only if you can't use dev.sh)
 
-**1. Start anvil:**
+`dev.sh` automates everything here — **prefer it**. If you must hand-roll, the
+steps it performs are:
 
-```bash
-anvil
-```
+1. `anvil` (chain id 31337).
+2. Deploy and read the printed addresses:
+   ```bash
+   cd contracts && forge script script/DeployLocal.s.sol:DeployLocal \
+     --rpc-url http://localhost:8545 --broadcast \
+     --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+   ```
+3. Start the relayer with those addresses in `zk-relayer/.env`
+   (`RELAYER_PRIVATE_KEY` = anvil #1, `PORT=3002`), then `npm run dev`.
+4. Write each app's `.env.local` with the deployed contract addresses, then
+   `npm run dev`. **`apps/pay` is different** — it reads `NEXT_PUBLIC_PAY_*`
+   keys (see `apps/pay/app/_lib/network.ts`), not the generic `NEXT_PUBLIC_*`.
 
-**2. Deploy contracts:**
-
-```bash
-cd contracts
-forge script script/DeployLocal.s.sol:DeployLocal \
-  --rpc-url http://localhost:8545 --broadcast \
-  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-```
-
-Note the addresses from the output:
-
-| Variable | Output label |
-|----------|-------------|
-| `<RELAYER_REGISTRY>` | RelayerRegistry |
-| `<WETH>` | WETH |
-| `<USDC>` | USDC |
-| `<COMMITMENT_POOL>` | CommitmentPool |
-| `<PRIVATE_SETTLEMENT>` | PrivateSettlement |
-| `<IDENTITY_GATE>` | IdentityGate |
-| `<FEE_VAULT>` | FeeVault |
-
-**3. Start zk-relayer:**
-
-```bash
-cd zk-relayer
-cat > .env <<EOF
-RPC_URL=http://localhost:8545
-RELAYER_PRIVATE_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
-COMMITMENT_POOL_ADDRESS=<COMMITMENT_POOL>
-PRIVATE_SETTLEMENT_ADDRESS=<PRIVATE_SETTLEMENT>
-FEE_VAULT_ADDRESS=<FEE_VAULT>
-TOKEN_LIST=<WETH>:WETH:18,<USDC>:USDC:18
-ADMIN_API_KEY=<YOUR_ADMIN_API_KEY>
-RELAYER_FEE=30
-PORT=3002
-EOF
-npm run dev
-```
-
-**4. Start an app (e.g. Pro):**
-
-Write the deployed addresses into the app's `.env.local`, then start it. (`dev.sh`
-does this automatically via `write_app_env`; the block below is the manual
-equivalent for `apps/pro`, which reads the generic `NEXT_PUBLIC_*` keys.)
-
-```bash
-cd apps/pro
-cat > .env.local <<EOF
-NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=<RELAYER_REGISTRY>
-NEXT_PUBLIC_WETH_ADDRESS=<WETH>
-NEXT_PUBLIC_TOKENS=<WETH>:WETH:18,<USDC>:USDC:18
-NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=<COMMITMENT_POOL>
-NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=<PRIVATE_SETTLEMENT>
-NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=<IDENTITY_GATE>
-NEXT_PUBLIC_FEE_VAULT_ADDRESS=<FEE_VAULT>
-NEXT_PUBLIC_RPC_URL=http://localhost:8545
-NEXT_PUBLIC_CHAIN_ID=31337
-NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
-EOF
-npm run dev          # Pro on http://localhost:4003
-```
-
-> **Pay is different:** `apps/pay` reads `NEXT_PUBLIC_PAY_*`-prefixed keys (see
-> `apps/pay/app/_lib/network.ts`), not the generic ones above. Let `dev.sh
-> --apps pay` write its `.env.local` rather than hand-rolling it.
+The authoritative env-key list is whatever `write_app_env` in `scripts/dev.sh`
+emits — read that function rather than copying a list that can drift.
 
 ## Integration Mode (with zk-X509)
 
@@ -276,20 +230,6 @@ cd <scatter-dex>
 ./scripts/swap-identity-registry.sh <zk-X509 IdentityRegistry from step 3>
 ```
 
-If you'd rather drive `cast` directly:
-
-```bash
-IDENTITY_GATE=<IdentityGate from step 1>
-ZK_X509_REG=<zk-X509 IdentityRegistry from step 3>
-DEPLOYER_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80   # Anvil account #0
-RPC=http://localhost:8545
-
-cast send $IDENTITY_GATE "addRegistry(address)" $ZK_X509_REG --rpc-url $RPC --private-key $DEPLOYER_KEY
-MOCK=$(cast call $IDENTITY_GATE "getRegistries()(address[])" --rpc-url $RPC | tr -d '[]' | awk -F',' '{print $1}' | tr -d ' ')
-cast send $IDENTITY_GATE "removeRegistry(address)" $MOCK --rpc-url $RPC --private-key $DEPLOYER_KEY
-cast call $IDENTITY_GATE "getRegistries()(address[])" --rpc-url $RPC
-```
-
 After the swap, `isVerified(user)` calls from **both Pay and Pro** route through the same zk-X509 registry (they share the on-chain `IdentityGate`). The registry already has the test CA loaded (from step 3) but no wallet has called `register(proof, publicValues)` yet, so `isVerified()` returns `false` for every wallet until you issue an identity through the zk-X509 dashboard at http://localhost:3000 (Identity → pick the registry → submit a proof against the seeded test CA). The CA itself should already be visible in the registry's Explorer tab; if it's not, re-run step 3 — `caMerkleRoot` in the script output should not be all-zeros.
 
 ### Ports at a glance (integration + zk-X509)
@@ -337,7 +277,7 @@ rm -f zk-relayer/zk-relayer.db zk-relayer/zk-relayer-b.db shared-orderbook/share
 #    Delete zkscatter-note-*.json and zkscatter-claims-*.json from your notes folder
 
 # 4. Restart everything
-./scripts/dev.sh --mock --apps pay,pro,operators
+./scripts/dev.sh --mock --apps pay,pro,operators,admin,hub
 ```
 
 > `dev.sh --mock` already wipes these DBs on a fresh start (it resets state
