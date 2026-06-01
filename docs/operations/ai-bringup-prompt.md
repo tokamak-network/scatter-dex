@@ -57,6 +57,11 @@ pieces and adds the verification + zk-X509 steps. Run it from the repo root.
 > cd <zk-X509> && bash script/verify-deployment.sh --quick
 > # 3d. scatter-dex IdentityGate를 그 레지스트리로 swap (검증 통과 후)
 > cd <scatter-dex> && ./scripts/swap-identity-registry.sh <3a의 IdentityRegistry 주소>
+> #     swap이 실제로 반영됐는지 검증: getRegistries()가 zk-X509 레지스트리만 보여야 한다.
+> #     (진짜 zk-X509 레지스트리는 effectiveProgramVKey()에 응답, mock은 revert) — 여전히 mock이면 swap 실패.
+> GATE=<IdentityGate 주소>   # apps/pay/.env.local 의 NEXT_PUBLIC_PAY_IDENTITY_GATE
+> cast call $GATE "getRegistries()(address[])" --rpc-url http://localhost:8545
+> cast call <위에서 나온 레지스트리> "effectiveProgramVKey()(bytes32)" --rpc-url http://localhost:8545   # revert 나면 안 됨
 > # 3e. 프론트/백엔드 헬스체크
 > curl -fsS -o /dev/null -w "zkx509-frontend %{http_code}\n" http://localhost:3000
 > curl -fsS -o /dev/null -w "zkx509-backend %{http_code}\n" http://localhost:4444
@@ -71,6 +76,11 @@ pieces and adds the verification + zk-X509 steps. Run it from the repo root.
 > (사람: 데스크탑 앱에서 실제 X.509 인증서로 CA 증명 생성/검증, 또는 대시보드 Identity → 레지스트리 선택 →
 > seed된 테스트 CA에 대한 증명 제출.) AI는 "대시보드·데스크탑 앱이 떴고 레지스트리가 swap됐고 verify가
 > 통과했다"까지만 보장하고, 그 사실을 보고해라.
+> 참고(사람용): 레지스트리 등록은 위 CLI(swap) 대신 **어드민 UI**로도 된다 — Protocol → Identity (user)
+> (http://localhost:4005/protocol/identity-user) 에서 게이트 owner 지갑(anvil #0)으로 "Add registry" +
+> 기존 mock "Remove registry". 그리고 어드민 /operator-ca 의 온체인 attestation은 apps/admin/.env.local 의
+> NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS(Relayer-CA 레지스트리)를 요구하니, 그 기능을 쓸 거면 값을 넣고 admin을
+> 재시작해야 한다(Next는 NEXT_PUBLIC_* 를 부팅 때만 인라인).
 > 주의: zk-X509의 실제 증명 생성(SP1 prover)은 Docker가 필요하다 — Docker 없이는 배포 + swap + (--quick) 검증까지만 된다.
 >
 > **종료**: `./scripts/dev.sh --stop` (저장된 PID kill + 8545/3002/3003/4000–4006 포트 스윕).
