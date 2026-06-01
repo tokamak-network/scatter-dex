@@ -21,6 +21,7 @@ import type {
   KycListFilter,
 } from "../types/kyc.js";
 import type { RootCaRecord } from "../types/ca.js";
+import type { AuditEntry, AuditEntryInsert, AuditListFilter } from "../types/audit.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -53,6 +54,7 @@ export class OrderbookDB {
   private stmtDeactivateRootCa!: Database.Statement;
   private stmtUpsertRootCa!: Database.Statement;
   private stmtGetActiveRootCa!: Database.Statement;
+  private stmtInsertAudit!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -185,6 +187,27 @@ export class OrderbookDB {
       );
 
       CREATE INDEX IF NOT EXISTS idx_root_ca_active ON root_ca(active, created_at);
+
+      -- Append-only admin audit log (operator onboarding, §12.4 local SIEM).
+      -- Records privileged admin actions (KYC review decisions, Root CA
+      -- publications). Never updated or deleted — the API exposes insert +
+      -- read only. actor is the SIWE admin address, or NULL when acted via the
+      -- static token.
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts          INTEGER NOT NULL,
+        actor       TEXT,
+        action      TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id   TEXT,
+        detail      TEXT
+      );
+
+      -- listAudit orders by id DESC (insertion order ≈ time) and filters on
+      -- action / (target_type,target_id); these two indexes serve those. No
+      -- standalone ts index — nothing sorts or filters on ts alone.
+      CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action, id);
+      CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id, id);
     `);
 
     // Lightweight ALTER for pre-byApp databases — adds the `type`
@@ -366,6 +389,11 @@ export class OrderbookDB {
     this.stmtGetActiveRootCa = this.db.prepare(
       `SELECT * FROM root_ca WHERE active = 1 ORDER BY created_at DESC LIMIT 1`,
     );
+
+    this.stmtInsertAudit = this.db.prepare(`
+      INSERT INTO audit_log (ts, actor, action, target_type, target_id, detail)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
   }
 
   insertOrder(o: OrderSummary): void {
@@ -1030,8 +1058,7 @@ export class OrderbookDB {
     // clampLimit truncates + bounds to [1, 500]; without it a negative limit
     // reaches SQLite as "no limit" and returns the whole table.
     const limit = clampLimit(filter.limit, 500, 100);
-    const rawOffset = Math.trunc(Number(filter.offset ?? 0));
-    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+    const offset = this.clampOffset(filter.offset);
     const rows = filter.status
       ? (this.stmtListKycByStatus.all(filter.status, limit, offset) as Record<string, unknown>[])
       : (this.stmtListKycAll.all(limit, offset) as Record<string, unknown>[]);
@@ -1089,6 +1116,52 @@ export class OrderbookDB {
       notAfter: (row.not_after as number | null) ?? null,
       createdAt: row.created_at as number,
     };
+  }
+
+  /** Clamp a caller-supplied offset to a non-negative integer (0 on garbage).
+   *  Shared by the paginated list queries. */
+  private clampOffset(value: unknown): number {
+    const n = Math.trunc(Number(value ?? 0));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  // ── Append-only admin audit log ────────────────────────────────────────
+
+  /** Append one audit entry. The log is insert-only — there is intentionally
+   *  no update or delete path. */
+  recordAudit(e: AuditEntryInsert): void {
+    this.stmtInsertAudit.run(e.ts, e.actor, e.action, e.targetType, e.targetId, e.detail ?? null);
+  }
+
+  /** List audit entries newest-first, with optional action / target filters. */
+  listAudit(filter: AuditListFilter = {}): AuditEntry[] {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (filter.action) {
+      where.push("action = ?");
+      params.push(filter.action);
+    }
+    if (filter.targetType) {
+      where.push("target_type = ?");
+      params.push(filter.targetType);
+    }
+    if (filter.targetId) {
+      where.push("target_id = ?");
+      params.push(filter.targetId);
+    }
+    const limit = clampLimit(filter.limit, 500, 100);
+    const offset = this.clampOffset(filter.offset);
+    const sql = `SELECT * FROM audit_log ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY id DESC LIMIT ? OFFSET ?`;
+    const rows = this.db.prepare(sql).all(...params, limit, offset) as Record<string, unknown>[];
+    return rows.map((r) => ({
+      id: r.id as number,
+      ts: r.ts as number,
+      actor: (r.actor as string | null) ?? null,
+      action: r.action as string,
+      targetType: r.target_type as string,
+      targetId: (r.target_id as string | null) ?? null,
+      detail: (r.detail as string | null) ?? null,
+    }));
   }
 
   /** Truncate the settlements table — for tests only. Faster than dropping
