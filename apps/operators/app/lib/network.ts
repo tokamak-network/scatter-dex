@@ -53,3 +53,11 @@ export const CA_REGISTRATION_URL: string = pick(
   process.env.NEXT_PUBLIC_CA_REGISTRATION_URL,
   pick(process.env.NEXT_PUBLIC_ZK_X509_URL, ""),
 );
+
+/** Base URL of the central shared-orderbook service, which also hosts
+ *  the relayer KYC intake (`/api/kyc/*`). See
+ *  docs/design/relayer-kyc-onboarding/design.md. */
+export const SHARED_ORDERBOOK_URL: string = pick(
+  process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL,
+  "http://localhost:4000",
+);

@@ -14,15 +14,45 @@ import {
   registerRelayer,
   type RegistrationStatus,
 } from "@zkscatter/sdk/relayer";
-import { CA_REGISTRATION_URL, DEMO_NETWORK } from "../lib/network";
+import { CA_REGISTRATION_URL, DEMO_NETWORK, SHARED_ORDERBOOK_URL } from "../lib/network";
 import { safeOperatorUrl } from "../lib/operatorDisplay";
 import { useOperatorIdentityRefresh } from "../lib/identity";
-import { normalizeName, validateRelayerUrl } from "../lib/registerValidation";
+import { normalizeName, validateEmail, validateRelayerUrl } from "../lib/registerValidation";
 import { useEndpointProbe, type EndpointProbeResult } from "../lib/useEndpointProbe";
 import { useIssuanceApproval, type UseIssuanceApprovalResult } from "../lib/useIssuanceApproval";
 import { Stepper, type StepStatus } from "./_Stepper";
 
 const VERIFY_URL = safeOperatorUrl(CA_REGISTRATION_URL);
+
+/** Mirrors `kyc_submissions.status` on the shared-orderbook, plus two
+ *  client-only sentinels: `loading` (status fetch in flight) and
+ *  `none` (no submission for this wallet, or the backend is offline). */
+type KycStatus =
+  | "loading"
+  | "none"
+  | "pending"
+  | "verified"
+  | "approved"
+  | "rejected";
+
+/** A wallet has cleared the KYC gate once a submission exists and
+ *  hasn't been rejected — pending/verified/approved all unblock the
+ *  next wizard step (the admin's review + on-chain approval gate the
+ *  LATER cert/verify steps, not this one). */
+function isKycSubmitted(s: KycStatus): boolean {
+  return s === "pending" || s === "verified" || s === "approved";
+}
+
+/** Which of the 9 onboarding-guide steps each wizard milestone
+ *  completes, for the ordered progress rendering in FlowContextPanel.
+ *  KYC clears guide step 1; verification (isVerified) implies the admin
+ *  approved issuance and the cert was issued, so 3–6 light up together;
+ *  a successful register closes out 7–9. */
+const FLOW_STEP_GROUPS = {
+  kyc: [1],
+  verified: [3, 4, 5, 6],
+  registered: [7, 8, 9],
+} as const;
 
 type Phase =
   | "idle"
@@ -72,6 +102,67 @@ export default function RegisterPage() {
   const [txHash, setTxHash] = useState("");
 
   const [takenNames, setTakenNames] = useState<Map<string, string>>(new Map());
+
+  // ── Step 1 (KYC) state ──────────────────────────────────────────
+  // The KYC form (email + wallet + ID video + ID document) posts to
+  // the shared-orderbook; the admin reviews it there. `kycStatus`
+  // reflects the wallet's submission so progress survives a reload.
+  const [kycStatus, setKycStatus] = useState<KycStatus>("loading");
+  const [kycEmail, setKycEmail] = useState("");
+  const [kycVideo, setKycVideo] = useState<File | null>(null);
+  const [kycIdDoc, setKycIdDoc] = useState<File | null>(null);
+  const [kycPhase, setKycPhase] = useState<"idle" | "submitting" | "error">("idle");
+  const [kycError, setKycError] = useState("");
+
+  // Re-read the wallet's KYC submission whenever the account changes so
+  // a returning operator lands on the right step. A failed fetch (the
+  // shared-orderbook KYC route not deployed yet, or offline) degrades
+  // to "none" so the form is still usable.
+  useEffect(() => {
+    if (!account) { setKycStatus("none"); return; }
+    let cancelled = false;
+    setKycStatus("loading");
+    (async () => {
+      try {
+        const res = await fetch(
+          `${SHARED_ORDERBOOK_URL}/api/kyc/status?wallet=${encodeURIComponent(account)}`,
+        );
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        const json = (await res.json()) as { status?: KycStatus };
+        if (!cancelled) setKycStatus(json.status ?? "none");
+      } catch (err) {
+        if (!cancelled) {
+          console.warn("[register] KYC status fetch failed; treating as not-submitted", err);
+          setKycStatus("none");
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [account]);
+
+  const onKycSubmit = useCallback(async () => {
+    if (!account || !kycEmail || !kycVideo || !kycIdDoc) return;
+    setKycError("");
+    setKycPhase("submitting");
+    try {
+      const fd = new FormData();
+      fd.append("wallet", account);
+      fd.append("email", kycEmail);
+      fd.append("video", kycVideo);
+      fd.append("idDoc", kycIdDoc);
+      const res = await fetch(`${SHARED_ORDERBOOK_URL}/api/kyc/submit`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) throw new Error(`Submit failed (${res.status})`);
+      const json = (await res.json()) as { status?: KycStatus };
+      setKycStatus(json.status ?? "pending");
+      setKycPhase("idle");
+    } catch (err) {
+      setKycError(err instanceof Error ? err.message : "Submit failed");
+      setKycPhase("error");
+    }
+  }, [account, kycEmail, kycVideo, kycIdDoc]);
 
   const wrongChain = chainId !== null && chainId !== DEMO_NETWORK.chainId;
   const deployed = isConfiguredAddress(DEMO_NETWORK.contracts.relayerRegistry);
@@ -155,37 +246,59 @@ export default function RegisterPage() {
     (probe.status === "warn" && !endpointOverride) ||
     probe.status === "idle";
 
-  // Per-step completion gates the next step. `step1Done`/`step2Done`
-  // double as the Stepper's status inputs.
-  const step1Done = !!status && status.isVerified;
+  // Per-step completion gates the next step. The wizard renders FOUR
+  // steps — 1=KYC, 2=Verify, 3=Endpoint, 4=Bond — but the
+  // verify/endpoint/bond booleans keep their original names
+  // (step1Done=Verify, step2Done=Endpoint, step3Done=Bond);
+  // `kycDone` is the new step-1 gate in front of them.
+  const kycDone = isKycSubmitted(kycStatus);
+  const step1Done = !!status && status.isVerified; // Verify (wizard step 2)
   const step2Done =
-    step1Done && !urlInvalid && !nameInvalid && !probeBlocks;
-  const step3Done = phase === "success";
-  const currentStep: 1 | 2 | 3 = !step1Done ? 1 : !step2Done ? 2 : 3;
+    step1Done && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 3)
+  const step3Done = phase === "success"; // Bond (step 4)
+  const currentStep: 1 | 2 | 3 | 4 =
+    !kycDone ? 1 : !step1Done ? 2 : !step2Done ? 3 : 4;
+
+  // Which of the 9 onboarding-guide steps are complete, for the
+  // ordered progress rendering in FlowContextPanel (groups defined in
+  // FLOW_STEP_GROUPS).
+  const doneFlowSteps = useMemo(() => {
+    const s = new Set<number>();
+    if (kycDone) for (const n of FLOW_STEP_GROUPS.kyc) s.add(n);
+    if (step1Done) for (const n of FLOW_STEP_GROUPS.verified) s.add(n);
+    if (step3Done) for (const n of FLOW_STEP_GROUPS.registered) s.add(n);
+    return s;
+  }, [kycDone, step1Done, step3Done]);
 
   const stepperSteps = useMemo(
     () => [
       {
         id: 1 as const,
-        title: "Verify",
-        status: stepStatus(step1Done, currentStep === 1),
-        caption: step1Caption(status, account, wrongChain),
+        title: "Identity",
+        status: stepStatus(kycDone, currentStep === 1),
+        caption: kycCaption(kycStatus, account),
       },
       {
         id: 2 as const,
-        title: "Endpoint",
-        status: stepStatus(step2Done, currentStep === 2),
-        caption: step2Caption(probe, urlValidation, nameTooShort, nameConflict),
+        title: "Verify",
+        status: stepStatus(step1Done, currentStep === 2),
+        caption: step1Caption(status, account, wrongChain),
       },
       {
         id: 3 as const,
+        title: "Endpoint",
+        status: stepStatus(step2Done, currentStep === 3),
+        caption: step2Caption(probe, urlValidation, nameTooShort, nameConflict),
+      },
+      {
+        id: 4 as const,
         title: "Bond & submit",
-        status: stepStatus(step3Done, currentStep === 3),
+        status: stepStatus(step3Done, currentStep === 4),
         caption: step3Caption(phase, status, txHash),
       },
     ],
     [
-      step1Done, step2Done, step3Done, currentStep,
+      kycDone, kycStatus, step1Done, step2Done, step3Done, currentStep,
       status, account, wrongChain,
       probe, urlValidation, nameTooShort, nameConflict, phase, txHash,
     ],
@@ -230,7 +343,7 @@ export default function RegisterPage() {
         <h1 className="mt-2 text-2xl font-semibold">Register a relayer</h1>
         <p className="mt-1 text-sm text-[var(--color-text-muted)]">
           This page covers <strong>your</strong> steps in the relayer onboarding flow
-          (4, 6, 8 below). The admin handles steps 2 + 3, the zk-X509 portal
+          (1, 4, 6, 8 below). The admin handles steps 2 + 3, the zk-X509 portal
           handles step 5, and the leaderboard verifies step 9.{" "}
           <Link
             href="/docs?d=registering-a-relayer"
@@ -241,7 +354,7 @@ export default function RegisterPage() {
         </p>
       </header>
 
-      <FlowContextPanel currentWizardStep={currentStep} />
+      <FlowContextPanel currentWizardStep={currentStep} doneSteps={doneFlowSteps} />
 
       {!deployed && <NotDeployedBanner />}
       {!account && <ConnectPrompt onConnect={connect} connectError={connectError} />}
@@ -249,12 +362,28 @@ export default function RegisterPage() {
 
       <Stepper steps={stepperSteps} current={currentStep} />
 
+      <Step0Kyc
+        account={account}
+        kycStatus={kycStatus}
+        email={kycEmail}
+        setEmail={setKycEmail}
+        video={kycVideo}
+        setVideo={setKycVideo}
+        idDoc={kycIdDoc}
+        setIdDoc={setKycIdDoc}
+        phase={kycPhase}
+        error={kycError}
+        onSubmit={onKycSubmit}
+        defaultOpen={currentStep === 1}
+      />
+
       <Step1Verify
         status={status}
         account={account}
         wrongChain={wrongChain}
+        gated={!kycDone}
         onRefresh={() => { refreshIdentity(); refreshStatus(); }}
-        defaultOpen={currentStep === 1 || !step1Done}
+        defaultOpen={currentStep === 2}
       />
 
       <Step2Endpoint
@@ -272,7 +401,7 @@ export default function RegisterPage() {
         probe={probe}
         endpointOverride={endpointOverride}
         setEndpointOverride={setEndpointOverride}
-        defaultOpen={currentStep === 2}
+        defaultOpen={currentStep === 3}
       />
 
       <Step3Bond
@@ -285,7 +414,7 @@ export default function RegisterPage() {
         txHash={txHash}
         wrongChain={wrongChain}
         onSubmit={onSubmit}
-        defaultOpen={currentStep === 3}
+        defaultOpen={currentStep === 4}
       />
     </div>
   );
@@ -320,6 +449,16 @@ function formatVerifiedUntil(unixSec: number): string {
     return "indefinitely";
   }
   return new Date(ms).toISOString().slice(0, 10);
+}
+
+function kycCaption(kycStatus: KycStatus, account: string | null): string | undefined {
+  if (!account) return "Connect wallet first";
+  if (kycStatus === "loading") return "Checking submission…";
+  if (kycStatus === "approved") return "Approved";
+  if (kycStatus === "verified") return "Verified — awaiting approval";
+  if (kycStatus === "pending") return "Submitted — under review";
+  if (kycStatus === "rejected") return "Rejected — resubmit";
+  return "Not submitted yet";
 }
 
 function step1Caption(
@@ -368,18 +507,179 @@ function step3Caption(
   return undefined;
 }
 
-// ─── Step 1 — Verify ──────────────────────────────────────────────
+// ─── Step 1 — KYC submission ──────────────────────────────────────
+
+function Step0Kyc({
+  account,
+  kycStatus,
+  email,
+  setEmail,
+  video,
+  setVideo,
+  idDoc,
+  setIdDoc,
+  phase,
+  error,
+  onSubmit,
+  defaultOpen,
+}: {
+  account: string | null;
+  kycStatus: KycStatus;
+  email: string;
+  setEmail: (v: string) => void;
+  video: File | null;
+  setVideo: (f: File | null) => void;
+  idDoc: File | null;
+  setIdDoc: (f: File | null) => void;
+  phase: "idle" | "submitting" | "error";
+  error: string;
+  onSubmit: () => void;
+  defaultOpen: boolean;
+}) {
+  const submitted = isKycSubmitted(kycStatus);
+  const emailValid = useMemo(() => validateEmail(email), [email]);
+  const canSubmit =
+    !!account && emailValid && !!video && !!idDoc && phase !== "submitting";
+  return (
+    <StepSection
+      step={1}
+      title="Submit KYC + wallet"
+      hint="Identity-verification documents for the admin's offline review. Required before the Relayer-CA will issue your certificate."
+      done={submitted}
+      defaultOpen={defaultOpen}
+    >
+      {submitted ? (
+        <KycSubmittedBanner kycStatus={kycStatus} />
+      ) : (
+        <div className="space-y-4">
+          <Field label="Wallet address" hint="The address this relayer will register and post bond from.">
+            <input
+              type="text"
+              value={account ?? ""}
+              readOnly
+              placeholder="Connect a wallet to continue"
+              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-muted)] px-3 py-2 font-mono text-xs text-[var(--color-text-muted)]"
+            />
+          </Field>
+          <Field label="Contact email" hint="The admin emails your certificate-issuance link here once approved.">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@company.com"
+              className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
+            />
+          </Field>
+          <Field
+            label="Identity video"
+            hint="A short clip of you holding a paper that shows your resident-registration number and address."
+          >
+            <FileInput accept="video/*" file={video} onPick={setVideo} cta="Choose video" />
+          </Field>
+          <Field
+            label="ID document"
+            hint="A copy of your 주민등록증 or 사업자등록증 (image or PDF)."
+          >
+            <FileInput accept="image/*,application/pdf" file={idDoc} onPick={setIdDoc} cta="Choose document" />
+          </Field>
+          <p className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-[11px] text-[var(--color-text-muted)]">
+            These documents contain sensitive personal data. They are sent over the
+            network only to the central review service and are never written
+            on-chain.
+          </p>
+          {phase === "error" && error && (
+            <p className="text-xs text-[var(--color-danger)]">{error}</p>
+          )}
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={!canSubmit}
+            className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
+          >
+            {phase === "submitting" ? "Submitting…" : "Submit for review"}
+          </button>
+        </div>
+      )}
+    </StepSection>
+  );
+}
+
+function KycSubmittedBanner({ kycStatus }: { kycStatus: KycStatus }) {
+  const copy: Record<string, { title: string; body: string; tone: string }> = {
+    pending: {
+      title: "Submitted — under review",
+      body: "The admin is reviewing your documents. You'll get an email with your certificate-issuance link once your wallet is approved.",
+      tone: "var(--color-primary)",
+    },
+    verified: {
+      title: "Documents verified",
+      body: "Your documents passed review. Awaiting final issuance approval — watch your email for the certificate link.",
+      tone: "var(--color-primary)",
+    },
+    approved: {
+      title: "Approved for issuance",
+      body: "Your wallet is approved. Check your email for the certificate-issuance link, then continue to Verify below.",
+      tone: "var(--color-success)",
+    },
+  };
+  const c = copy[kycStatus] ?? copy.pending;
+  return (
+    <div
+      className="rounded-md border bg-[var(--color-surface)] px-4 py-3 text-sm"
+      style={{ borderColor: c.tone }}
+    >
+      <div className="font-medium">{c.title}</div>
+      <p className="mt-1 text-xs text-[var(--color-text-muted)]">{c.body}</p>
+    </div>
+  );
+}
+
+/** Minimal file picker matching the wizard's input styling — a hidden
+ *  native <input type=file> behind a styled label so the control reads
+ *  consistently with the text inputs above. */
+function FileInput({
+  accept,
+  file,
+  onPick,
+  cta,
+}: {
+  accept: string;
+  file: File | null;
+  onPick: (f: File | null) => void;
+  cta: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-3">
+      <span className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm font-medium hover:bg-[var(--color-primary-soft)]">
+        {cta}
+      </span>
+      <span className="truncate text-xs text-[var(--color-text-muted)]">
+        {file ? `${file.name} (${Math.round(file.size / 1024)} KB)` : "No file selected"}
+      </span>
+      <input
+        type="file"
+        accept={accept}
+        onChange={(e) => onPick(e.target.files?.[0] ?? null)}
+        className="hidden"
+      />
+    </label>
+  );
+}
+
+// ─── Step 2 — Verify ──────────────────────────────────────────────
 
 function Step1Verify({
   status,
   account,
   wrongChain,
+  gated,
   onRefresh,
   defaultOpen,
 }: {
   status: RegistrationStatus | null;
   account: string | null;
   wrongChain: boolean;
+  gated: boolean;
   onRefresh: () => void;
   defaultOpen: boolean;
 }) {
@@ -392,10 +692,12 @@ function Step1Verify({
   const approval = useIssuanceApproval();
   return (
     <StepSection
-      step={1}
+      step={2}
       title="Verify your operator identity"
       hint="Get an attestation from the zk-X509 Relayer-CA. Without it, register() reverts."
       done={verified}
+      gated={gated}
+      gatedReason="Submit your KYC documents in Step 1 first."
       defaultOpen={defaultOpen}
     >
       {/* Persistent verifier link — surfaced even when the operator is
@@ -655,7 +957,7 @@ function ApprovalAwareCTA({
   );
 }
 
-// ─── Step 2 — Endpoint ────────────────────────────────────────────
+// ─── Step 3 — Endpoint ────────────────────────────────────────────
 
 function Step2Endpoint({
   gated,
@@ -693,7 +995,7 @@ function Step2Endpoint({
   const feePct = (Number(feeBps) / 100).toFixed(2);
   return (
     <StepSection
-      step={2}
+      step={3}
       title="Endpoint, name & fee"
       hint="Publish where Pay/Pro should reach you. We probe the URL live so a typo is caught before gas."
       done={!gated && !urlValidation.invalid && !urlValidation.empty && !nameInvalid && (probe.status === "ok" || (probe.status === "warn" && endpointOverride))}
@@ -876,7 +1178,7 @@ function probePalette(status: EndpointProbeResult["status"]): string {
   return "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]";
 }
 
-// ─── Step 3 — Bond & submit ───────────────────────────────────────
+// ─── Step 4 — Bond & submit ───────────────────────────────────────
 
 function Step3Bond({
   gated,
@@ -913,7 +1215,7 @@ function Step3Bond({
     "Register on-chain";
   return (
     <StepSection
-      step={3}
+      step={4}
       title="Bond & submit"
       hint={status && status.minBond > 0n
         ? `Stake at least ${status.minBondEth} ETH. Refundable on exit.`
@@ -988,7 +1290,7 @@ function StepSection({
   defaultOpen,
   children,
 }: {
-  step: 1 | 2 | 3;
+  step: 1 | 2 | 3 | 4;
   title: string;
   hint?: string;
   done: boolean;
@@ -1097,23 +1399,29 @@ const FLOW_STEPS: Array<{
   who: "operator" | "admin" | "external";
   title: string;
   where: string;
-  /** Maps to the wizard step (1/2/3) when the operator action here
+  /** Maps to the wizard step (1/2/3/4) when the operator action here
    *  is what one of the cards below covers. Undefined for steps
    *  the operator does outside this page (or admin steps). */
-  wizardStep?: 1 | 2 | 3;
+  wizardStep?: 1 | 2 | 3 | 4;
 }> = [
-  { n: 1, who: "operator", title: "Submit KYC + wallet to the admin", where: "off-chain (email / in-person)" },
+  { n: 1, who: "operator", title: "Submit KYC + wallet to the admin", where: "Step 1 below", wizardStep: 1 },
   { n: 2, who: "admin", title: "Anchor company Root CA on zk-X509", where: "one-time admin setup" },
   { n: 3, who: "admin", title: "Approve your wallet for issuance", where: "/admin/issuance (admin's app)" },
-  { n: 4, who: "operator", title: "Open the Relayer-CA portal", where: "Step 1 below", wizardStep: 1 },
+  { n: 4, who: "operator", title: "Open the Relayer-CA portal", where: "Step 2 below", wizardStep: 2 },
   { n: 5, who: "external", title: "Issue cert + submit ZK proof", where: "zk-X509 portal (separate tab)" },
-  { n: 6, who: "operator", title: "Confirm verification went green", where: "Step 1 below — Refresh button", wizardStep: 1 },
+  { n: 6, who: "operator", title: "Confirm verification went green", where: "Step 2 below — Refresh button", wizardStep: 2 },
   { n: 7, who: "operator", title: "Spin up your relayer process", where: "your server (zk-relayer service)" },
-  { n: 8, who: "operator", title: "Register endpoint + post bond", where: "Steps 2 & 3 below", wizardStep: 2 },
+  { n: 8, who: "operator", title: "Register endpoint + post bond", where: "Steps 3 & 4 below", wizardStep: 3 },
   { n: 9, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
 ];
 
-function FlowContextPanel({ currentWizardStep }: { currentWizardStep: 1 | 2 | 3 }) {
+function FlowContextPanel({
+  currentWizardStep,
+  doneSteps,
+}: {
+  currentWizardStep: 1 | 2 | 3 | 4;
+  doneSteps: Set<number>;
+}) {
   return (
     <details
       // Collapsed by default so the panel doesn't push the wizard
@@ -1127,14 +1435,14 @@ function FlowContextPanel({ currentWizardStep }: { currentWizardStep: 1 | 2 | 3 
       </summary>
       <ol className="mt-3 space-y-1.5 text-xs">
         {FLOW_STEPS.map((s) => {
-          const isHere = s.wizardStep === currentWizardStep;
-          const palette =
-            s.who === "operator"
-              ? isHere
-                ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-text)]"
-                : "border-[var(--color-border)] bg-[var(--color-bg)]"
-              : s.who === "admin"
-                ? "border-dashed border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+          const done = doneSteps.has(s.n);
+          const isHere = !done && s.wizardStep === currentWizardStep;
+          const palette = done
+            ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-text)]"
+            : isHere
+              ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-text)]"
+              : s.who === "operator"
+                ? "border-[var(--color-border)] bg-[var(--color-bg)]"
                 : "border-dashed border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]";
           const tag =
             s.who === "operator"
@@ -1147,8 +1455,12 @@ function FlowContextPanel({ currentWizardStep }: { currentWizardStep: 1 | 2 | 3 
               key={s.n}
               className={`flex items-center gap-3 rounded-md border px-3 py-1.5 ${palette}`}
             >
-              <span className="w-5 font-mono text-[10px] text-[var(--color-text-subtle)]">
-                {s.n}.
+              <span
+                className={`w-5 font-mono text-[10px] ${
+                  done ? "text-[var(--color-success)]" : "text-[var(--color-text-subtle)]"
+                }`}
+              >
+                {done ? "✓" : `${s.n}.`}
               </span>
               <span className="flex-1">
                 <span className="font-medium">{s.title}</span>

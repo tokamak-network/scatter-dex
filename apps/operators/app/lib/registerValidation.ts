@@ -17,6 +17,14 @@ export function normalizeName(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+/** Lightweight email check for the KYC step's contact field — a
+ *  single `@`, a dot in the domain, no whitespace. The admin re-checks
+ *  deliverability when they email the certificate link, so this only
+ *  needs to catch obvious typos before submit. */
+export function validateEmail(email: string): boolean {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
+}
+
 /** Pre-flight check for the URL field. We don't want to ship a
  *  half-validated value to `register(url, ...)` on-chain — the
  *  contract stores any string, but Pay/Pro discovery probes the URL
