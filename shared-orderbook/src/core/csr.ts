@@ -65,6 +65,25 @@ export function parseCsrSubject(csrPem: string): CsrSubject | Error {
   }
 }
 
+/**
+ * The CSR's SubjectPublicKeyInfo as DER bytes — the canonical encoding of the
+ * requested public key. Compared against an issued leaf cert's SPKI to prove
+ * the cert was signed for *this* CSR's keypair (not just a matching subject).
+ * Returns null when the PEM isn't a parseable CSR.
+ */
+export function csrPublicKeyDer(csrPem: string): Buffer | null {
+  const der = pemToDer(csrPem);
+  if (!der) return null;
+  try {
+    const asn1 = asn1js.fromBER(der);
+    if (asn1.offset === -1) return null;
+    const csr = new CertificationRequest({ schema: asn1.result });
+    return Buffer.from(csr.subjectPublicKeyInfo.toSchema().toBER());
+  } catch {
+    return null;
+  }
+}
+
 /** sha256 of the CSR PEM bytes, lowercase hex (no 0x) — bound into the
  *  submission signature so the signed message is tied to this exact CSR. */
 export function csrHash(csrPem: string): string {

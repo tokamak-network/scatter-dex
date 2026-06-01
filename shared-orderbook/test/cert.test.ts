@@ -28,6 +28,11 @@ const LEAF_PEM =
 const WRONG_LEAF_PEM =
   "-----BEGIN CERTIFICATE-----\nMIIDUTCCAjmgAwIBAgIUGvrgTwCuZWidq1qgLdM1a9/6KtcwDQYJKoZIhvcNAQEL\nBQAwODEaMBgGA1UEAwwRYXR0YWNrZXJAZXZpbC5jb20xDTALBgNVBAoMBEV2aWwx\nCzAJBgNVBAYTAlVTMB4XDTI2MDYwMTEyNDk0MFoXDTI3MDYwMTEyNDk0MFowODEa\nMBgGA1UEAwwRYXR0YWNrZXJAZXZpbC5jb20xDTALBgNVBAoMBEV2aWwxCzAJBgNV\nBAYTAlVTMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx+YaQ97XARhW\nwL0bcNHkCnEik4FdT6UdtNQDyi+DsYf176G7Aa4B2kO08I6X6h6FIkBisv8wpsKc\na/am0Nqe4cRgLznIiGzbpmndTq3zwYAR4R/rha9+SZbjvnCZ8cnlFPm1RVcx0gYM\nMx4FCyoujIM9V0lShOK5/WZUYmbtV9uon4QIuA6gCoe6wSpLQclTtYJwrSzMAJaE\nGyLRnGB84V9pgpUIzk4KtDQk0rvl+txaRR2w94DKMD8dUQPGaGpHEcDwLa1sKB8/\nNbuXqI2SLXB69tBSkDxy8LAEDCREb5yT9PVyqvjUDW/MO1CF8MSLzJF+NnqB4Wjg\nLS0Bv/js2QIDAQABo1MwUTAdBgNVHQ4EFgQUhZqnlElFQssGzT3O1nl92qzAiyQw\nHwYDVR0jBBgwFoAUhZqnlElFQssGzT3O1nl92qzAiyQwDwYDVR0TAQH/BAUwAwEB\n/zANBgkqhkiG9w0BAQsFAAOCAQEAb8csu/CtJW3lkLg7xLuUfPAKHbVOE155yauJ\nfW4MzDufL+/QIs3GBpsh7pGGfUbr+JQAcB/8gvcxZyAb8Y/LJFoeAniKwtpyhN76\nyEeZPQNL7pJSXfdjNHeH6DKir9RWYOZO4txzpZ+hHnbRyQPlMcnKye1lixwI5b6Y\nsxaaRVMMDBcg7A/NE7kI+Yo3jigsO2qhoYMgrWMRa81I8d8GZMddiw8hzZ72a5o2\nbUjB0CUOwi2IaeYsDHHnAUmCZSCLUpn9Lb+ZtUWutgmIHOIhTEIu5GiR9+CtQs2x\nSb6vWk2hNRM9C3Ki00cfkdeR5/XOGibwqQU9aUi68AYfRRQVnA==\n-----END CERTIFICATE-----\n";
 
+// Same subject as the CSR (CN=op@example.com/O=Tokamak/C=KR) but a DIFFERENT
+// key — must be rejected on the public-key check (the attack K0 flagged).
+const SAME_SUBJ_DIFF_KEY_PEM =
+  "-----BEGIN CERTIFICATE-----\nMIIDUTCCAjmgAwIBAgIUF5OdJnhyaJ2koUdzu4rruvL8vmkwDQYJKoZIhvcNAQEL\nBQAwODEXMBUGA1UEAwwOb3BAZXhhbXBsZS5jb20xEDAOBgNVBAoMB1Rva2FtYWsx\nCzAJBgNVBAYTAktSMB4XDTI2MDYwMTEyNTIxOFoXDTI3MDYwMTEyNTIxOFowODEX\nMBUGA1UEAwwOb3BAZXhhbXBsZS5jb20xEDAOBgNVBAoMB1Rva2FtYWsxCzAJBgNV\nBAYTAktSMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuoYA6uf45EaK\nPJ5owV8IPsuB87lt17/37Ptf2vf0SP7rq9wG+2UzoA7kvIMMhjRriWCWY5+xlUjC\nw+Z5mBH8b61tAzULnmRv/sP8zlbYHz9xyhMA5d5AIe+2Y1WYS4CbIJdezwAssVa7\njWRIQ07FVRI03rELZAIXvSQXnHaPJgrNjwZ1tEBOpgUeva729QHReyBX3F4dRoTw\ncAtFWiYDKeO3tbU7Gmj+8E4MY59MZqUfYRy7oUeV5l/zCgMCX/7ClrsoX7wXhYCc\n9viIG//9odv7K7gkSupYcVXmOStxARl8OAbNgJhOeYKFmTOgdfKbLuPOEd3ayve2\nxd2JOk/GjQIDAQABo1MwUTAdBgNVHQ4EFgQUrfzpvk6O3+cVpJvaxj0xgzY3sP4w\nHwYDVR0jBBgwFoAUrfzpvk6O3+cVpJvaxj0xgzY3sP4wDwYDVR0TAQH/BAUwAwEB\n/zANBgkqhkiG9w0BAQsFAAOCAQEAeKBu806M+JntMhBRZ7LkYTwgvnMVjcVgceUk\nQlh1wk17KCw3ZutRgKYryUTnutsNHeGbrOYWydgG1fgfQKmxv6VzoHK8rMa5tNLt\nYXOBrv7UyMlFH8qza8z1PE8WCBWLRxNNyAS0rqkdA8P3UKndcdNvX2Xj42sOknwU\n+lEFu0wPea7DhnBaE5XiRwI0vF/JB856t6+vOshyCDEj07VsJzKkplMFOB83rUnO\nWmsrjmMoNv7xFwqDQ67m+GPJdm9FZEw8dfsDA7I5EsRkgCETRhsaNCuMmEddNGwT\n40Asd4GCetnz6C+Qurox1svizQgRFpWXCkqdU7A9PGL3FqNooQ==\n-----END CERTIFICATE-----\n";
+
 const APPROVED: IssuanceApproval = {
   commonName: "op@example.com",
   organization: "Tokamak",
@@ -154,6 +159,15 @@ describe("cert routes", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/does not match/i);
     // the CSR stays pending (no leaf recorded)
+    expect(db.getCsrById(sub.id)?.status).toBe("pending");
+  });
+
+  it("admin POST /issued rejects a cert with the right subject but a different key (400)", async () => {
+    approval = APPROVED;
+    const sub = await (await post("/api/cert/csr", await signedBody(opWallet, CSR_PEM))).json();
+    const res = await post("/api/cert/issued", { csrId: sub.id, certPem: SAME_SUBJ_DIFF_KEY_PEM }, adminHdr);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/public key does not match/i);
     expect(db.getCsrById(sub.id)?.status).toBe("pending");
   });
 

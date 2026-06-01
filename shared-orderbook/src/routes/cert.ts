@@ -3,7 +3,7 @@ import { randomUUID, X509Certificate } from "crypto";
 import type { OrderbookDB } from "../core/db.js";
 import type { AdminAuthedRequest } from "../middleware/admin-auth.js";
 import type { ApprovalReader } from "../core/issuance-approval.js";
-import { parseCsrSubject, verifyCsrSignature } from "../core/csr.js";
+import { parseCsrSubject, verifyCsrSignature, csrPublicKeyDer } from "../core/csr.js";
 import { recordAuditSafe } from "../core/audit.js";
 import { isCsrStatus, CsrNotPendingError, type CsrStatus } from "../types/cert.js";
 
@@ -234,14 +234,27 @@ export function createCertRoutes(
       res.status(400).json({ error: "certPem: not a valid X.509 certificate" });
       return;
     }
-    // The leaf must be for THIS CSR — its subject has to match the CSR's, or an
-    // admin could accidentally attach the wrong operator's cert.
+    // The leaf must be for THIS CSR. Subject match is the quick, clear check;
+    // public-key identity is the authoritative one — the cert has to certify
+    // the exact key the CSR requested, so an admin can't attach a cert minted
+    // for a different keypair (even one with the same subject).
     if (
       !eqCi(dnField(cert.subject, "CN"), csr.commonName) ||
       !eqCi(dnField(cert.subject, "O"), csr.organization) ||
       !eqCi(dnField(cert.subject, "C"), csr.country)
     ) {
       res.status(400).json({ error: "certPem subject does not match the CSR" });
+      return;
+    }
+    const csrSpki = csrPublicKeyDer(csr.csrPem);
+    let certSpki: Buffer | null = null;
+    try {
+      certSpki = cert.publicKey.export({ type: "spki", format: "der" }) as Buffer;
+    } catch {
+      certSpki = null;
+    }
+    if (!csrSpki || !certSpki || !csrSpki.equals(certSpki)) {
+      res.status(400).json({ error: "certPem public key does not match the CSR" });
       return;
     }
     const serial = cert.serialNumber ?? null;
