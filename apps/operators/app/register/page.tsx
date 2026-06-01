@@ -43,6 +43,25 @@ function isKycSubmitted(s: KycStatus): boolean {
   return s === "pending" || s === "verified" || s === "approved";
 }
 
+/** The submission states the backend may report. `loading` is a
+ *  client-only sentinel and is intentionally excluded. */
+const SERVER_KYC_STATUSES: readonly KycStatus[] = [
+  "none",
+  "pending",
+  "verified",
+  "approved",
+  "rejected",
+];
+
+/** Coerce an untrusted server `status` field to a known value. An
+ *  unexpected string (or missing field) must not leak into the gating
+ *  logic, so anything off-list collapses to `none`. */
+function coerceKycStatus(v: unknown): KycStatus {
+  return typeof v === "string" && (SERVER_KYC_STATUSES as string[]).includes(v)
+    ? (v as KycStatus)
+    : "none";
+}
+
 /** Which of the 9 onboarding-guide steps each wizard milestone
  *  completes, for the ordered progress rendering in FlowContextPanel.
  *  KYC clears guide step 1; verification (isVerified) implies the admin
@@ -122,11 +141,11 @@ export default function RegisterPage() {
   const [kycError, setKycError] = useState("");
 
   // Re-read the wallet's KYC submission whenever the account changes so
-  // a returning operator lands on the right step. A failed fetch (the
-  // shared-orderbook KYC route not deployed yet, or offline) degrades
-  // to "none" so the form is still usable.
+  // a returning operator lands on the right step. With no backend
+  // configured, or on a failed fetch (route not deployed yet / offline),
+  // we degrade to "none" so the form stays usable.
   useEffect(() => {
-    if (!account) { setKycStatus("none"); return; }
+    if (!account || !SHARED_ORDERBOOK_URL) { setKycStatus("none"); return; }
     let cancelled = false;
     setKycStatus("loading");
     (async () => {
@@ -135,8 +154,8 @@ export default function RegisterPage() {
           `${SHARED_ORDERBOOK_URL}/api/kyc/status?wallet=${encodeURIComponent(account)}`,
         );
         if (!res.ok) throw new Error(`status ${res.status}`);
-        const json = (await res.json()) as { status?: KycStatus };
-        if (!cancelled) setKycStatus(json.status ?? "none");
+        const json = (await res.json()) as { status?: unknown };
+        if (!cancelled) setKycStatus(coerceKycStatus(json.status));
       } catch (err) {
         if (!cancelled) {
           console.warn("[register] KYC status fetch failed; treating as not-submitted", err);
@@ -148,13 +167,13 @@ export default function RegisterPage() {
   }, [account]);
 
   const onKycSubmit = useCallback(async () => {
-    if (!account || !kycEmail || !kycVideo || !kycIdDoc) return;
+    if (!account || !SHARED_ORDERBOOK_URL || !kycEmail || !kycVideo || !kycIdDoc) return;
     setKycError("");
     setKycPhase("submitting");
     try {
       const fd = new FormData();
       fd.append("wallet", account);
-      fd.append("email", kycEmail);
+      fd.append("email", kycEmail.trim());
       fd.append("video", kycVideo);
       fd.append("idDoc", kycIdDoc);
       const res = await fetch(`${SHARED_ORDERBOOK_URL}/api/kyc/submit`, {
@@ -162,8 +181,9 @@ export default function RegisterPage() {
         body: fd,
       });
       if (!res.ok) throw new Error(`Submit failed (${res.status})`);
-      const json = (await res.json()) as { status?: KycStatus };
-      setKycStatus(json.status ?? "pending");
+      const json = (await res.json()) as { status?: unknown };
+      const next = coerceKycStatus(json.status);
+      setKycStatus(next === "none" ? "pending" : next);
       setKycPhase("idle");
     } catch (err) {
       setKycError(err instanceof Error ? err.message : "Submit failed");
@@ -258,8 +278,11 @@ export default function RegisterPage() {
   // verify/endpoint/bond booleans keep their original names
   // (step1Done=Verify, step2Done=Endpoint, step3Done=Bond);
   // `kycDone` is the new step-1 gate in front of them.
-  const kycDone = isKycSubmitted(kycStatus);
   const step1Done = !!status && status.isVerified; // Verify (wizard step 2)
+  // A wallet that's already verified has plainly passed KYC, so don't
+  // force a legacy verified/registered operator back to step 1
+  // (Copilot review on #889).
+  const kycDone = isKycSubmitted(kycStatus) || step1Done;
   const step2Done =
     step1Done && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 3)
   const step3Done = phase === "success"; // Bond (step 4)
@@ -544,9 +567,10 @@ function Step0Kyc({
   defaultOpen: boolean;
 }) {
   const submitted = isKycSubmitted(kycStatus);
+  const configured = SHARED_ORDERBOOK_URL !== "";
   const emailValid = useMemo(() => validateEmail(email), [email]);
   const canSubmit =
-    !!account && emailValid && !!video && !!idDoc && phase !== "submitting";
+    configured && !!account && emailValid && !!video && !!idDoc && phase !== "submitting";
   return (
     <StepSection
       step={1}
@@ -606,6 +630,12 @@ function Step0Kyc({
             network only to the central review service and are never written
             on-chain.
           </p>
+          {!configured && (
+            <p className="text-xs text-[var(--color-warning)]">
+              KYC service is not configured for this deployment
+              (NEXT_PUBLIC_SHARED_ORDERBOOK_URL). Submission is disabled.
+            </p>
+          )}
           {phase === "error" && error && (
             <p className="text-xs text-[var(--color-danger)]">{error}</p>
           )}
