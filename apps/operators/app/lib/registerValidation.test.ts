@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { normalizeName, validateRelayerUrl } from "./registerValidation";
+import { normalizeName, validateEmail, validateRelayerUrl } from "./registerValidation";
 
 describe("normalizeName", () => {
   it("trims outer whitespace", () => {
@@ -43,5 +43,28 @@ describe("validateRelayerUrl", () => {
   });
   it("rejects garbage that fails URL parsing", () => {
     expect(validateRelayerUrl("not a url at all").invalid).toBe(true);
+  });
+});
+
+describe("validateEmail", () => {
+  it("accepts a normal address", () => {
+    expect(validateEmail("op@company.com")).toBe(true);
+    expect(validateEmail("a.b+tag@sub.example.co")).toBe(true);
+  });
+  it("trims surrounding whitespace before checking", () => {
+    expect(validateEmail("  op@company.com  ")).toBe(true);
+  });
+  it("rejects empty / whitespace-only input", () => {
+    expect(validateEmail("")).toBe(false);
+    expect(validateEmail("   ")).toBe(false);
+  });
+  it("rejects a missing @, domain, or TLD dot", () => {
+    expect(validateEmail("opcompany.com")).toBe(false);
+    expect(validateEmail("op@")).toBe(false);
+    expect(validateEmail("op@company")).toBe(false);
+  });
+  it("rejects internal whitespace", () => {
+    expect(validateEmail("op @company.com")).toBe(false);
+    expect(validateEmail("op@comp any.com")).toBe(false);
   });
 });
