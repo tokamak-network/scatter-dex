@@ -34,6 +34,11 @@ const ORDERBOOK_URL =
 const ISSUANCE_REGISTRY = process.env.NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS ?? "";
 const APPROVE_ABI = [
   "function approve(address operator, string commonName, string organization, string country, uint32 validityDays, uint64 expiresAt)",
+  "function revoke(address operator, string reason)",
+  // Read the current on-chain approval so the flow can be made idempotent
+  // (skip a redundant tx that would revert) and self-heal if a prior DB
+  // write failed after the chain already changed.
+  "function approvals(address operator) view returns (tuple(string commonName, string organization, string country, uint32 validityDays, address approvedBy, uint64 approvedAt, uint64 expiresAt, bool revoked, string revokeReason, uint64 revokedAt))",
 ];
 
 /** Dev/interim bearer, read from env so the page authenticates without a
@@ -45,7 +50,7 @@ function authHeaders(): HeadersInit {
   return ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {};
 }
 
-type KycStatus = "pending" | "verified" | "approved" | "rejected";
+type KycStatus = "pending" | "verified" | "approved" | "rejected" | "revoked";
 
 interface SubmissionSummary {
   id: string;
@@ -70,10 +75,35 @@ interface SubmissionDetail extends SubmissionSummary {
 /** Allowed status transitions — mirrors the shared-orderbook's
  *  `canTransitionKyc` (kept inline since that helper lives in the
  *  orderbook package, not the shared types). */
+/** Record a KYC status transition in the orderbook. Called AFTER the
+ *  on-chain write (the source of truth for issuance gating), so a failure
+ *  here is a secondary, retryable record error — not a lost decision. */
+async function recordStatus(
+  id: string,
+  status: KycStatus,
+  notes: string | undefined,
+  authHeaders: () => HeadersInit,
+): Promise<void> {
+  const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ status, notes: notes || undefined }),
+  });
+  if (!res.ok) {
+    const j = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(
+      `On-chain done, but recording failed (${j.error ?? res.status}). Click again to retry the record.`,
+    );
+  }
+}
+
 function canTransition(from: KycStatus, to: KycStatus): boolean {
   if (from === "pending") return to === "verified" || to === "rejected";
   if (from === "verified") return to === "approved" || to === "rejected";
-  return false; // approved / rejected are terminal
+  // `approved` can still be revoked (after-the-fact identity invalidation,
+  // mirrored on-chain); rejected / revoked are terminal.
+  if (from === "approved") return to === "revoked";
+  return false;
 }
 
 export default function KycReviewPage() {
@@ -231,6 +261,7 @@ function StatusBadge({ status }: { status: KycStatus }) {
     verified: "bg-[var(--color-primary-soft)] text-[var(--color-primary)]",
     approved: "bg-[var(--color-success-soft)] text-[var(--color-success)]",
     rejected: "bg-[var(--color-danger-soft)] text-[var(--color-danger)]",
+    revoked: "bg-[var(--color-danger-soft)] text-[var(--color-danger)]",
   };
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${tone[status]}`}>
@@ -380,25 +411,24 @@ function SubmissionPanel({
     setBusy(true);
     try {
       const reg = new Contract(ISSUANCE_REGISTRY, APPROVE_ABI, signer);
-      const tx = await reg.approve(
-        detail.wallet,
-        cn.trim(),
-        org.trim(),
-        country.trim().toUpperCase(),
-        days,
-        0, // expiresAt 0 = no expiry
-      );
-      await tx.wait();
-      const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
-        method: "POST",
-        headers: { ...authHeaders(), "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "approved", notes: notes || undefined }),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(j.error ?? `Status update failed (${res.status})`);
+      // Idempotent: skip the tx if this wallet is already approved (and
+      // not revoked) on-chain — e.g. a prior DB write failed after the
+      // chain changed. Just re-sync the record below.
+      const current = await reg.approvals(detail.wallet);
+      const alreadyApproved = current.approvedAt > 0n && !current.revoked;
+      if (!alreadyApproved) {
+        const tx = await reg.approve(
+          detail.wallet,
+          cn.trim(),
+          org.trim(),
+          country.trim().toUpperCase(),
+          days,
+          0, // expiresAt 0 = no expiry
+        );
+        await tx.wait();
       }
       setDetail((d) => (d ? { ...d, status: "approved" } : d));
+      await recordStatus(id, "approved", notes, authHeaders);
       emailIssuanceLink(detail.email, detail.wallet);
       await onChanged();
     } catch (e) {
@@ -407,6 +437,45 @@ function SubmissionPanel({
       setBusy(false);
     }
   }, [detail, signer, cn, org, country, validityDays, id, notes, onChanged]);
+
+  /** Revoke = invalidate an already-approved identity on-chain
+   *  (IssuanceApprovalRegistry.revoke, owner-only) + record it. The
+   *  on-chain revoke is what the issuance gate reads; the DB status
+   *  mirrors it for the review queue. */
+  const onRevoke = useCallback(async () => {
+    setErr("");
+    if (!detail) return;
+    if (!ISSUANCE_REGISTRY) {
+      setErr("Issuance registry not configured (NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS).");
+      return;
+    }
+    if (!signer) { setErr("Connect the admin (owner) wallet to revoke on-chain."); return; }
+    const reason = notes.trim();
+    if (!reason) { setErr("Enter a revocation reason in the notes field."); return; }
+    if (!window.confirm(`Revoke ${detail.wallet}? Their certificate identity will be invalidated.`)) return;
+    setBusy(true);
+    try {
+      const reg = new Contract(ISSUANCE_REGISTRY, APPROVE_ABI, signer);
+      // Idempotent: if a prior attempt already revoked on-chain (e.g. the
+      // DB write then failed), skip the tx that would revert with
+      // AlreadyRevoked and just re-sync the DB.
+      const current = await reg.approvals(detail.wallet);
+      if (!current.revoked) {
+        const tx = await reg.revoke(detail.wallet, reason);
+        await tx.wait();
+      }
+      // On-chain (the source of truth for gating) is now revoked — reflect
+      // it immediately; a DB recording failure is a secondary, retryable
+      // error rather than a lost revocation.
+      setDetail((d) => (d ? { ...d, status: "revoked" } : d));
+      await recordStatus(id, "revoked", reason, authHeaders);
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Revoke failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [detail, signer, id, notes, onChanged]);
 
   if (err && !detail) {
     return <div className="px-4 py-3 text-xs text-[var(--color-danger)]">{err}</div>;
@@ -504,11 +573,26 @@ function SubmissionPanel({
         >
           Reject
         </button>
+        <button
+          type="button"
+          disabled={busy || !canTransition(status, "revoked")}
+          onClick={() => void onRevoke()}
+          className="rounded-md bg-[var(--color-danger)] px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+        >
+          Revoke approval
+        </button>
       </div>
       {status === "approved" && (
         <p className="text-xs text-[var(--color-success)]">
           Approved on-chain — the operator can now issue their certificate from
-          the emailed link.
+          the emailed link. To invalidate it later, enter a reason in notes and
+          use Revoke approval.
+        </p>
+      )}
+      {status === "revoked" && (
+        <p className="text-xs text-[var(--color-danger)]">
+          Revoked on-chain — this operator&apos;s certificate identity is no
+          longer valid.
         </p>
       )}
     </div>
