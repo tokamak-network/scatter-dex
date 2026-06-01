@@ -13,6 +13,13 @@ import type {
   LeaderboardRow,
   LeaderboardMetric,
 } from "../types/settlement.js";
+import type {
+  KycSubmission,
+  KycStatus,
+  KycSubmissionInsert,
+  KycSubmissionUpdate,
+  KycListFilter,
+} from "../types/kyc.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -35,6 +42,11 @@ export class OrderbookDB {
   private stmtListMatchesJoin!: Database.Statement;
   private stmtInsertSettlement!: Database.Statement;
   private stmtGetSettlement!: Database.Statement;
+  private stmtInsertKyc!: Database.Statement;
+  private stmtGetKycById!: Database.Statement;
+  private stmtGetKycByWallet!: Database.Statement;
+  private stmtUpdateKycFiles!: Database.Statement;
+  private stmtUpdateKycStatus!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -126,6 +138,29 @@ export class OrderbookDB {
       -- verbatim — keep these in sync with the WHERE clauses.
       CREATE INDEX IF NOT EXISTS idx_settle_time_coalesce
         ON settlements(COALESCE(block_time, created_at));
+
+      -- Relayer operator KYC onboarding (Stage 1). Submissions arrive on the
+      -- public POST /api/kyc/submit endpoint; an admin reviews them (PR2) and
+      -- a cert is issued (PR3). The wallet is stored lowercased so the status
+      -- lookup and re-submission path are case-insensitive. The uploaded
+      -- video / ID document live on disk under config.kycUploadDir/<id>/ —
+      -- only their paths are kept here.
+      CREATE TABLE IF NOT EXISTS kyc_submissions (
+        id          TEXT PRIMARY KEY,
+        wallet      TEXT NOT NULL,
+        email       TEXT,
+        video_path  TEXT,
+        id_doc_path TEXT,
+        status      TEXT NOT NULL DEFAULT 'pending',
+        notes       TEXT,
+        created_at  INTEGER NOT NULL,
+        reviewed_at INTEGER
+      );
+
+      -- Lookup by wallet (status endpoint + re-submission) and the admin
+      -- review queue (status, newest-first).
+      CREATE INDEX IF NOT EXISTS idx_kyc_wallet ON kyc_submissions(wallet, created_at);
+      CREATE INDEX IF NOT EXISTS idx_kyc_status ON kyc_submissions(status, created_at);
     `);
 
     // Lightweight ALTER for pre-byApp databases — adds the `type`
@@ -252,6 +287,31 @@ export class OrderbookDB {
       JOIN orders mk ON mk.id = m.maker_id
       JOIN orders tk ON tk.id = m.taker_id
       ORDER BY m.created_at DESC LIMIT ? OFFSET ?
+    `);
+
+    this.stmtInsertKyc = this.db.prepare(`
+      INSERT INTO kyc_submissions
+        (id, wallet, email, video_path, id_doc_path, status, notes, created_at, reviewed_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, NULL)
+    `);
+
+    this.stmtGetKycById = this.db.prepare(`SELECT * FROM kyc_submissions WHERE id = ?`);
+
+    // Newest submission for a wallet — drives the public status endpoint and
+    // the re-submission path (refresh a still-pending row instead of piling
+    // up duplicates).
+    this.stmtGetKycByWallet = this.db.prepare(
+      `SELECT * FROM kyc_submissions WHERE wallet = ? ORDER BY created_at DESC LIMIT 1`,
+    );
+
+    this.stmtUpdateKycFiles = this.db.prepare(`
+      UPDATE kyc_submissions
+         SET email = ?, video_path = ?, id_doc_path = ?, created_at = ?
+       WHERE id = ?
+    `);
+
+    this.stmtUpdateKycStatus = this.db.prepare(`
+      UPDATE kyc_submissions SET status = ?, notes = ?, reviewed_at = ? WHERE id = ?
     `);
   }
 
@@ -877,6 +937,69 @@ export class OrderbookDB {
       txCountVerified: r.tx_count_verified as number,
       lastSettleAt: (r.last_settle_at as number | null) ?? null,
     }));
+  }
+
+  // ── Relayer operator KYC onboarding (Stage 1) ──────────────────────────
+
+  /** Insert a fresh KYC submission. `wallet` is lowercased by the caller. */
+  insertKycSubmission(s: KycSubmissionInsert): void {
+    this.stmtInsertKyc.run(s.id, s.wallet, s.email, s.videoPath, s.idDocPath, s.createdAt);
+  }
+
+  /**
+   * Refresh a still-pending submission's files / email / timestamp when the
+   * same wallet re-submits. Status stays 'pending'; the review clock resets
+   * via created_at so a re-submit goes to the back of the admin queue.
+   */
+  updateKycFiles(id: string, u: KycSubmissionUpdate, resubmittedAt: number): void {
+    this.stmtUpdateKycFiles.run(u.email, u.videoPath, u.idDocPath, resubmittedAt, id);
+  }
+
+  /** Admin review action (PR2): set status + optional notes + reviewed_at. */
+  updateKycStatus(id: string, status: KycStatus, notes: string | null, reviewedAt: number): boolean {
+    const result = this.stmtUpdateKycStatus.run(status, notes, reviewedAt, id);
+    return result.changes > 0;
+  }
+
+  getKycById(id: string): KycSubmission | null {
+    const row = this.stmtGetKycById.get(id) as Record<string, unknown> | undefined;
+    return row ? this.rowToKyc(row) : null;
+  }
+
+  /** Newest submission for a wallet (case-insensitive), or null. */
+  getKycByWallet(wallet: string): KycSubmission | null {
+    const row = this.stmtGetKycByWallet.get(wallet.toLowerCase()) as Record<string, unknown> | undefined;
+    return row ? this.rowToKyc(row) : null;
+  }
+
+  /** Admin review queue (PR2). Optional status filter, newest-first. */
+  listKycSubmissions(filter: KycListFilter = {}): KycSubmission[] {
+    const limit = Math.min(filter.limit ?? 100, 500);
+    const offset = Math.max(filter.offset ?? 0, 0);
+    const rows = filter.status
+      ? (this.db
+          .prepare(
+            `SELECT * FROM kyc_submissions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+          )
+          .all(filter.status, limit, offset) as Record<string, unknown>[])
+      : (this.db
+          .prepare(`SELECT * FROM kyc_submissions ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+          .all(limit, offset) as Record<string, unknown>[]);
+    return rows.map((r) => this.rowToKyc(r));
+  }
+
+  private rowToKyc(row: Record<string, unknown>): KycSubmission {
+    return {
+      id: row.id as string,
+      wallet: row.wallet as string,
+      email: (row.email as string | null) ?? null,
+      videoPath: (row.video_path as string | null) ?? null,
+      idDocPath: (row.id_doc_path as string | null) ?? null,
+      status: row.status as KycStatus,
+      notes: (row.notes as string | null) ?? null,
+      createdAt: row.created_at as number,
+      reviewedAt: (row.reviewed_at as number | null) ?? null,
+    };
   }
 
   /** Truncate the settlements table — for tests only. Faster than dropping

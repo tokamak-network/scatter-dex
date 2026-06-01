@@ -1,47 +1,12 @@
 /**
- * Operator-only endpoints. Auth uses a static bearer token compared
- * with `timingSafeEqual` — meant for a single ops/monitoring user, not
- * end-user-facing. If `ADMIN_TOKEN` is unset, every admin endpoint
- * returns 503 (disabled). Setting an empty `ADMIN_TOKEN` also disables
- * it; we require a non-empty token to enable.
+ * Operator-only endpoints. Auth uses a static bearer token compared with
+ * `timingSafeEqual` (see `middleware/admin-auth.ts`) — meant for a single
+ * ops/monitoring user, not end-user-facing.
  */
-import { Router, type Request, type Response, type NextFunction, type RequestHandler } from "express";
-import { timingSafeEqual } from "crypto";
+import { Router } from "express";
 import type { OrderbookDB } from "../core/db.js";
 import type { VerifyMonitor } from "../core/verify-runtime.js";
-
-function makeAdminAuth(token: string | undefined): RequestHandler {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    if (!token) {
-      res.status(503).json({ error: "admin endpoints disabled (set ADMIN_TOKEN to enable)" });
-      return;
-    }
-    const header = (req.headers.authorization ?? "").trim();
-    const supplied = header.startsWith("Bearer ") ? header.slice(7) : "";
-    if (!supplied) {
-      res.status(401).json({ error: "missing bearer token" });
-      return;
-    }
-    // Constant-time compare. Pad both sides to the same length and ALWAYS
-    // run `timingSafeEqual` regardless of length so a prefix/short token
-    // doesn't return earlier than a same-length wrong token. The length
-    // check is folded into the final boolean, not into control flow.
-    const a = Buffer.from(supplied);
-    const b = Buffer.from(token);
-    const len = Math.max(a.length, b.length);
-    const ap = Buffer.alloc(len);
-    a.copy(ap);
-    const bp = Buffer.alloc(len);
-    b.copy(bp);
-    const bytesEq = timingSafeEqual(ap, bp);
-    const lenEq = a.length === b.length;
-    if (!(bytesEq && lenEq)) {
-      res.status(401).json({ error: "invalid bearer token" });
-      return;
-    }
-    next();
-  };
-}
+import { makeAdminAuth } from "../middleware/admin-auth.js";
 
 export interface AdminDeps {
   db: OrderbookDB;

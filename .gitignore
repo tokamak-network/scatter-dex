@@ -60,6 +60,10 @@ contracts/src/zk/SettleVerifier.sol
 zk-relayer/dist/
 shared-orderbook/dist/
 
+# Relayer operator KYC uploads (liveness video + ID document). User PII —
+# must never be committed. Wiped by scripts/dev.sh's DB reset.
+shared-orderbook/kyc-uploads/
+
 # Auto-generated SDK reference (TypeDoc output) produced by
 # `cd apps/docs && npm run api`. Committing it drifts across Node
 # versions / TypeScript installs (TypeDoc categorises some internal
