@@ -118,7 +118,7 @@ Ctrl+C
 # If the terminal died without a clean exit, orphan processes can keep the
 # ports held. Identify and kill them (portable across Linux/macOS — avoids
 # GNU-specific `xargs -r`):
-pids=$(lsof -ti :8545 -i :3002 -i :3003 -i :4000 -i :4001 -i :4003 -i :4004)
+pids=$(lsof -ti :8545 -i :3002 -i :3003 -i :4000 -i :4001 -i :4002 -i :4003 -i :4004)
 if [ -n "$pids" ]; then
   kill $pids
 fi
