@@ -148,6 +148,10 @@ async function main() {
     console.log(`  GET    /api/leaderboard              — top relayers by metric`);
     console.log(`  POST   /api/kyc/submit               — submit operator KYC (multipart)`);
     console.log(`  GET    /api/kyc/status?wallet=       — KYC submission status`);
+    console.log(`  GET    /api/kyc/submissions          — admin: review queue`);
+    console.log(`  GET    /api/kyc/submissions/:id      — admin: submission detail`);
+    console.log(`  GET    /api/kyc/submissions/:id/file/:kind — admin: stream document`);
+    console.log(`  POST   /api/kyc/submissions/:id/status     — admin: set review status`);
   });
 
   // Graceful shutdown
