@@ -25,16 +25,36 @@ import { Contract } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../../components/SectionHeader";
 
-const ORDERBOOK_URL = (
-  process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "http://localhost:4000"
-).replace(/\/+$/, "");
+/** Trim, validate (http/https only), and strip trailing slashes on a
+ *  configured base URL. Fails loud at module load on a malformed value
+ *  rather than silently building broken links — these become absolute
+ *  URLs in admin requests and the certificate-issuance email. */
+function parseConfigUrl(value: string | undefined, fallback: string): string {
+  const raw = value?.trim() || fallback;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`Invalid URL configuration: "${raw}"`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`URL must be http(s): "${raw}"`);
+  }
+  return url.toString().replace(/\/+$/, "");
+}
+
+const ORDERBOOK_URL = parseConfigUrl(
+  process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL,
+  "http://localhost:4000",
+);
 
 /** Where the operator self-service certificate-issuance screen lives —
  *  the OPERATORS app (operator keys are generated in the operator's own
  *  context, never in the admin app). The approval email links here. */
-const OPERATORS_URL = (
-  process.env.NEXT_PUBLIC_OPERATORS_URL ?? "http://localhost:4004"
-).replace(/\/+$/, "");
+const OPERATORS_URL = parseConfigUrl(
+  process.env.NEXT_PUBLIC_OPERATORS_URL,
+  "http://localhost:4004",
+);
 
 /** IssuanceApprovalRegistry — approving a KYC submission writes the cert
  *  subject here on-chain (owner-only), which the operator's issuance
