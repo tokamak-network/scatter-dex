@@ -14,7 +14,8 @@
  *    here (e.g. to anchor it in zk-X509, or to verify a chain).
  *
  *  Backend (shared-orderbook, in progress):
- *    GET  /api/ca/root         → public rootCA.der (+ metadata) | 404
+ *    GET  /api/ca/root         → public rootCA.der (binary) | 404
+ *    GET  /api/ca/root/info    → { commonName, organization, … } | 404
  *    POST /api/ca/root (admin) → publish the generated rootCA.der */
 
 import { useCallback, useEffect, useState } from "react";
@@ -76,10 +77,7 @@ export default function RootCaPage() {
             <Row label="Common name" value={info.commonName} />
             <Row label="Organization" value={info.organization} />
             <Row label="Country" value={info.country} />
-            <Row
-              label="Valid until"
-              value={new Date(info.notAfter * 1000).toISOString().slice(0, 10)}
-            />
+            <Row label="Valid until" value={formatDate(info.notAfter)} />
             <Row label="SHA-256" value={info.fingerprint} mono />
             <a
               href={`${ORDERBOOK_URL}/api/ca/root`}
@@ -119,6 +117,14 @@ export default function RootCaPage() {
       </section>
     </div>
   );
+}
+
+/** `notAfter` comes from an untrusted backend; guard against invalid /
+ *  out-of-range values that would make `Date.toISOString()` throw. */
+function formatDate(unixSec: number): string {
+  const ms = unixSec * 1000;
+  if (!Number.isFinite(ms) || ms <= 0 || ms > 8.64e15) return "—";
+  return new Date(ms).toISOString().slice(0, 10);
 }
 
 function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {

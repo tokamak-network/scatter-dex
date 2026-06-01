@@ -21,10 +21,20 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { Contract } from "ethers";
+import { useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../../components/SectionHeader";
 
 const ORDERBOOK_URL =
   process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "http://localhost:4000";
+
+/** IssuanceApprovalRegistry — approving a KYC submission writes the cert
+ *  subject here on-chain (owner-only), which the operator's issuance
+ *  screen then reads as the FIXED, read-only subject. */
+const ISSUANCE_REGISTRY = process.env.NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS ?? "";
+const APPROVE_ABI = [
+  "function approve(address operator, string commonName, string organization, string country, uint32 validityDays, uint64 expiresAt)",
+];
 
 /** Dev/interim bearer, read from env so the page authenticates without a
  *  manual token entry. Replaced by a SIWE session header (signed by the
@@ -229,6 +239,31 @@ function StatusBadge({ status }: { status: KycStatus }) {
   );
 }
 
+function LabeledInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block text-xs">
+      <span className="mb-0.5 block text-[var(--color-text-subtle)]">{label}</span>
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-1.5 text-sm"
+      />
+    </label>
+  );
+}
+
 function SubmissionPanel({
   id,
   onChanged,
@@ -236,12 +271,18 @@ function SubmissionPanel({
   id: string;
   onChanged: () => Promise<void>;
 }) {
+  const { signer, connect } = useWallet();
   const [detail, setDetail] = useState<SubmissionDetail | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [docUrl, setDocUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // Cert subject fixed on-chain at approval (read-only to the operator later).
+  const [cn, setCn] = useState("");
+  const [org, setOrg] = useState("");
+  const [country, setCountry] = useState("KR");
+  const [validityDays, setValidityDays] = useState("365");
 
   // Files need the auth header, so they can't be a plain <video src>; fetch
   // each as a blob and hand the component an object URL.
@@ -272,8 +313,17 @@ function SubmissionPanel({
         if (cancelled) return;
         setDetail(json);
         setNotes(json.notes ?? "");
-        if (json.files.video.present) { v = await loadFile("video"); if (!cancelled) setVideoUrl(v); }
-        if (json.files.idDoc.present) { d = await loadFile("idDoc"); if (!cancelled) setDocUrl(d); }
+        setCn((prev) => prev || json.email.split("@")[0] || "");
+        if (json.files.video.present) {
+          v = await loadFile("video");
+          // The fetch can resolve after the drawer closed; revoke instead
+          // of leaking the object URL (the cleanup already ran by then).
+          if (cancelled) { if (v) URL.revokeObjectURL(v); v = null; } else setVideoUrl(v);
+        }
+        if (json.files.idDoc.present) {
+          d = await loadFile("idDoc");
+          if (cancelled) { if (d) URL.revokeObjectURL(d); d = null; } else setDocUrl(d);
+        }
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : "Failed to load");
       }
@@ -299,7 +349,9 @@ function SubmissionPanel({
           const j = (await res.json().catch(() => ({}))) as { error?: string };
           throw new Error(j.error ?? `Update failed (${res.status})`);
         }
-        if (status === "approved" && detail) emailIssuanceLink(detail.email, detail.wallet);
+        // Reflect the new status locally so the drawer's action buttons
+        // re-gate immediately (the list refresh is separate).
+        setDetail((d) => (d ? { ...d, status } : d));
         await onChanged();
       } catch (e) {
         setErr(e instanceof Error ? e.message : "Update failed");
@@ -307,8 +359,54 @@ function SubmissionPanel({
         setBusy(false);
       }
     },
-    [id, notes, detail, onChanged],
+    [id, notes, onChanged],
   );
+
+  /** Approve = fix the cert subject on-chain (IssuanceApprovalRegistry,
+   *  owner-only) + record the decision + email the issuance link. The
+   *  on-chain write is what unlocks the operator's issuance/verify. */
+  const onApprove = useCallback(async () => {
+    setErr("");
+    if (!detail) return;
+    if (!ISSUANCE_REGISTRY) {
+      setErr("Issuance registry not configured (NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS).");
+      return;
+    }
+    if (!signer) { setErr("Connect the admin (owner) wallet to approve on-chain."); return; }
+    if (!cn.trim() || !org.trim()) { setErr("Common name and organization are required."); return; }
+    if (country.trim().length !== 2) { setErr("Country must be a 2-letter ISO-3166 code."); return; }
+    const days = Number(validityDays);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) { setErr("Validity must be 1–3650 days."); return; }
+    setBusy(true);
+    try {
+      const reg = new Contract(ISSUANCE_REGISTRY, APPROVE_ABI, signer);
+      const tx = await reg.approve(
+        detail.wallet,
+        cn.trim(),
+        org.trim(),
+        country.trim().toUpperCase(),
+        days,
+        0, // expiresAt 0 = no expiry
+      );
+      await tx.wait();
+      const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "approved", notes: notes || undefined }),
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error ?? `Status update failed (${res.status})`);
+      }
+      setDetail((d) => (d ? { ...d, status: "approved" } : d));
+      emailIssuanceLink(detail.email, detail.wallet);
+      await onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Approve failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [detail, signer, cn, org, country, validityDays, id, notes, onChanged]);
 
   if (err && !detail) {
     return <div className="px-4 py-3 text-xs text-[var(--color-danger)]">{err}</div>;
@@ -356,6 +454,29 @@ function SubmissionPanel({
         className="w-full rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
       />
 
+      {canTransition(status, "approved") && (
+        <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
+          <div className="text-xs font-semibold text-[var(--color-text-subtle)]">
+            Certificate subject — fixed on-chain at approval (operator sees it read-only)
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <LabeledInput label="Common name (CN)" value={cn} onChange={setCn} placeholder="Operator name" />
+            <LabeledInput label="Organization (O)" value={org} onChange={setOrg} placeholder="Company" />
+            <LabeledInput label="Country (C, ISO-3166)" value={country} onChange={setCountry} placeholder="KR" />
+            <LabeledInput label="Validity (days)" value={validityDays} onChange={setValidityDays} placeholder="365" />
+          </div>
+          {!signer && (
+            <button
+              type="button"
+              onClick={() => void connect()}
+              className="text-xs font-medium text-[var(--color-primary)] underline"
+            >
+              Connect admin (owner) wallet to approve on-chain
+            </button>
+          )}
+        </div>
+      )}
+
       {err && <p className="text-xs text-[var(--color-danger)]">{err}</p>}
 
       <div className="flex flex-wrap gap-2">
@@ -370,7 +491,7 @@ function SubmissionPanel({
         <button
           type="button"
           disabled={busy || !canTransition(status, "approved")}
-          onClick={() => void setStatus("approved")}
+          onClick={() => void onApprove()}
           className="rounded-md bg-[var(--color-success)] px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
         >
           Approve issuance + email link
@@ -386,8 +507,8 @@ function SubmissionPanel({
       </div>
       {status === "approved" && (
         <p className="text-xs text-[var(--color-success)]">
-          Approved. On-chain issuance approval (approveForIssuance) is wired in a
-          follow-up once the registry address is configured.
+          Approved on-chain — the operator can now issue their certificate from
+          the emailed link.
         </p>
       )}
     </div>
@@ -417,5 +538,8 @@ function emailIssuanceLink(email: string, wallet: string) {
   a.href = gmailUrl;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
+  // Firefox ignores .click() on an anchor that isn't in the document.
+  document.body.appendChild(a);
   a.click();
+  a.remove();
 }
