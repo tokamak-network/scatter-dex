@@ -1,206 +1,47 @@
 /**
  * Wallet-signature admin auth for the operator console.
  *
- * Flow:
- *   1. Client GETs /api/admin/challenge → server returns a fresh
- *      nonce (single-use, 60s TTL). The nonce is keyed by itself —
- *      we don't bind it to an address up-front because the client
- *      may not have signed yet.
- *   2. Client builds the message (see `formatChallengeMessage`) and
- *      signs it with the operator's wallet, then POSTs the signature
- *      to /api/admin/session.
- *   3. Server recovers the signer via `ethers.verifyMessage`, looks
- *      up `RelayerRegistry.isActiveRelayer(signer)`, and on success
- *      issues a session token (15-min TTL) that downstream admin
- *      endpoints accept via `Authorization: Bearer <token>`.
+ * The core — nonce/session lifecycle, single-use nonces, exact-message match,
+ * signature recovery — lives in `@scatter-dex/types` (`AdminSiweAuth`) and is
+ * shared with shared-orderbook. This module only wires it to the relayer's
+ * admin identity (an on-chain `RelayerRegistry.isActiveRelayer` read) and the
+ * operator-console challenge wording.
  *
- * The stores are in-memory — a relayer restart invalidates active
- * sessions, which is acceptable since restarts are operator-driven
- * (re-sign takes seconds) and there's only one process.
+ * Flow:
+ *   1. Client GETs /api/admin/challenge → a fresh nonce + message to sign.
+ *   2. Client signs and POSTs the signature to /api/admin/session.
+ *   3. Server recovers the signer, checks `isActiveRelayer`, and on success
+ *      issues a session token accepted via `Authorization: Bearer <token>`.
  */
 
-import { randomBytes } from "node:crypto";
 import { ethers } from "ethers";
+import { AdminSiweAuth } from "@scatter-dex/types";
 
-const NONCE_TTL_MS = 60_000;
-const SESSION_TTL_MS = 15 * 60_000;
-// Gate the O(n) sweep across both maps to at most once per this many
-// ms. Independent expiry checks on individual entries still happen
-// on every read (see `verifySession`), so a single stale row never
-// becomes accessible just because the sweep hasn't run yet.
-const PURGE_INTERVAL_MS = 30_000;
-const NONCE_BYTES = 32;
-const SESSION_TOKEN_BYTES = 32;
+// Re-export the shared core so sibling modules keep importing it from here
+// (middleware/admin-auth.ts, routes/admin.ts) without reaching into the package.
+export { AdminSiweAuth, formatChallengeMessage } from "@scatter-dex/types";
+
+const SIWE_DOMAIN = "zkscatter operators admin";
+const SIWE_ACTION = "sign in to manage this relayer";
 
 const RELAYER_REGISTRY_ABI = [
   "function isActiveRelayer(address relayer) view returns (bool)",
 ] as const;
 
-interface NonceEntry {
-  expiresAt: number;
-  /** Exact challenge message bound to this nonce. The client must
-   *  present the byte-identical string back in `createSession`; this
-   *  prevents an attacker from getting an operator to sign an
-   *  innocuous-looking message that happens to contain the nonce
-   *  somewhere in its body — only the canonical SIWE message format
-   *  produced by `formatChallengeMessage` is accepted. */
-  message: string;
-}
-
-interface SessionEntry {
-  address: string;
-  expiresAt: number;
-}
-
-/** Factory: wire an on-chain `RelayerRegistry.isActiveRelayer` probe
- *  into the SIWE auth. Kept separate from the class so unit tests can
- *  inject a fake verifier without a JSON-RPC provider. */
+/** Factory: wire an on-chain `RelayerRegistry.isActiveRelayer` probe into the
+ *  SIWE auth. Kept separate from the shared class so unit tests can inject a
+ *  fake verifier without a JSON-RPC provider. */
 export function makeAdminSiweAuthFromChain(
   registryAddress: string,
   provider: ethers.JsonRpcProvider,
 ): AdminSiweAuth {
-  const registry = new ethers.Contract(
-    registryAddress,
-    RELAYER_REGISTRY_ABI,
-    provider,
+  const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_ABI, provider);
+  return new AdminSiweAuth(
+    async (addr: string) => (await registry.isActiveRelayer(addr)) as boolean,
+    {
+      domain: SIWE_DOMAIN,
+      action: SIWE_ACTION,
+      notAdminError: "Signer is not an active relayer in the registry",
+    },
   );
-  return new AdminSiweAuth(async (addr: string) =>
-    (await registry.isActiveRelayer(addr)) as boolean,
-  );
-}
-
-/** Issues challenges, verifies signatures, and tracks live sessions.
- *  Built once per process; admin routes use `issueChallenge`,
- *  `createSession`, and `verifySession` to drive the flow. */
-export class AdminSiweAuth {
-  private nonces = new Map<string, NonceEntry>();
-  private sessions = new Map<string, SessionEntry>();
-  // Last sweep timestamp. `purgeExpired` runs on every public call,
-  // but the actual O(n) walk is gated by `PURGE_INTERVAL_MS` so we
-  // don't iterate two maps on each request — sessions are short and
-  // request rate is low, but cheap is cheaper.
-  private lastPurgeAt = 0;
-  constructor(
-    private verifyActive: (address: string) => Promise<boolean>,
-  ) {}
-
-  /** Reserve a fresh nonce and the canonical message that must be
-   *  signed against it. Caller is responsible for consuming the
-   *  challenge via `createSession` before `NONCE_TTL_MS` elapses. */
-  issueChallenge(): {
-    nonce: string;
-    expiresAt: number;
-    issuedAt: string;
-    message: string;
-  } {
-    this.purgeExpired();
-    const nonce = randomBytes(NONCE_BYTES).toString("hex");
-    const expiresAt = Date.now() + NONCE_TTL_MS;
-    const issuedAt = new Date().toISOString();
-    const message = formatChallengeMessage({ nonce, issuedAt });
-    this.nonces.set(nonce, { expiresAt, message });
-    return { nonce, expiresAt, issuedAt, message };
-  }
-
-  /** Verify the signature, ensure the signer is an active relayer in
-   *  the registry, and mint a session token. The nonce is consumed
-   *  on success **and** on signature-mismatch — anything that proves
-   *  the client saw it (or tried to) burns the slot, so replay
-   *  windows stay tight. */
-  async createSession(input: {
-    nonce: string;
-    message: string;
-    signature: string;
-  }): Promise<{ token: string; address: string; expiresAt: number }> {
-    const { nonce, message, signature } = input;
-    this.purgeExpired();
-    const entry = this.nonces.get(nonce);
-    if (!entry) throw new Error("Unknown or expired challenge nonce");
-    // Burn the nonce up-front so a malformed signature can't be
-    // replayed against the same nonce while the operator types a
-    // second time. The client retries with a fresh challenge.
-    this.nonces.delete(nonce);
-    if (entry.expiresAt <= Date.now()) {
-      throw new Error("Challenge nonce expired");
-    }
-    // Exact-match against the message issued *with this nonce*. A
-    // permissive `includes(nonce)` check would let an attacker craft
-    // an innocuous-looking message containing the nonce and trick an
-    // active relayer into signing it.
-    if (message !== entry.message) {
-      throw new Error("Message does not match the issued challenge");
-    }
-    let recovered: string;
-    try {
-      recovered = ethers.verifyMessage(message, signature);
-    } catch (err) {
-      throw new Error(
-        `Signature recovery failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    const isActive: boolean = await this.verifyActive(recovered);
-    if (!isActive) {
-      throw new Error("Signer is not an active relayer in the registry");
-    }
-    const token = randomBytes(SESSION_TOKEN_BYTES).toString("hex");
-    const expiresAt = Date.now() + SESSION_TTL_MS;
-    this.sessions.set(token, { address: recovered.toLowerCase(), expiresAt });
-    return { token, address: recovered, expiresAt };
-  }
-
-  /** Returns the bound address on hit, null when the token is unknown
-   *  or has expired. Tokens are 32 bytes of `crypto.randomBytes`, so a
-   *  plain `Map.get` is safe: the lookup key *is* the secret (there's
-   *  no shorter "prefix" an attacker could guess and time toward), and
-   *  the hash compare doesn't leak useful timing on uniformly-random
-   *  hex strings. */
-  verifySession(token: string): string | null {
-    this.purgeExpired();
-    const entry = this.sessions.get(token);
-    if (!entry) return null;
-    if (entry.expiresAt <= Date.now()) {
-      this.sessions.delete(token);
-      return null;
-    }
-    return entry.address;
-  }
-
-  /** Explicit logout. Idempotent — unknown tokens are silently
-   *  dropped, matching how the client treats a 401 from a stale
-   *  session (just re-sign). */
-  revokeSession(token: string): void {
-    this.sessions.delete(token);
-  }
-
-  private purgeExpired(): void {
-    const now = Date.now();
-    if (now - this.lastPurgeAt < PURGE_INTERVAL_MS) return;
-    this.lastPurgeAt = now;
-    for (const [n, e] of this.nonces) {
-      if (e.expiresAt <= now) this.nonces.delete(n);
-    }
-    for (const [t, e] of this.sessions) {
-      if (e.expiresAt <= now) this.sessions.delete(t);
-    }
-  }
-}
-
-/** Canonical challenge message. The client must produce **exactly**
- *  this string for the server's recovered signature to match. Kept
- *  ASCII + LF so a copy/paste through any wallet UI doesn't mutate
- *  the bytes. The `Issued At` line ties the message to a wall-clock
- *  moment so an out-of-band capture loses meaning once the nonce
- *  expires. */
-export function formatChallengeMessage(input: {
-  nonce: string;
-  issuedAt: string;
-  domain?: string;
-}): string {
-  const domain = input.domain ?? "zkscatter operators admin";
-  return [
-    `${domain} wants you to sign in to manage this relayer.`,
-    "",
-    `Nonce: ${input.nonce}`,
-    `Issued At: ${input.issuedAt}`,
-  ].join("\n");
 }

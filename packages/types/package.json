@@ -19,6 +19,9 @@
     "prepare": "test -d dist || tsc",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "ethers": "^6.13.0"
+  },
   "devDependencies": {
     "typescript": "^5.6.0"
   }

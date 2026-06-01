@@ -46,7 +46,15 @@ describe("AdminSiweAuth", () => {
     const ch = siwe.issueChallenge();
     expect(ch.nonce).toMatch(/^[0-9a-f]{64}$/);
     expect(ch.expiresAt).toBeGreaterThan(0);
-    expect(ch.message).toBe(formatChallengeMessage({ nonce: ch.nonce, issuedAt: ch.issuedAt }));
+    // The allowlist factory configures the shared-orderbook domain/action.
+    expect(ch.message).toBe(
+      formatChallengeMessage({
+        nonce: ch.nonce,
+        issuedAt: ch.issuedAt,
+        domain: "zkscatter shared-orderbook admin",
+        action: "sign in to review KYC submissions",
+      }),
+    );
     expect(ch.message).toContain(ch.nonce);
   });
 
