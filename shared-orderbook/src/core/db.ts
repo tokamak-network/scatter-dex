@@ -20,6 +20,7 @@ import type {
   KycSubmissionUpdate,
   KycListFilter,
 } from "../types/kyc.js";
+import type { RootCaRecord } from "../types/ca.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -49,6 +50,9 @@ export class OrderbookDB {
   private stmtUpdateKycStatus!: Database.Statement;
   private stmtListKycAll!: Database.Statement;
   private stmtListKycByStatus!: Database.Statement;
+  private stmtDeactivateRootCa!: Database.Statement;
+  private stmtUpsertRootCa!: Database.Statement;
+  private stmtGetActiveRootCa!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -163,6 +167,24 @@ export class OrderbookDB {
       -- review queue (status, newest-first).
       CREATE INDEX IF NOT EXISTS idx_kyc_wallet ON kyc_submissions(wallet, created_at);
       CREATE INDEX IF NOT EXISTS idx_kyc_status ON kyc_submissions(status, created_at);
+
+      -- Public Root CA certificates (operator onboarding X.509 anchor). Only
+      -- the public DER is stored — the CA private key never reaches the
+      -- server. One row is active=1 at a time (the current Root CA);
+      -- superseded certs are kept (active=0) as history. Keyed by the cert's
+      -- sha256 fingerprint (hex).
+      CREATE TABLE IF NOT EXISTS root_ca (
+        fingerprint  TEXT PRIMARY KEY,
+        der          BLOB NOT NULL,
+        common_name  TEXT,
+        organization TEXT,
+        country      TEXT,
+        not_after    INTEGER,
+        created_at   INTEGER NOT NULL,
+        active       INTEGER NOT NULL DEFAULT 1
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_root_ca_active ON root_ca(active, created_at);
     `);
 
     // Lightweight ALTER for pre-byApp databases — adds the `type`
@@ -324,6 +346,25 @@ export class OrderbookDB {
     );
     this.stmtListKycByStatus = this.db.prepare(
       `SELECT * FROM kyc_submissions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    );
+
+    this.stmtDeactivateRootCa = this.db.prepare(`UPDATE root_ca SET active = 0 WHERE active = 1`);
+    // Re-publishing the same cert (same fingerprint) reactivates + refreshes
+    // its row rather than erroring.
+    this.stmtUpsertRootCa = this.db.prepare(`
+      INSERT INTO root_ca (fingerprint, der, common_name, organization, country, not_after, created_at, active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+      ON CONFLICT(fingerprint) DO UPDATE SET
+        der = excluded.der,
+        common_name = excluded.common_name,
+        organization = excluded.organization,
+        country = excluded.country,
+        not_after = excluded.not_after,
+        created_at = excluded.created_at,
+        active = 1
+    `);
+    this.stmtGetActiveRootCa = this.db.prepare(
+      `SELECT * FROM root_ca WHERE active = 1 ORDER BY created_at DESC LIMIT 1`,
     );
   }
 
@@ -1008,6 +1049,45 @@ export class OrderbookDB {
       notes: (row.notes as string | null) ?? null,
       createdAt: row.created_at as number,
       reviewedAt: (row.reviewed_at as number | null) ?? null,
+    };
+  }
+
+  // ── Public Root CA storage ─────────────────────────────────────────────
+
+  /**
+   * Publish a Root CA: deactivate the current active cert and upsert this one
+   * as the single active row, in one transaction. Re-publishing the same
+   * fingerprint reactivates + refreshes that row; superseded certs are kept
+   * (active=0) as history.
+   */
+  saveRootCa(rec: RootCaRecord): void {
+    const txn = this.db.transaction(() => {
+      this.stmtDeactivateRootCa.run();
+      this.stmtUpsertRootCa.run(
+        rec.fingerprint,
+        rec.der,
+        rec.commonName,
+        rec.organization,
+        rec.country,
+        rec.notAfter,
+        rec.createdAt,
+      );
+    });
+    txn();
+  }
+
+  /** The current active Root CA, or null if none has been published. */
+  getActiveRootCa(): RootCaRecord | null {
+    const row = this.stmtGetActiveRootCa.get() as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      fingerprint: row.fingerprint as string,
+      der: row.der as Buffer,
+      commonName: (row.common_name as string | null) ?? null,
+      organization: (row.organization as string | null) ?? null,
+      country: (row.country as string | null) ?? null,
+      notAfter: (row.not_after as number | null) ?? null,
+      createdAt: row.created_at as number,
     };
   }
 
