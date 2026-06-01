@@ -621,7 +621,7 @@ function Step0Kyc({
           </Field>
           <Field
             label="ID document"
-            hint="A copy of your 주민등록증 or 사업자등록증 (image or PDF)."
+            hint="A copy of your national ID card or business-registration certificate (image or PDF)."
           >
             <FileInput accept="image/*,application/pdf" file={idDoc} onPick={setIdDoc} cta="Choose document" maxBytes={MAX_KYC_DOC_BYTES} />
           </Field>
