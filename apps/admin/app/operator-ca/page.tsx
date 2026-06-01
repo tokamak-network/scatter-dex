@@ -10,6 +10,7 @@ import { useRelayerIdentityRegistry } from "../lib/useRelayerIdentityRegistry";
 import { AttestationPanel } from "./_components/AttestationPanel";
 import { IssueForm, type IssuedRecord } from "./_components/IssueForm";
 import { IssuedList, type LedgerEntry } from "./_components/IssuedList";
+import { SignCsrPanel } from "./_components/SignCsrPanel";
 
 const STORAGE_KEY = "zkscatter.admin.operator-ca.issued";
 
@@ -152,7 +153,20 @@ export default function OperatorCaPage() {
       </section>
 
       <section>
-        <SectionHeader title="New certificate" badge="live" />
+        <SectionHeader
+          title="Sign operator CSR"
+          badge="live"
+          hint="CA signs an operator's request → leaf cert; subject is bound to the on-chain approval"
+        />
+        <SignCsrPanel />
+      </section>
+
+      <section>
+        <SectionHeader
+          title="New certificate (legacy in-browser keygen)"
+          badge="live"
+          hint="superseded by the operators self-service /operator-cert screen"
+        />
         <IssueForm onIssued={onIssued} />
       </section>
 
