@@ -4,7 +4,7 @@ zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-C
 
 ## Prerequisite: ZK circuit artifacts
 
-The frontend loads six `.wasm` / `_final.zkey` pairs from `frontend/public/zk/` at proof time (deposit, withdraw, settle, claim, authorize, cancel) and `DeployLocal` deploys six matching `*Verifier.sol` contracts from `contracts/src/zk/`. **None of these are tracked in git** — both `dev.sh` and `dev-fork.sh` rebuild them automatically before the deploy step.
+The apps load `.wasm` / `_final.zkey` pairs from their `public/zk/` directories at proof time — `deposit`, `withdraw`, `claim`, `authorize`, `cancel`, plus the tiered batch variants `claim_64` / `claim_128` and `authorize_64` / `authorize_128` — and `DeployLocal` deploys the matching `*Verifier.sol` contracts from `contracts/src/zk/`. **None of these are tracked in git** — both `dev.sh` and `dev-fork.sh` rebuild them automatically before the deploy step and mirror them into the app surfaces (`frontend/public/zk/`, `apps/pro/public/zk/`; Pay pulls from `apps/pro` via its `predev` hook).
 
 ### Why generated artifacts are gitignored
 
@@ -14,7 +14,7 @@ Each Groth16 phase-2 setup uses a fresh random beacon (`scripts/build.sh` lines 
 |---|---|---|
 | `circuits/build/*_final.zkey`, `*.wasm` | local build cache | no — `circuits/build/` ignored |
 | `frontend/public/zk/*` | copied during build | no — `frontend/public/zk/` ignored |
-| `contracts/src/zk/{Authorize,Cancel,Claim,Deposit,Settle,Withdraw}Verifier.sol` | rebuilt from same beacon | no — listed in `.gitignore` |
+| `contracts/src/zk/{Authorize,Cancel,Claim,Deposit,Withdraw}Verifier.sol` | rebuilt from same beacon | no — listed in `.gitignore` |
 | `contracts/src/zk/I*Verifier.sol`, `BatchAuthorizeVerifier.sol` | hand-written | yes |
 
 ### Building manually
@@ -35,52 +35,77 @@ Both deploy scripts rebuild on every invocation. When you know nothing changed s
 SKIP_CIRCUIT_BUILD=1 ./scripts/dev-fork.sh
 ```
 
-This is purely a speed knob — leaving it unset is the safe default and the only thing that guarantees the on-chain Verifier.sol matches the zkey the frontend will load.
+This is purely a speed knob — leaving it unset is the safe default and the only thing that guarantees the on-chain Verifier.sol matches the zkey the apps will load.
 
 **Symptom if you skip the build incorrectly:** browser console shows `CompileError: WebAssembly.compile(): expected magic word 00 61 73 6d, found 3c 21 44 4f` (404 HTML being fed to WebAssembly because the `.wasm` is missing), or `InvalidProof()` (0x09bde339) at deposit time (`Verifier.sol` and `_final.zkey` came from different beacons). Re-run with the env var unset.
 
-## Two ways to run the stack
+## How to run the stack
 
-Both options run the stack in mock mode, but the service topology differs slightly between them (`make up` also starts the shared orderbook + deployer container; `dev.sh --mock` does not). Pick whichever fits your workflow:
+This guide covers the **native (host-process)** workflow — anvil, contracts,
+the shared orderbook, both relayers, and the apps run directly on your machine
+via `./scripts/dev.sh`. This is the default for active development (native hot
+reload, per-app logs, easy restarts).
 
-| | `./scripts/dev.sh --mock` | `make up` |
-|---|---|---|
-| Runtime | Host processes (anvil / node / next) | Docker Compose containers |
-| Hot reload | Yes — edits re-run locally | No — rebuild image to pick up code changes |
-| Logs | `.dev-logs/*.log` + foreground stdout | `make logs` / `docker compose logs` |
-| Stop | `Ctrl+C` (trap cleanup kills PIDs) | `make down` (or `make clean` to drop volumes) |
-| Cross-relayer | Run `./scripts/start-cross-relayer-e2e.sh` in a 2nd terminal | `make up-multi` (relayer B + shared orderbook) |
-| Best for | Active development, debugging with native tools | Reproducible environment, throwaway trials |
+> Prefer Docker Compose for a reproducible, throwaway stack? See
+> **[local-setup-docker.md](local-setup-docker.md)**.
 
 ## Quick Start — dev.sh (host processes)
 
 ```bash
-./scripts/dev.sh --mock
+./scripts/dev.sh --mock --apps pay,pro,operators
 ```
 
-Starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and Relayer CA), mock tokens, zk-relayer, and frontend in one terminal. Press `Ctrl+C` to stop all services.
+Starts anvil, deploys all contracts (MockIdentityRegistry for both User CA and
+Relayer CA), mock tokens, the shared orderbook, **both relayers**, and the
+selected apps in one terminal. Press `Ctrl+C` to stop all services.
 
-Services started:
+Services and ports (relayers + orderbook always start; each app starts only when named in `--apps`, except admin/hub — see below):
 | Service | Port | Description |
 |---------|------|-------------|
 | Anvil | 8545 | Local Ethereum node |
-| ZK Relayer | 3002 | ZK private orders + gasless claims |
-| Frontend | 3000 | Next.js web app |
+| shared-orderbook | 4000 | Cross-relayer order discovery |
+| Relayer A | 3002 | ZK private orders + gasless claims |
+| Relayer B | 3003 | Second relayer (cross-relayer matching) |
+| Pay | 4001 | `--apps pay` |
+| Drop | 4002 | `--apps drop` |
+| Pro | 4003 | `--apps pro` |
+| Operators | 4004 | `--apps operators` |
+| Admin | 4005 | see "Admin & Hub" below — `dev.sh` writes its env but doesn't start it |
+
+`--apps` accepts `pay`, `drop`, `pro`, `operators` (comma-separated). Pick the
+subset you need; `dev.sh` writes each app's `.env.local` with the freshly
+deployed contract addresses.
+
+### Admin & Hub
+
+`dev.sh --apps` doesn't start `admin` or `hub`, but it does write
+`apps/admin/.env.local` on every run. Start them in their own terminals:
+
+```bash
+# Admin (reads the env dev.sh already wrote)
+cd apps/admin && npm run dev          # http://localhost:4005
+
+# Hub (static landing site — no contracts/relayer needed). Its default port is
+# 4000, which collides with shared-orderbook, so override the port:
+cd apps/hub && npx next dev -p 4006   # http://localhost:4006
+```
 
 ### Monitoring (dev.sh)
 
 ```bash
 # Per-service logs written while dev.sh runs
 # (anvil is launched with --silent and does not write a log file)
-tail -f .dev-logs/zk-relayer.log
-tail -f .dev-logs/frontend.log
+tail -f .dev-logs/relayer-a.log
+tail -f .dev-logs/shared-orderbook.log
+tail -f .dev-logs/app-pay.log            # one per --apps entry (app-pro.log, …)
 
 # Which ports are bound, and by which PID
-lsof -i :8545 -i :3000 -i :3002
+lsof -i :8545 -i :3002 -i :4000 -i :4001
 
 # Service health
-curl http://localhost:3002/api/info      # zk-relayer
-curl http://localhost:3000 -I            # frontend (expect 200)
+curl http://localhost:3002/api/info      # relayer A
+curl http://localhost:4000/health        # shared orderbook
+curl http://localhost:4001 -I            # Pay app (expect 200)
 cast block-number --rpc-url http://localhost:8545   # anvil
 ```
 
@@ -93,7 +118,7 @@ Ctrl+C
 # If the terminal died without a clean exit, orphan processes can keep the
 # ports held. Identify and kill them (portable across Linux/macOS — avoids
 # GNU-specific `xargs -r`):
-pids=$(lsof -ti :8545 -i :3000 -i :3002)
+pids=$(lsof -ti :8545 -i :3002 -i :3003 -i :4000 -i :4001 -i :4002 -i :4003 -i :4004)
 if [ -n "$pids" ]; then
   kill $pids
 fi
@@ -104,54 +129,8 @@ rm -rf .dev-logs
 
 `dev.sh` fails fast with `port X is already in use` when any of the above ports are occupied, so the port check above is the usual recovery path.
 
-## Quick Start — Makefile (Docker Compose)
-
-```bash
-make up              # mock mode (anvil + frontend + zk-relayer A + shared orderbook)
-make up-multi        # mock mode + second relayer on :3003 (cross-relayer matching)
-make up-integration IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x...   # real zk-X509
-```
-
-| Target | Purpose |
-|---|---|
-| `make up` | `docker compose --profile mock up -d` — frontend, relayer A, shared orderbook, anvil |
-| `make up-multi` | Adds relayer B under the `multi-relayer` profile |
-| `make up-integration` | Runs against pre-deployed zk-X509 registries (requires env vars) |
-| `make ps` | `docker compose ps` |
-| `make logs` | Follow all container logs |
-| `make down` | Stop containers (keeps volumes) |
-| `make clean` | Stop and **drop volumes** (anvil state, relayer DB) |
-| `make test` | `forge test` on the contracts package |
-
-### Monitoring (Docker)
-
-```bash
-make ps                                  # container status
-make logs                                # follow all container logs
-docker compose logs -f frontend          # follow a single service
-docker compose logs -f zk-relayer        # relayer A in the default mock stack
-docker compose logs -f zk-relayer-b      # relayer B when using make up-multi
-docker compose logs --tail=200 anvil     # last 200 lines only
-docker stats                             # live CPU / memory per container
-
-# Service health (same endpoints as dev.sh)
-curl http://localhost:3002/api/info
-curl http://localhost:4000/health
-cast block-number --rpc-url http://localhost:8545
-```
-
-### Stopping & cleanup (make / Docker)
-
-```bash
-make down            # stop containers, keep volumes (anvil state, relayer DB persist)
-make clean           # stop containers and drop volumes — full reset
-
-# If a container is stuck / orphaned, list and remove manually:
-docker compose ps
-docker compose --profile mock --profile multi-relayer rm -fsv
-```
-
-Because Docker owns the ports, you don't need the `lsof` cleanup that `dev.sh` sometimes requires.
+> Running via Docker Compose instead? The `make up` / `make logs` / `make down`
+> workflow lives in **[local-setup-docker.md](local-setup-docker.md)**.
 
 ## Manual Setup (step by step)
 
@@ -200,12 +179,14 @@ EOF
 npm run dev
 ```
 
-**4. Start frontend:**
+**4. Start an app (e.g. Pro):**
 
-The deploy script prints a `LOCAL DEPLOYMENT SUMMARY` block that you can copy directly into `.env.local`:
+Write the deployed addresses into the app's `.env.local`, then start it. (`dev.sh`
+does this automatically via `write_app_env`; the block below is the manual
+equivalent for `apps/pro`, which reads the generic `NEXT_PUBLIC_*` keys.)
 
 ```bash
-cd frontend
+cd apps/pro
 cat > .env.local <<EOF
 NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=<RELAYER_REGISTRY>
 NEXT_PUBLIC_WETH_ADDRESS=<WETH>
@@ -218,8 +199,12 @@ NEXT_PUBLIC_RPC_URL=http://localhost:8545
 NEXT_PUBLIC_CHAIN_ID=31337
 NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
 EOF
-npm run dev
+npm run dev          # Pro on http://localhost:4003
 ```
+
+> **Pay is different:** `apps/pay` reads `NEXT_PUBLIC_PAY_*`-prefixed keys (see
+> `apps/pay/app/_lib/network.ts`), not the generic ones above. Let `dev.sh
+> --apps pay` write its `.env.local` rather than hand-rolling it.
 
 ## Integration Mode (with zk-X509)
 
@@ -245,13 +230,11 @@ SKIP_CIRCUIT_BUILD=1 ./scripts/dev.sh --mock --apps pay,pro
 
 Note the `IdentityGate` address from the deploy summary (`NEXT_PUBLIC_IDENTITY_GATE_ADDRESS` is also written to each app's `.env.local`). `IdentityGate` is a **single on-chain contract** that both Pay and Pro point at, so the registry swap in step 4 below applies to both apps — register a wallet once in the zk-X509 dashboard and it's verified everywhere.
 
-**2. Start zk-X509 frontend + backend** in a separate terminal. With `--apps pay` the default frontend isn't started, so zk-X509 can take its default port 3000:
+**2. Start zk-X509 frontend + backend** in a separate terminal. scatter-dex no longer starts a service on port 3000, so zk-X509 can take its default port:
 
 ```bash
 cd <zk-X509>
 bash script/start-services.sh                           # frontend :3000, backend :4444
-# or, if you also need scatter-dex's default frontend later:
-FRONTEND_PORT=3001 bash script/start-services.sh
 ```
 
 **3. Deploy a zk-X509 `IdentityRegistry` onto the same anvil** that `dev.sh --mock` started. The script also auto-seeds the test CA from `certs/ca_pub.der` so the registry isn't stuck at `caMerkleRoot = 0` (which would block every `register()` call):
@@ -298,7 +281,7 @@ After the swap, `isVerified(user)` calls from **both Pay and Pro** route through
 | Port | Service | Owner |
 |---|---|---|
 | 8545 | anvil | started by `dev.sh --mock` |
-| 3000 | zk-X509 frontend | zk-X509 (free because `--apps pay` skips scatter-dex's default frontend) |
+| 3000 | zk-X509 frontend / dashboard | zk-X509 (free because scatter-dex no longer starts a service on 3000) |
 | 3002 | zk-relayer A | scatter-dex |
 | 3003 | zk-relayer B | scatter-dex |
 | 4000 | shared-orderbook | scatter-dex |
@@ -324,51 +307,44 @@ lsof -tiTCP:8545 -sTCP:LISTEN | xargs -r kill           # anvil (this also tears
 
 On macOS `xargs` doesn't support `-r`; if you're not on Linux, gate the kill with a check instead: `pids=$(lsof -tiTCP:8545 -sTCP:LISTEN); [ -n "$pids" ] && kill $pids`.
 
-## Docker (ZK Relayer)
-
-```bash
-cd zk-relayer
-
-# Create key file
-echo "0xYOUR_RELAYER_PRIVATE_KEY" > relayer.key
-
-# Run
-PORT=3002 \
-RPC_URL=https://your-rpc.example.com \
-COMMITMENT_POOL_ADDRESS=0x... \
-PRIVATE_SETTLEMENT_ADDRESS=0x... \
-RELAYER_KEY_FILE=./relayer.key \
-docker compose up -d
-```
-
 ## Redeployment / Reset
 
 When redeploying contracts (e.g., after code changes), reset the relayer database and notes:
 
 ```bash
-# 1. Stop all services
-#    dev.sh mode  : Ctrl+C
-#    Docker mode  : make clean   (drops volumes — required to wipe relayer DB)
+# 1. Stop all services (Ctrl+C in dev.sh's terminal)
 
-# 2. Delete relayer database (dev.sh mode only — Docker mode is cleared by `make clean`)
-rm -f zk-relayer/zk-relayer.db
+# 2. Delete relayer databases
+rm -f zk-relayer/zk-relayer.db zk-relayer/zk-relayer-b.db shared-orderbook/shared-orderbook.db
 
 # 3. Clear notes folder (old commitment notes are invalid after redeploy)
 #    Delete zkscatter-note-*.json and zkscatter-claims-*.json from your notes folder
 
 # 4. Restart everything
-./scripts/dev.sh --mock     # or: make up
+./scripts/dev.sh --mock --apps pay,pro,operators
 ```
+
+> `dev.sh --mock` already wipes these DBs on a fresh start (it resets state
+> whenever it boots a new chain), so step 2 is only needed if you restart the
+> apps against an anvil that's still running. The Docker workflow uses
+> `make clean` instead — see [local-setup-docker.md](local-setup-docker.md).
 
 ## Cross-Relayer Setup (Shared Orderbook)
 
-Single-relayer `dev.sh` does **not** start the shared orderbook or a second relayer. To exercise cross-relayer matching (S-M15), run the cross-relayer script in a separate terminal after `dev.sh --mock` is up:
+`dev.sh --mock` already starts the shared orderbook + relayer A + relayer B, so
+cross-relayer matching (S-M15) works out of the box. The standalone
+`start-cross-relayer-e2e.sh` script is a separate variant that brings up the
+orderbook + both relayers against an **already-running** anvil — use it when you
+started anvil/contracts by other means and just need the relayer layer for an
+E2E run:
 
 ```bash
-# Terminal 1
-./scripts/dev.sh --mock
+# Normal flow — dev.sh --mock already brings up the orderbook + relayer A + B:
+./scripts/dev.sh --mock --apps pay
 
-# Terminal 2 (after deployment completes)
+# Standalone variant — ONLY when anvil + contracts are already up *without* dev.sh.
+# Don't run this alongside dev.sh; it starts its own orderbook + relayers and would
+# collide on ports 4000 / 3002 / 3003.
 ./scripts/start-cross-relayer-e2e.sh
 ```
 
@@ -392,10 +368,9 @@ Run the end-to-end cross-relayer scenario:
 cd zk-relayer && npx tsx test/e2e-cross-relayer.ts
 ```
 
-**Frontend with two relayers:** `dev.sh` only writes `NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002`. For a full 2-relayer local setup, append the following to `frontend/.env.local` and restart `npm run dev`:
+**Apps with two relayers:** `dev.sh` already writes `NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000` and `NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002` into each app's `.env.local`. To let an app forward claims to the second relayer too, append the server-side allowlist to that app's `.env.local` and restart `npm run dev`:
 
 ```
-NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 ALLOWED_RELAYER_ORIGINS=http://localhost:3002,http://localhost:3003
 ```
 
@@ -474,16 +449,16 @@ Fork-mode failure modes fall into four buckets. Diagnose in this order:
 | MetaMask: `This Chain ID is currently used by the Ethereum network` | You tried to add the fork as chain ID `1`, which MetaMask reserves for its built-in Mainnet. | `dev-fork.sh` uses chain ID `31338` by default for exactly this reason — don't override `FORK_CHAIN_ID=1`. The Add Fork Network header button uses 31338 automatically. |
 | `ONEINCH_API_KEY` present but 1inch path still not taken | Fork mode defaults `NEXT_PUBLIC_DISABLE_AGGREGATOR=true` to sidestep state-drift reverts (the env-var comment block and "1inch Swap API key" paragraph both mention this). | `NEXT_PUBLIC_DISABLE_AGGREGATOR=false ./scripts/dev-fork.sh` — also pin `FORK_BLOCK` near tip so 1inch's routing matches fork state. |
 
-**Frontend (non-fork-specific):** invisible text on mint-green buttons after editing `globals.css` is Tailwind v4's `@theme inline` block compiling into CSS custom properties at dev-server startup — HMR doesn't always pick up edits inside `@theme`. Kill the frontend, `rm -rf frontend/.next`, restart `npm run dev`, hard-reload the browser tab (⌘⇧R).
+**App UI (non-fork-specific):** invisible text on mint-green buttons after editing `globals.css` is Tailwind v4's `@theme inline` block compiling into CSS custom properties at dev-server startup — HMR doesn't always pick up edits inside `@theme`. Kill the dev server, clear the affected app's build cache (`rm -rf apps/<name>/.next` for a native app, or `frontend/.next` in fork mode, which runs the legacy `frontend/`), restart `npm run dev`, hard-reload the browser tab (⌘⇧R).
 
-When all else fails, `make clean` (Docker) or `rm -rf .dev-logs zk-relayer/zk-relayer.db frontend/.next` (host processes) wipes the moving parts; rerun the circuits build once and `./scripts/dev-fork.sh`.
+When all else fails in fork mode, `rm -rf .dev-logs zk-relayer/zk-relayer.db frontend/.next` wipes the moving parts; rerun the circuits build once and `./scripts/dev-fork.sh`.
 
 ## E2E Test Runbook
 
 | Scenario | Command | Prereqs |
 |---|---|---|
-| Full limit-order flow (single relayer) | open `http://localhost:3000`, deposit → order → claim | `dev.sh --mock` |
-| Cross-relayer matching | `cd zk-relayer && npx tsx test/e2e-cross-relayer.ts` | `dev.sh --mock` + `start-cross-relayer-e2e.sh` |
+| Full limit-order flow (single relayer) | open a started app (e.g. Pay `http://localhost:4001`), deposit → order → claim | `dev.sh --mock --apps pay` |
+| Cross-relayer matching | `cd zk-relayer && npx tsx test/e2e-cross-relayer.ts` | `dev.sh --mock` (already starts the orderbook + relayer B) |
 | Market order (DEX Trade) browser flow | open `http://localhost:3000`, add fork network, deposit → DEX Trade → claim; verify `DexSurplusCollected` / `PlatformFeeFromDex` / `PlatformSurplusFromDex` events fired (`cast logs --address <feeVault> …`). `FeeVault.platformRevenue(buyToken)` is only non-zero when the swap yielded positive slippage, and `platformRevenue(sellToken)` only when `dexPlatformFeeBps > 0` — events are the reliable invariant. | `dev-fork.sh` |
 | Market order (settleWithDex) Foundry fork | `cd contracts && forge test --match-contract SettleWithDex --fork-url <MAINNET_RPC>` | mainnet RPC URL |
 | FeeVault platformRevenue unit tests | `cd contracts && forge test --match-contract FeeVaultPlatformRevenue` | none (hermetic) |

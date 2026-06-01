@@ -18,7 +18,7 @@ Component design specs. Pre-implementation items are labeled in-document.
 
 ## operations/
 Deploy, run, and secure the system.
-- [deployment.md](operations/deployment.md), [local-setup.md](operations/local-setup.md), [operations-guide.md](operations/operations-guide.md)
+- [deployment.md](operations/deployment.md), [local-setup.md](operations/local-setup.md) (native) / [local-setup-docker.md](operations/local-setup-docker.md) (Docker), [operations-guide.md](operations/operations-guide.md)
 - [relayer-security.md](operations/relayer-security.md) — threat model (§1–§3 describe legacy v1 custodial model; Half-proof supersedes)
 - [mev-protection.md](operations/mev-protection.md), [fee-architecture.md](operations/fee-architecture.md), [gas-cost-analysis.md](operations/gas-cost-analysis.md)
 
