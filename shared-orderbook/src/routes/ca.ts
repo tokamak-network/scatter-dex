@@ -82,7 +82,12 @@ function parseAndValidateRootCa(der: Buffer): ParsedRootCa | Error {
   };
 }
 
-export function createCaRoutes(db: OrderbookDB, adminAuth: RequestHandler): Router {
+export function createCaRoutes(
+  db: OrderbookDB,
+  adminAuth: RequestHandler,
+  readLimiter: RequestHandler,
+  writeLimiter: RequestHandler,
+): Router {
   const router = Router();
 
   // Capture a raw binary upload as a Buffer. JSON `{ der: <base64> }` is
@@ -93,7 +98,7 @@ export function createCaRoutes(db: OrderbookDB, adminAuth: RequestHandler): Rout
     limit: MAX_CERT_BYTES,
   });
 
-  router.post("/root", adminAuth, rawCert, (req: Request, res: Response) => {
+  router.post("/root", writeLimiter, adminAuth, rawCert, (req: Request, res: Response) => {
     let der: Buffer | null = null;
     if (Buffer.isBuffer(req.body) && req.body.length > 0) {
       der = req.body; // raw binary upload
@@ -122,7 +127,7 @@ export function createCaRoutes(db: OrderbookDB, adminAuth: RequestHandler): Rout
     }
   });
 
-  router.get("/root", (_req, res) => {
+  router.get("/root", readLimiter, (_req, res) => {
     const ca = db.getActiveRootCa();
     if (!ca) {
       res.status(404).json({ error: "no root CA published" });
@@ -134,7 +139,7 @@ export function createCaRoutes(db: OrderbookDB, adminAuth: RequestHandler): Rout
     res.send(ca.der);
   });
 
-  router.get("/root/info", (_req, res) => {
+  router.get("/root/info", readLimiter, (_req, res) => {
     const ca = db.getActiveRootCa();
     if (!ca) {
       res.status(404).json({ error: "no root CA published" });

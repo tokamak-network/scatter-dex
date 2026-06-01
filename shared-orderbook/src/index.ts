@@ -104,7 +104,7 @@ async function main() {
 
   // Public Root CA store: admin publishes the public .der, anyone downloads it
   // (X.509 anchor for operator cert-chain verification).
-  app.use("/api/ca", createCaRoutes(db, adminAuth));
+  app.use("/api/ca", createCaRoutes(db, adminAuth, readLimiter, writeLimiter));
 
   // Operator-only — single shared monitor instance. The verifier daemon
   // (`src/verify.ts`) is the writer; this server is the read-side

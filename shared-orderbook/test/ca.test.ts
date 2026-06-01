@@ -1,13 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import http from "http";
 import express from "express";
 import fs from "fs";
+import path from "path";
+import os from "os";
 import { createHash } from "crypto";
 import { OrderbookDB } from "../src/core/db.js";
 import { createCaRoutes } from "../src/routes/ca.js";
 import { makeAdminAuth } from "../src/middleware/admin-auth.js";
 
-const TEST_DB = "/tmp/shared-orderbook-ca-test.db";
+const TEST_DB = path.join(os.tmpdir(), "shared-orderbook-ca-test.db");
 const ADMIN_TOKEN = "ca-admin-token";
 const noop: express.RequestHandler = (_req, _res, next) => next();
 
@@ -34,7 +36,9 @@ function cleanDb() {
 describe("OrderbookDB — root CA", () => {
   let db: OrderbookDB;
   beforeEach(() => { cleanDb(); db = new OrderbookDB(TEST_DB); });
-  afterAll(() => { db.close(); cleanDb(); });
+  // Close the handle after each test so cleanDb never races an open connection.
+  afterEach(() => { db.close(); });
+  afterAll(() => { cleanDb(); });
 
   it("returns null when no CA is published", () => {
     expect(db.getActiveRootCa()).toBeNull();
@@ -78,7 +82,7 @@ describe("CA routes", () => {
     db = new OrderbookDB(TEST_DB);
     const app = express();
     app.use(express.json());
-    app.use("/api/ca", createCaRoutes(db, makeAdminAuth({ staticToken: ADMIN_TOKEN })));
+    app.use("/api/ca", createCaRoutes(db, makeAdminAuth({ staticToken: ADMIN_TOKEN }), noop, noop));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, resolve));
     const addr = server.address();
