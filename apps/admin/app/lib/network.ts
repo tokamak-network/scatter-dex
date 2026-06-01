@@ -19,6 +19,8 @@ function resolveNetwork(): NetworkConfig {
       relayerRegistry: pick(process.env.NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS, ZERO),
       feeVault: pick(process.env.NEXT_PUBLIC_FEE_VAULT_ADDRESS, ZERO),
       weth: pick(process.env.NEXT_PUBLIC_WETH_ADDRESS, ZERO),
+      issuanceApprovalRegistry:
+        pick(process.env.NEXT_PUBLIC_ISSUANCE_APPROVAL_REGISTRY_ADDRESS) || undefined,
     },
     tokens: parseTokenList(process.env.NEXT_PUBLIC_TOKENS),
   };
