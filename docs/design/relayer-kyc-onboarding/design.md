@@ -211,3 +211,48 @@
 
 ## 10. 운영 / PII 주의
 현재 구현은 **로컬/테스트 한정**. 업로드 PII(주민등록번호·신분증·동영상)는 `shared-orderbook/kyc-uploads/`(gitignore, dev.sh wipe)에 평문 저장된다. **실서비스 배포 전 반드시**: 저장 암호화(KMS), 접근 감사로그, 보존·파기 정책, 격리 스토리지, 개인키·비밀번호 비수집 원칙 재확인.
+
+---
+
+## 11. 정정된 전체 아키텍처 (2026-06-01) — 단일 진실원천
+
+설계가 KYC 제출을 넘어 **operator-CA / PKI / zk-X509 신뢰체인** 전체로 확장됨에 따라, 정확본을 여기 고정한다.
+
+### 11.1 인증서 신뢰 체인 = 3 레이어
+| 레이어 | 무엇 | 보유/발급 | 9단계 |
+|---|---|---|---|
+| ① Root CA 인증서(.der) | `rootCA.der` (자체서명, cA=true) | **zk-X509 서버 보유·앵커**(caMerkleRoot). CA 개인키 `rootCA.p12`는 admin 보유(서명용) | 0a 생성(admin) → 2 앵커(zk-X509) |
+| ② Operator leaf 인증서 | operator 전용 X.509(CN/O/C/validity) | admin Operator-CA가 **operator CSR을 Root CA로 서명** | 3·4·5 |
+| ③ ZK proof | leaf가 앵커 Root CA로 체인됨을 영지식 증명 | operator가 zk-X509 포털(SP1/Docker)에서 생성 → IdentityRegistry 등록 | 5 |
+
+### 11.2 End-to-end 흐름
+0a. **admin**: company Root CA 생성(웹) → `rootCA.der`(공개)+`rootCA.p12`(CA키,비번암호화) 다운로드.
+0b. **admin/zk-X509**: rootCA.der를 zk-X509에 앵커(서버 보유).
+1. **operator**: KYC 제출(메일·월렛·동영상·신분증) → shared-orderbook.
+2. **admin**: KYC 검토 → subject(CN/O/C/validity) 확정 → 온체인 `approveForIssuance(wallet,CN,O,C,validityDays)`(subject 고정) + cert링크 메일.
+3. **operator**: 메일링크 `?wallet=` → 발급화면, subject **read-only**, `approved`만 활성.
+4. **operator(개인영역)**: 본인 비번 → WebCrypto keygen(클라) → 개인키 **PKCS#12 로컬보관(서버 미전송)** → **CSR(공개)만** 제출.
+5. **admin CA**: CSR subject가 온체인 승인값과 일치 검증 → `rootCA.p12`로 서명 → operator **leaf cert** 반환.
+6. **operator**: leaf+개인키로 zk-X509 ZK proof(SP1/Docker) → IdentityRegistry 등록 → `isVerified`.
+7~9. Verify 초록 → Endpoint → Bond → register → leaderboard.
+
+### 11.3 불변 보안 원칙
+- **Root CA .der = zk-X509 보유(공개)**, CA 개인키 .p12 = admin 보유(서명용, 비번암호화).
+- **operator 개인키 = operator 클라에서 생성, 본인 비번 암호화, admin/서버 절대 미열람**. CSR(공개)만 전송. (키 생성은 admin이 아니라 operator)
+- **cert subject = admin 온체인 승인으로 고정**, operator는 read-only.
+- **admin 백엔드 인증 = SIWE(어드민 지갑 서명)**, static bearer 폐기.
+
+### 11.4 작업배분 (소유/의존)
+| 작업 | 소유 | 상태 |
+|---|---|---|
+| operators KYC 폼 / orderbook KYC 백엔드 / admin KYC 라우트 | K0/K2/K2 | ✅ #889/#888/#892 |
+| admin KYC 검토 UI | K0 | 🔨 PR2-B |
+| + 온체인 approveForIssuance(subject 고정) | K0 | ⏳ PR2-B 추가 |
+| 개인키 암호화/PKCS#12 | K1 | ✅ #887/#891 |
+| 발급 승인게이트 | K1 | 🔨 #893 |
+| Root CA 생성(admin .der/.p12) | K1 | ⏳ |
+| operator 자가 keygen 재구성 | K1 | ⏳ |
+| CA가 CSR 서명→leaf | K1 | ⏳ |
+| 메일링크 발급화면(?wallet, subject read-only) | K1 | ⏳ |
+| SIWE 어드민 인증 | K2 | ⏳ |
+| Root CA 앵커 + ZK proof(SP1) | 사람/zk-X509(Docker) | 외부 |
