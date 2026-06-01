@@ -63,6 +63,9 @@ shared-orderbook/dist/
 # Relayer operator KYC uploads (liveness video + ID document). User PII —
 # must never be committed. Wiped by scripts/dev.sh's DB reset.
 shared-orderbook/kyc-uploads/
+# Scratch space for a tester's own KYC fixtures (liveness video / ID scan)
+# kept inside the repo — also PII, never commit. Drop test files here.
+kyc-test-files/
 
 # Auto-generated SDK reference (TypeDoc output) produced by
 # `cd apps/docs && npm run api`. Committing it drifts across Node
