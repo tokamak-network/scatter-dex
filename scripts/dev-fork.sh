@@ -133,6 +133,22 @@ ensure_types_built() {
   fi
 }
 
+# Install a package's node_modules when missing OR when package.json is newer
+# than the last install — a `git pull` that adds a `file:` workspace dependency
+# otherwise leaves a stale node_modules and the process crashes with
+# `ERR_MODULE_NOT_FOUND: Cannot find package`. The post-install `touch` stamps
+# node_modules newer than package.json so the check doesn't re-fire next run.
+ensure_deps_installed() {
+  local dir="$1" name="$2"
+  [ -f "$dir/package.json" ] || return 0
+  if [ ! -d "$dir/node_modules" ] || [ "$dir/package.json" -nt "$dir/node_modules" ]; then
+    echo "  Installing $name dependencies (first run or package.json changed)..."
+    ( cd "$dir" && npm install --no-audit --no-fund ) > "$LOG_DIR/$name-install.log" 2>&1 \
+      || { echo "  ERROR: $name dependency install failed. See $LOG_DIR/$name-install.log"; tail -15 "$LOG_DIR/$name-install.log" 2>/dev/null; exit 1; }
+    touch "$dir/node_modules"
+  fi
+}
+
 # Uninstall the mobile app from all booted simulators/emulators. Fresh contract
 # addresses on every run make cached commitments/claim notes stale; wallet
 # mnemonic must be re-imported after reset.
@@ -407,10 +423,7 @@ echo "[3/6] Starting shared orderbook (port 4000)..."
 # shared-orderbook AND zk-relayer both import @scatter-dex/types' built
 # output — keep it fresh before either boots.
 ensure_types_built
-if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
-  echo "  Installing shared-orderbook dependencies (first run)..."
-  ( cd "$ROOT_DIR/shared-orderbook" && npm install --no-audit --no-fund ) > "$LOG_DIR/shared-orderbook-install.log" 2>&1
-fi
+ensure_deps_installed "$ROOT_DIR/shared-orderbook" "shared-orderbook"
 ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
 cd "$ROOT_DIR/shared-orderbook"
 # Mirror dev.sh's CORS allowlist union — see scripts/dev.sh DEV_CORS_ORIGINS
@@ -458,6 +471,7 @@ EOF
 echo "  INDEX_FROM_BLOCK:    $INDEX_FROM"
 echo "  Admin API key: $ADMIN_KEY"
 
+ensure_deps_installed "$ROOT_DIR/zk-relayer" "zk-relayer"
 ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
 cd "$ROOT_DIR/zk-relayer"
 # Same CORS allowlist as the orderbook above — same rationale.
@@ -621,6 +635,7 @@ else
   echo "        Add it to frontend/.env.local and restart the frontend to enable 1inch."
 fi
 
+ensure_deps_installed "$ROOT_DIR/frontend" "frontend"
 cd "$ROOT_DIR/frontend"
 npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
 last_pid=$!

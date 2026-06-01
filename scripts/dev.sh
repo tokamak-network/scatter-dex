@@ -217,6 +217,25 @@ ensure_types_built() {
   fi
 }
 
+# Install a package's node_modules when missing OR when package.json is newer
+# than the last install. dev.sh previously only installed when node_modules was
+# entirely ABSENT, so a `git pull` that added a `file:` workspace dependency
+# (e.g. zk-relayer gaining `@zkscatter/sdk`) left a stale node_modules and the
+# process crashed at startup with `ERR_MODULE_NOT_FOUND: Cannot find package`.
+# The `package.json -nt node_modules` test reinstalls after any dependency
+# change; the post-install `touch` stamps node_modules newer than package.json
+# so the check doesn't re-fire on the next run.
+ensure_deps_installed() {
+  local dir="$1" name="$2"
+  [ -f "$dir/package.json" ] || return 0
+  if [ ! -d "$dir/node_modules" ] || [ "$dir/package.json" -nt "$dir/node_modules" ]; then
+    echo "  Installing $name dependencies (first run or package.json changed)..."
+    ( cd "$dir" && npm install --no-audit --no-fund ) > "$LOG_DIR/$name-install.log" 2>&1 \
+      || { echo "  ERROR: $name dependency install failed. See $LOG_DIR/$name-install.log"; tail -15 "$LOG_DIR/$name-install.log" 2>/dev/null; exit 1; }
+    touch "$dir/node_modules"
+  fi
+}
+
 # Wipe the mobile app from any booted iOS simulator / Android emulator.
 # Fresh anvil means fresh contract addresses, so any cached commitment
 # notes / claim notes / trade history in the app are stale. Full uninstall
@@ -627,10 +646,7 @@ echo "[3/6] Starting shared orderbook (port 4000)..."
 # shared-orderbook AND zk-relayer (started below) both import from the
 # @scatter-dex/types built output — keep it fresh before either boots.
 ensure_types_built
-if [ ! -d "$ROOT_DIR/shared-orderbook/node_modules" ]; then
-  echo "  Installing shared-orderbook dependencies (first run)..."
-  ( cd "$ROOT_DIR/shared-orderbook" && npm install --no-audit --no-fund ) > "$LOG_DIR/shared-orderbook-install.log" 2>&1
-fi
+ensure_deps_installed "$ROOT_DIR/shared-orderbook" "shared-orderbook"
 ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
 cd "$ROOT_DIR/shared-orderbook"
 # `ALLOW_PRIVATE_RELAYER_URLS=1` opts the SSRF guard out for local
@@ -656,6 +672,7 @@ echo "  shared-orderbook running on http://localhost:4000 (PID $last_pid)"
 INDEX_FROM=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo 0)
 ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
 
+ensure_deps_installed "$ROOT_DIR/zk-relayer" "zk-relayer"
 ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
 
 # ── 4. Start Relayer A (port 3002) ─────────────────────────
@@ -924,6 +941,7 @@ if [ -d "$ROOT_DIR/mobile" ]; then
 fi
 
 if [ ${#APPS_TO_RUN[@]} -eq 0 ]; then
+  ensure_deps_installed "$ROOT_DIR/frontend" "frontend"
   cd "$ROOT_DIR/frontend"
   npm run dev > "$LOG_DIR/frontend.log" 2>&1 &
   last_pid=$!
@@ -938,6 +956,7 @@ else
   for app in "${APPS_TO_RUN[@]}"; do
     port="${APP_PORTS[$app]}"
     write_app_env "$ROOT_DIR/apps/$app"
+    ensure_deps_installed "$ROOT_DIR/apps/$app" "app-$app"
     # `exec` makes the subshell *become* the npm process so `$!` is the
     # real server PID. Without it, the subshell PID is captured and
     # `cleanup()` would kill only the wrapper, leaving npm/next orphaned
