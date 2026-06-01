@@ -184,12 +184,114 @@ describe("KYC routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("admin stubs require a bearer token and return 501 once authed (PR2)", async () => {
-    const noAuth = await fetch(`http://localhost:${PORT}/api/kyc/submissions`);
-    expect(noAuth.status).toBe(401);
-    const authed = await fetch(`http://localhost:${PORT}/api/kyc/submissions`, {
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+  // ── Admin review surface (PR2-A) ─────────────────────────────────────────
+  const base = `http://localhost:${PORT}`;
+  const adminAuth = { authorization: `Bearer ${ADMIN_TOKEN}` };
+  const postStatus = (id: string, body: unknown) =>
+    fetch(`${base}/api/kyc/submissions/${id}/status`, {
+      method: "POST",
+      headers: { ...adminAuth, "content-type": "application/json" },
+      body: JSON.stringify(body),
     });
-    expect(authed.status).toBe(501);
+
+  it("admin GET /submissions — 401 without token, PII-minimal list with token", async () => {
+    expect((await fetch(`${base}/api/kyc/submissions`)).status).toBe(401);
+    const res = await fetch(`${base}/api/kyc/submissions`, { headers: adminAuth });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.submissions)).toBe(true);
+    expect(body.submissions.length).toBeGreaterThan(0);
+    const row = body.submissions[0];
+    expect(row).toHaveProperty("wallet");
+    expect(row).toHaveProperty("status");
+    expect(row).not.toHaveProperty("videoPath"); // no raw paths leaked
+    expect(row).not.toHaveProperty("idDocPath");
+    expect(row).not.toHaveProperty("notes"); // notes are detail-only
+  });
+
+  it("admin GET /submissions?status= — filters; rejects an unknown status", async () => {
+    const pending = await (await fetch(`${base}/api/kyc/submissions?status=pending`, { headers: adminAuth })).json();
+    expect(pending.submissions.every((r: { status: string }) => r.status === "pending")).toBe(true);
+    expect((await fetch(`${base}/api/kyc/submissions?status=bogus`, { headers: adminAuth })).status).toBe(400);
+  });
+
+  it("admin GET /submissions/:id — 404 missing; meta + file availability, no paths", async () => {
+    expect((await fetch(`${base}/api/kyc/submissions/nope`, { headers: adminAuth })).status).toBe(404);
+    const sub = await (await submitForm({ wallet: "0x" + "d".repeat(40), email: "d@example.com", video: true, idDoc: true })).json();
+    const res = await fetch(`${base}/api/kyc/submissions/${sub.id}`, { headers: adminAuth });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.wallet).toBe("0x" + "d".repeat(40));
+    expect(body.files.video).toEqual({ present: true, contentType: "video/webm", sizeBytes: 3 });
+    expect(body.files.idDoc.present).toBe(true);
+    expect(body.files.idDoc.contentType).toBe("image/png");
+    expect(body).not.toHaveProperty("videoPath");
+  });
+
+  it("admin GET /submissions/:id/file/:kind — streams correct bytes + Content-Type; rejects bad kind / no auth", async () => {
+    const sub = await (await submitForm({ wallet: "0x" + "e".repeat(40), email: "e@example.com", video: true, idDoc: true })).json();
+    expect((await fetch(`${base}/api/kyc/submissions/${sub.id}/file/bogus`, { headers: adminAuth })).status).toBe(400);
+    expect((await fetch(`${base}/api/kyc/submissions/${sub.id}/file/video`)).status).toBe(401);
+
+    const vres = await fetch(`${base}/api/kyc/submissions/${sub.id}/file/video`, { headers: adminAuth });
+    expect(vres.status).toBe(200);
+    expect(vres.headers.get("content-type")).toBe("video/webm");
+    expect(new Uint8Array(await vres.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+
+    const dres = await fetch(`${base}/api/kyc/submissions/${sub.id}/file/idDoc`, { headers: adminAuth });
+    expect(dres.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await dres.arrayBuffer())).toEqual(new Uint8Array([4, 5, 6]));
+  });
+
+  it("admin POST /submissions/:id/status — auth, validation, and the two-step transition", async () => {
+    const wallet = "0x" + "f".repeat(40);
+    const sub = await (await submitForm({ wallet, email: "f@example.com", video: true, idDoc: true })).json();
+
+    // no auth
+    const noAuth = await fetch(`${base}/api/kyc/submissions/${sub.id}/status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "verified" }),
+    });
+    expect(noAuth.status).toBe(401);
+
+    // bad targets: pending isn't a review target; unknown status; bad transition
+    expect((await postStatus(sub.id, { status: "pending" })).status).toBe(400);
+    expect((await postStatus(sub.id, { status: "bogus" })).status).toBe(400);
+    expect((await postStatus(sub.id, { status: "approved" })).status).toBe(400); // pending→approved skips verify
+
+    // valid pending → verified (with notes)
+    const verified = await postStatus(sub.id, { status: "verified", notes: "docs look good" });
+    expect(verified.status).toBe(200);
+    const vbody = await verified.json();
+    expect(vbody.status).toBe("verified");
+    expect(vbody.notes).toBe("docs look good");
+    expect(vbody.reviewedAt).toBeGreaterThan(0);
+
+    // verified → approved, then approved is terminal
+    expect((await (await postStatus(sub.id, { status: "approved" })).json()).status).toBe("approved");
+    expect((await postStatus(sub.id, { status: "rejected" })).status).toBe(400);
+
+    // unknown id
+    expect((await postStatus("nope", { status: "verified" })).status).toBe(404);
+
+    // public status endpoint reflects the final decision
+    const pub = await (await fetch(`${base}/api/kyc/status?wallet=${wallet}`)).json();
+    expect(pub.status).toBe("approved");
+  });
+
+  it("admin routes are disabled (503) when ADMIN_TOKEN is unset", async () => {
+    // A second app with no admin token — the shared auth should 503, not 401.
+    const noTokenApp = express();
+    noTokenApp.use(express.json());
+    noTokenApp.use("/api/kyc", createKycRoutes(db, noopLimiter, noopLimiter, undefined));
+    const srv = http.createServer(noTokenApp);
+    await new Promise<void>((resolve) => srv.listen(PORT + 1, resolve));
+    try {
+      const res = await fetch(`http://localhost:${PORT + 1}/api/kyc/submissions`, { headers: adminAuth });
+      expect(res.status).toBe(503);
+    } finally {
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+    }
   });
 });
