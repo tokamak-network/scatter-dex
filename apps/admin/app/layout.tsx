@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
+import { OperatorCaNav } from "./components/OperatorCaNav";
 import { AdminBadge } from "./components/AdminBadge";
 import { Brand } from "./components/Brand";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
@@ -36,7 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             navLinks={
               <>
                 <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
-                <Link href="/operator-ca" className="hover:text-[var(--color-text)]">Operator CA</Link>
+                <OperatorCaNav />
                 <Link href="/sanctions" className="hover:text-[var(--color-text)]">Sanctions</Link>
                 <Link href="/protocol" className="hover:text-[var(--color-text)]">Protocol</Link>
                 <Link href="/treasury" className="hover:text-[var(--color-text)]">Treasury</Link>
