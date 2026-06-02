@@ -20,6 +20,7 @@ import { useOperatorIdentityRefresh } from "../lib/identity";
 import { normalizeName, validateEmail, validateRelayerUrl } from "../lib/registerValidation";
 import { useEndpointProbe, type EndpointProbeResult } from "../lib/useEndpointProbe";
 import { useIssuanceApproval, type UseIssuanceApprovalResult } from "../lib/useIssuanceApproval";
+import { useGateRegistry } from "../lib/useGateRegistry";
 import { Stepper, type StepStatus } from "./_Stepper";
 
 const VERIFY_URL = safeOperatorUrl(CA_REGISTRATION_URL);
@@ -62,15 +63,17 @@ function coerceKycStatus(v: unknown): KycStatus {
     : "none";
 }
 
-/** Which of the 9 onboarding-guide steps each wizard milestone
+/** Which of the 6 onboarding-guide steps each wizard milestone
  *  completes, for the ordered progress rendering in FlowContextPanel.
- *  KYC clears guide step 1; verification (isVerified) implies the admin
- *  approved issuance and the cert was issued, so 3–6 light up together;
- *  a successful register closes out 7–9. */
+ *  Each milestone lights up EXACTLY one guide step so the panel never
+ *  shows a wall of green that hides where you actually are:
+ *    1 KYC submit · 2 zk-X509 proof · 3 admin KYC approval ·
+ *    4 endpoint · 5 bond · 6 leaderboard. */
 const FLOW_STEP_GROUPS = {
   kyc: [1],
-  verified: [3, 4, 5, 6],
-  registered: [7, 8, 9],
+  verified: [2],
+  approved: [3],
+  registered: [4, 5, 6],
 } as const;
 
 /** Client-side upload ceilings — a pre-check that mirrors the
@@ -282,16 +285,28 @@ export default function RegisterPage() {
   // verify/endpoint/bond booleans keep their original names
   // (step1Done=Verify, step2Done=Endpoint, step3Done=Bond);
   // `kycDone` is the new step-1 gate in front of them.
-  const step1Done = !!status && status.isVerified; // Verify (wizard step 2)
+  const step1Done = !!status && status.isVerified; // zk-X509 proof (wizard step 2)
   // A wallet that's already verified has plainly passed KYC, so don't
   // force a legacy verified/registered operator back to step 1
   // (Copilot review on #889).
   const kycDone = isKycSubmitted(kycStatus) || step1Done;
-  const step2Done =
-    step1Done && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 3)
+  // 2nd gate (new flow): AFTER zk-X509 verification the admin compares the
+  // proven certificate subject against the KYC documents and approves
+  // on-chain (IssuanceApprovalRegistry, reused as the KYC-approval registry).
+  const kycApproved = approval.status === "approved";
   const step3Done = phase === "success"; // Bond (step 4)
+  // Verified but not yet approved → the ball is in the admin's court.
+  // Hold at the Verify milestone and surface the wait instead of
+  // presenting Endpoint as the operator's next action.
+  // Only "waiting on the admin" when genuinely pending review — not during the
+  // transient `checking` load, and not for revoked/expired/error (those carry
+  // their own messaging), which a bare `!kycApproved` would wrongly include.
+  const awaitingAdmin =
+    step1Done && approval.status === "not-approved" && !step3Done;
+  const step2Done =
+    step1Done && kycApproved && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 3)
   const currentStep: 1 | 2 | 3 | 4 =
-    !kycDone ? 1 : !step1Done ? 2 : !step2Done ? 3 : 4;
+    !kycDone ? 1 : !step1Done ? 2 : awaitingAdmin ? 2 : !step2Done ? 3 : 4;
 
   // Which of the 9 onboarding-guide steps are complete, for the
   // ordered progress rendering in FlowContextPanel (groups defined in
@@ -300,20 +315,10 @@ export default function RegisterPage() {
     const s = new Set<number>();
     if (kycDone) for (const n of FLOW_STEP_GROUPS.kyc) s.add(n);
     if (step1Done) for (const n of FLOW_STEP_GROUPS.verified) s.add(n);
+    if (kycApproved) for (const n of FLOW_STEP_GROUPS.approved) s.add(n);
     if (step3Done) for (const n of FLOW_STEP_GROUPS.registered) s.add(n);
     return s;
-  }, [kycDone, step1Done, step3Done]);
-
-  // After KYC is submitted the operator can't act until the admin
-  // reviews + approves (onboarding steps 2-3). Distinguish that wait
-  // from the "approved — go issue your cert" state so the wizard
-  // doesn't present Verify as if it were the operator's next action.
-  // Only "waiting on the admin" when the wallet is genuinely pending the
-  // on-chain approval. `checking` is a transient load, and
-  // revoked/expired/error/idle (registry unset) are surfaced by the
-  // Verify card's own CTA — not as "keep waiting".
-  const awaitingAdmin = kycDone && !step1Done && approval.status === "not-approved";
-  const approvedNotVerified = approval.status === "approved" && !step1Done;
+  }, [kycDone, step1Done, kycApproved, step3Done]);
 
   const stepperSteps = useMemo(
     () => [
@@ -411,9 +416,8 @@ export default function RegisterPage() {
 
       <Stepper steps={stepperSteps} current={currentStep} />
 
-      {(awaitingAdmin || approvedNotVerified) && (
+      {awaitingAdmin && (
         <AdminReviewBanner
-          approvedNotVerified={approvedNotVerified}
           onRefresh={() => { approval.refetch(); refreshIdentity(); refreshStatus(); }}
         />
       )}
@@ -444,7 +448,7 @@ export default function RegisterPage() {
       />
 
       <Step2Endpoint
-        gated={!step1Done}
+        gated={!step1Done || !kycApproved}
         url={url}
         setUrl={setUrl}
         urlValidation={urlValidation}
@@ -602,7 +606,7 @@ function Step0Kyc({
     <StepSection
       step={1}
       title="Submit KYC + wallet"
-      hint="Identity-verification documents for the admin's offline review. Required before the Relayer-CA will issue your certificate."
+      hint="Identity-verification documents for the admin's review. The admin later compares these against your zk-X509 certificate proof (Step 2) before approving."
       done={submitted}
       defaultOpen={defaultOpen}
     >
@@ -630,7 +634,7 @@ function Step0Kyc({
               className="w-full rounded-lg border border-[var(--color-border-strong)] bg-[var(--color-surface-muted)] px-3 py-2 font-mono text-xs text-[var(--color-text-muted)]"
             />
           </Field>
-          <Field label="Contact email" hint="The admin emails your certificate-issuance link here once approved.">
+          <Field label="Contact email" hint="Where the admin reaches you about your application.">
             <input
               type="email"
               value={email}
@@ -683,18 +687,18 @@ function Step0Kyc({
 function KycSubmittedBanner({ kycStatus }: { kycStatus: KycStatus }) {
   const copy: Record<string, { title: string; body: string; tone: string }> = {
     pending: {
-      title: "Submitted — under review",
-      body: "The admin is reviewing your documents — this usually takes 1–2 business days. You'll get an email with your certificate-issuance link once your wallet is approved.",
+      title: "KYC submitted — now prove your certificate",
+      body: "Your documents are on file. Next, do Step 2 below: prove your accredited certificate via zk-X509. The admin reviews your documents against that proof — there's nothing to wait for here until Step 2 is in.",
       tone: "var(--color-primary)",
     },
     verified: {
-      title: "Documents verified",
-      body: "Your documents passed review. Awaiting final issuance approval — watch your email for the certificate link.",
+      title: "Documents checked",
+      body: "The admin has checked your KYC documents. Make sure your zk-X509 proof is submitted in Step 2 — final on-chain approval and registration follow.",
       tone: "var(--color-primary)",
     },
     approved: {
-      title: "Approved for issuance",
-      body: "Your wallet is approved. Check your email for the certificate-issuance link, then continue to Verify below.",
+      title: "KYC approved",
+      body: "The admin approved your KYC. Once your zk-X509 proof is verified, registration (endpoint + bond) unlocks below.",
       tone: "var(--color-success)",
     },
   };
@@ -781,15 +785,20 @@ function Step1Verify({
   defaultOpen: boolean;
 }) {
   const verified = !!status?.isVerified;
-  // `approval` (admin-recorded issuance approval for the connected
-  // wallet) is lifted to the page and passed in — when set it replaces
-  // the generic "Get verified" warning card with a tailored
-  // "You're approved — go get your cert" banner.
+  // Deep-link straight to THIS registry's register tab (the gate's
+  // active zk-X509 registry) rather than the bare dashboard root, so
+  // the operator lands exactly where they submit their accredited-cert
+  // proof. Falls back to the base URL until the address resolves.
+  const registryAddr = useGateRegistry();
+  const proveUrl =
+    VERIFY_URL && registryAddr
+      ? `${VERIFY_URL.replace(/\/+$/, "")}/registry/${registryAddr}?tab=register`
+      : VERIFY_URL;
   return (
     <StepSection
       step={2}
-      title="Verify your operator identity"
-      hint="Get an attestation from the zk-X509 Relayer-CA. Without it, register() reverts."
+      title="Prove your accredited certificate (zk-X509)"
+      hint="Submit a zk-X509 proof that you hold a certificate from a registered accredited CA. This flips isVerified on-chain; without it register() reverts."
       done={verified}
       gated={gated}
       gatedReason="Submit your KYC documents in Step 1 first."
@@ -800,14 +809,14 @@ function Step1Verify({
           is close to expiry. Distinct from the warning-card CTA
           below which only shows when isVerified=false. */}
       <div className="mb-4 flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-muted)]">
-        {VERIFY_URL && (
+        {proveUrl && (
           <a
-            href={VERIFY_URL}
+            href={proveUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
           >
-            Open zk-X509 verifier ↗
+            Open zk-X509 to prove your certificate ↗
           </a>
         )}
         <Link
@@ -834,7 +843,7 @@ function Step1Verify({
           hint={
             verified
               ? `Verified until ${formatVerifiedUntil(status!.verifiedUntil)}`
-              : "Required for slashing accountability"
+              : "Binds this wallet to your verified identity so the protocol can slash a misbehaving relayer"
           }
         />
       </ul>
@@ -1499,15 +1508,12 @@ const FLOW_STEPS: Array<{
    *  the operator does outside this page (or admin steps). */
   wizardStep?: 1 | 2 | 3 | 4;
 }> = [
-  { n: 1, who: "operator", title: "Submit KYC + wallet to the admin", where: "Step 1 below", wizardStep: 1 },
-  { n: 2, who: "admin", title: "Anchor company Root CA on zk-X509", where: "one-time admin setup" },
-  { n: 3, who: "admin", title: "Approve your wallet for issuance", where: "/admin/issuance (admin's app)" },
-  { n: 4, who: "operator", title: "Open the Relayer-CA portal", where: "Step 2 below", wizardStep: 2 },
-  { n: 5, who: "external", title: "Issue cert + submit ZK proof", where: "zk-X509 portal (separate tab)" },
-  { n: 6, who: "operator", title: "Confirm verification went green", where: "Step 2 below — Refresh button", wizardStep: 2 },
-  { n: 7, who: "operator", title: "Spin up your relayer process", where: "your server (zk-relayer service)" },
-  { n: 8, who: "operator", title: "Register endpoint + post bond", where: "Steps 3 & 4 below", wizardStep: 3 },
-  { n: 9, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
+  { n: 1, who: "operator", title: "Submit your KYC documents + wallet", where: "Step 1 below", wizardStep: 1 },
+  { n: 2, who: "operator", title: "Prove your accredited certificate via zk-X509", where: "Step 2 below", wizardStep: 2 },
+  { n: 3, who: "admin", title: "Admin checks your KYC against the certificate, then approves", where: "admin app — please wait" },
+  { n: 4, who: "operator", title: "Register your relayer endpoint + fee", where: "Step 3 below", wizardStep: 3 },
+  { n: 5, who: "operator", title: "Post bond to activate", where: "Step 4 below", wizardStep: 4 },
+  { n: 6, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
 ];
 
 /** Banner shown once KYC is submitted: makes explicit that the next
@@ -1515,34 +1521,18 @@ const FLOW_STEPS: Array<{
  *  should wait for the issuance email — rather than the wizard quietly
  *  advancing the highlight to Verify as if it were actionable. */
 function AdminReviewBanner({
-  approvedNotVerified,
   onRefresh,
 }: {
-  approvedNotVerified: boolean;
   onRefresh: () => void;
 }) {
-  if (approvedNotVerified) {
-    return (
-      <div className="rounded-xl border border-[var(--color-success)] bg-[var(--color-success-soft)] px-4 py-3 text-sm">
-        <div className="font-medium">Approved — issue your certificate</div>
-        <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-          The admin approved your wallet. Open the certificate-issuance link from
-          your email (or the Verify step below), issue your certificate, then{" "}
-          <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">
-            refresh
-          </button>
-          .
-        </p>
-      </div>
-    );
-  }
   return (
     <div className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-3 text-sm">
-      <div className="font-medium">Submitted — waiting on the admin</div>
+      <div className="font-medium">Verified — waiting on the admin&apos;s approval</div>
       <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-        Your KYC is in. The admin now reviews your documents and approves your
-        wallet (onboarding steps 2-3). You&apos;ll get a certificate-issuance
-        email once approved — no action is needed here until then.{" "}
+        Your zk-X509 certificate proof is in. The admin now compares the
+        certificate details against your KYC documents and approves your wallet
+        on-chain. Registration (endpoint + bond) unlocks once approved — no
+        action is needed here until then.{" "}
         <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">
           Check now
         </button>
