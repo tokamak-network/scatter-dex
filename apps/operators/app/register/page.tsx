@@ -308,9 +308,12 @@ export default function RegisterPage() {
   const awaitingAdmin =
     step1Done && approval.status === "not-approved" && !step3Done;
   const step2Done =
-    step1Done && kycApproved && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 3)
-  const currentStep: 1 | 2 | 3 | 4 =
-    !kycDone ? 1 : !step1Done ? 2 : awaitingAdmin ? 2 : !step2Done ? 3 : 4;
+    step1Done && kycApproved && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 4)
+  // 5-step flow: 1 Submit KYC · 2 Prove zk-X509 · 3 Admin approval ·
+  // 4 Endpoint · 5 Bond & submit. Admin approval is its own step (the
+  // operator waits on it) between proving and registering.
+  const currentStep: 1 | 2 | 3 | 4 | 5 =
+    !kycDone ? 1 : !step1Done ? 2 : !kycApproved ? 3 : !step2Done ? 4 : 5;
 
   // Which of the 9 onboarding-guide steps are complete, for the
   // ordered progress rendering in FlowContextPanel (groups defined in
@@ -328,31 +331,37 @@ export default function RegisterPage() {
     () => [
       {
         id: 1 as const,
-        title: "Identity",
+        title: "Submit KYC",
         status: stepStatus(kycDone, currentStep === 1),
         caption: kycCaption(kycStatus, account),
       },
       {
         id: 2 as const,
-        title: "Verify",
+        title: "Prove zk-X509",
         status: stepStatus(step1Done, currentStep === 2),
         caption: step1Caption(status, account, wrongChain),
       },
       {
         id: 3 as const,
-        title: "Endpoint",
-        status: stepStatus(step2Done, currentStep === 3),
-        caption: step2Caption(probe, urlValidation, nameTooShort, nameConflict),
+        title: "Admin approval",
+        status: stepStatus(kycApproved, currentStep === 3),
+        caption: adminApprovalCaption(approval.status),
       },
       {
         id: 4 as const,
+        title: "Endpoint",
+        status: stepStatus(step2Done, currentStep === 4),
+        caption: step2Caption(probe, urlValidation, nameTooShort, nameConflict),
+      },
+      {
+        id: 5 as const,
         title: "Bond & submit",
-        status: stepStatus(step3Done, currentStep === 4),
+        status: stepStatus(step3Done, currentStep === 5),
         caption: step3Caption(phase, status, txHash),
       },
     ],
     [
-      kycDone, kycStatus, step1Done, step2Done, step3Done, currentStep,
+      kycDone, kycStatus, step1Done, kycApproved, approval.status, step2Done, step3Done, currentStep,
       status, account, wrongChain,
       probe, urlValidation, nameTooShort, nameConflict, phase, txHash,
     ],
@@ -420,12 +429,6 @@ export default function RegisterPage() {
 
       <Stepper steps={stepperSteps} current={currentStep} />
 
-      {awaitingAdmin && (
-        <AdminReviewBanner
-          onRefresh={() => { approval.refetch(); refreshIdentity(); refreshStatus(); }}
-        />
-      )}
-
       <Step0Kyc
         account={account}
         kycStatus={kycStatus}
@@ -451,6 +454,15 @@ export default function RegisterPage() {
         defaultOpen={currentStep === 2}
       />
 
+      {/* Step 3 — admin approval. The operator can't act; surface the wait
+          here, between Prove (step 2) and Endpoint (step 4), so the banner
+          sits where this step lives in the flow rather than at the top. */}
+      {awaitingAdmin && (
+        <AdminReviewBanner
+          onRefresh={() => { approval.refetch(); refreshIdentity(); refreshStatus(); }}
+        />
+      )}
+
       <Step2Endpoint
         gated={!step1Done || !kycApproved}
         url={url}
@@ -466,7 +478,7 @@ export default function RegisterPage() {
         probe={probe}
         endpointOverride={endpointOverride}
         setEndpointOverride={setEndpointOverride}
-        defaultOpen={currentStep === 3}
+        defaultOpen={currentStep === 4}
       />
 
       <Step3Bond
@@ -479,7 +491,7 @@ export default function RegisterPage() {
         txHash={txHash}
         wrongChain={wrongChain}
         onSubmit={onSubmit}
-        defaultOpen={currentStep === 4}
+        defaultOpen={currentStep === 5}
       />
     </div>
   );
@@ -519,11 +531,23 @@ function formatVerifiedUntil(unixSec: number): string {
 function kycCaption(kycStatus: KycStatus, account: string | null): string | undefined {
   if (!account) return "Connect wallet first";
   if (kycStatus === "loading") return "Checking submission…";
-  if (kycStatus === "approved") return "Approved";
-  if (kycStatus === "verified") return "Verified — awaiting approval";
-  if (kycStatus === "pending") return "Submitted — under review";
+  if (kycStatus === "approved") return "Submitted";
+  if (kycStatus === "verified") return "Submitted";
+  if (kycStatus === "pending") return "Submitted — next: prove zk-X509";
   if (kycStatus === "rejected") return "Rejected — resubmit";
   return "Not submitted yet";
+}
+
+/** Step 3 (admin approval) caption — the operator waits on the admin here. */
+function adminApprovalCaption(status: UseIssuanceApprovalResult["status"]): string | undefined {
+  switch (status) {
+    case "approved": return "Approved by admin";
+    case "not-approved": return "Waiting on the admin's approval";
+    case "checking": return "Checking…";
+    case "revoked": return "Approval revoked";
+    case "expired": return "Approval expired";
+    default: return undefined;
+  }
 }
 
 function step1Caption(
