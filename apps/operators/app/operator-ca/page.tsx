@@ -239,8 +239,9 @@ function gate1(status: OperatorIdentityStatus): { state: GateState; label: strin
       // `no-registry` fires when the RelayerRegistry *contract address* itself
       // is unconfigured (DEMO_NETWORK.contracts.relayerRegistry) — not the
       // identity registry it points at. Name the right thing so an operator
-      // doesn't debug the wrong env var.
-      return { state: "pending", label, detail: "RelayerRegistry address not configured" };
+      // doesn't debug the wrong env var, and flag it as an error (⚠) — a
+      // misconfigured deployment is distinct from a normal "resolving" state.
+      return { state: "error", label, detail: "RelayerRegistry address not configured" };
     case "error":
       return { state: "error", label, detail: status.message };
     case "loading":
