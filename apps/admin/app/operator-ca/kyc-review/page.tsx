@@ -25,7 +25,7 @@ import { useWallet } from "@zkscatter/sdk/react";
 import { useAdminSiwe } from "../../lib/useAdminSiwe";
 import { parseConfigUrl } from "../../lib/configUrl";
 import { SectionHeader } from "../../components/SectionHeader";
-import { ComplianceCrossCheck } from "../_components/ComplianceCrossCheck";
+import { ComplianceCrossCheck, type CrossCheckState } from "../_components/ComplianceCrossCheck";
 
 const ORDERBOOK_URL = parseConfigUrl(
   process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL,
@@ -250,7 +250,7 @@ function Drawer({
         onClick={onClose}
         aria-hidden
       />
-      <aside className="relative flex h-full w-full max-w-xl flex-col overflow-y-auto bg-[var(--color-surface)] shadow-xl">
+      <aside className="relative flex h-full w-full max-w-3xl flex-col overflow-y-auto bg-[var(--color-surface)] shadow-xl">
         <div className="sticky top-0 flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-5 py-3">
           <h2 className="text-sm font-semibold">{title}</h2>
           <button
@@ -324,11 +324,28 @@ function SubmissionPanel({
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  // Cert subject fixed on-chain at approval (read-only to the operator later).
+  // Cross-check state lifted from the inline ComplianceCrossCheck: the PROVED
+  // cert subject (written on-chain at approval — the admin no longer types it)
+  // plus the two gates (wallet match + admin name confirmation).
+  const [crossCheck, setCrossCheck] = useState<CrossCheckState | null>(null);
+  // Cert subject written on-chain at approval. Editable, but PREFILLED from the
+  // proved zk-X509 subject so the admin records the proved identity by default
+  // (and can adjust if needed). The two cross-checks still gate Approve.
   const [cn, setCn] = useState("");
   const [org, setOrg] = useState("");
   const [country, setCountry] = useState("KR");
   const [validityDays, setValidityDays] = useState("365");
+
+  // Prefill from the proved subject when it loads/changes (keyed on the values,
+  // so toggling the name-confirm checkbox doesn't clobber admin edits).
+  useEffect(() => {
+    if (crossCheck?.hasProof) {
+      if (crossCheck.commonName) setCn(crossCheck.commonName);
+      if (crossCheck.org) setOrg(crossCheck.org);
+      if (crossCheck.country) setCountry(crossCheck.country.toUpperCase().slice(0, 2));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crossCheck?.commonName, crossCheck?.org, crossCheck?.country, crossCheck?.hasProof]);
 
   // Files need the auth header, so they can't be a plain <video src>; fetch
   // each as a blob and hand the component an object URL.
@@ -355,7 +372,6 @@ function SubmissionPanel({
         if (cancelled) return;
         setDetail(json);
         setNotes(json.notes ?? "");
-        setCn((prev) => prev || json.email.split("@")[0] || "");
         if (json.files.video.present) {
           v = await loadFile("video");
           // The fetch can resolve after the drawer closed; revoke instead
@@ -415,6 +431,11 @@ function SubmissionPanel({
       return;
     }
     if (!signer) { setErr("Connect the admin (owner) wallet to approve on-chain."); return; }
+    // Write the PROVED cert subject (from zk-X509), not an admin-typed one —
+    // the two cross-checks below must hold first.
+    if (!crossCheck?.hasProof) { setErr("No zk-X509 proof on record for this wallet — cannot approve."); return; }
+    if (crossCheck.walletMatch !== true) { setErr("Proof wallet doesn't match this submission — do not approve."); return; }
+    if (!crossCheck.nameConfirmed) { setErr("Confirm the certificate name matches the ID/video first."); return; }
     if (!cn.trim() || !org.trim()) { setErr("Common name and organization are required."); return; }
     if (country.trim().length !== 2) { setErr("Country must be a 2-letter ISO-3166 code."); return; }
     const days = Number(validityDays);
@@ -447,7 +468,7 @@ function SubmissionPanel({
     } finally {
       setBusy(false);
     }
-  }, [detail, signer, cn, org, country, validityDays, id, notes, onChanged, authedFetch]);
+  }, [detail, signer, crossCheck, cn, org, country, validityDays, id, notes, onChanged, authedFetch]);
 
   /** Revoke = invalidate an already-approved identity on-chain
    *  (IssuanceApprovalRegistry.revoke, owner-only) + record it. The
@@ -533,7 +554,7 @@ function SubmissionPanel({
         <div className="mb-1 text-xs font-semibold text-[var(--color-text-subtle)]">
           Proved certificate (zk-X509) — compare against the documents above
         </div>
-        <ComplianceCrossCheck fixedWallet={detail.wallet} />
+        <ComplianceCrossCheck fixedWallet={detail.wallet} onCrossCheck={setCrossCheck} />
       </div>
 
       <textarea
@@ -547,7 +568,8 @@ function SubmissionPanel({
       {canTransition(status, "approved") && (
         <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
           <div className="text-xs font-semibold text-[var(--color-text-subtle)]">
-            Certificate subject — fixed on-chain at approval (operator sees it read-only)
+            Certificate subject — written ON-CHAIN at approval. Prefilled from the zk-X509
+            proof; the admin can edit before approving. The operator then sees it read-only.
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <LabeledInput label="Common name (CN)" value={cn} onChange={setCn} placeholder="Operator name" />
@@ -555,6 +577,10 @@ function SubmissionPanel({
             <LabeledInput label="Country (C, ISO-3166)" value={country} onChange={setCountry} placeholder="KR" />
             <LabeledInput label="Validity (days)" value={validityDays} onChange={setValidityDays} placeholder="365" />
           </div>
+          <p className="text-[10px] text-[var(--color-text-muted)]">
+            Writes <code className="font-mono">IssuanceApprovalRegistry.approve(wallet, CN, O, C, …)</code>{" "}
+            on-chain (owner-only).
+          </p>
           {!signer && (
             <button
               type="button"
@@ -580,7 +606,22 @@ function SubmissionPanel({
         </button>
         <button
           type="button"
-          disabled={busy || !canTransition(status, "approved")}
+          disabled={
+            busy ||
+            !canTransition(status, "approved") ||
+            !crossCheck?.hasProof ||
+            crossCheck.walletMatch !== true ||
+            !crossCheck.nameConfirmed
+          }
+          title={
+            !crossCheck?.hasProof
+              ? "No zk-X509 proof on record yet"
+              : crossCheck.walletMatch !== true
+                ? "Proof wallet must match this submission"
+                : !crossCheck.nameConfirmed
+                  ? "Confirm the certificate name matches the ID/video first"
+                  : undefined
+          }
           onClick={() => void onApprove()}
           className="rounded-md bg-[var(--color-success)] px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
         >
