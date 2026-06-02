@@ -280,13 +280,13 @@ KYC/CA 온보딩 PoC + Phase 1 + 발급(CA서명) 라인 전부 머지 (~23 PR).
    어드민 "운영자 CA" 화면:                                    ▼
      ① zk-X509 isVerified 여부 표시                    GET {proverUrl}/api/compliance?wallet=
      ② prover compliance의 cert subject(이름/기관/국가)  ──대조──▶ KYC 동영상·서류
-        ↳ 일치 → ② kycApprovalRegistry.approve(wallet, CN/O/C, validityDays)
+        ↳ 일치 → ② kycApprovalRegistry.approve(wallet, CN/O/C, validityDays, expiresAt)
                                                               │
    RelayerRegistry.register():  require ① isVerified  AND  ② kycApproved  ◀───┘
 ```
 1. **operator**: 공인인증서로 zk-X509 **delegated proving**(consent 동의) → `isVerified(wallet)`. delegate prover가 cert subject + consent 증거를 compliance 기록.
 2. **operator**: KYC 동영상·신분증 → shared-orderbook 제출(기존 흐름 유지).
-3. **admin**: "운영자 CA" 화면에서 ① zk-X509 검증여부 확인 + ② prover compliance로 cert subject 조회 → KYC 동영상·서류와 **대조** → 일치 시 `kycApprovalRegistry.approve(wallet, CN/O/C, validityDays)`.
+3. **admin**: "운영자 CA" 화면에서 ① zk-X509 검증여부 확인 + ② prover compliance로 cert subject 조회 → KYC 동영상·서류와 **대조** → 일치 시 `kycApprovalRegistry.approve(wallet, CN/O/C, validityDays, expiresAt)`.
 4. **register**: `RelayerRegistry.register()` 가 `isVerified`(zk-X509) **AND** `kycApproved`(어드민) 둘 다 충족 시 등록.
 
 **compliance 조회 API (K3 구현완료, prover-server 확장):**
@@ -313,7 +313,7 @@ if (address(kycApprovalRegistry) != address(0)                                  
     && !kycApprovalRegistry.isApproved(msg.sender)) revert NotKycApproved();      // ② 어드민 KYC (신규)
 ```
 - **feature-flag**: `kycApprovalRegistry == address(0)` → ② 체크 skip(= zk-X509-only, 기존 동작). 주소 세팅 순간부터 AND 강제 → **무중단 마이그레이션·페이즈드 롤아웃**.
-- `kycApprovalRegistry` = 기존 **`IssuanceApprovalRegistry` 재활용**(`approve/revoke/isApproved` 코드무변경, 주석/문서만 "CA발급 인가"→"어드민 KYC 승인"으로). `approve(wallet,CN,O,C,validityDays)` 시그니처 유지 — CN/O/C는 이제 *어드민이 cert subject로 확인한 신원값*.
+- `kycApprovalRegistry` = 기존 **`IssuanceApprovalRegistry` 재활용**(`approve/revoke/isApproved` 코드무변경, 주석/문서만 "CA발급 인가"→"어드민 KYC 승인"으로). 온체인 실제 시그니처 그대로 유지: `approve(address wallet, string CN, string O, string C, uint32 validityDays, uint64 expiresAt)`, `revoke(address wallet, string reason)`, `isApproved(address) view returns (bool)`. CN/O/C는 이제 *어드민이 cert subject로 확인한 신원값*.
 - `setKycApprovalRegistry()` onlyOwner 세터 추가. 호출용 최소 인터페이스 `IKycApproval { function isApproved(address) external view returns (bool); }`.
 - **dev.sh**: flag ON + 릴레이어 A/B 시드 `approve` (로컬에서 2-게이트 실경로 검증; mock 모드라 무조건 승인). 변경 후 `zk-relayer/test/e2e-authorize-cross-relayer.ts` 재실행으로 green 확인.
 
@@ -362,7 +362,7 @@ if (address(kycApprovalRegistry) != address(0)                                  
 
 ### 12.4 폐기·라이프사이클
 - 공인인증서 **자체** 폐기는 외부 CA(CRL/OCSP) 책임 — 우리가 responder를 운영하지 않음.
-- 우리 측: `kycApprovalRegistry.revoke(wallet)` + zk-X509 만료(`notAfter`)·`nullifier` 재사용 차단으로 즉시 반영. 외부 CRL 동기화는 선택.
+- 우리 측: `kycApprovalRegistry.revoke(wallet, reason)` + zk-X509 만료(`notAfter`)·`nullifier` 재사용 차단으로 즉시 반영. 외부 CRL 동기화는 선택.
 
 ### 12.5 컴플라이언스
 RA 운영정책, KYC PII 보존·파기(KMS·격리 스토리지), 접근 감사, 정기 pen-test. (CA-급 WebTrust/SOC2-for-CA 부담 없음)
