@@ -911,7 +911,9 @@ write_app_env() {
   # the apps still try to reach a relayer that isn't there. Emit an empty URL so
   # the app config reflects the no-relayer onboarding state.
   local relayer_url="http://localhost:3002"
-  [ "$NO_RELAYERS" = true ] && relayer_url=""
+  if [ "$NO_RELAYERS" = true ]; then
+    relayer_url=""
+  fi
   # Preserve user-provided secrets (non-deployment env vars) across regeneration.
   # The deploy-driven NEXT_PUBLIC_* keys are overwritten on every run, but keys
   # like ONEINCH_API_KEY belong to the developer, not the deployment.
