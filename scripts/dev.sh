@@ -906,6 +906,12 @@ fi
 # operator hand-editing .env.local after each redeploy.
 write_app_env() {
   local target_dir="$1"
+  # In --no-relayers mode no zk-relayer process runs at :3002, so the apps must
+  # not be pointed at a dead endpoint — otherwise the "(none)" summary lies and
+  # the apps still try to reach a relayer that isn't there. Emit an empty URL so
+  # the app config reflects the no-relayer onboarding state.
+  local relayer_url="http://localhost:3002"
+  [ "$NO_RELAYERS" = true ] && relayer_url=""
   # Preserve user-provided secrets (non-deployment env vars) across regeneration.
   # The deploy-driven NEXT_PUBLIC_* keys are overwritten on every run, but keys
   # like ONEINCH_API_KEY belong to the developer, not the deployment.
@@ -954,7 +960,7 @@ NEXT_PUBLIC_IDENTITY_GATE_ADDRESS=$IDENTITY_GATE
 NEXT_PUBLIC_FEE_VAULT_ADDRESS=$FEE_VAULT
 NEXT_PUBLIC_TREASURY_ADDRESS=$TREASURY
 NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=$BATCH_EXECUTOR
-NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002
+NEXT_PUBLIC_ZK_RELAYER_URL=$relayer_url
 NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000
 NEXT_PUBLIC_ZK_X509_URL=${ZK_X509_URL:-http://localhost:3000}
 NEXT_PUBLIC_ZK_ASSETS_VERSION=$zk_assets_version
@@ -979,7 +985,7 @@ NEXT_PUBLIC_PAY_WETH=$WETH
 NEXT_PUBLIC_PAY_USDC=$USDC
 NEXT_PUBLIC_PAY_USDT=$USDT
 NEXT_PUBLIC_PAY_TON=$TON
-NEXT_PUBLIC_PAY_RELAYER_URL=http://localhost:3002
+NEXT_PUBLIC_PAY_RELAYER_URL=$relayer_url
 NEXT_PUBLIC_PAY_DEPLOY_BLOCK=$INDEX_FROM
 NEXT_PUBLIC_PAY_ZK_X509_URL=${ZK_X509_URL:-http://localhost:3000}
 EOF
@@ -1039,7 +1045,7 @@ cat > "$ROOT_DIR/mobile/src/config/fork-contracts.json" << EOF
     "feeVault": "$FEE_VAULT",
     "treasury": "$TREASURY",
     "batchExecutor": "$BATCH_EXECUTOR",
-${MOBILE_TOKENS_LINE}    "relayerUrl": "http://localhost:3002",
+${MOBILE_TOKENS_LINE}    "relayerUrl": "$relayer_url",
     "sharedOrderbookUrl": "http://localhost:4000"
   }
 }
