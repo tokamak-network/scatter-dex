@@ -1506,8 +1506,8 @@ function Step3AdminApproval({
           </p>
         </div>
       ) : approvalStatus === "checking" ? (
-        <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-3 text-sm text-[var(--color-text-muted)]">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        <div role="status" className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-3 text-sm text-[var(--color-text-muted)]">
+          <span aria-hidden className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
           Checking approval status…
         </div>
       ) : (

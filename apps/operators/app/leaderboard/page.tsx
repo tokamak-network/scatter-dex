@@ -804,7 +804,7 @@ function RelayerRow({
           <RelayerNameCell row={row} isMe={isMe} />
         </td>
         <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{shortAddr(row.address)}</td>
-        <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">#{row.id}</td>
+        <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">{row.id >= 0 ? `#${row.id}` : "—"}</td>
         <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
         <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
         <VolumeCell row={row} segment={segment} />
