@@ -20,8 +20,13 @@ export default function Onboarding() {
           From zero to a running relayer.
         </h1>
         <p className="mx-auto mt-5 max-w-2xl text-base text-[var(--color-text-muted)]">
-          Six steps. No hidden prerequisites. Follow top-to-bottom and you will
-          have a registered relayer accepting traffic on the testnet.
+          Six steps to a running relayer — but registration is gated. Your wallet
+          must first be <strong>verified</strong> (zk-X509 certificate proof) and{" "}
+          <strong>admin-approved</strong> (KYC). Do that onboarding in the{" "}
+          <Link href="/register" className="text-[var(--color-primary)] hover:underline">
+            registration wizard
+          </Link>{" "}
+          first; the steps below stand up the service it gates.
         </p>
         <div className="mt-6 flex justify-center gap-3">
           <a
@@ -61,6 +66,11 @@ export default function Onboarding() {
             title="Operator wallet (with private key)"
             body="A dedicated EVM wallet whose private key the relayer process can read. Never reuse a personal/treasury key — operator keys sign settlement txs constantly."
             note="Hardware wallets are not supported for the relayer process. Use a fresh hot wallet held only by the operator host."
+          />
+          <Prereq
+            title="Verified + admin-approved identity (2 gates)"
+            body="RelayerRegistry.register() reverts unless this same wallet is both isVerified (you proved an accredited certificate to zk-X509) AND kycApproved (an admin signed off your KYC). Complete both in the /register wizard before you reach the register step."
+            note="Both gates bind to the wallet that registers — prove and register from the same key, or it reverts (NotVerified / NotKycApproved)."
           />
           <Prereq
             title="Bond + gas balance"
@@ -132,9 +142,9 @@ curl -s http://localhost:3002/health | jq`}
           />
           <Step
             n={4}
-            title="Register on-chain"
+            title="Register on-chain (gated)"
             time="~3 min"
-            body="Connect your operator wallet and publish your public URL plus per-trade fee. The bond is escrowed in the RelayerRegistry contract."
+            body="Connect your operator wallet and publish your public URL plus per-trade fee; the bond is escrowed in the RelayerRegistry contract. register() reverts with NotVerified unless your wallet proved its certificate to zk-X509, and with NotKycApproved unless an admin approved your KYC — so do the wizard's identity steps (KYC → zk-X509 proof → admin approval) first. The /register wizard walks all of it, then builds the tx."
             extra={
               <Link
                 href="/register"

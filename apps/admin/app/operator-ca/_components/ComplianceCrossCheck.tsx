@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { eqAddr } from "@zkscatter/sdk";
 import { parseConfigUrl } from "../../lib/configUrl";
 import { explainError } from "../../lib/format";
 import { normalizeEvmAddress } from "../../lib/x509";
@@ -50,14 +51,40 @@ interface ComplianceRecord {
   consentSignature: string; // non-repudiation evidence (cert-key signature)
 }
 
+/** Lifted to the KYC drawer: the two cross-checks (wallet match + admin name
+ *  confirmation) gate Approve, and the proved subject is what gets written
+ *  on-chain — the admin no longer types it. `hasProof` is false when the
+ *  operator hasn't proved a cert yet (nothing to approve against). */
+export interface CrossCheckState {
+  hasProof: boolean;
+  walletMatch: boolean | null;
+  nameConfirmed: boolean;
+  commonName: string;
+  org: string;
+  country: string;
+}
+
 type State =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "loaded"; wallet: string; records: ComplianceRecord[] }
   | { kind: "error"; msg: string };
 
-export function ComplianceCrossCheck() {
-  const [wallet, setWallet] = useState("");
+/** `fixedWallet` pins the panel to one operator and auto-looks-up on mount,
+ *  hiding the address input — used inside the KYC review drawer so the admin
+ *  sees the proved cert subject right next to the KYC documents. Omit it (the
+ *  standalone /operator-ca page) to get the manual address-entry form. */
+export function ComplianceCrossCheck({
+  fixedWallet,
+  onCrossCheck,
+}: {
+  fixedWallet?: string;
+  /** Latest proof's cross-check state (wallet match + admin name confirmation)
+   *  plus the proved subject, so the drawer can gate Approve AND write the
+   *  PROVED identity on-chain (not an admin-typed one). */
+  onCrossCheck?: (state: CrossCheckState) => void;
+} = {}) {
+  const [wallet, setWallet] = useState(fixedWallet ?? "");
   const [state, setState] = useState<State>(
     configError ? { kind: "error", msg: configError } : { kind: "idle" },
   );
@@ -68,6 +95,18 @@ export function ComplianceCrossCheck() {
   // address for exact-match consistency.
   const normalizedWallet = normalizeEvmAddress(wallet.trim());
   const walletValid = normalizedWallet !== null;
+
+  // Tell the drawer there's no proof to approve against in every non-loaded
+  // state — including `loading`, so a NEW lookup clears the previous
+  // submission's proof and Approve can't fire on stale data mid-fetch.
+  // (The loaded-with-records case reports hasProof:true from RecordCard.)
+  useEffect(() => {
+    const noProof = state.kind === "loaded" ? state.records.length === 0 : true;
+    if (noProof) {
+      onCrossCheck?.({ hasProof: false, walletMatch: null, nameConfirmed: false, commonName: "", org: "", country: "" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.kind]);
 
   const lookup = useCallback(async () => {
     // Defense-in-depth: guard inside the callback too, not just on the button —
@@ -95,8 +134,25 @@ export function ComplianceCrossCheck() {
     }
   }, [normalizedWallet, state.kind]);
 
+  // Drawer mode: when the pinned wallet actually changes (a different
+  // submission), sync it into `wallet` and auto-look-up. Track the previous
+  // value via a ref so a parent re-render with the SAME fixedWallet doesn't
+  // clobber state or re-fetch. The standalone page passes no fixedWallet, so
+  // this is inert there.
+  const prevFixedWalletRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (fixedWallet === prevFixedWalletRef.current) return;
+    prevFixedWalletRef.current = fixedWallet;
+    if (fixedWallet && normalizeEvmAddress(fixedWallet.trim()) && !configError) {
+      setWallet(fixedWallet);
+      void lookup();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixedWallet]);
+
   return (
     <div className="space-y-4">
+      {!fixedWallet && (
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
         <div className="mb-3 text-xs text-[var(--color-text-muted)]">
           Reads the certificate subject the operator proved to zk-X509 from the prover&apos;s
@@ -133,6 +189,13 @@ export function ComplianceCrossCheck() {
           </p>
         )}
       </div>
+      )}
+
+      {fixedWallet && state.kind === "loading" && (
+        <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+          Reading the proved certificate subject from zk-X509…
+        </div>
+      )}
 
       {state.kind === "error" && (
         <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-2 text-sm text-[var(--color-danger)]">
@@ -152,13 +215,52 @@ export function ComplianceCrossCheck() {
 
       {state.kind === "loaded" &&
         state.records.map((r, i) => (
-          <RecordCard key={`${r.nullifier}-${r.timestamp}-${i}`} record={r} latest={i === 0} />
+          <RecordCard
+            key={`${r.nullifier}-${r.timestamp}-${i}`}
+            record={r}
+            latest={i === 0}
+            expectedWallet={fixedWallet}
+            onCrossCheck={onCrossCheck}
+          />
         ))}
     </div>
   );
 }
 
-function RecordCard({ record: r, latest }: { record: ComplianceRecord; latest: boolean }) {
+function RecordCard({
+  record: r,
+  latest,
+  expectedWallet,
+  onCrossCheck,
+}: {
+  record: ComplianceRecord;
+  latest: boolean;
+  expectedWallet?: string;
+  onCrossCheck?: (state: CrossCheckState) => void;
+}) {
+  const [nameConfirmed, setNameConfirmed] = useState(false);
+  // Gate 1 cross-check: the wallet that PROVED the cert must be the same wallet
+  // that submitted this KYC. A mismatch means the proof belongs to someone else
+  // — do NOT approve.
+  const walletMatch =
+    expectedWallet && r.registrant
+      ? eqAddr(r.registrant, expectedWallet)
+      : null;
+  // Lift the latest record's cross-check state + proved subject so the drawer
+  // can gate Approve and write the proved identity on-chain.
+  useEffect(() => {
+    if (latest) {
+      onCrossCheck?.({
+        hasProof: true,
+        walletMatch,
+        nameConfirmed,
+        commonName: r.commonName,
+        org: r.org,
+        country: r.country,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latest, walletMatch, nameConfirmed, r.commonName, r.org, r.country]);
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -175,16 +277,55 @@ function RecordCard({ record: r, latest }: { record: ComplianceRecord; latest: b
         )}
         <span className="text-xs text-[var(--color-text-subtle)]">· proved {formatDate(r.timestamp)}</span>
       </div>
+      {/* The wallet that submitted this proof — must match the KYC submission's
+          wallet. Surfaced up top so the admin confirms the proof belongs to the
+          operator under review before trusting the subject below. */}
+      <div className="mb-3 border-b border-[var(--color-border)] pb-3">
+        <dt className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">Proved by wallet</dt>
+        <dd className="mt-0.5 break-all font-mono text-xs">{r.registrant || "—"}</dd>
+      </div>
       <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
         <Row label="Common name" value={r.commonName} />
         <Row label="Organization" value={r.org} />
         <Row label="Org unit" value={r.orgUnit} />
         <Row label="Country" value={r.country} />
-        <Row label="Serial" value={r.serial} mono />
         <Row label="Valid until" value={formatDate(r.notAfter)} />
-        <Row label="Nullifier" value={r.nullifier} mono />
         <Row label="Consent signature" value={r.consentSignature} mono />
       </dl>
+
+      {/* Two cross-checks the admin must confirm before approving (only on the
+          latest proof — that's the one approval acts on):
+            1. wallet match — automatic (proof's wallet == this KYC submission's)
+            2. name match   — manual (admin eyeballs the cert CN against the
+               liveness video / ID document above) */}
+      {latest && (
+        <div className="mt-4 space-y-2 border-t border-[var(--color-border)] pt-3 text-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+            Cross-check before approving
+          </div>
+          <div className="flex items-start gap-2">
+            <span className={walletMatch === true ? "text-[var(--color-success)]" : walletMatch === false ? "text-[var(--color-danger)]" : "text-[var(--color-text-subtle)]"}>
+              {walletMatch === true ? "✓" : walletMatch === false ? "✗" : "•"}
+            </span>
+            <span>
+              Proof wallet {walletMatch === true ? "matches" : walletMatch === false ? "does NOT match" : "vs"} the KYC submission&apos;s wallet
+              {walletMatch === false && <span className="font-medium text-[var(--color-danger)]"> — do not approve</span>}
+            </span>
+          </div>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={nameConfirmed}
+              onChange={(e) => setNameConfirmed(e.target.checked)}
+            />
+            <span>
+              The certificate <strong>common name</strong> (<span className="font-mono">{r.commonName || "—"}</span>) matches the
+              name in the liveness video / ID document above
+            </span>
+          </label>
+        </div>
+      )}
     </div>
   );
 }

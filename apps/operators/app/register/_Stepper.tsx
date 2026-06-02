@@ -10,7 +10,7 @@
 export type StepStatus = "done" | "active" | "blocked";
 
 export interface StepDef {
-  id: 1 | 2 | 3 | 4;
+  id: 1 | 2 | 3 | 4 | 5;
   title: string;
   status: StepStatus;
   /** Short caption shown under the title — e.g. "Verified until …" or
@@ -18,14 +18,14 @@ export interface StepDef {
   caption?: string;
 }
 
-export function Stepper({ steps, current }: { steps: StepDef[]; current: 1 | 2 | 3 | 4 }) {
+export function Stepper({ steps, current }: { steps: StepDef[]; current: 1 | 2 | 3 | 4 | 5 }) {
   return (
     <ol
       role="list"
-      className="flex items-stretch gap-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-sm"
+      className="flex flex-wrap items-stretch gap-y-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-2 text-sm"
     >
       {steps.map((s, i) => (
-        <li key={s.id} className="flex flex-1 items-stretch">
+        <li key={s.id} className="flex flex-1 basis-[9rem] items-stretch">
           <StepChip step={s} isCurrent={s.id === current} />
           {i < steps.length - 1 && (
             <span

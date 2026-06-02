@@ -16,7 +16,6 @@ import {
 import { Stat } from "../components/Stat";
 import { SectionHeader } from "../components/SectionHeader";
 import { DEMO_NETWORK } from "../lib/network";
-import { formatEther } from "../lib/format";
 import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
 
@@ -552,7 +551,7 @@ function leaderboardPlaceholder(state: LeaderboardState, registryDeployed: boole
   return null;
 }
 
-const TABLE_COLUMNS = 10;
+const TABLE_COLUMNS = 9;
 
 // Map each sort criterion onto the column header it should highlight.
 // Centralised so the arrow indicator + the sort selector can't drift.
@@ -700,7 +699,6 @@ function RelayerTable({
             <SortableTh label="Relayer" column="" criterion={null} align="left" />
             <SortableTh label="Address" column="" criterion={null} align="left" />
             <SortableTh label="Fee rate" column="fee" criterion="fee" />
-            <SortableTh label="Bond" column="bond" criterion="bond" />
             <SortableTh label="Settled" column="settled" criterion="activity" />
             <SortableTh label="Volume" column="volume" criterion="volume" />
             <SortableTh label="Fee" column="revenue" criterion="revenue" />
@@ -806,7 +804,6 @@ function RelayerRow({
         </td>
         <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{shortAddr(row.address)}</td>
         <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
-        <td className="px-5 py-3 text-right font-mono">{formatEther(row.bond)} ETH</td>
         <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
         <VolumeCell row={row} segment={segment} />
         <RevenueCell row={row} segment={segment} />
