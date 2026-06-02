@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Contract, type Signer } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
@@ -62,7 +62,15 @@ export function AttestationPanel({
     );
     (c.effectiveProgramVKey() as Promise<string>)
       .then(() => { if (!cancelled) setIsRealRegistry(true); })
-      .catch(() => { if (!cancelled) setIsRealRegistry(false); });
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // A mock registry has no effectiveProgramVKey → the call reverts
+        // (CALL_EXCEPTION/BAD_DATA). Only that means "mock". A transient RPC
+        // error (network/timeout) is inconclusive — stay in the probing state
+        // rather than mislabel a real registry as mock.
+        const code = (err as { code?: string } | null)?.code;
+        setIsRealRegistry(code === "CALL_EXCEPTION" || code === "BAD_DATA" ? false : null);
+      });
     return () => { cancelled = true; };
   }, [registryConfigured, registryAddress, readProvider]);
 
@@ -97,9 +105,11 @@ export function AttestationPanel({
     ? `${zkX509Base}/registry/${registryAddress}?tab=register`
     : null;
 
+  const checkSeq = useRef(0);
   const checkVerified = useCallback(async () => {
     if (!readProvider || !registryAddress || !addressValid) return;
     const addr = address.trim();
+    const seq = ++checkSeq.current;
     setVerifyCheck({ kind: "checking" });
     try {
       const c = new Contract(
@@ -108,9 +118,10 @@ export function AttestationPanel({
         readProvider,
       );
       const verified = (await c.isVerified(addr)) as boolean;
-      setVerifyCheck({ kind: "result", addr, verified });
+      // Ignore a stale response if a newer check started meanwhile.
+      if (seq === checkSeq.current) setVerifyCheck({ kind: "result", addr, verified });
     } catch (err) {
-      setVerifyCheck({ kind: "error", msg: explainError(err) });
+      if (seq === checkSeq.current) setVerifyCheck({ kind: "error", msg: explainError(err) });
     }
   }, [readProvider, registryAddress, addressValid, address]);
 
@@ -206,6 +217,16 @@ export function AttestationPanel({
           </div>
         )}
         {r.kind === "error" && <ErrorBanner msg={r.msg} />}
+      </div>
+    );
+  }
+
+  // Still probing real-vs-mock (or an inconclusive/transient RPC error):
+  // don't flash the mock setVerified form before we know which it is.
+  if (isRealRegistry === null) {
+    return (
+      <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
+        <p>Detecting registry type on-chain…</p>
       </div>
     );
   }
