@@ -23,43 +23,83 @@
               └──────────────────────────────┘
 ```
 
+## Let an AI agent do it
+
+Hand this doc to an AI coding agent (e.g. Claude Code) and paste the prompt
+below — it covers clone → build → up → health-check for a single relayer:
+
+> 이 레포(`https://github.com/tokamak-network/scatter-dex`)를 클론하고
+> `docs/operations/deployment.md`대로 **단일 릴레이어**를 mock 프로파일로 띄워줘:
+> 1. `git clone … && cd scatter-dex`
+> 2. `cd circuits && npm install && npm run build && cd ..` (ZK 아티팩트, 최초 1회·수 분)
+> 3. `docker compose --profile mock up -d` (anvil + 컨트랙트 배포 + 릴레이어 1 + 오더북 + 프론트)
+> 4. 헬스체크: `curl localhost:4000/health`, `curl localhost:3002/api/info`, `curl localhost:3000`
+> 각 단계 결과를 한 줄로 보고하고, 실패하면 `docker compose logs <service>` 근거와 함께 알려줘.
+> 종료는 `docker compose --profile mock down`.
+
+For a **testnet / production** relayer (real chain, your own key), follow the
+["Testnet Deployment"](#testnet-deployment) section instead — and note the
+operator must complete on-chain onboarding (KYC → zk-X509 proof → admin
+approval) before `RelayerRegistry.register()` succeeds. In `mock` mode every
+wallet is pre-verified, so the local stack just works.
+
 ## Quick Start (Local Development)
 
-> **First-time setup:** build the ZK circuit artifacts before `docker compose up`. The images copy `frontend/public/zk/*.wasm` + `*.zkey` in at build time, but **none of the generated zkey/wasm/Verifier.sol files are tracked in git** (each phase-2 setup uses a fresh beacon, so committing them would let the on-chain Verifier drift from the local zkey). Generate the full set once:
->
-> ```bash
-> cd circuits && npm install && npm run build
-> ```
->
-> The host-process scripts (`./scripts/dev.sh`, `./scripts/dev-fork.sh`) auto-run this before deploying contracts; only `docker compose up` needs the manual step. Details and symptom matching in [local-setup.md](./local-setup.md#prerequisite-zk-circuit-artifacts).
+### Prerequisites
 
-### Single Relayer (default)
+- **Docker** (Engine + Compose v2) and **git**
+- **Node.js + npm** (only for the one-time circuit build below)
+
+### 0. Clone the repo
 
 ```bash
-# Start anvil + deploy contracts + 1 relayer + shared orderbook + frontend
+git clone https://github.com/tokamak-network/scatter-dex.git
+cd scatter-dex
+```
+
+### 1. Build the ZK circuit artifacts (one-time, required)
+
+`docker compose up` does **not** build these — the images copy
+`frontend/public/zk/*.wasm` + `*.zkey` in at image-build time, but **none of the
+generated zkey/wasm/Verifier.sol files are tracked in git** (each phase-2 setup
+uses a fresh beacon, so committing them would let the on-chain Verifier drift
+from the local zkey). Generate the full set once, from the repo root:
+
+```bash
+cd circuits && npm install && npm run build && cd ..
+```
+
+First run is slow (Powers-of-Tau, several minutes). Symptom matching for a
+missing/mismatched build is in
+[local-setup.md](./local-setup.md#prerequisite-zk-circuit-artifacts).
+
+> The host-process scripts (`./scripts/dev.sh`, `./scripts/dev-fork.sh`) auto-run
+> this before deploying contracts; only the `docker compose` path needs it manually.
+
+### 2. Bring it up
+
+```bash
+# From the repo root. Starts anvil + deploys contracts + ONE relayer +
+# shared orderbook + frontend.
 docker compose --profile mock up -d
 ```
 
-### Multi-Relayer (cross-relayer matching)
-
-```bash
-# Start everything including Relayer B
-docker compose --profile mock --profile multi-relayer up -d
-```
+> Running more than one relayer (cross-relayer matching) is an advanced setup —
+> see the `multi-relayer` profile in `docker-compose.yml`. The default single
+> relayer is all an operator needs to get on-chain.
 
 ### Verify
 
 ```bash
 curl http://localhost:4000/health          # Shared Orderbook
-curl http://localhost:3002/api/info        # Relayer A
-curl http://localhost:3003/api/info        # Relayer B (multi-relayer only)
+curl http://localhost:3002/api/info        # Relayer
 curl http://localhost:3000                 # Frontend
 ```
 
 ### Stop
 
 ```bash
-docker compose --profile mock --profile multi-relayer down
+docker compose --profile mock down
 ```
 
 ## Testnet Deployment
@@ -104,20 +144,31 @@ docker compose up -d zk-relayer
 docker compose --profile multi-relayer up -d zk-relayer zk-relayer-b
 ```
 
-### 4. Register Relayers
+### 4. Register the relayer on-chain
 
-Relayers auto-register with the shared orderbook server on startup. For on-chain registration in `RelayerRegistry` (if required by your deployment):
+> ⚠ **On-chain registration is gated.** `RelayerRegistry.register()` reverts
+> with `NotVerified` unless your wallet has proved its accredited certificate to
+> zk-X509 (`identityRegistry.isVerified(you) == true`), and — when the KYC gate
+> is wired — also requires a current admin approval (`NotKycApproved`). Complete
+> onboarding first via the operators app `/register` wizard (KYC → zk-X509 proof
+> → admin approval). See [Registering a Relayer](./registering-a-relayer.md).
+> In `mock` mode every wallet is pre-verified, so this just works.
+
+Once verified/approved, register from the **same wallet** that was verified.
+The signature is `register(string url, string name, uint256 fee, uint256 bondAmount)`
+(fee in basis points; `bondAmount` ≥ `RelayerRegistry.minBond()`, sent as
+`msg.value` in native-bond mode):
 
 ```bash
-# register(string url, uint256 fee) — check your contract's exact signature
-cast send $RELAYER_REGISTRY "register(string,uint256)" \
-  "https://relayer-a.yourdomain.com" 30 \
-  --rpc-url $RPC_URL --private-key $RELAYER_A_KEY
-
-cast send $RELAYER_REGISTRY "register(string,uint256)" \
-  "https://relayer-b.yourdomain.com" 30 \
-  --rpc-url $RPC_URL --private-key $RELAYER_B_KEY
+cast send $RELAYER_REGISTRY \
+  "register(string,string,uint256,uint256)" \
+  "https://relayer.yourdomain.com" "My Relayer" 30 0 \
+  --value 0 \
+  --rpc-url $RPC_URL --private-key $RELAYER_KEY
 ```
+
+Or just use the operators app `/register` Steps 4–5 (Endpoint + Bond), which
+builds this tx for you with a live endpoint probe.
 
 ## Docker Services
 
