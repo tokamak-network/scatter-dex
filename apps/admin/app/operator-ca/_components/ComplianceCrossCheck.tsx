@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { parseConfigUrl } from "../../lib/configUrl";
 import { explainError } from "../../lib/format";
 import { normalizeEvmAddress } from "../../lib/x509";
@@ -56,8 +56,12 @@ type State =
   | { kind: "loaded"; wallet: string; records: ComplianceRecord[] }
   | { kind: "error"; msg: string };
 
-export function ComplianceCrossCheck() {
-  const [wallet, setWallet] = useState("");
+/** `fixedWallet` pins the panel to one operator and auto-looks-up on mount,
+ *  hiding the address input — used inside the KYC review drawer so the admin
+ *  sees the proved cert subject right next to the KYC documents. Omit it (the
+ *  standalone /operator-ca page) to get the manual address-entry form. */
+export function ComplianceCrossCheck({ fixedWallet }: { fixedWallet?: string } = {}) {
+  const [wallet, setWallet] = useState(fixedWallet ?? "");
   const [state, setState] = useState<State>(
     configError ? { kind: "error", msg: configError } : { kind: "idle" },
   );
@@ -95,8 +99,19 @@ export function ComplianceCrossCheck() {
     }
   }, [normalizedWallet, state.kind]);
 
+  // Drawer mode: auto-look-up the pinned wallet once on mount (and if it
+  // changes between submissions). The standalone page passes no fixedWallet,
+  // so this is inert there.
+  useEffect(() => {
+    if (fixedWallet && normalizeEvmAddress(fixedWallet.trim()) && !configError) {
+      void lookup();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fixedWallet]);
+
   return (
     <div className="space-y-4">
+      {!fixedWallet && (
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
         <div className="mb-3 text-xs text-[var(--color-text-muted)]">
           Reads the certificate subject the operator proved to zk-X509 from the prover&apos;s
@@ -133,6 +148,13 @@ export function ComplianceCrossCheck() {
           </p>
         )}
       </div>
+      )}
+
+      {fixedWallet && state.kind === "loading" && (
+        <div className="rounded-md border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
+          Reading the proved certificate subject from zk-X509…
+        </div>
+      )}
 
       {state.kind === "error" && (
         <div className="rounded-md border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-2 text-sm text-[var(--color-danger)]">

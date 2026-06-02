@@ -25,6 +25,7 @@ import { useWallet } from "@zkscatter/sdk/react";
 import { useAdminSiwe } from "../../lib/useAdminSiwe";
 import { parseConfigUrl } from "../../lib/configUrl";
 import { SectionHeader } from "../../components/SectionHeader";
+import { ComplianceCrossCheck } from "../_components/ComplianceCrossCheck";
 
 const ORDERBOOK_URL = parseConfigUrl(
   process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL,
@@ -523,6 +524,16 @@ function SubmissionPanel({
       <div className="text-xs text-[var(--color-text-muted)]">
         <span className="font-mono">{detail.wallet}</span> · {detail.email} · submitted{" "}
         {new Date(detail.createdAt * 1000).toISOString().slice(0, 16).replace("T", " ")}
+      </div>
+
+      {/* zk-X509 proved certificate subject for THIS wallet, pulled inline so the
+          admin can compare it against the KYC video / ID above without leaving
+          the drawer (cross-check the name / org / country before approving). */}
+      <div>
+        <div className="mb-1 text-xs font-semibold text-[var(--color-text-subtle)]">
+          Proved certificate (zk-X509) — compare against the documents above
+        </div>
+        <ComplianceCrossCheck fixedWallet={detail.wallet} />
       </div>
 
       <textarea
