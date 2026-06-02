@@ -20,10 +20,9 @@ export default function OperatorCaPage() {
       <header>
         <h1 className="text-2xl font-semibold">Operator CA — verify &amp; attest</h1>
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
-          scatter-dex no longer issues operator certificates. An operator&apos;s identity is
-          their <strong>real accredited certificate</strong>, verified by the external{" "}
-          <strong>zk-X509</strong> delegated-proving flow — scatter-dex only reads the result.
-          Onboarding is gated by two independent checks:
+          An operator&apos;s identity is their <strong>real accredited certificate</strong>,
+          verified by the external <strong>zk-X509</strong> delegated-proving flow — scatter-dex
+          only reads the result. Onboarding is gated by two independent checks:
         </p>
         <ul className="mt-2 max-w-2xl list-disc space-y-1 pl-5 text-sm text-[var(--color-text-muted)]">
           <li>
