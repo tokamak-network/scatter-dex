@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Contract, type Signer } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useWallet } from "@zkscatter/sdk/react";
@@ -37,12 +37,34 @@ export function AttestationPanel({
   registryAddress: string | null;
   loading?: boolean;
 }) {
-  const { account, signer, connect } = useWallet();
+  const { account, signer, connect, readProvider } = useWallet();
   const [address, setAddress] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+  // null = still probing; true = real zk-X509 registry (responds to
+  // effectiveProgramVKey()); false = mock (the call reverts). A real
+  // registry has no admin setVerified — the boolean form below would just
+  // revert — so we hide it and point the admin at the desktop/dashboard.
+  const [isRealRegistry, setIsRealRegistry] = useState<boolean | null>(null);
 
   const registryConfigured = isConfiguredAddress(registryAddress ?? "");
   const addressValid = isValidEvmAddress(address.trim());
+
+  useEffect(() => {
+    if (!registryConfigured || !registryAddress || !readProvider) {
+      setIsRealRegistry(null);
+      return;
+    }
+    let cancelled = false;
+    const c = new Contract(
+      registryAddress,
+      ["function effectiveProgramVKey() view returns (bytes32)"],
+      readProvider,
+    );
+    (c.effectiveProgramVKey() as Promise<string>)
+      .then(() => { if (!cancelled) setIsRealRegistry(true); })
+      .catch(() => { if (!cancelled) setIsRealRegistry(false); });
+    return () => { cancelled = true; };
+  }, [registryConfigured, registryAddress, readProvider]);
 
   const submit = useCallback(async () => {
     if (!signer || !registryConfigured || !registryAddress || !addressValid) return;
@@ -55,6 +77,42 @@ export function AttestationPanel({
       setPhase({ kind: "error", msg: explainError(err) });
     }
   }, [signer, registryConfigured, registryAddress, addressValid, address]);
+
+  // Read-only lookup of an operator's on-chain verification status on a REAL
+  // zk-X509 registry (gate 1). The admin can't attest here, but they CAN
+  // confirm the operator actually proved their cert (isVerified == true)
+  // before approving KYC (gate 2). If not verified, surface the deep-link to
+  // that registry's register tab so the operator can go prove.
+  const [verifyCheck, setVerifyCheck] = useState<
+    | { kind: "idle" }
+    | { kind: "checking" }
+    | { kind: "result"; addr: string; verified: boolean }
+    | { kind: "error"; msg: string }
+  >({ kind: "idle" });
+
+  const zkX509Base = (
+    process.env.NEXT_PUBLIC_ZK_X509_URL || "http://localhost:3000"
+  ).replace(/\/+$/, "");
+  const registerUrl = registryAddress
+    ? `${zkX509Base}/registry/${registryAddress}?tab=register`
+    : null;
+
+  const checkVerified = useCallback(async () => {
+    if (!readProvider || !registryAddress || !addressValid) return;
+    const addr = address.trim();
+    setVerifyCheck({ kind: "checking" });
+    try {
+      const c = new Contract(
+        registryAddress,
+        ["function isVerified(address) view returns (bool)"],
+        readProvider,
+      );
+      const verified = (await c.isVerified(addr)) as boolean;
+      setVerifyCheck({ kind: "result", addr, verified });
+    } catch (err) {
+      setVerifyCheck({ kind: "error", msg: explainError(err) });
+    }
+  }, [readProvider, registryAddress, addressValid, address]);
 
   if (loading) {
     return (
@@ -74,6 +132,80 @@ export function AttestationPanel({
           direct <code className="font-mono">setVerified()</code> writes from the connected
           admin wallet.
         </p>
+      </div>
+    );
+  }
+
+  if (isRealRegistry === true) {
+    const r = verifyCheck;
+    return (
+      <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <div className="mb-3 text-xs text-[var(--color-text-muted)]">
+          <code className="font-mono">{registryAddress.slice(0, 10)}…</code> is a real{" "}
+          <strong>zk-X509</strong> registry — no admin{" "}
+          <code className="font-mono">setVerified()</code>. Operators flip{" "}
+          <code className="font-mono">isVerified</code> themselves by proving their accredited
+          certificate (delegated proving). Check an operator&apos;s on-chain verification
+          status here, then use the <strong>Compliance cross-check</strong> below before
+          approving.
+        </div>
+
+        <label className="block text-sm">
+          <span className="mb-1 block text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+            Operator wallet to check
+          </span>
+          <input
+            className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
+            placeholder="0x…"
+            value={address}
+            onChange={(e) => { setAddress(e.target.value); setVerifyCheck({ kind: "idle" }); }}
+          />
+        </label>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            disabled={!addressValid || r.kind === "checking"}
+            onClick={() => void checkVerified()}
+            className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {r.kind === "checking" ? "Checking…" : "Check on-chain verification"}
+          </button>
+          {address && !addressValid && (
+            <span className="text-xs text-[var(--color-danger)]">
+              Must be a 0x-prefixed 20-byte address
+            </span>
+          )}
+        </div>
+
+        {r.kind === "result" && r.verified && (
+          <div className="mt-4 rounded-md border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-2 text-sm text-[var(--color-success)]">
+            ✓ <code className="font-mono">{r.addr.slice(0, 10)}…</code> is verified on-chain
+            (zk-X509 proof accepted). Gate 1 satisfied — proceed to the compliance cross-check.
+          </div>
+        )}
+        {r.kind === "result" && !r.verified && (
+          <div className="mt-4 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-2 text-sm">
+            <div className="font-medium">
+              ✗ <code className="font-mono">{r.addr.slice(0, 10)}…</code> is not verified on-chain yet
+            </div>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              The operator hasn&apos;t proved their certificate to this registry. Send them to the
+              zk-X509 register page{registerUrl ? "" : " (set NEXT_PUBLIC_ZK_X509_URL to enable the link)"}:
+            </p>
+            {registerUrl && (
+              <a
+                href={registerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
+              >
+                Open zk-X509 register page ↗
+              </a>
+            )}
+          </div>
+        )}
+        {r.kind === "error" && <ErrorBanner msg={r.msg} />}
       </div>
     );
   }
