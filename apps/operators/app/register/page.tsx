@@ -1052,8 +1052,9 @@ function Step2Endpoint({
             - "Full registration walkthrough" is the primary CTA
               (brand-color filled button) — the entry-point doc
               that contextualises every other step.
-            - "Production deployment" is the reference link for
-              actually standing the relayer up in production. */}
+            - "How to run a relayer" is the focused relayer-only guide
+              (process + orderbook + register), and "Production
+              deployment" is the hardened production reference. */}
       <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
         <div className="font-medium text-[var(--color-text)]">
           Don&apos;t have a relayer running yet?
@@ -1070,6 +1071,14 @@ function Step2Endpoint({
             className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[11px] font-medium text-[var(--color-primary)] hover:opacity-90"
           >
             Full registration walkthrough →
+          </Link>
+          <Link
+            href="/docs?d=running-a-relayer"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 text-[11px] font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
+          >
+            How to run a relayer →
           </Link>
           <Link
             href="/docs?d=deployment"

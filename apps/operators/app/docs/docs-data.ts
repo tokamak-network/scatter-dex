@@ -7,6 +7,7 @@
 export type DocSlug =
   | "operations-guide"
   | "registering-a-relayer"
+  | "running-a-relayer"
   | "local-setup"
   | "deployment"
   | "relayer-security"
@@ -44,7 +45,13 @@ export const DOCS: DocMeta[] = [
   {
     slug: "registering-a-relayer",
     title: "Registering a Relayer",
-    blurb: "9-step end-to-end flow: KYC → zk-X509 cert → bond → leaderboard.",
+    blurb: "End-to-end onboarding: KYC → zk-X509 proof → admin approval → bond → leaderboard.",
+    category: "Run",
+  },
+  {
+    slug: "running-a-relayer",
+    title: "Running a Relayer",
+    blurb: "Stand up just YOUR relayer (+ the orderbook it talks to) and register it.",
     category: "Run",
   },
   {
