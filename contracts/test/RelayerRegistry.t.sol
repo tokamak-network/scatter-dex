@@ -268,7 +268,7 @@ contract RelayerRegistryTest is Test {
         assertTrue(registry.isActiveRelayer(relayer1));
     }
 
-    function test_register_kyc_gate_on_verified_but_unapproved_blocks_only_that_leg() public {
+    function test_register_kyc_gate_on_approved_but_unverified_blocks_on_identity_leg() public {
         // Sanity: with the gate on, a KYC-approved-but-unverified wallet is
         // still blocked by the zk-X509 leg — the gate is an AND, not an OR.
         registry.setKycApprovalRegistry(address(kycApproval));

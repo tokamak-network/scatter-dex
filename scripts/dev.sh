@@ -826,7 +826,9 @@ if [ -n "$ISSUANCE_APPROVAL_REGISTRY" ]; then
         --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
       echo "  KYC-approved $kyc_addr on IssuanceApprovalRegistry"
     else
-      echo "  KYC approval for $kyc_addr skipped (already approved?)"
+      # approve() overwrites any prior approval (idempotent, never reverts on
+      # re-approval), so a failure here is a genuine tx/network/owner error.
+      echo "  WARNING: failed to KYC-approve $kyc_addr on IssuanceApprovalRegistry"
     fi
   done
   if cast send "$RELAYER_REGISTRY" "setKycApprovalRegistry(address)" \

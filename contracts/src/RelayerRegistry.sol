@@ -142,8 +142,9 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         if (fee > MAX_FEE) revert FeeTooHigh();
         if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();
         // AND gate (feature-flagged): when wired, also require a current admin KYC approval.
-        // `address(0)` skips the check — see `setKycApprovalRegistry`.
-        if (address(kycApprovalRegistry) != address(0) && !kycApprovalRegistry.isApproved(msg.sender)) {
+        // `address(0)` skips the check — see `setKycApprovalRegistry`. Cache the SLOAD.
+        IKycApproval _kyc = kycApprovalRegistry;
+        if (address(_kyc) != address(0) && !_kyc.isApproved(msg.sender)) {
             revert NotKycApproved();
         }
 
