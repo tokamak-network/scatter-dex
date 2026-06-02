@@ -5,48 +5,26 @@
  *  The admin reviews relayer-operator KYC submissions (collected by the
  *  /register wizard step 1 and stored on the shared-orderbook): watch the
  *  liveness video, check the ID document, then mark the submission
- *  Verified / Rejected, or Approve it for issuance.
+ *  Verified / Rejected, or Approve it (which fixes the operator's identity
+ *  on-chain and continues their onboarding).
  *
- *  Approving emails the operator a certificate-issuance link (via the
- *  admin's mail client, the same Gmail-compose pattern Pay uses for
- *  claim links) and flips the submission to `approved`. Wiring the
- *  on-chain `IssuanceApprovalRegistry.approveForIssuance` write into the
- *  same button is the follow-up once the registry address is configured
- *  (coordinated with the operator-CA issuance gate).
+ *  Approving writes the cert subject on-chain (IssuanceApprovalRegistry,
+ *  owner-only), flips the submission to `approved`, and emails the operator
+ *  an onboarding link (via the admin's mail client, the same Gmail-compose
+ *  pattern Pay uses for claim links).
  *
- *  Auth: the shared-orderbook `/api/kyc/*` admin routes require a bearer.
- *  Interim, the token is read from env so the signed-in admin doesn't
- *  type anything; the target is SIWE with the connected admin wallet
- *  (in progress on the orderbook) — only `authHeaders` changes then. */
+ *  Auth: the shared-orderbook `/api/kyc/*` admin routes require a bearer
+ *  token. The admin authenticates by SIGNING a challenge with the connected
+ *  admin wallet (SIWE) — see `useAdminSiwe`; the minted session token is held
+ *  in memory only, never persisted. There is no static env token. */
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Contract } from "ethers";
 import { useWallet } from "@zkscatter/sdk/react";
+import { useAdminSiwe } from "../../lib/useAdminSiwe";
+import { parseConfigUrl } from "../../lib/configUrl";
 import { SectionHeader } from "../../components/SectionHeader";
-
-/** Trim, validate (http/https only), and strip trailing slashes on a
- *  configured base URL. Fails loud at module load on a malformed value
- *  rather than silently building broken links — these become absolute
- *  URLs in admin requests and the certificate-issuance email. */
-function parseConfigUrl(value: string | undefined, fallback: string): string {
-  const raw = value?.trim() || fallback;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error(`Invalid URL configuration: "${raw}"`);
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`URL must be http(s): "${raw}"`);
-  }
-  // A base URL must not carry a query or fragment — these become broken
-  // when we append paths/params (e.g. `${base}/register?wallet=…`).
-  if (url.search || url.hash) {
-    throw new Error(`Base URL must not include a query or fragment: "${raw}"`);
-  }
-  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
-}
 
 const ORDERBOOK_URL = parseConfigUrl(
   process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL,
@@ -73,15 +51,6 @@ const APPROVE_ABI = [
   // write failed after the chain already changed.
   "function approvals(address operator) view returns (tuple(string commonName, string organization, string country, uint32 validityDays, address approvedBy, uint64 approvedAt, uint64 expiresAt, bool revoked, string revokeReason, uint64 revokedAt))",
 ];
-
-/** Dev/interim bearer, read from env so the page authenticates without a
- *  manual token entry. Replaced by a SIWE session header (signed by the
- *  connected admin wallet) once the orderbook's signature auth lands. */
-const ADMIN_TOKEN = process.env.NEXT_PUBLIC_ORDERBOOK_ADMIN_TOKEN ?? "";
-
-function authHeaders(): HeadersInit {
-  return ADMIN_TOKEN ? { Authorization: `Bearer ${ADMIN_TOKEN}` } : {};
-}
 
 type KycStatus = "pending" | "verified" | "approved" | "rejected" | "revoked";
 
@@ -115,11 +84,11 @@ async function recordStatus(
   id: string,
   status: KycStatus,
   notes: string | undefined,
-  authHeaders: () => HeadersInit,
+  authedFetch: (url: string, init?: RequestInit) => Promise<Response>,
 ): Promise<void> {
-  const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
+  const res = await authedFetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
     method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status, notes: notes || undefined }),
   });
   if (!res.ok) {
@@ -140,24 +109,25 @@ function canTransition(from: KycStatus, to: KycStatus): boolean {
 }
 
 export default function KycReviewPage() {
+  const { account, connect, authedFetch } = useAdminSiwe(ORDERBOOK_URL);
   const [list, setList] = useState<SubmissionSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const refreshList = useCallback(async () => {
+    // Loading the queue requires an authenticated admin wallet — wait for a
+    // connection (the prompt below) rather than firing an unauthed request.
+    if (!account) { setList([]); setError(""); return; }
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions`, {
-        headers: authHeaders(),
-      });
-      if (res.status === 401 || res.status === 503) {
-        throw new Error(
-          res.status === 503
-            ? "KYC admin endpoints are disabled (orderbook ADMIN_TOKEN unset)."
-            : "Not authorized — admin auth not configured.",
-        );
+      const res = await authedFetch(`${ORDERBOOK_URL}/api/kyc/submissions`);
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("Not authorized — this wallet isn't an admin, or the session expired.");
+      }
+      if (res.status === 503) {
+        throw new Error("KYC admin endpoints are disabled — orderbook SIWE auth (ADMIN_ADDRESSES) is not configured.");
       }
       if (!res.ok) throw new Error(`List failed (${res.status})`);
       const json = (await res.json()) as { submissions: SubmissionSummary[] };
@@ -168,7 +138,7 @@ export default function KycReviewPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [account, authedFetch]);
 
   useEffect(() => {
     void refreshList();
@@ -186,8 +156,8 @@ export default function KycReviewPage() {
         <h1 className="mt-2 text-2xl font-semibold">Operator CA — KYC review</h1>
         <p className="mt-1 max-w-2xl text-sm text-[var(--color-text-muted)]">
           Review relayer-operator identity submissions, then verify, reject, or
-          approve them for certificate issuance. Approving emails the operator
-          their issuance link.
+          approve them to continue onboarding. Approving fixes their identity
+          on-chain and emails the operator their onboarding link.
         </p>
       </header>
 
@@ -197,11 +167,20 @@ export default function KycReviewPage() {
           badge="live"
           hint={loading ? "Loading…" : `${list.length} total`}
         />
-        {!ADMIN_TOKEN && (
-          <p className="mb-3 text-xs text-[var(--color-warning)]">
-            Admin auth not configured — set <code className="font-mono">NEXT_PUBLIC_ORDERBOOK_ADMIN_TOKEN</code>{" "}
-            (dev) until SIWE admin-signature auth lands.
-          </p>
+        {!account && (
+          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs">
+            <span>
+              Connect the admin wallet to load and review submissions — each session is
+              authenticated by a wallet signature (no shared token).
+            </span>
+            <button
+              type="button"
+              onClick={() => void connect()}
+              className="rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-1 font-medium hover:bg-[var(--color-primary-soft)]"
+            >
+              Connect admin wallet
+            </button>
+          </div>
         )}
         <div className="mb-3">
           <button
@@ -240,7 +219,7 @@ export default function KycReviewPage() {
 
       {selectedId && (
         <Drawer title="KYC submission" onClose={() => setSelectedId(null)}>
-          <SubmissionPanel id={selectedId} onChanged={refreshList} />
+          <SubmissionPanel id={selectedId} onChanged={refreshList} authedFetch={authedFetch} />
         </Drawer>
       )}
     </div>
@@ -331,9 +310,11 @@ function LabeledInput({
 function SubmissionPanel({
   id,
   onChanged,
+  authedFetch,
 }: {
   id: string;
   onChanged: () => Promise<void>;
+  authedFetch: (url: string, init?: RequestInit) => Promise<Response>;
 }) {
   const { signer, connect } = useWallet();
   const [detail, setDetail] = useState<SubmissionDetail | null>(null);
@@ -352,15 +333,13 @@ function SubmissionPanel({
   // each as a blob and hand the component an object URL.
   const loadFile = useCallback(async (kind: "video" | "idDoc"): Promise<string | null> => {
     try {
-      const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/file/${kind}`, {
-        headers: authHeaders(),
-      });
+      const res = await authedFetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/file/${kind}`);
       if (!res.ok) return null;
       return URL.createObjectURL(await res.blob());
     } catch {
       return null;
     }
-  }, [id]);
+  }, [id, authedFetch]);
 
   useEffect(() => {
     let cancelled = false;
@@ -369,9 +348,7 @@ function SubmissionPanel({
     (async () => {
       setErr("");
       try {
-        const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}`, {
-          headers: authHeaders(),
-        });
+        const res = await authedFetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}`);
         if (!res.ok) throw new Error(`Detail failed (${res.status})`);
         const json = (await res.json()) as SubmissionDetail;
         if (cancelled) return;
@@ -404,9 +381,9 @@ function SubmissionPanel({
       setErr("");
       setBusy(true);
       try {
-        const res = await fetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
+        const res = await authedFetch(`${ORDERBOOK_URL}/api/kyc/submissions/${id}/status`, {
           method: "POST",
-          headers: { ...authHeaders(), "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status, notes: notes || undefined }),
         });
         if (!res.ok) {
@@ -423,12 +400,12 @@ function SubmissionPanel({
         setBusy(false);
       }
     },
-    [id, notes, onChanged],
+    [id, notes, onChanged, authedFetch],
   );
 
   /** Approve = fix the cert subject on-chain (IssuanceApprovalRegistry,
-   *  owner-only) + record the decision + email the issuance link. The
-   *  on-chain write is what unlocks the operator's issuance/verify. */
+   *  owner-only) + record the decision + email the onboarding link. The
+   *  on-chain write is what unlocks the operator's verify/register flow. */
   const onApprove = useCallback(async () => {
     setErr("");
     if (!detail) return;
@@ -461,15 +438,15 @@ function SubmissionPanel({
         await tx.wait();
       }
       setDetail((d) => (d ? { ...d, status: "approved" } : d));
-      await recordStatus(id, "approved", notes, authHeaders);
-      emailIssuanceLink(detail.email, detail.wallet);
+      await recordStatus(id, "approved", notes, authedFetch);
+      emailOnboardingLink(detail.email, detail.wallet);
       await onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Approve failed");
     } finally {
       setBusy(false);
     }
-  }, [detail, signer, cn, org, country, validityDays, id, notes, onChanged]);
+  }, [detail, signer, cn, org, country, validityDays, id, notes, onChanged, authedFetch]);
 
   /** Revoke = invalidate an already-approved identity on-chain
    *  (IssuanceApprovalRegistry.revoke, owner-only) + record it. The
@@ -501,14 +478,14 @@ function SubmissionPanel({
       // it immediately; a DB recording failure is a secondary, retryable
       // error rather than a lost revocation.
       setDetail((d) => (d ? { ...d, status: "revoked" } : d));
-      await recordStatus(id, "revoked", reason, authHeaders);
+      await recordStatus(id, "revoked", reason, authedFetch);
       await onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Revoke failed");
     } finally {
       setBusy(false);
     }
-  }, [detail, signer, id, notes, onChanged]);
+  }, [detail, signer, id, notes, onChanged, authedFetch]);
 
   if (err && !detail) {
     return <div className="px-4 py-3 text-xs text-[var(--color-danger)]">{err}</div>;
@@ -617,9 +594,9 @@ function SubmissionPanel({
       </div>
       {status === "approved" && (
         <p className="text-xs text-[var(--color-success)]">
-          Approved on-chain — the operator can now issue their certificate from
-          the emailed link. To invalidate it later, enter a reason in notes and
-          use Revoke approval.
+          Approved on-chain — the operator can now continue onboarding from the
+          emailed link (verify their certificate via zk-X509, then register). To
+          invalidate it later, enter a reason in notes and use Revoke approval.
         </p>
       )}
       {status === "revoked" && (
@@ -637,7 +614,7 @@ function SubmissionPanel({
  *  SMTP). scatter-dex no longer issues certificates: after KYC approval the
  *  operator proves their real certificate via zk-X509 and continues the
  *  relayer onboarding wizard. */
-function emailIssuanceLink(email: string, wallet: string) {
+function emailOnboardingLink(email: string, wallet: string) {
   const onboardUrl = `${OPERATORS_URL}/register?wallet=${encodeURIComponent(wallet)}`;
   const subject = "Your relayer onboarding is approved";
   const body = [
