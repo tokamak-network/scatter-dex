@@ -7,7 +7,6 @@ import os from "os";
 import { Wallet } from "ethers";
 import { OrderbookDB } from "../src/core/db.js";
 import { createKycRoutes } from "../src/routes/kyc.js";
-import { createCaRoutes } from "../src/routes/ca.js";
 import { createAdminRoutes } from "../src/routes/admin.js";
 import { makeAdminAuth } from "../src/middleware/admin-auth.js";
 import { makeAdminSiweFromAllowlist } from "../src/core/admin-siwe.js";
@@ -19,10 +18,6 @@ const UPLOAD_DIR = path.join(os.tmpdir(), "audit-test-uploads");
 const STATIC_TOKEN = "audit-static-token";
 const noop: express.RequestHandler = (_req, _res, next) => next();
 const adminWallet = new Wallet("0x" + "ab".repeat(32));
-
-// A self-signed Root CA (CA:TRUE), reused from the CA suite fixtures.
-const CA_DER_B64 =
-  "MIIDVzCCAj+gAwIBAgIUHvIvd1SS+rkKEnSsefjbEIw1jgEwDQYJKoZIhvcNAQELBQAwOzEaMBgGA1UEAwwRemtTY2F0dGVyIFJvb3QgQ0ExEDAOBgNVBAoMB1Rva2FtYWsxCzAJBgNVBAYTAktSMB4XDTI2MDYwMTA4NTIwOVoXDTM2MDUyOTA4NTIwOVowOzEaMBgGA1UEAwwRemtTY2F0dGVyIFJvb3QgQ0ExEDAOBgNVBAoMB1Rva2FtYWsxCzAJBgNVBAYTAktSMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAv59AJsLibY8yeUMn1uHdm6orEIhY3L34R7dQW00SC7BvKN+GV2xob8qPWFs6C3Da0yAUm3v1iNVrNFcafczuGByQqzRqk8l3PiqI0yo26KGnu9BCjfq+I+BeJLTBL2YLaU9VXYMk43KN8EvzLeUWPm91ULOyeMFNmf2d/818IhQhzgnk5ursV4kCrTpclCjhr6V5VteXY49Xhy1wh5GLtDkr/ByzprHtt8Htg4EHiili12ZKkRd13RXZnv/+p2zDCvsEhIXhQtjzMDJY9L/QxQFXfYHRmr4CiQcIl+KtMETj5/obUzzSx6ENBsD9co0sVHjr3lBIanqFB+dDFgWChwIDAQABo1MwUTAdBgNVHQ4EFgQUQvPsOizs16+K0hatFq8MWg52SVowHwYDVR0jBBgwFoAUQvPsOizs16+K0hatFq8MWg52SVowDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEACIX14fZtYNK3O0MgRwbd6dNj1J7g2VANOpB0FXPIMNrDWUh5SHGgIKPQh39zrLm95U/EC/yLSyrO94h8qSVM8gIRztHy4DrjJfSn42Xr4v3ubTiHaCnbCGuy34rPQspkTEuQcj8jMXBfS4KtZlkPd3U2p69Hkq0+VrxaTDgaXUKRyu6uoC1mHs//znwVqU3+vjna99G9m4yhyeCzGf0afeKMBCR9uuxnz3y5a7yUUIdG5Do77nlB4ZV+apUB8KWmXD7Y6UcDWJMgoNa9vBMrOFkharz0+86zFggux/iZ95wsl9eaeiEMBtp96d8pT0ys/gTnuH+V3SxMSfErQQ22Uw==";
 
 function cleanDb() {
   for (const ext of ["", "-wal", "-shm"]) {
@@ -39,9 +34,9 @@ describe("OrderbookDB — audit log", () => {
 
   it("appends and lists entries newest-first", () => {
     db.recordAudit({ ts: 100, actor: "0xa", action: "kyc.approved", targetType: "kyc", targetId: "s1" });
-    db.recordAudit({ ts: 200, actor: null, action: "rootca.published", targetType: "root_ca", targetId: "fp" });
+    db.recordAudit({ ts: 200, actor: null, action: "kyc.rejected", targetType: "kyc", targetId: "s2" });
     const all = db.listAudit();
-    expect(all.map((e) => e.action)).toEqual(["rootca.published", "kyc.approved"]);
+    expect(all.map((e) => e.action)).toEqual(["kyc.rejected", "kyc.approved"]);
     expect(all[1].actor).toBe("0xa");
     expect(all[0].actor).toBeNull();
   });
@@ -49,10 +44,10 @@ describe("OrderbookDB — audit log", () => {
   it("filters by action / targetType / targetId", () => {
     db.recordAudit({ ts: 1, actor: "0xa", action: "kyc.approved", targetType: "kyc", targetId: "s1" });
     db.recordAudit({ ts: 2, actor: "0xa", action: "kyc.revoked", targetType: "kyc", targetId: "s1" });
-    db.recordAudit({ ts: 3, actor: "0xa", action: "rootca.published", targetType: "root_ca", targetId: "fp" });
+    db.recordAudit({ ts: 3, actor: "0xa", action: "kyc.verified", targetType: "kyc", targetId: "s2" });
     expect(db.listAudit({ action: "kyc.revoked" })).toHaveLength(1);
-    expect(db.listAudit({ targetType: "kyc" })).toHaveLength(2);
-    expect(db.listAudit({ targetId: "fp" })).toHaveLength(1);
+    expect(db.listAudit({ targetType: "kyc" })).toHaveLength(3);
+    expect(db.listAudit({ targetId: "s2" })).toHaveLength(1);
   });
 
   it("is append-only (no update/delete surface)", () => {
@@ -64,7 +59,7 @@ describe("OrderbookDB — audit log", () => {
 });
 
 // ── HTTP integration ─────────────────────────────────────────────────────
-describe("audit log wiring (KYC + Root CA → /api/admin/audit)", () => {
+describe("audit log wiring (KYC → /api/admin/audit)", () => {
   let server: http.Server;
   let db: OrderbookDB;
   let port: number;
@@ -99,7 +94,6 @@ describe("audit log wiring (KYC + Root CA → /api/admin/audit)", () => {
     app.use(express.json());
     app.use("/api/admin", createAdminRoutes({ db, monitor: new VerifyMonitor(), adminAuth, siwe, writeLimiter: noop }));
     app.use("/api/kyc", createKycRoutes(db, noop, noop, adminAuth));
-    app.use("/api/ca", createCaRoutes(db, adminAuth, noop, noop));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, resolve));
     const addr = server.address();
@@ -151,24 +145,23 @@ describe("audit log wiring (KYC + Root CA → /api/admin/audit)", () => {
     expect(JSON.parse(audit.entries[0].detail)).toMatchObject({ from: "approved", to: "revoked", notes: "compromised" });
   });
 
-  it("records a Root CA publication, and the static-token actor is null", async () => {
-    // Publish via the static token → actor should be null.
-    const res = await fetch(`http://localhost:${port}/api/ca/root`, {
+  it("records a status decision via the static token with a null actor", async () => {
+    const wallet = "0x" + "e3".repeat(20);
+    const sub = await (await submitForm(wallet)).json();
+    // Decide via the static token → actor should be null (no SIWE address).
+    const res = await fetch(`http://localhost:${port}/api/kyc/submissions/${sub.id}/status`, {
       method: "POST",
       headers: { authorization: `Bearer ${STATIC_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ der: CA_DER_B64 }),
+      body: JSON.stringify({ status: "verified" }),
     });
-    expect(res.status).toBe(201);
-    const fp = (await res.json()).fingerprint;
+    expect(res.status).toBe(200);
 
-    const audit = await (await fetch(`http://localhost:${port}/api/admin/audit?action=rootca.published`, {
+    const audit = await (await fetch(`http://localhost:${port}/api/admin/audit?targetId=${sub.id}`, {
       headers: { authorization: `Bearer ${STATIC_TOKEN}` },
     })).json();
-    expect(audit.entries.length).toBeGreaterThanOrEqual(1);
-    const entry = audit.entries.find((e: { targetId: string }) => e.targetId === fp);
-    expect(entry).toBeTruthy();
-    expect(entry.actor).toBeNull();
-    expect(entry.targetType).toBe("root_ca");
+    expect(audit.entries).toHaveLength(1);
+    expect(audit.entries[0].actor).toBeNull();
+    expect(audit.entries[0].targetType).toBe("kyc");
   });
 
   it("GET /api/admin/audit requires admin auth (401)", async () => {

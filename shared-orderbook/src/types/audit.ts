@@ -1,9 +1,9 @@
 /**
  * Immutable admin audit log (operator onboarding, §12.4 local SIEM).
  *
- * An append-only record of privileged admin actions — KYC review decisions
- * and Root CA publications — so an operator can later answer "who approved /
- * revoked / published what, and when". Rows are never updated or deleted.
+ * An append-only record of privileged admin actions — KYC review decisions —
+ * so an operator can later answer "who approved / revoked what, and when".
+ * Rows are never updated or deleted.
  */
 
 /** Known action keys. Stored as free text (so new actions don't need a schema
@@ -13,14 +13,10 @@ export const AUDIT_ACTIONS = [
   "kyc.approved",
   "kyc.rejected",
   "kyc.revoked",
-  "rootca.published",
-  "cert.csr_submitted",
-  "cert.issued",
-  "cert.rejected",
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
 
-export type AuditTargetType = "kyc" | "root_ca" | "cert";
+export type AuditTargetType = "kyc";
 
 /** A stored audit row. */
 export interface AuditEntry {

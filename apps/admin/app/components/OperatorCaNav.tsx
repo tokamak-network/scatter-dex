@@ -11,9 +11,8 @@ export function OperatorCaNav() {
     <NavDropdown
       label="Operator CA"
       items={[
-        { href: "/operator-ca", label: "Issuance" },
+        { href: "/operator-ca", label: "Verify & attest" },
         { href: "/operator-ca/kyc-review", label: "KYC review" },
-        { href: "/operator-ca/root-ca", label: "Root CA" },
       ]}
       LinkComponent={Link}
     />
