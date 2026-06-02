@@ -39,7 +39,7 @@ background**, the way the *real service* works:
 > ```bash
 > ./scripts/dev.sh --stop                                   # anvil + orderbook + apps + (있다면)relayers
 > cd <zk-X509> && bash script/stop-services.sh; cd -        # zk-X509 front/back
-> lsof -tiTCP:9090 -sTCP:LISTEN | xargs -r kill              # prover-server
+> pid=$(lsof -tiTCP:9090 -sTCP:LISTEN); [ -n "$pid" ] && kill $pid   # prover-server (macOS xargs has no -r)
 > ```
 >
 > **1. 인프라 기동 (릴레이어 없이, 백그라운드)**

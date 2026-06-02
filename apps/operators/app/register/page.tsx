@@ -298,7 +298,11 @@ export default function RegisterPage() {
   // Verified but not yet approved → the ball is in the admin's court.
   // Hold at the Verify milestone and surface the wait instead of
   // presenting Endpoint as the operator's next action.
-  const awaitingAdmin = step1Done && !kycApproved && !step3Done;
+  // Only "waiting on the admin" when genuinely pending review — not during the
+  // transient `checking` load, and not for revoked/expired/error (those carry
+  // their own messaging), which a bare `!kycApproved` would wrongly include.
+  const awaitingAdmin =
+    step1Done && approval.status === "not-approved" && !step3Done;
   const step2Done =
     step1Done && kycApproved && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 3)
   const currentStep: 1 | 2 | 3 | 4 =
