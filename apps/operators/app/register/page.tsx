@@ -1484,11 +1484,15 @@ function Step3AdminApproval({
             wallet on-chain. Registration (endpoint + bond) is unlocked below.
           </p>
         </div>
-      ) : approvalStatus === "revoked" ? (
+      ) : approvalStatus === "revoked" || approvalStatus === "expired" ? (
         <div className="rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-3 text-sm">
-          <div className="font-medium text-[var(--color-danger)]">Approval revoked</div>
+          <div className="font-medium text-[var(--color-danger)]">
+            {approvalStatus === "expired" ? "Approval expired" : "Approval revoked"}
+          </div>
           <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-            The admin revoked your approval. Contact the admin offline before retrying.{" "}
+            {approvalStatus === "expired"
+              ? "Your approval window closed. Ask the admin for a re-approval."
+              : "The admin revoked your approval. Contact the admin offline before retrying."}{" "}
             <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">Check now</button>
           </p>
         </div>

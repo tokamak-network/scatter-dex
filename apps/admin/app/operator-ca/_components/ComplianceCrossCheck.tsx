@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { eqAddr } from "@zkscatter/sdk";
 import { parseConfigUrl } from "../../lib/configUrl";
 import { explainError } from "../../lib/format";
 import { normalizeEvmAddress } from "../../lib/x509";
@@ -95,11 +96,12 @@ export function ComplianceCrossCheck({
   const normalizedWallet = normalizeEvmAddress(wallet.trim());
   const walletValid = normalizedWallet !== null;
 
-  // Tell the drawer there's no proof to approve against (no records, or not yet
-  // loaded / errored) so it can keep Approve disabled.
+  // Tell the drawer there's no proof to approve against in every non-loaded
+  // state — including `loading`, so a NEW lookup clears the previous
+  // submission's proof and Approve can't fire on stale data mid-fetch.
+  // (The loaded-with-records case reports hasProof:true from RecordCard.)
   useEffect(() => {
-    const noProof =
-      state.kind === "loaded" ? state.records.length === 0 : state.kind !== "loading";
+    const noProof = state.kind === "loaded" ? state.records.length === 0 : true;
     if (noProof) {
       onCrossCheck?.({ hasProof: false, walletMatch: null, nameConfirmed: false, commonName: "", org: "", country: "" });
     }
@@ -132,11 +134,17 @@ export function ComplianceCrossCheck({
     }
   }, [normalizedWallet, state.kind]);
 
-  // Drawer mode: auto-look-up the pinned wallet once on mount (and if it
-  // changes between submissions). The standalone page passes no fixedWallet,
-  // so this is inert there.
+  // Drawer mode: when the pinned wallet actually changes (a different
+  // submission), sync it into `wallet` and auto-look-up. Track the previous
+  // value via a ref so a parent re-render with the SAME fixedWallet doesn't
+  // clobber state or re-fetch. The standalone page passes no fixedWallet, so
+  // this is inert there.
+  const prevFixedWalletRef = useRef<string | undefined>(undefined);
   useEffect(() => {
+    if (fixedWallet === prevFixedWalletRef.current) return;
+    prevFixedWalletRef.current = fixedWallet;
     if (fixedWallet && normalizeEvmAddress(fixedWallet.trim()) && !configError) {
+      setWallet(fixedWallet);
       void lookup();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -236,7 +244,7 @@ function RecordCard({
   // — do NOT approve.
   const walletMatch =
     expectedWallet && r.registrant
-      ? r.registrant.toLowerCase() === expectedWallet.toLowerCase()
+      ? eqAddr(r.registrant, expectedWallet)
       : null;
   // Lift the latest record's cross-check state + proved subject so the drawer
   // can gate Approve and write the proved identity on-chain.
