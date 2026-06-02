@@ -454,14 +454,16 @@ export default function RegisterPage() {
         defaultOpen={currentStep === 2}
       />
 
-      {/* Step 3 — admin approval. The operator can't act; surface the wait
-          here, between Prove (step 2) and Endpoint (step 4), so the banner
-          sits where this step lives in the flow rather than at the top. */}
-      {awaitingAdmin && (
-        <AdminReviewBanner
-          onRefresh={() => { approval.refetch(); refreshIdentity(); refreshStatus(); }}
-        />
-      )}
+      {/* Step 3 — admin approval. The operator can't act (the admin does), but
+          render it as a full StepSection like the others for visual consistency:
+          gated until zk-X509 is proved, then pending → done as the admin acts. */}
+      <Step3AdminApproval
+        gated={!step1Done}
+        kycApproved={kycApproved}
+        approvalStatus={approval.status}
+        onRefresh={() => { approval.refetch(); refreshIdentity(); refreshStatus(); }}
+        defaultOpen={currentStep === 3}
+      />
 
       <Step2Endpoint
         gated={!step1Done || !kycApproved}
@@ -1034,7 +1036,7 @@ function Step2Endpoint({
   const feePct = (Number(feeBps) / 100).toFixed(2);
   return (
     <StepSection
-      step={3}
+      step={4}
       title="Endpoint, name & fee"
       hint="Publish where Pay/Pro should reach you. We probe the URL live so a typo is caught before gas."
       done={!gated && !urlValidation.invalid && !urlValidation.empty && !nameInvalid && (probe.status === "ok" || (probe.status === "warn" && endpointOverride))}
@@ -1050,10 +1052,8 @@ function Step2Endpoint({
             - "Full registration walkthrough" is the primary CTA
               (brand-color filled button) — the entry-point doc
               that contextualises every other step.
-            - "How to run a relayer locally" + "Production deployment"
-              are reference links (strong border, white background)
-              for operators who already know the flow and just need
-              the env reference. */}
+            - "Production deployment" is the reference link for
+              actually standing the relayer up in production. */}
       <div className="mb-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
         <div className="font-medium text-[var(--color-text)]">
           Don&apos;t have a relayer running yet?
@@ -1065,18 +1065,16 @@ function Step2Endpoint({
         <div className="mt-2 flex flex-wrap gap-3">
           <Link
             href="/docs?d=registering-a-relayer"
+            target="_blank"
+            rel="noopener noreferrer"
             className="rounded border border-[var(--color-primary)] bg-[var(--color-primary-soft)] px-2 py-1 text-[11px] font-medium text-[var(--color-primary)] hover:opacity-90"
           >
             Full registration walkthrough →
           </Link>
           <Link
-            href="/docs?d=local-setup"
-            className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 text-[11px] font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
-          >
-            How to run a relayer locally →
-          </Link>
-          <Link
             href="/docs?d=deployment"
+            target="_blank"
+            rel="noopener noreferrer"
             className="rounded border border-[var(--color-border-strong)] bg-white px-2 py-1 text-[11px] font-medium text-[var(--color-text)] hover:bg-[var(--color-primary-soft)]"
           >
             Production deployment →
@@ -1254,7 +1252,7 @@ function Step3Bond({
     "Register on-chain";
   return (
     <StepSection
-      step={4}
+      step={5}
       title="Bond & submit"
       hint={status && status.minBond > 0n
         ? `Stake at least ${status.minBondEth} ETH. Refundable on exit.`
@@ -1329,7 +1327,7 @@ function StepSection({
   defaultOpen,
   children,
 }: {
-  step: 1 | 2 | 3 | 4;
+  step: 1 | 2 | 3 | 4 | 5;
   title: string;
   hint?: string;
   done: boolean;
@@ -1451,28 +1449,60 @@ const FLOW_STEPS: Array<{
   { n: 6, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
 ];
 
-/** Banner shown after the operator is zk-X509 verified but still waiting on
- *  the admin's on-chain approval (gate 2): makes explicit that the next move
- *  is the ADMIN's (review + approve) — rather than the wizard quietly
- *  advancing the highlight to Endpoint as if it were actionable. */
-function AdminReviewBanner({
+/** Step 3 — admin approval (gate 2). The operator can't act here (the admin
+ *  reviews + approves on-chain), but it renders as a full StepSection like the
+ *  other steps for consistency: gated until zk-X509 is proved, "done" once the
+ *  admin approves, with a waiting state (and a Check-now refresh) in between. */
+function Step3AdminApproval({
+  gated,
+  kycApproved,
+  approvalStatus,
   onRefresh,
+  defaultOpen,
 }: {
+  gated: boolean;
+  kycApproved: boolean;
+  approvalStatus: UseIssuanceApprovalResult["status"];
   onRefresh: () => void;
+  defaultOpen: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-4 py-3 text-sm">
-      <div className="font-medium">Verified — waiting on the admin&apos;s approval</div>
-      <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-        Your zk-X509 certificate proof is in. The admin now compares the
-        certificate details against your KYC documents and approves your wallet
-        on-chain. Registration (endpoint + bond) unlocks once approved — no
-        action is needed here until then.{" "}
-        <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">
-          Check now
-        </button>
-      </p>
-    </div>
+    <StepSection
+      step={3}
+      title="Admin approval"
+      hint="The admin compares your proved certificate against your KYC documents, then approves your wallet on-chain. You wait here — no action needed."
+      done={kycApproved}
+      gated={gated}
+      gatedReason="Prove your certificate (Step 2) first."
+      defaultOpen={defaultOpen}
+    >
+      {kycApproved ? (
+        <div className="rounded-lg border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-3 text-sm">
+          <div className="font-medium text-[var(--color-success)]">✓ Approved by the admin</div>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+            The admin checked your certificate against your KYC documents and approved your
+            wallet on-chain. Registration (endpoint + bond) is unlocked below.
+          </p>
+        </div>
+      ) : approvalStatus === "revoked" ? (
+        <div className="rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-3 text-sm">
+          <div className="font-medium text-[var(--color-danger)]">Approval revoked</div>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+            The admin revoked your approval. Contact the admin offline before retrying.{" "}
+            <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">Check now</button>
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-3 text-sm">
+          <div className="font-medium">Waiting on the admin&apos;s approval</div>
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+            Your zk-X509 proof is in. The admin now compares the certificate against your KYC
+            documents and approves your wallet on-chain. Registration unlocks once approved.{" "}
+            <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">Check now</button>
+          </p>
+        </div>
+      )}
+    </StepSection>
   );
 }
 
