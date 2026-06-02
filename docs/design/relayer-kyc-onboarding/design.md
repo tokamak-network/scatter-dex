@@ -339,7 +339,7 @@ if (address(kycApprovalRegistry) != address(0)                                  
 - **apps/admin**: `lib/rootca.ts`, `lib/leafCert.ts`, `lib/pkcs12.ts`, `_components/{GenerateRootCa,SignCsrPanel,IssueForm,IssuedList}.tsx`
 - **shared-orderbook**: `routes/cert.ts`(csr/issued), `routes/ca.ts` + `index.ts` mount
 - **apps/operators**: `app/operator-cert/page.tsx`, `lib/operatorCert.ts`
-- **유지**: KYC 제출/검토 UI, `AttestationPanel`(zk-X509 isVerified 게이트), `useIssuanceApproval`·`useRelayerIdentityRegistry`(register 게이트 재사용), SIWE, 감사로그, revoke, `RelayerRegistry.isVerified()`.
+- **유지**: KYC 제출/검토 UI, `AttestationPanel`(zk-X509 isVerified 게이트), `useIssuanceApproval`·`useRelayerIdentityRegistry`(register 게이트 재사용), SIWE, 감사로그, revoke, `RelayerRegistry.register()`의 신원 게이트(내부 `identityRegistry.isVerified()`, `contracts/src/RelayerRegistry.sol:134`).
 
 ---
 
