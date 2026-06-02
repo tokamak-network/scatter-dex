@@ -5,18 +5,24 @@ import {Test} from "forge-std/Test.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
+import {MockKycApproval} from "./mocks/MockKycApproval.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 contract RelayerRegistryTest is Test {
     RelayerRegistry public registry;
     MockIdentityRegistry public identityRegistry;
+    MockKycApproval public kycApproval;
     address treasury = address(0x7777);
     address relayer1 = address(0xA1);
     address relayer2 = address(0xA2);
 
     function setUp() public {
         identityRegistry = new MockIdentityRegistry();
+        // KYC-approval mock is created but left UNWIRED by default
+        // (kycApprovalRegistry stays address(0)), so the AND gate is off
+        // and every pre-existing test keeps its zk-X509-only behaviour.
+        kycApproval = new MockKycApproval();
         registry = ProxyDeployer.deployRelayerRegistry(
             address(this), address(this), treasury, address(identityRegistry), address(0)
         );
@@ -233,6 +239,86 @@ contract RelayerRegistryTest is Test {
         vm.prank(newcomer);
         vm.expectRevert(RelayerRegistry.NotVerified.selector);
         registry.register("http://newcomer", "Newcomer", 25, 0);
+    }
+
+    // ─── KYC AND gate (feature-flagged) ─────────────────────────
+
+    function test_register_kyc_gate_disabled_by_default() public {
+        // No KYC registry wired → gate off → verified relayer registers fine.
+        assertEq(address(registry.kycApprovalRegistry()), address(0));
+        vm.prank(relayer1);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+    }
+
+    function test_register_kyc_gate_on_not_approved_reverts() public {
+        registry.setKycApprovalRegistry(address(kycApproval));
+        // relayer1 is zk-X509 verified (setUp) but NOT KYC-approved.
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.NotKycApproved.selector);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+    }
+
+    function test_register_kyc_gate_on_approved_succeeds() public {
+        registry.setKycApprovalRegistry(address(kycApproval));
+        kycApproval.setApproved(relayer1, true);
+        // Both gates satisfied: zk-X509 verified AND KYC approved.
+        vm.prank(relayer1);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+    }
+
+    function test_register_kyc_gate_on_verified_but_unapproved_blocks_only_that_leg() public {
+        // Sanity: with the gate on, a KYC-approved-but-unverified wallet is
+        // still blocked by the zk-X509 leg — the gate is an AND, not an OR.
+        registry.setKycApprovalRegistry(address(kycApproval));
+        address ghost = address(0xBEEF);
+        vm.deal(ghost, 10 ether);
+        kycApproval.setApproved(ghost, true); // approved but never zk-X509 verified
+        vm.prank(ghost);
+        vm.expectRevert(RelayerRegistry.NotVerified.selector);
+        registry.register("http://ghost.com", "Ghost", 30, 0);
+    }
+
+    function test_setKycApprovalRegistry() public {
+        vm.expectEmit(false, false, false, true);
+        emit RelayerRegistry.KycApprovalRegistryUpdated(address(0), address(kycApproval));
+        registry.setKycApprovalRegistry(address(kycApproval));
+        assertEq(address(registry.kycApprovalRegistry()), address(kycApproval));
+    }
+
+    function test_setKycApprovalRegistry_not_owner_reverts() public {
+        vm.prank(relayer1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
+        registry.setKycApprovalRegistry(address(kycApproval));
+    }
+
+    function test_setKycApprovalRegistry_zero_disables_gate() public {
+        // Enable, then clear back to address(0): registration falls back to
+        // zk-X509-only. address(0) is a valid input (the feature-flag "off").
+        registry.setKycApprovalRegistry(address(kycApproval));
+        registry.setKycApprovalRegistry(address(0));
+        assertEq(address(registry.kycApprovalRegistry()), address(0));
+        vm.prank(relayer1); // verified, not KYC-approved — should still pass
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+    }
+
+    function test_enabling_kyc_gate_preserves_existing_relayers() public {
+        // Register relayer1 with the gate off, then enable the gate while
+        // relayer1 is NOT KYC-approved. The existing relayer stays active —
+        // the gate only applies at register() time (mirrors setIdentityRegistry).
+        vm.prank(relayer1);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        registry.setKycApprovalRegistry(address(kycApproval)); // relayer1 unapproved
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        // But a fresh, unapproved-yet-verified wallet is now blocked.
+        vm.prank(relayer2);
+        vm.expectRevert(RelayerRegistry.NotKycApproved.selector);
+        registry.register("http://relay2.com", "Relayer-2", 30, 0);
     }
 
     function test_initialize_zero_treasury_reverts() public {

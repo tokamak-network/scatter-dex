@@ -37,6 +37,7 @@ LOG_DIR="$ROOT_DIR/.dev-logs"
 DEPLOYER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 # Hardhat Account #1 — Relayer A (also registered on-chain by DeployLocal.s.sol).
 ZK_RELAYER_KEY="0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
+RELAYER_A_ADDR="0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 # Hardhat Account #2 — Relayer B (registered post-deploy for P2P orderbook tests).
 RELAYER_B_KEY="0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a"
 RELAYER_B_ADDR="0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"
@@ -650,7 +651,13 @@ else
   TON=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *TON:" | tail -1 | awk '{print $NF}')
 fi
 
+# IssuanceApprovalRegistry — the admin KYC-approval registry that gates relayer
+# registration alongside zk-X509 (the on-chain AND gate). Parsed once here since
+# `$DEPLOY_OUTPUT` persists past both deploy branches. Seeded + wired further below.
+ISSUANCE_APPROVAL_REGISTRY=$(echo "$DEPLOY_OUTPUT" | grep -E "^ *IssuanceApprovalRegistry:" | tail -1 | awk '{print $NF}')
+
 echo "  RelayerRegistry:     $RELAYER_REGISTRY"
+[ -n "$ISSUANCE_APPROVAL_REGISTRY" ] && echo "  IssuanceApprovalReg: $ISSUANCE_APPROVAL_REGISTRY"
 [ -n "$WETH" ] && echo "  WETH:                $WETH"
 [ -n "$USDC" ] && echo "  USDC:                $USDC"
 [ -n "$COMMITMENT_POOL" ] && echo "  CommitmentPool:      $COMMITMENT_POOL"
@@ -799,6 +806,37 @@ if ! wait_for "http://localhost:3003/api/info" "relayer-b" 30; then
   exit 1
 fi
 echo "  Relayer B running on http://localhost:3003 (PID $last_pid)"
+
+# ── KYC AND-gate seed (relayer 2-gate: zk-X509 isVerified AND KYC approval) ──
+# RelayerRegistry.register() now optionally requires an admin KYC approval
+# (IssuanceApprovalRegistry) on top of zk-X509 verification. Enable the gate in
+# the dev stack so the real 2-gate path is exercised by default:
+#   1. KYC-approve Relayer A + B on IssuanceApprovalRegistry (mock review = auto-approve)
+#   2. flip the gate ON via setKycApprovalRegistry → Relayer B's registration below
+#      then goes through BOTH legs.
+# Relayer A is already seated by DeployLocal (gate was off) and stays active — the
+# gate only applies at register() time, so existing relayers are never evicted.
+# In production the admin approves only after matching the delegated-proving
+# compliance log (cert subject) against the submitted KYC video / documents.
+if [ -n "$ISSUANCE_APPROVAL_REGISTRY" ]; then
+  for kyc_addr in "$RELAYER_A_ADDR" "$RELAYER_B_ADDR"; do
+    if cast send "$ISSUANCE_APPROVAL_REGISTRY" \
+        "approve(address,string,string,string,uint32,uint64)" \
+        "$kyc_addr" "Relayer Operator" "ScatterDEX Dev" "KR" 365 0 \
+        --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
+      echo "  KYC-approved $kyc_addr on IssuanceApprovalRegistry"
+    else
+      echo "  KYC approval for $kyc_addr skipped (already approved?)"
+    fi
+  done
+  if cast send "$RELAYER_REGISTRY" "setKycApprovalRegistry(address)" \
+      "$ISSUANCE_APPROVAL_REGISTRY" \
+      --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
+    echo "  KYC AND-gate enabled on RelayerRegistry → $ISSUANCE_APPROVAL_REGISTRY"
+  else
+    echo "  WARNING: failed to enable KYC AND-gate on RelayerRegistry"
+  fi
+fi
 
 # Register Relayer B on-chain (DeployLocal.s.sol only registers Relayer A).
 if cast send "$RELAYER_REGISTRY" "register(string,string,uint256,uint256)" \
@@ -1044,6 +1082,7 @@ echo "  Orderbook:   http://localhost:4000"
 echo "  Anvil:       $RPC_URL"
 echo ""
 echo "  RelayerRegistry:     $RELAYER_REGISTRY"
+[ -n "$ISSUANCE_APPROVAL_REGISTRY" ] && echo "  IssuanceApprovalReg: $ISSUANCE_APPROVAL_REGISTRY"
 [ -n "$WETH" ] && echo "  WETH:                $WETH"
 [ -n "$USDC" ] && echo "  USDC:                $USDC"
 [ -n "$COMMITMENT_POOL" ] && echo "  CommitmentPool:      $COMMITMENT_POOL"
