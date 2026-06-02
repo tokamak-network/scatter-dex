@@ -8,6 +8,7 @@ import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/ut
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IIdentityRegistry} from "./interfaces/IIdentityRegistry.sol";
+import {IKycApproval} from "./interfaces/IKycApproval.sol";
 
 /// @notice On-chain registry for ScatterDEX relayers.
 /// @dev Relayers may optionally stake a bond to register (minBond configurable by owner, default 0).
@@ -59,8 +60,14 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     mapping(address => bool) private inList; // tracks if address was ever added to relayerList
     address[] public relayerList;
 
+    /// @notice Optional admin KYC-approval gate (the repurposed `IssuanceApprovalRegistry`).
+    ///         `address(0)` disables it; see `setKycApprovalRegistry` for the gate semantics.
+    /// @dev Appended after `relayerList` (consuming one `__gap` slot) to keep the
+    ///      upgrade-safe storage layout intact.
+    IKycApproval public kycApprovalRegistry;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[50] private __gap;
+    uint256[49] private __gap;
 
     // ─── Events ──────────────────────────────────────────────────
     event RelayerRegistered(address indexed relayer, string url, string name, uint256 fee, uint256 bond);
@@ -71,6 +78,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
     event IdentityRegistryUpdated(address oldRegistry, address newRegistry);
+    event KycApprovalRegistryUpdated(address oldRegistry, address newRegistry);
 
     // ─── Errors ──────────────────────────────────────────────────
     error AlreadyRegistered();
@@ -84,6 +92,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     error BondTransferFailed();
     error FeeTooHigh();
     error NotVerified();
+    error NotKycApproved();
     error RenounceOwnershipDisabled();
     /// @dev ERC20 mode received native value, or native mode received non-zero `bondAmount`.
     error WrongPaymentMode();
@@ -132,6 +141,12 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         if (relayers[msg.sender].active) revert AlreadyRegistered();
         if (fee > MAX_FEE) revert FeeTooHigh();
         if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();
+        // AND gate (feature-flagged): when wired, also require a current admin KYC approval.
+        // `address(0)` skips the check — see `setKycApprovalRegistry`. Cache the SLOAD.
+        IKycApproval _kyc = kycApprovalRegistry;
+        if (address(_kyc) != address(0) && !_kyc.isApproved(msg.sender)) {
+            revert NotKycApproved();
+        }
 
         uint256 bond = _pullBond(bondAmount);
         if (bond < minBond) revert InsufficientBond();
@@ -319,5 +334,17 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         if (_identityRegistry == address(0)) revert ZeroAddress();
         emit IdentityRegistryUpdated(address(identityRegistry), _identityRegistry);
         identityRegistry = IIdentityRegistry(_identityRegistry);
+    }
+
+    /// @notice Set (or clear) the admin KYC-approval registry that gates registration.
+    /// @param _kycApprovalRegistry The `IssuanceApprovalRegistry` address, or `address(0)`
+    ///        to disable the KYC AND gate (registration falls back to zk-X509 only).
+    /// @dev Owner-only. Unlike `setIdentityRegistry`, `address(0)` is intentionally allowed —
+    ///      it is the feature-flag "off" value. Takes effect for new `register()` calls only;
+    ///      already-seated relayers are never re-checked, so enabling the gate never evicts
+    ///      existing relayers (mirrors the `setIdentityRegistry` migration semantics).
+    function setKycApprovalRegistry(address _kycApprovalRegistry) external onlyOwner {
+        emit KycApprovalRegistryUpdated(address(kycApprovalRegistry), _kycApprovalRegistry);
+        kycApprovalRegistry = IKycApproval(_kycApprovalRegistry);
     }
 }
