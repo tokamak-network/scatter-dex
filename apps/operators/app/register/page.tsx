@@ -1505,6 +1505,11 @@ function Step3AdminApproval({
             <button type="button" onClick={onRefresh} className="font-medium text-[var(--color-primary)] underline">Check now</button>
           </p>
         </div>
+      ) : approvalStatus === "checking" ? (
+        <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-3 py-3 text-sm text-[var(--color-text-muted)]">
+          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          Checking approval status…
+        </div>
       ) : (
         <div className="rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-3 text-sm">
           <div className="font-medium">Waiting on the admin&apos;s approval</div>

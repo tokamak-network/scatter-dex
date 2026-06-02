@@ -551,7 +551,7 @@ function leaderboardPlaceholder(state: LeaderboardState, registryDeployed: boole
   return null;
 }
 
-const TABLE_COLUMNS = 9;
+const TABLE_COLUMNS = 10;
 
 // Map each sort criterion onto the column header it should highlight.
 // Centralised so the arrow indicator + the sort selector can't drift.
@@ -698,6 +698,7 @@ function RelayerTable({
             <SortableTh label="#" column="" criterion={null} align="left" />
             <SortableTh label="Relayer" column="" criterion={null} align="left" />
             <SortableTh label="Address" column="" criterion={null} align="left" />
+            <SortableTh label="ID" column="" criterion={null} align="right" />
             <SortableTh label="Fee rate" column="fee" criterion="fee" />
             <SortableTh label="Settled" column="settled" criterion="activity" />
             <SortableTh label="Volume" column="volume" criterion="volume" />
@@ -803,6 +804,7 @@ function RelayerRow({
           <RelayerNameCell row={row} isMe={isMe} />
         </td>
         <td className="px-5 py-3 font-mono text-xs text-[var(--color-text-muted)]">{shortAddr(row.address)}</td>
+        <td className="px-5 py-3 text-right font-mono text-xs text-[var(--color-text-muted)]">#{row.id}</td>
         <td className="px-5 py-3 text-right">{(row.fee / 100).toFixed(2)}%</td>
         <StatCell row={row} value={row.stats?.settledOrders} render={(n) => String(n)} />
         <VolumeCell row={row} segment={segment} />
