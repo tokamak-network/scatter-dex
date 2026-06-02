@@ -215,7 +215,7 @@ function GateRow({
           <button
             type="button"
             onClick={onRetry}
-            className="mt-1 rounded-md border border-[var(--color-border-strong)] bg-white px-2 py-0.5 text-xs font-medium hover:bg-[var(--color-bg)]"
+            className="mt-1 rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-2 py-0.5 text-xs font-medium hover:bg-[var(--color-bg)]"
           >
             Retry
           </button>
