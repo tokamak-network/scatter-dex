@@ -1436,16 +1436,16 @@ const FLOW_STEPS: Array<{
   who: "operator" | "admin" | "external";
   title: string;
   where: string;
-  /** Maps to the wizard step (1/2/3/4) when the operator action here
-   *  is what one of the cards below covers. Undefined for steps
-   *  the operator does outside this page (or admin steps). */
-  wizardStep?: 1 | 2 | 3 | 4;
+  /** Maps to the wizard step (1–5) when the operator action here is what one
+   *  of the cards below covers. Undefined for steps the operator does outside
+   *  this page (or admin steps, surfaced via adminInProgress instead). */
+  wizardStep?: 1 | 2 | 3 | 4 | 5;
 }> = [
   { n: 1, who: "operator", title: "Submit your KYC documents + wallet", where: "Step 1 below", wizardStep: 1 },
   { n: 2, who: "operator", title: "Prove your accredited certificate via zk-X509", where: "Step 2 below", wizardStep: 2 },
-  { n: 3, who: "admin", title: "Admin checks your KYC against the certificate, then approves", where: "admin app — please wait" },
-  { n: 4, who: "operator", title: "Register your relayer endpoint + fee", where: "Step 3 below", wizardStep: 3 },
-  { n: 5, who: "operator", title: "Post bond to activate", where: "Step 4 below", wizardStep: 4 },
+  { n: 3, who: "admin", title: "Admin checks your KYC against the certificate, then approves", where: "Step 3 below — please wait" },
+  { n: 4, who: "operator", title: "Register your relayer endpoint + fee", where: "Step 4 below", wizardStep: 4 },
+  { n: 5, who: "operator", title: "Post bond to activate", where: "Step 5 below", wizardStep: 5 },
   { n: 6, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
 ];
 
@@ -1515,7 +1515,7 @@ function FlowContextPanel({
   doneSteps,
   adminInProgress,
 }: {
-  currentWizardStep: 1 | 2 | 3 | 4;
+  currentWizardStep: 1 | 2 | 3 | 4 | 5;
   doneSteps: Set<number>;
   adminInProgress?: boolean;
 }) {

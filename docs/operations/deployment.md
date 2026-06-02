@@ -160,10 +160,14 @@ The signature is `register(string url, string name, uint256 fee, uint256 bondAmo
 `msg.value` in native-bond mode):
 
 ```bash
+# bondAmount (4th arg) must be >= RelayerRegistry.minBond(); in native-bond
+# mode it's also sent as --value. The 0/0 below only works when minBond == 0
+# — check it first: cast call $RELAYER_REGISTRY "minBond()(uint256)"
+BOND=$(cast call $RELAYER_REGISTRY "minBond()(uint256)" --rpc-url $RPC_URL)
 cast send $RELAYER_REGISTRY \
   "register(string,string,uint256,uint256)" \
-  "https://relayer.yourdomain.com" "My Relayer" 30 0 \
-  --value 0 \
+  "https://relayer.yourdomain.com" "My Relayer" 30 "$BOND" \
+  --value "$BOND" \
   --rpc-url $RPC_URL --private-key $RELAYER_KEY
 ```
 
