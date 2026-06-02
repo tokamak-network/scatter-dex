@@ -20,12 +20,15 @@ import { useWallet } from "@zkscatter/sdk/react";
 interface Session {
   token: string;
   expiresAt: number; // unix ms
+  account: string; // lowercase address this session was minted for
 }
 
-// Module-level so every component on the page shares one session, and a single
-// in-flight mint is de-duped (concurrent calls don't each pop a signature).
-let session: Session | null = null;
-let minting: Promise<Session> | null = null;
+// Keyed by lowercase account so every component on the page shares one session
+// per wallet AND switching wallets can't reuse a stale token (which would
+// mis-attribute audit-log actions / reuse a prior admin's privileges). A single
+// in-flight mint per account is de-duped so concurrent calls share one signature.
+const sessions = new Map<string, Session>();
+const mintingPromises = new Map<string, Promise<Session>>();
 
 /** Re-mint this far before expiry so a request never races the TTL. */
 const EXPIRY_SKEW_MS = 30_000;
@@ -34,7 +37,7 @@ interface Signer {
   signMessage(message: string): Promise<string>;
 }
 
-async function mintSession(orderbookUrl: string, signer: Signer): Promise<Session> {
+async function mintSession(orderbookUrl: string, signer: Signer, account: string): Promise<Session> {
   const chRes = await fetch(`${orderbookUrl}/api/admin/challenge`);
   if (!chRes.ok) throw new Error(`Admin challenge failed (${chRes.status})`);
   const { nonce, message } = (await chRes.json()) as { nonce: string; message: string };
@@ -51,15 +54,21 @@ async function mintSession(orderbookUrl: string, signer: Signer): Promise<Sessio
     throw new Error(`Admin session failed (${j.error ?? sesRes.status}). Is this wallet an admin?`);
   }
   const { token, expiresAt } = (await sesRes.json()) as { token: string; expiresAt: number };
-  return { token, expiresAt };
+  return { token, expiresAt, account: account.toLowerCase() };
 }
 
-async function ensureToken(orderbookUrl: string, signer: Signer): Promise<string> {
-  if (session && Date.now() < session.expiresAt - EXPIRY_SKEW_MS) return session.token;
+async function ensureToken(orderbookUrl: string, signer: Signer, account: string): Promise<string> {
+  const key = account.toLowerCase();
+  const existing = sessions.get(key);
+  if (existing && Date.now() < existing.expiresAt - EXPIRY_SKEW_MS) return existing.token;
+
+  let minting = mintingPromises.get(key);
   if (!minting) {
-    minting = mintSession(orderbookUrl, signer).finally(() => { minting = null; });
+    minting = mintSession(orderbookUrl, signer, account).finally(() => { mintingPromises.delete(key); });
+    mintingPromises.set(key, minting);
   }
-  session = await minting;
+  const session = await minting;
+  sessions.set(key, session);
   return session.token;
 }
 
@@ -80,19 +89,25 @@ export function useAdminSiwe(orderbookUrl: string): UseAdminSiwe {
 
   const authedFetch = useCallback(
     async (url: string, init?: RequestInit): Promise<Response> => {
-      if (!signer) throw new Error("Connect the admin wallet to authenticate.");
-      const withAuth = (token: string): Promise<Response> =>
-        fetch(url, { ...init, headers: { ...init?.headers, Authorization: `Bearer ${token}` } });
+      if (!signer || !account) throw new Error("Connect the admin wallet to authenticate.");
+      const withAuth = (token: string): Promise<Response> => {
+        // Use the Headers constructor so a caller's Headers/array/object init
+        // all merge correctly (object spread would drop a Headers/array form).
+        const headers = new Headers(init?.headers);
+        headers.set("Authorization", `Bearer ${token}`);
+        return fetch(url, { ...init, headers });
+      };
 
-      let res = await withAuth(await ensureToken(orderbookUrl, signer));
+      const key = account.toLowerCase();
+      let res = await withAuth(await ensureToken(orderbookUrl, signer, account));
       if (res.status === 401) {
         // Token expired or revoked server-side — drop it and re-auth once.
-        session = null;
-        res = await withAuth(await ensureToken(orderbookUrl, signer));
+        sessions.delete(key);
+        res = await withAuth(await ensureToken(orderbookUrl, signer, account));
       }
       return res;
     },
-    [orderbookUrl, signer],
+    [orderbookUrl, signer, account],
   );
 
   return { account, connect, authedFetch };
