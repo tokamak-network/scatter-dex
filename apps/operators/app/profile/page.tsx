@@ -110,6 +110,12 @@ function OnChainSettings({ operator }: { operator: OperatorState }) {
         Updating these fields submits a transaction to{" "}
         <code className="font-mono">RelayerRegistry.updateInfo()</code>.
       </p>
+      {row && (
+        <div className="mb-5 flex flex-wrap gap-4">
+          <Stat compact label="Relayer ID" value={`#${row.id}`} sub="on-chain relayerList index" />
+          <Stat compact label="Wallet" value={row.address.slice(0, 6) + "…" + row.address.slice(-4)} sub={row.address} />
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-5">
         <Field label="Endpoint URL">
           <input

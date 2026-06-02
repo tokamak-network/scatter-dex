@@ -10,6 +10,12 @@ import { RELAYER_REGISTRY_IFACE } from "../core/contracts";
 export type OperatorStatus = "active" | "cooldown" | "offline" | "unregistered";
 
 export interface OperatorRow {
+  /** Stable on-chain id — index of this wallet in `relayerList`. -1 when
+   *  the wallet has never registered (status "unregistered"). */
+  id: number;
+  /** The wallet address this row belongs to (== the account passed to
+   *  loadOperatorRow). */
+  address: string;
   url: string;
   /** On-chain display name (may be empty for legacy registrations). */
   name: string;
@@ -70,17 +76,28 @@ export async function loadOperatorRow(
   // First call per registry: parallelise the bondToken fetch with
   // the row read so we don't pay an extra round-trip. After the
   // first call the cache short-circuits and only the row reads ride.
-  const [r, bondToken] = cachedBondToken !== undefined
-    ? [await registry.relayers(account), cachedBondToken]
+  const [r, bondToken, count] = cachedBondToken !== undefined
+    ? [await registry.relayers(account), cachedBondToken, await registry.getRelayerCount() as bigint]
     : await Promise.all([
         registry.relayers(account),
         resolveBondToken(registryAddress, registry),
+        registry.getRelayerCount() as Promise<bigint>,
       ]);
+  // Resolve the stable on-chain id (relayerList index). Scan linearly;
+  // the list is small in practice and getRelayerCount+relayerList(i) are
+  // cheap view calls. -1 when this wallet has never registered.
+  const n = Number(count);
+  const listAddrs = await Promise.all(
+    Array.from({ length: n }, (_, i) => registry.relayerList(i) as Promise<string>),
+  );
+  const id = listAddrs.findIndex((a) => a.toLowerCase() === account.toLowerCase());
   const active = r.active as boolean;
   const registeredAt = Number(r.registeredAt);
   const exitRequestedAt = Number(r.exitRequestedAt);
   const bond = r.bond as bigint;
   return {
+    id,
+    address: account,
     url: r.url as string,
     name: (r.name as string) ?? "",
     feeBps: Number(r.fee),
