@@ -65,6 +65,13 @@ declare -A APP_PORTS=(
 # (the legacy default).
 APPS_LIST=""
 
+# When true, bring up infra (anvil + orderbook + apps) WITHOUT the zk-relayer
+# A/B processes and without seeding any relayer on-chain (no register, no KYC
+# approval). The KYC AND-gate stays ON so a brand-new operator must actually go
+# through the onboarding flow (KYC → zk-X509 proof → admin approval → register)
+# to come online — i.e. test the service the way it really works.
+NO_RELAYERS=false
+
 # Build the CORS allowlist union once and pass it to every dev server
 # that opens an HTTP endpoint the apps may call (shared-orderbook,
 # zk-relayer A, zk-relayer B). Previously two of those three baked
@@ -90,6 +97,9 @@ usage() {
   echo "                  Example: --apps pay,pro,operators,admin,hub"
   echo "  --background,-d: Start everything, then detach and leave it running"
   echo "                  (terminal is freed; closing the window won't stop it)."
+  echo "  --no-relayers:  Bring up infra + apps WITHOUT the zk-relayer A/B"
+  echo "                  processes and without seeding them on-chain. Relayers"
+  echo "                  come online only via the real onboarding flow."
   echo "  --stop:         Stop services started by a previous --background run."
   exit 0
 }
@@ -98,6 +108,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --mock) MOCK_MODE=true; shift ;;
     --background|-d) BACKGROUND=true; shift ;;
+    --no-relayers) NO_RELAYERS=true; shift ;;
     --stop) STOP=true; shift ;;
     --apps)
       # Without this guard, `--apps` as the last arg or before another
@@ -457,8 +468,10 @@ if [ "$MOCK_MODE" = true ]; then
 
   check_port 8545 "anvil"
   check_port 4000 "shared-orderbook"
-  check_port 3002 "zk-relayer-a"
-  check_port 3003 "zk-relayer-b"
+  if [ "$NO_RELAYERS" != true ]; then
+    check_port 3002 "zk-relayer-a"
+    check_port 3003 "zk-relayer-b"
+  fi
   # Only reserve 3000 if we're about to start the default frontend on it.
   # `--apps pay` (or any non-empty --apps) skips the frontend, so a sibling
   # service holding 3000 (e.g. zk-X509's dashboard) must not block startup.
@@ -496,7 +509,7 @@ if [ "$MOCK_MODE" = true ]; then
   # networks with that limit (anvil deploys fine regardless). Suppress
   # `set -e` only for those known-benign cases; surface any other failure.
   set +e
-  DEPLOY_OUTPUT=$(forge script script/DeployLocal.s.sol:DeployLocal \
+  DEPLOY_OUTPUT=$(SKIP_RELAYER_REGISTER=$NO_RELAYERS forge script script/DeployLocal.s.sol:DeployLocal \
     --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
   DEPLOY_STATUS=$?
   set -e
@@ -556,8 +569,10 @@ else
   echo "  anvil is running."
 
   check_port 4000 "shared-orderbook"
-  check_port 3002 "zk-relayer-a"
-  check_port 3003 "zk-relayer-b"
+  if [ "$NO_RELAYERS" != true ]; then
+    check_port 3002 "zk-relayer-a"
+    check_port 3003 "zk-relayer-b"
+  fi
   # Same rationale as the MOCK branch: 3000 only matters when the default
   # frontend will actually be started. zk-X509's frontend defaults to 3000,
   # so integration runs of `--apps pay` need this conditional to coexist.
@@ -612,6 +627,7 @@ else
   set +e
   DEPLOY_OUTPUT=$(IDENTITY_REGISTRY="$IDENTITY_REGISTRY" \
     RELAYER_IDENTITY_REGISTRY="$RELAYER_IDENTITY_REGISTRY" \
+    SKIP_RELAYER_REGISTER=$NO_RELAYERS \
     forge script script/DeployLocal.s.sol:DeployLocal \
     --rpc-url "$RPC_URL" --broadcast --private-key "$DEPLOYER_KEY" 2>&1)
   DEPLOY_STATUS=$?
@@ -725,6 +741,12 @@ echo "  shared-orderbook running on http://localhost:4000 (PID $last_pid)"
 INDEX_FROM=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo 0)
 ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
 
+if [ "$NO_RELAYERS" = true ]; then
+  echo ""
+  echo "[4/6] Relayers SKIPPED (--no-relayers): no zk-relayer A/B processes and"
+  echo "      no on-chain relayer registration. A new operator comes online only"
+  echo "      via the onboarding flow (KYC → zk-X509 proof → admin approval → register)."
+else
 ensure_deps_installed "$ROOT_DIR/zk-relayer" "zk-relayer"
 ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
 
@@ -806,6 +828,7 @@ if ! wait_for "http://localhost:3003/api/info" "relayer-b" 30; then
   exit 1
 fi
 echo "  Relayer B running on http://localhost:3003 (PID $last_pid)"
+fi
 
 # ── KYC AND-gate seed (relayer 2-gate: zk-X509 isVerified AND KYC approval) ──
 # RelayerRegistry.register() now optionally requires an admin KYC approval
@@ -819,6 +842,9 @@ echo "  Relayer B running on http://localhost:3003 (PID $last_pid)"
 # In production the admin approves only after matching the delegated-proving
 # compliance log (cert subject) against the submitted KYC video / documents.
 if [ -n "$ISSUANCE_APPROVAL_REGISTRY" ]; then
+  # --no-relayers: keep the gate ON but DON'T pre-approve A/B — a real operator
+  # must earn KYC approval through the onboarding flow.
+  if [ "$NO_RELAYERS" != true ]; then
   for kyc_addr in "$RELAYER_A_ADDR" "$RELAYER_B_ADDR"; do
     if cast send "$ISSUANCE_APPROVAL_REGISTRY" \
         "approve(address,string,string,string,uint32,uint64)" \
@@ -831,6 +857,7 @@ if [ -n "$ISSUANCE_APPROVAL_REGISTRY" ]; then
       echo "  WARNING: failed to KYC-approve $kyc_addr on IssuanceApprovalRegistry"
     fi
   done
+  fi
   if cast send "$RELAYER_REGISTRY" "setKycApprovalRegistry(address)" \
       "$ISSUANCE_APPROVAL_REGISTRY" \
       --private-key "$DEPLOYER_KEY" --rpc-url "$RPC_URL" > /dev/null 2>&1; then
@@ -841,6 +868,7 @@ if [ -n "$ISSUANCE_APPROVAL_REGISTRY" ]; then
 fi
 
 # Register Relayer B on-chain (DeployLocal.s.sol only registers Relayer A).
+if [ "$NO_RELAYERS" != true ]; then
 if cast send "$RELAYER_REGISTRY" "register(string,string,uint256,uint256)" \
     "http://localhost:3003" "Relayer-B" "$RELAYER_FEE_BPS" 0 \
     --private-key "$RELAYER_B_KEY" --rpc-url "$RPC_URL" \
@@ -855,6 +883,7 @@ else
   else
     echo "  WARNING: Relayer B on-chain registration failed — frontend may only list Relayer A"
   fi
+fi
 fi
 
 # ── 6. Start frontend (or selected apps via --apps) ────────
@@ -1078,8 +1107,12 @@ else
     printf "  apps/%-10s http://localhost:%s\n" "$app:" "${APP_PORTS[$app]}"
   done
 fi
-echo "  Relayer A:   http://localhost:3002"
-echo "  Relayer B:   http://localhost:3003"
+if [ "$NO_RELAYERS" = true ]; then
+  echo "  Relayers:    (none — --no-relayers; onboard via /register flow)"
+else
+  echo "  Relayer A:   http://localhost:3002"
+  echo "  Relayer B:   http://localhost:3003"
+fi
 echo "  Orderbook:   http://localhost:4000"
 echo "  Anvil:       $RPC_URL"
 echo ""
