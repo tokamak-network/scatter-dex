@@ -67,9 +67,12 @@ background**, the way the *real service* works:
 > # 3a. 같은 anvil에 zk-X509 IdentityRegistry 배포 (= Relayer-CA). "IdentityRegistry" 주소를 받아둬라.
 > #     반드시 zk-X509 프론트 기동(3c)보다 먼저.
 > cd <zk-X509> && MAX_WALLETS_PER_CERT=10 SERVICE_NAME="Relayer CA" bash script/deploy-on-existing-anvil.sh
-> # 3b. scatter-dex가 그 레지스트리를 릴레이어 신원게이트로 쓰게 swap.
-> cd <scatter-dex> && ./scripts/swap-identity-registry.sh <3a의 IdentityRegistry 주소>
-> #     검증: RelayerRegistry.identityRegistry() 가 그 주소여야 한다(register가 게이팅하는 레지스트리).
+> # 3b. RelayerRegistry의 신원 레지스트리를 그 Relayer-CA로 설정 (register가 게이팅하는 레지스트리).
+> #      ⚠ swap-identity-registry.sh 는 Pay IdentityGate(유저용)라 릴레이어엔 쓰지 말 것 —
+> #      릴레이어는 RelayerRegistry.setIdentityRegistry(addr) (onlyOwner) 를 직접 호출한다.
+> cast send <RelayerRegistry> "setIdentityRegistry(address)" <3a의 IdentityRegistry 주소> \
+>     --private-key <anvil #0 key> --rpc-url http://localhost:8545
+> #     검증: RelayerRegistry.identityRegistry() 가 그 주소여야 한다.
 > cast call <RelayerRegistry> "identityRegistry()(address)" --rpc-url http://localhost:8545
 > # 3c. 단일 프루빙 서버 기동 (모든 릴레이어가 공유, URL은 온체인 저장됨).
 > cd <zk-X509> && PROVER_PORT=9090 PROVER_URL=http://localhost:9090 PROVER_LOG_DIR=./logs \
@@ -88,6 +91,17 @@ background**, the way the *real service* works:
 > ```
 > AI는 "인프라+Relayer-CA+프루버가 떴고, RelayerRegistry가 그 레지스트리를 게이팅하며, 온체인 proverUrl이
 > set됐고, 어드민 인증이 설정됐다"까지 보장·보고한다.
+>
+> **★ 모든 서비스 기동 후, 떠있는 서비스와 URL을 표로 화면에 출력한다** (사람이 바로 접속할 수 있게). 최소 항목:
+> ```
+> 앱        operators http://localhost:4004 · admin http://localhost:4005 · pay :4001 · pro :4003 · hub :4006
+> 인프라     orderbook http://localhost:4000 · anvil http://localhost:8545(chainId 31337)
+> 릴레이어    (없음 — --no-relayers; /register 온보딩으로만 등록)
+> zk-X509    prover http://localhost:9090 · dashboard http://localhost:3000 · backend http://localhost:4444 · desktop(PID)
+> Docker     RUNNING / DOWN (DOWN이면 실제 증명 불가 — open -a Docker)
+> 온체인     Relayer-CA <addr>(RelayerRegistry.identityRegistry, proverUrl set) · RelayerRegistry <addr>(등록 0, 2게이트 ON) · IssuanceApprovalRegistry <addr>(승인 0)
+> ```
+> **여기까지가 AI 범위.** 운영자 온보딩(KYC 제출·zk-X509 증명)과 어드민 KYC 검토/승인은 **사람이 직접** 한다(아래 4).
 >
 > **4. 릴레이어 온보딩 테스트 (2-게이트 실흐름)** — 사람이 인터랙티브로, AI는 보조
 > 운영자 지갑(미등록, 예 anvil #3)으로 operators `:4004/register`:
