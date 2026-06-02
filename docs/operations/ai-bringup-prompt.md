@@ -87,7 +87,8 @@ background**, the way the *real service* works:
 > cd <zk-X509> && bash script/start-services.sh
 > ( <zk-X509>/target/release/bundle/macos/zk-X509.app/Contents/MacOS/zk-x509-desktop > /tmp/zkx509-app.log 2>&1 & )
 > # 3f. 어드민 인증 설정: shared-orderbook 에 ADMIN_ADDRESSES=<anvil #0> 를 넣고 그 서버만 재시작
-> #     (어드민이 SIWE 지갑서명으로 KYC 검토/승인하려면 필요). static ADMIN_TOKEN 은 폐기됨.
+> #     (어드민이 SIWE 지갑서명으로 KYC 검토/승인하려면 필요). SIWE 가 기본 경로이고,
+> #     static ADMIN_TOKEN 은 legacy/CI 용으로 백엔드에서 계속 지원된다(admin-auth.ts).
 > ```
 > AI는 "인프라+Relayer-CA+프루버가 떴고, RelayerRegistry가 그 레지스트리를 게이팅하며, 온체인 proverUrl이
 > set됐고, 어드민 인증이 설정됐다"까지 보장·보고한다.
@@ -133,9 +134,9 @@ background**, the way the *real service* works:
 |---|---|---|
 | 인프라만 (릴레이어 없이) | `./scripts/dev.sh --mock --apps pay,pro,operators,admin,hub --no-relayers --background` | anvil+orderbook+apps. 릴레이어 미기동·미등록 |
 | zkey offline verify | `scripts/check-zk-artifacts.sh` | 매니페스트 대비 해시 |
-| Relayer-CA 부착 | `<zk-X509>/script/deploy-on-existing-anvil.sh` → `./scripts/swap-identity-registry.sh <reg>` | `RelayerRegistry.identityRegistry()` 가 그 레지스트리가 됨 |
+| Relayer-CA 부착 | `<zk-X509>/script/deploy-on-existing-anvil.sh` → `cast send <RelayerRegistry> "setIdentityRegistry(address)" <reg>` | `RelayerRegistry.identityRegistry()` 가 그 레지스트리가 됨 (swap-identity-registry.sh 는 Pay/유저 IdentityGate 용이라 릴레이어엔 부적합) |
 | 단일 프루버 (위임 증명) | `prover-server`(:9090) + `enable-delegated-proving.sh` (REGISTRY_ADDR=Relayer-CA, PROVER_URL) | proverUrl 온체인 저장, 모든 릴레이어 공유. 실제 proof=Docker 필요 |
-| 어드민 인증 | shared-orderbook `ADMIN_ADDRESSES=<anvil #0>` + SIWE 지갑서명 | static `ADMIN_TOKEN` 폐기(#914) |
+| 어드민 인증 | shared-orderbook `ADMIN_ADDRESSES=<anvil #0>` + SIWE 지갑서명 | SIWE 가 기본(#914); static `ADMIN_TOKEN` 은 legacy/CI 용으로 지원 유지 |
 | 온보딩 검토 | admin `:4005` Operator CA → KYC review + compliance 대조(`:9090/api/compliance?wallet=`) | isVerified ∧ kycApproved 둘 다여야 register |
 | 종료 | `./scripts/dev.sh --stop` + zk-X509 `stop-services.sh` + prover kill | dev.sh 재기동 = anvil 리셋 → 3a~3d 재실행 필요 |
 

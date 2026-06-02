@@ -65,10 +65,14 @@ function coerceKycStatus(v: unknown): KycStatus {
 
 /** Which of the 6 onboarding-guide steps each wizard milestone
  *  completes, for the ordered progress rendering in FlowContextPanel.
- *  Each milestone lights up EXACTLY one guide step so the panel never
- *  shows a wall of green that hides where you actually are:
+ *  Each milestone lights up a minimal group — one step for the early
+ *  milestones so the panel never shows a wall of green that hides where you
+ *  actually are:
  *    1 KYC submit · 2 zk-X509 proof · 3 admin KYC approval ·
- *    4 endpoint · 5 bond · 6 leaderboard. */
+ *    4 endpoint · 5 bond · 6 leaderboard.
+ *  The final `registered` milestone lights the wrap-up group 4–6 together,
+ *  since the wizard's bond+submit completes endpoint/bond and the operator
+ *  then appears on the leaderboard as one unit. */
 const FLOW_STEP_GROUPS = {
   kyc: [1],
   verified: [2],
@@ -872,25 +876,15 @@ function Step1Verify({
   );
 }
 
-/** Picks the right call-to-action card based on the admin's
- *  IssuanceApprovalRegistry state for the connected wallet.
+/** A SHORT admin-approval warning shown during the verify step, only for the
+ *  two states the operator must act on: a `revoked` or `expired` approval.
+ *  Every other state (`approved` / `not-approved` / `checking` / `idle` /
+ *  `error`) renders nothing — the persistent "Open zk-X509 to prove your
+ *  certificate" link above is the single call-to-action for getting verified.
  *
- *  - `approved` → green card with the metadata the admin recorded
- *    (CN / O / C / validity), "Open Relayer-CA portal" primary
- *    button. Communicates that the heavy lift (KYC) is done.
- *  - `revoked` → red card surfacing the reason; Refresh button
- *    re-polls in case the admin reverses the revocation.
- *  - `expired` → amber card pointing back at the admin; Refresh
- *    in case the admin re-approves with a fresh expiry.
- *  - `not-approved` / `checking` / `idle` / `error` → the generic
- *    warning card we shipped pre-IssuanceApprovalRegistry, so
- *    deployments without the contract (or with the env unset) keep
- *    the prior UX.
- *
- *  Every branch carries the same Refresh control — without it the
- *  operator is stuck after an admin re-approves or extends an
- *  expired approval, since `useIssuanceApproval`'s effect only
- *  re-runs on account / provider change. */
+ *  (The old `approved → generate your keypair / Open Relayer-CA portal`
+ *  issuance branch is gone: scatter-dex no longer issues certs, and admin
+ *  approval comes AFTER the zk-X509 proof, not before it.) */
 function ApprovalAwareCTA({
   approval,
   onRefresh,
@@ -905,72 +899,17 @@ function ApprovalAwareCTA({
     onRefresh();
     approval.refetch();
   };
-  if (approval.status === "approved" && approval.approval) {
-    return (
-      <div className="mt-4 rounded-lg border border-[var(--color-success)] bg-[var(--color-success-soft)] px-3 py-3 text-xs">
-        <div className="font-medium text-[var(--color-success)]">
-          ✓ You&apos;re approved — get your certificate
-        </div>
-        <div className="mt-1 text-[var(--color-text-muted)]">
-          Admin has registered your wallet for issuance:
-        </div>
-        <dl className="mt-1.5 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5">
-          <dt className="text-[var(--color-text-subtle)]">CN</dt>
-          <dd className="font-mono">{approval.approval.commonName}</dd>
-          <dt className="text-[var(--color-text-subtle)]">O</dt>
-          <dd>{approval.approval.organization}</dd>
-          <dt className="text-[var(--color-text-subtle)]">C</dt>
-          <dd>{approval.approval.country}</dd>
-          <dt className="text-[var(--color-text-subtle)]">Validity</dt>
-          <dd>{approval.approval.validityDays} days</dd>
-        </dl>
-        <div className="mt-2 text-[var(--color-text-muted)]">
-          Open the Relayer-CA portal — generate your keypair locally
-          (your private key never leaves the browser), receive the
-          signed cert, then click Refresh below.
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {VERIFY_URL ? (
-            <a
-              href={VERIFY_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-block rounded-md bg-[var(--color-success)] px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
-            >
-              Open Relayer-CA portal ↗
-            </a>
-          ) : (
-            <span
-              className="inline-block cursor-not-allowed rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-muted)] px-2.5 py-1 text-xs text-[var(--color-text-subtle)]"
-              title="Set NEXT_PUBLIC_CA_REGISTRATION_URL to enable this link"
-            >
-              Portal URL not configured
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={handleRefresh}
-            className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
-          >
-            Refresh verification status
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   if (approval.status === "revoked") {
     return (
       <div className="mt-4 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-3 text-xs">
         <div className="font-medium text-[var(--color-danger)]">
-          Issuance approval was revoked
+          Admin approval was revoked
         </div>
         <div className="mt-1 text-[var(--color-text-muted)]">
           Reason: {approval.revokeReason}
         </div>
         <div className="mt-1 text-[var(--color-text-muted)]">
-          Contact the Relayer-CA admin offline before retrying. Once they
-          re-approve, click Refresh to re-check.
+          Contact the admin offline; once they re-approve, Refresh to re-check.
         </div>
         <div className="mt-2">
           <button
@@ -988,11 +927,9 @@ function ApprovalAwareCTA({
   if (approval.status === "expired") {
     return (
       <div className="mt-4 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-3 text-xs">
-        <div className="font-medium">Approval window expired</div>
+        <div className="font-medium">Admin approval expired</div>
         <div className="mt-1 text-[var(--color-text-muted)]">
-          Admin approved this wallet, but the issuance window passed
-          before you completed the cert exchange. Ask the admin to
-          re-approve, then Refresh below.
+          Ask the admin to re-approve this wallet, then Refresh below.
         </div>
         <div className="mt-2">
           <button
@@ -1007,58 +944,10 @@ function ApprovalAwareCTA({
     );
   }
 
-  // `checking` gets a dedicated neutral card with a spinner so the
-  // first paint doesn't flash the warning-card copy and re-paint
-  // into approved/revoked/etc. as soon as the RPC settles (Gemini
-  // review #847).
-  if (approval.status === "checking") {
-    return (
-      <div className="mt-4 flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-3 text-xs text-[var(--color-text-muted)]">
-        <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[var(--color-primary)] border-t-transparent" />
-        <span>Checking admin approval status…</span>
-      </div>
-    );
-  }
-
-  // Fallback: generic "go get verified" card. Covers
-  // `not-approved` (admin hasn't seen this wallet), `idle` (registry
-  // env unset), and `error` (RPC probe failed).
-  return (
-    <div className="mt-4 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-3 text-xs">
-      <div className="font-medium">Get your operator address verified</div>
-      <div className="mt-1 text-[var(--color-text-muted)]">
-        {approval.status === "not-approved"
-          ? "Submit your ID + this wallet address to the Relayer-CA admin offline. Once they approve, you'll see issuance instructions here automatically."
-          : "Open the Relayer-CA verifier (zk-X509), complete the proof round-trip, then click Refresh below."}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {VERIFY_URL ? (
-          <a
-            href={VERIFY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-block rounded-md border border-[var(--color-warning)] bg-white px-2.5 py-1 text-xs font-medium text-[var(--color-warning)] hover:bg-[var(--color-warning-soft)]"
-          >
-            Open Relayer-CA verifier ↗
-          </a>
-        ) : (
-          <span
-            className="inline-block cursor-not-allowed rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface-muted)] px-2.5 py-1 text-xs text-[var(--color-text-subtle)]"
-            title="Set NEXT_PUBLIC_CA_REGISTRATION_URL (or NEXT_PUBLIC_ZK_X509_URL) to enable this link"
-          >
-            Verifier URL not configured
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={handleRefresh}
-          className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
-        >
-          Refresh verification status
-        </button>
-      </div>
-    </div>
-  );
+  // Not verified yet (and not revoked/expired): the persistent
+  // "Open zk-X509 to prove your certificate" link above is the single
+  // call-to-action — don't duplicate a CTA card here.
+  return null;
 }
 
 // ─── Step 3 — Endpoint ────────────────────────────────────────────
@@ -1104,7 +993,7 @@ function Step2Endpoint({
       hint="Publish where Pay/Pro should reach you. We probe the URL live so a typo is caught before gas."
       done={!gated && !urlValidation.invalid && !urlValidation.empty && !nameInvalid && (probe.status === "ok" || (probe.status === "warn" && endpointOverride))}
       gated={gated}
-      gatedReason="Complete Verify to unlock."
+      gatedReason="Prove your certificate (Verify) and get the admin's on-chain approval to unlock."
       defaultOpen={defaultOpen}
     >
       {/* First-timer guidance — the URL field assumes the operator
@@ -1516,10 +1405,10 @@ const FLOW_STEPS: Array<{
   { n: 6, who: "external", title: "Appear on the leaderboard", where: "/leaderboard (auto)" },
 ];
 
-/** Banner shown once KYC is submitted: makes explicit that the next
- *  move is the ADMIN's (review + approve, steps 2-3) and the operator
- *  should wait for the issuance email — rather than the wizard quietly
- *  advancing the highlight to Verify as if it were actionable. */
+/** Banner shown after the operator is zk-X509 verified but still waiting on
+ *  the admin's on-chain approval (gate 2): makes explicit that the next move
+ *  is the ADMIN's (review + approve) — rather than the wizard quietly
+ *  advancing the highlight to Endpoint as if it were actionable. */
 function AdminReviewBanner({
   onRefresh,
 }: {
