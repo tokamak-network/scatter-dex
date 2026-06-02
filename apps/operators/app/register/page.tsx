@@ -944,6 +944,28 @@ function ApprovalAwareCTA({
     );
   }
 
+  if (approval.status === "error") {
+    // Surface a failed status check rather than silently returning null —
+    // otherwise an RPC/config error is indistinguishable from "not approved".
+    return (
+      <div className="mt-4 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-3 text-xs text-[var(--color-danger)]">
+        <div className="font-medium">Couldn&apos;t check admin approval status</div>
+        {approval.message && (
+          <div className="mt-1 text-[var(--color-text-muted)]">{approval.message}</div>
+        )}
+        <div className="mt-2">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            className="inline-block rounded-md border border-[var(--color-border-strong)] bg-white px-2.5 py-1 text-xs font-medium hover:bg-[var(--color-bg)]"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Not verified yet (and not revoked/expired): the persistent
   // "Open zk-X509 to prove your certificate" link above is the single
   // call-to-action — don't duplicate a CTA card here.
