@@ -1,10 +1,27 @@
 # Relayer KYC Onboarding — 설계 문서
 
-> 상태: **PoC 라인 머지 완료 + E2E 검증 통과 · 남은 배선(operators 발급화면) + 상용 하드닝 진행 중** · 작성: 2026-06-01 · 범위: operators · shared-orderbook · admin · 인증서 발급 사이트
+> 상태: **설계 전환 진행 중 (2026-06-02)** · 최초작성: 2026-06-01 · 범위: operators · shared-orderbook · admin
 >
-> (현황 상세는 §7 "진행 현황". 본 §1~§6은 *최초 설계 시점*의 서술을 보존하므로 일부 "~할 것" 표현은 이미 구현됨을 §7 기준으로 읽을 것.)
+> (§1~§10은 *최초 설계 시점*의 cert-발급 모델 서술이며 §7 진행현황 기준으로 읽되, **현행 설계는 §11–13으로 폐기·대체됨** — 아래 전환 배너 참조.)
 >
 > 이 문서 하나로 **다른 세션/사람이 이어서 구현**할 수 있도록 작성한다. 코드 식별자·컨트랙트·파일 경로는 영문 그대로 둔다.
+
+---
+
+> ## ⚠ 설계 전환 (2026-06-02) — 이 문서의 단일 진실원천은 §11–13
+>
+> **scatter-dex가 자체 CA를 운영/발급하지 않는다.** 운영자의 **진짜 공인인증서(accredited cert)** 를
+> **zk-X509 delegated proving** 으로 검증하고, **2-게이트(zk-X509 검증 AND 어드민 KYC 승인)** 로 온보딩한다.
+>
+> **전환 근거 (코드 조사로 확인):**
+> - operator leaf cert를 **런타임에서 소비하는 코드가 없다** — 릴레이어 인증은 EIP-191 지갑 서명
+>   (`shared-orderbook/src/middleware/auth.ts`), 등록 게이트는 `RelayerRegistry.register()`의
+>   `identityRegistry.isVerified()`(= zk-X509 결과). cert는 발급·저장·다운로드만 됨.
+> - `IssuanceApprovalRegistry`는 주석 그대로 *"purely UI/UX gating, not a security boundary"*.
+> - 운영자는 이미 외부 공인 CA가 발급한 진짜 cert를 보유 → scatter-dex가 cert를 **발급할 이유가 없다**.
+>
+> **따라서 §1–§10 및 구(舊) §11–§13의 "Root CA 생성 / leaf 발급 / CSR 서명 / PKCS#12" 모델은 폐기(superseded)한다.**
+> §1–§3·§7은 *과거 cert-발급 모델*을 기록한 이력으로 남기되, **현행 설계는 아래 §11–§13을 따른다.**
 
 ---
 
@@ -156,6 +173,8 @@
 ## 7. 구현 단계 (PR 분할)
 
 ### 진행 현황 (2026-06-01 최종) — 발급 라인 코드 완성
+> ⚠ **이력(폐기됨).** 아래 "발급(CA서명) 라인"은 2026-06-01에 머지됐으나 **2026-06-02 설계 전환으로 제거 대상**이다(§11.6). 현행 설계는 §11–13. 이 절은 과거 기록으로만 둔다.
+
 KYC/CA 온보딩 PoC + Phase 1 + 발급(CA서명) 라인 전부 머지 (~23 PR). E2E 로컬 검증 통과: KYC제출→어드민검토(동영상/신분증 스트림)→온체인approve(subject고정)→발급화면게이트→폐기(revoke,감사로그) 전 구간 동작.
 
 - **KYC**: #888 백엔드 · #889 operators 폼 · #890 영문 · #892 admin 라우트 · #895 검토UI(drawer)+온체인approve · #900 대기UX · #906/#908 메일링크·URL검증.
@@ -236,100 +255,129 @@ KYC/CA 온보딩 PoC + Phase 1 + 발급(CA서명) 라인 전부 머지 (~23 PR).
 
 ---
 
-## 11. 정정된 전체 아키텍처 (2026-06-01) — 단일 진실원천
+## 11. 현행 아키텍처 (2026-06-02) — 단일 진실원천
 
-설계가 KYC 제출을 넘어 **operator-CA / PKI / zk-X509 신뢰체인** 전체로 확장됨에 따라, 정확본을 여기 고정한다.
+> **이 §11–§13이 현행 설계다.** §1–§10 및 아래 "부록 A(구 cert-발급 모델)"는 폐기된 이력이다.
+> 핵심 전환: scatter-dex는 **CA를 운영·발급하지 않는다.** 운영자의 **진짜 공인인증서**를
+> **zk-X509로 검증**하고, **2-게이트(zk-X509 검증 AND 어드민 KYC 승인)** 로 온보딩한다.
 
-### 11.1 인증서 신뢰 체인 = 3 레이어
-| 레이어 | 무엇 | 보유/발급 | 9단계 |
-|---|---|---|---|
-| ① Root CA 인증서(.der) | `rootCA.der` (자체서명, cA=true) | **zk-X509 서버 보유·앵커**(caMerkleRoot). CA 개인키 `rootCA.p12`는 admin 보유(서명용) | 0a 생성(admin) → 2 앵커(zk-X509) |
-| ② Operator leaf 인증서 | operator 전용 X.509(CN/O/C/validity) | admin Operator-CA가 **operator CSR을 Root CA로 서명** | 3·4·5 |
-| ③ ZK proof | leaf가 앵커 Root CA로 체인됨을 영지식 증명 | operator가 zk-X509 포털(SP1/Docker)에서 생성 → IdentityRegistry 등록 | 5 |
-
-### 11.2 End-to-end 흐름
-0a. **admin**: company Root CA 생성(웹) → `rootCA.der`(공개)+`rootCA.p12`(CA키,비번암호화) 다운로드.
-0b. **admin/zk-X509**: rootCA.der를 zk-X509에 앵커(서버 보유).
-1. **operator**: KYC 제출(메일·월렛·동영상·신분증) → shared-orderbook.
-2. **admin**: KYC 검토 → subject(CN/O/C/validity) 확정 → 온체인 `approveForIssuance(wallet,CN,O,C,validityDays)`(subject 고정) + cert링크 메일.
-3. **operator**: 메일링크 `?wallet=` → 발급화면, subject **read-only**, `approved`만 활성.
-4. **operator(개인영역)**: 본인 비번 → WebCrypto keygen(클라) → 개인키 **PKCS#12 로컬보관(서버 미전송)** → **CSR(공개)만** 제출.
-5. **admin CA**: CSR subject가 온체인 승인값과 일치 검증(**대소문자 정확매칭 — case-folding 금지**) → `rootCA.p12`로 서명 → operator **leaf cert** 반환.
-6. **operator**: leaf+개인키로 zk-X509 ZK proof(SP1/Docker) → IdentityRegistry 등록 → `isVerified`.
-7~9. Verify 초록 → Endpoint → Bond → register → leaderboard.
-
-### 11.3 불변 보안 원칙
-- **Root CA .der = zk-X509 보유(공개)**, CA 개인키 .p12 = admin 보유(서명용, 비번암호화).
-- **operator 개인키 = operator 클라에서 생성, 본인 비번 암호화, admin/서버 절대 미열람**. CSR(공개)만 전송. (키 생성은 admin이 아니라 operator)
-- **cert subject = admin 온체인 승인으로 고정**, operator는 read-only.
-- **admin 백엔드 인증 = SIWE(어드민 지갑 서명)**, static bearer 폐기.
-
-### 11.4 작업배분 (소유/의존)
-| 작업 | 소유 | 상태 |
+### 11.1 신뢰 모델 = 2 레이어 (Root CA·leaf·CSR 폐지)
+| 레이어 | 무엇 | 보유/발급 |
 |---|---|---|
-| operators KYC 폼 / orderbook KYC 백엔드 / admin KYC 라우트 | K0/K2/K2 | ✅ #889/#888/#892 |
-| admin KYC 검토 UI | K0 | 🔨 PR2-B |
-| + 온체인 approveForIssuance(subject 고정) | K0 | ⏳ PR2-B 추가 |
-| 개인키 암호화/PKCS#12 | K1 | ✅ #887/#891 |
-| 발급 승인게이트 | K1 | 🔨 #893 |
-| Root CA 생성(admin .der/.p12) | K1 | ⏳ |
-| operator 자가 keygen 재구성 | K1 | ⏳ |
-| CA가 CSR 서명→leaf | K1 | ⏳ |
-| 메일링크 발급화면(?wallet, subject read-only) | K1 | ⏳ |
-| SIWE 어드민 인증 | K2 | ⏳ |
-| Root CA 앵커 + ZK proof(SP1) | 사람/zk-X509(Docker) | 외부 |
+| ① 공인인증서 (accredited cert) | 운영자가 **외부 공인 CA**(예: yessign/KICA)에서 이미 발급받은 진짜 X.509 | 운영자 보유 · 외부 CA 발급 (**scatter-dex 무관**) |
+| ② zk-X509 proof | 공인인증서가 신뢰 CA 집합(`caMerkleRoot`)에 체인됨 + subject 선택공개를 **영지식 증명** | 운영자가 zk-X509 **delegate prover**에서 생성 → `IdentityRegistry.register` → `isVerified` |
 
----
+→ scatter-dex가 발급하던 **Root CA / Operator leaf / CSR 서명 / PKCS#12 키스토어는 전부 폐기.** 신원의 신뢰근거는 외부 공인 CA가, 영지식 검증은 zk-X509가 담당한다.
 
-## 12. 상용(은행)급 PKI 아키텍처 — 프로덕션 목표 (2026-06-01)
+**경계 (불변 원칙):** zk-X509 **core(회로/program, contracts, lib)** 는 독립 완성품으로 **수정하지 않는다.** 통합에 필요한 확장은 운영 컴포넌트인 **prover-server**(delegate prover)에만 가한다.
 
-§11까지의 구현은 **로컬/테스트넷 PoC**다(브라우저 Root CA 생성, 단일 키, min-8 비번, Root 직접 서명, 폐기 없음). 상용 배포 전 아래로 격상한다. ⚠ 현재 코드의 브라우저 Root CA 생성은 **테스트 전용**이며 운영에서 사용 금지.
-
-### 12.1 CA 계층 = 3-tier (Root 직접 leaf 서명 폐지)
+### 11.2 2-게이트 온보딩 (end-to-end)
 ```
-Root CA   (오프라인·에어갭·HSM, M-of-N key ceremony, 20~30y) ── zk-X509 앵커(caMerkleRoot)
-   │ Intermediate만 가끔 서명
-Issuing CA (온라인·HSM, non-exportable, 3~5y, 회전 가능)     ── 발급 서비스가 leaf 서명에 사용
-   │
-Operator leaf cert (지갑·subject 바인딩, 짧은 validity, 갱신)
+ 운영자 공인인증서 ─zk-X509 delegate prover(consent)─▶ ① IdentityRegistry.isVerified(wallet)=true
+        │                                                  └▶ prover가 cert subject+consent를 compliance에 기록
+ 운영자 KYC 동영상·서류 ──────────────────────────────▶ shared-orderbook 저장
+                                                              │
+   어드민 "운영자 CA" 화면:                                    ▼
+     ① zk-X509 isVerified 여부 표시                    GET {proverUrl}/api/compliance?wallet=
+     ② prover compliance의 cert subject(이름/기관/국가)  ──대조──▶ KYC 동영상·서류
+        ↳ 일치 → ② kycApprovalRegistry.approve(wallet, CN/O/C, validityDays)
+                                                              │
+   RelayerRegistry.register():  require ① isVerified  AND  ② kycApproved  ◀───┘
 ```
-Root는 오프라인 보관 → Root 노출면 제거, Root 손상 ≠ Issuing 손상.
+1. **operator**: 공인인증서로 zk-X509 **delegated proving**(consent 동의) → `isVerified(wallet)`. delegate prover가 cert subject + consent 증거를 compliance 기록.
+2. **operator**: KYC 동영상·신분증 → shared-orderbook 제출(기존 흐름 유지).
+3. **admin**: "운영자 CA" 화면에서 ① zk-X509 검증여부 확인 + ② prover compliance로 cert subject 조회 → KYC 동영상·서류와 **대조** → 일치 시 `kycApprovalRegistry.approve(wallet, CN/O/C, validityDays)`.
+4. **register**: `RelayerRegistry.register()` 가 `isVerified`(zk-X509) **AND** `kycApproved`(어드민) 둘 다 충족 시 등록.
 
-### 12.2 키 관리
-- **모든 CA 키 = HSM/KMS** (CloudHSM·Cloud KMS·YubiHSM/Thales, FIPS 140-2 L3), non-exportable, 서명은 HSM API로만.
-- **Root**: 오프라인 HSM + 문서화 key ceremony(증인/녹화) + M-of-N(예 3/5) + 지리분산 암호화 백업.
-- **operator 키**: 현행 클라이언트 생성(zero-knowledge) 유지 → WebAuthn/passkey·Secure Enclave로 하드웨어 바인딩 업그레이드. CA는 operator 개인키를 영원히 못 봄.
+**compliance 조회 API (K3 구현완료, prover-server 확장):**
+`GET {proverUrl}/api/compliance?wallet=0x..` (dev 기본 `http://localhost:9090`) →
+```jsonc
+{ "wallet": "0x..", "records": [ {
+  "timestamp": 1717200000,   // 증명 시각(unix s)
+  "registrant": "0x..",      // == 쿼리 wallet (중복 확인용, K3 확정)
+  "commonName": "홍길동", "org": "삼성", "orgUnit": "Engineering", "country": "KR", // cert RDN 분리
+  "serial": "0x..", "notAfter": 1800000000,
+  "nullifier": "0x..",       // 온체인 IdentityRegistry 등록과 대조하는 키 (public_values에서 기록)
+  "consentVerified": true,
+  "consentMessage": "zk-x509-delegated-proving-consent\nProver:..\nRegistry:..\nChain ID:..\nWallet:..\nTimestamp:..",
+  "consentSignature": "0x.." // 인증서 개인키의 동의문 서명 = 부인방지 증거 (개인키 아님, freshness·바인딩으로 재사용 불가)
+} ] }
+```
+`nullifier`로 온체인 등록과 대조, `wallet`은 registrant 소문자 매칭. proverUrl = `IdentityRegistry.proverUrl()` 또는 dev `:9090`; 운영 PII 가드로 선택적 `X-Compliance-Token`(prover의 `PROVER_COMPLIANCE_TOKEN`) 헤더 지원. (zk-X509 PR #130, core 무수정 — prover-server만 확장)
 
-### 12.3 발급 플로우(HSM 백엔드 서명)
-1. operator: 클라(또는 본인 HSM) keygen → CSR + proof-of-possession(자기서명).
-2. 발급 서비스: KYC 온체인 approved ∧ **CSR subject == 온체인 승인값**(권위적 신원 게이트이므로 **대소문자 정확·완전매칭**, 입력이 이미 정규화돼 있다면 case-insensitive 비교로 약화하지 말 것) ∧ PoP 검증.
-3. **Issuing CA(HSM)** 가 CSR 서명 → leaf cert. (어드민 브라우저가 `.p12` 푸는 방식 폐지)
-4. operator: zk-X509 ZK proof(SP1) → IdentityRegistry → isVerified.
+### 11.3 컨트랙트 2-게이트 (PR②)
+```solidity
+// RelayerRegistry.register()
+if (!identityRegistry.isVerified(msg.sender)) revert NotVerified();              // ① zk-X509 (기존)
+if (address(kycApprovalRegistry) != address(0)                                   // feature-flag
+    && !kycApprovalRegistry.isApproved(msg.sender)) revert NotKycApproved();      // ② 어드민 KYC (신규)
+```
+- **feature-flag**: `kycApprovalRegistry == address(0)` → ② 체크 skip(= zk-X509-only, 기존 동작). 주소 세팅 순간부터 AND 강제 → **무중단 마이그레이션·페이즈드 롤아웃**.
+- `kycApprovalRegistry` = 기존 **`IssuanceApprovalRegistry` 재활용**(`approve/revoke/isApproved` 코드무변경, 주석/문서만 "CA발급 인가"→"어드민 KYC 승인"으로). `approve(wallet,CN,O,C,validityDays)` 시그니처 유지 — CN/O/C는 이제 *어드민이 cert subject로 확인한 신원값*.
+- `setKycApprovalRegistry()` onlyOwner 세터 추가. 호출용 최소 인터페이스 `IKycApproval { function isApproved(address) external view returns (bool); }`.
+- **dev.sh**: flag ON + 릴레이어 A/B 시드 `approve` (로컬에서 2-게이트 실경로 검증; mock 모드라 무조건 승인). 변경 후 `zk-relayer/test/e2e-authorize-cross-relayer.ts` 재실행으로 green 확인.
 
-### 12.4 접근통제·이중통제
-- **SoD**: KYC 검토자 ≠ 승인자 ≠ CA 운영자.
-- 고위험(Root anchor/교체, 발급키 회전): **멀티시그(Safe)+타임락**, 온체인 승인.
-- admin 인증: SIWE + 온체인 role. 불변 감사로그(온체인 이벤트 + SIEM).
+### 11.4 불변 보안 원칙 (갱신)
+- scatter-dex는 **CA 키를 보유/생성하지 않는다**(Root CA 폐지). 신뢰는 외부 공인 CA가 보증, zk-X509가 영지식 검증.
+- **operator 공인인증서 개인키 = operator만 보유.** delegate prover엔 일회성 서명·consent만 전달(개인키 미전송).
+- **2-게이트**: 기계 검증(zk-X509 `isVerified`) + 인간 심사(admin KYC `approve`) **모두 필요**. flag ON 시 어느 하나로 단독 등록 불가.
+- `consentSignature` = 부인방지 증거(개인키 아님, freshness·바인딩으로 재사용 불가).
+- admin 백엔드 인증 = **SIWE**(어드민 지갑 서명).
+- 경계: zk-X509 **core 불변**, **prover-server만 운영 확장**.
 
-### 12.5 폐기·라이프사이클 (현재 없음 → 필수)
-- **CRL + OCSP** + **온체인 폐기**: `IssuanceApprovalRegistry.revoke(wallet)` + 폐기 레지스트리/caMerkleRoot 갱신 → IdentityGate·슬래싱 즉시 반영.
-- 만료 전 자동 갱신, CA 회전(중첩기간). 손상 대응: Issuing CA만 폐기·재발급(Root 무손상 유지).
-
-### 12.6 컴플라이언스
-WebTrust for CA / CA-Browser Forum BR, SOC2 Type II, 정기 pen-test, key ceremony 감사.
-
----
-
-## 13. 개발 계획 (PoC → 상용 단계별 로드맵)
-
-| Phase | 범위 | 로컬 코드 가능? | 소유(제안) |
+### 11.5 작업배분 (PR 분할, 2026-06-02)
+| PR | 작업 | 소유 | 상태 |
 |---|---|---|---|
-| **0** ✅ | PoC: 브라우저 Root CA, 클라 keygen, 온체인 approve, KYC 검토, 발급 게이트 | 완료(#888~#898) | K0/K1/K2 |
-| **1** 하드닝 | (a) **CSR subject==온체인 승인** 검증 후 서명 (b) **온체인 revoke** 훅(revoke + 게이트 반영) (c) 폼/페이지 **"테스트 전용·운영 HSM 필요" 경고** (d) 발급/승인/폐기 **온체인 감사 이벤트** | **예** | (a)(d) K1, (b) 컨트랙트+K2, (c) K0/K1 |
-| **2** Issuing CA | Issuing CA tier 도입: Root는 Issuing만 서명, **백엔드 서명 서비스**(HSM 인터페이스 mock), leaf는 Issuing이 서명. 브라우저 생성=dev 모드 분기 | **부분**(인터페이스+mock) | K1 + 백엔드 K2 |
-| **3** HSM/KMS | CA 키를 HSM/KMS로(non-exportable), 서명 API 전환, 키 백업/ceremony | 인프라(인터페이스만) | infra/ops |
-| **4** 거버넌스 | Root anchor/교체·발급키 회전에 **멀티시그(Safe)+타임락**, M-of-N, SoD 강제 | 컨트랙트 일부 가능 | 컨트랙트 |
-| **5** 폐기 인프라 | **CRL/OCSP** responder, cert 갱신/회전 자동화 | 백엔드 가능 | K2 |
-| **6** 컴플라이언스 | WebTrust/CA-B BR, SOC2, pen-test, key ceremony 문서 | 운영 | ops |
+| **①** | 설계문서 §11–13 재작성 (본 문서) | K0 | 🔨 |
+| **②** | `RelayerRegistry` 2-게이트(AND + feature-flag) + `IssuanceApprovalRegistry` 의미 재정의 + dev.sh 시드 + 테스트 3케이스 | K2 | 🔨 |
+| **③** | 구 cert-발급 라인 제거(§11.6) + admin "운영자 CA" 화면을 **zk-X509 isVerified / KYC isApproved 2-상태 뷰**로 전환(대조 placeholder) | K1 | 🔨 |
+| **+** | zk-X509 **prover-server** delegated proving ON + compliance 조회 API(§11.2 스키마) + Docker 제약 노트 | K3 | 🔨 |
+- 의존: K1 대조 배선(placeholder→실대조) ← K3 prover URL/API. 컨트랙트 AND enforcement(②)와 admin 표시화면(③)은 독립.
+- 마이그레이션: feature-flag(`address(0)`)로 기존 배포 무중단.
 
-**즉시 착수(Phase 1, 코드 가능)**: (a) CSR subject 검증, (b) 온체인 revoke 연동, (c) 테스트 전용 경고, (d) 감사 이벤트. 나머지(HSM/멀티시그/CRL 인프라)는 인터페이스·로드맵 확보 후 운영 단계.
+### 11.6 제거 목록 (PR③ — 구 cert-발급 라인 롤백)
+- **apps/admin**: `lib/rootca.ts`, `lib/leafCert.ts`, `lib/pkcs12.ts`, `_components/{GenerateRootCa,SignCsrPanel,IssueForm,IssuedList}.tsx`
+- **shared-orderbook**: `routes/cert.ts`(csr/issued), `routes/ca.ts` + `index.ts` mount
+- **apps/operators**: `app/operator-cert/page.tsx`, `lib/operatorCert.ts`
+- **유지**: KYC 제출/검토 UI, `AttestationPanel`(zk-X509 isVerified 게이트), `useIssuanceApproval`·`useRelayerIdentityRegistry`(register 게이트 재사용), SIWE, 감사로그, revoke, `RelayerRegistry.isVerified()`.
+
+---
+
+## 12. 프로덕션 목표 (갱신 2026-06-02) — 우리는 CA가 아니라 RA
+
+> 구 §12의 "우리가 운영하는 CA를 HSM·3-tier·CRL/OCSP로 격상"은 **폐기**(부록 B). scatter-dex가 CA를
+> 운영하지 않으므로 HSM·key ceremony·CA 컴플라이언스(WebTrust) 운영 부담이 **사라진다** — 그건 외부 공인 CA의 몫.
+> 우리 역할은 **RA(등록기관)** 에 가깝다. 프로덕션 하드닝 대상이 아래로 이동한다.
+
+### 12.1 신뢰앵커 거버넌스 (`caMerkleRoot`)
+어떤 공인 CA를 신뢰할지(앵커 추가/교체)는 고위험 결정 → **멀티시그(Safe)+타임락** 온체인 승인. zk-X509 레지스트리의 앵커 관리 권한 분리.
+
+### 12.2 delegate prover 운영
+- prover가 다루는 **PII(cert subject·consent)** → 격리 스토리지·암호화(ECIES 전송 이미 지원)·접근 감사로그·보존/파기 정책.
+- prover 인증·레이트리밋·고가용성. compliance 로그 무결성.
+
+### 12.3 2-게이트 거버넌스 (SoD)
+- KYC 승인자 권한 = 온체인 role + SIWE + 감사 이벤트.
+- **직무분리**: 기계 검증(zk-X509) ≠ 인간 승인(admin KYC) ≠ 앵커 관리(거버넌스). 한 주체가 단독으로 신원을 통과시킬 수 없음.
+
+### 12.4 폐기·라이프사이클
+- 공인인증서 **자체** 폐기는 외부 CA(CRL/OCSP) 책임 — 우리가 responder를 운영하지 않음.
+- 우리 측: `kycApprovalRegistry.revoke(wallet)` + zk-X509 만료(`notAfter`)·`nullifier` 재사용 차단으로 즉시 반영. 외부 CRL 동기화는 선택.
+
+### 12.5 컴플라이언스
+RA 운영정책, KYC PII 보존·파기(KMS·격리 스토리지), 접근 감사, 정기 pen-test. (CA-급 WebTrust/SOC2-for-CA 부담 없음)
+
+---
+
+## 13. 로드맵 (갱신 2026-06-02)
+
+| Phase | 범위 | 로컬 코드 | 상태 |
+|---|---|---|---|
+| **0** (유지분) | KYC 제출/검토, SIWE, 감사로그, revoke, zk-X509 `isVerified` 게이트 | — | ✅ 어제 머지분 중 유지 |
+| **1** (이번 전환) | 구 cert-발급 라인 제거 · 2-게이트(AND+flag) · zk-X509 delegated proving + compliance 대조 · 화면 교체 | **예** | 🔨 K0/K1/K2/K3 |
+| **2** | `caMerkleRoot` 앵커 거버넌스(멀티시그/타임락) + 신뢰 공인 CA 목록 관리 | 컨트랙트 | ⏳ |
+| **3** | delegate prover PII 운영 하드닝(격리·KMS·접근로그) | 인프라 | ⏳ |
+| **4** | 폐기 동기화(외부 CRL/OCSP ↔ KYC revoke), cert 만료 자동 재검증 | 백엔드 | ⏳ |
+| **5** | 컴플라이언스(RA 운영정책, PII 보존·파기 감사) | 운영 | ⏳ |
+
+> ⚠ 구 §12/§13의 "HSM 3-tier CA" 로드맵(부록 B)은 자체 CA 폐지로 **무효(superseded)**.
