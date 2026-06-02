@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { parseConfigUrl } from "../../lib/configUrl";
 import { explainError } from "../../lib/format";
-import { isValidEvmAddress } from "../../lib/x509";
+import { normalizeEvmAddress } from "../../lib/x509";
 
 /** The zk-X509 prover-server compliance endpoint. The prover records the
  *  certificate subject each operator proved (name / org / country) and exposes
@@ -12,7 +12,16 @@ import { isValidEvmAddress } from "../../lib/x509";
  *  deployed prover. (zk-X509 also exposes it on-chain via
  *  IdentityRegistry.proverUrl(), but a static config URL keeps this read-only
  *  panel free of an extra on-chain round-trip.) */
-const PROVER_URL = parseConfigUrl(process.env.NEXT_PUBLIC_PROVER_URL, "http://localhost:9090");
+// Resolve config at module load, but DON'T let a malformed env var throw during
+// import — a module-level throw escapes React error boundaries and white-screens
+// the whole admin console. Capture it and surface it in the panel instead.
+let PROVER_URL = "";
+let configError: string | null = null;
+try {
+  PROVER_URL = parseConfigUrl(process.env.NEXT_PUBLIC_PROVER_URL, "http://localhost:9090");
+} catch (err) {
+  configError = err instanceof Error ? err.message : String(err);
+}
 
 /** Optional PII guard. When the prover runs with PROVER_COMPLIANCE_TOKEN set,
  *  the admin console must echo it as `X-Compliance-Token`. Unset in local dev.
@@ -49,16 +58,24 @@ type State =
 
 export function ComplianceCrossCheck() {
   const [wallet, setWallet] = useState("");
-  const [state, setState] = useState<State>({ kind: "idle" });
+  const [state, setState] = useState<State>(
+    configError ? { kind: "error", msg: configError } : { kind: "idle" },
+  );
 
-  const trimmed = wallet.trim();
-  const walletValid = isValidEvmAddress(trimmed);
+  // Checksum-aware: normalizeEvmAddress returns the canonical EIP-55 form (or
+  // null on a malformed / failed-checksum input), so mixed-case typos reject
+  // client-side instead of round-tripping to a 400, and we query the canonical
+  // address for exact-match consistency.
+  const normalizedWallet = normalizeEvmAddress(wallet.trim());
+  const walletValid = normalizedWallet !== null;
 
   const lookup = useCallback(async () => {
-    if (!walletValid) return;
+    // Defense-in-depth: guard inside the callback too, not just on the button —
+    // skip when invalid, misconfigured, or a lookup is already in flight.
+    if (!normalizedWallet || configError || state.kind === "loading") return;
     setState({ kind: "loading" });
     try {
-      const url = `${PROVER_URL}/api/compliance?wallet=${encodeURIComponent(trimmed)}`;
+      const url = `${PROVER_URL}/api/compliance?wallet=${encodeURIComponent(normalizedWallet)}`;
       const res = await fetch(url, {
         headers: COMPLIANCE_TOKEN ? { "X-Compliance-Token": COMPLIANCE_TOKEN } : undefined,
       });
@@ -72,11 +89,11 @@ export function ComplianceCrossCheck() {
         );
       }
       const body = (await res.json()) as { wallet: string; records?: ComplianceRecord[] };
-      setState({ kind: "loaded", wallet: body.wallet ?? trimmed, records: body.records ?? [] });
+      setState({ kind: "loaded", wallet: body.wallet ?? normalizedWallet, records: body.records ?? [] });
     } catch (err) {
       setState({ kind: "error", msg: explainError(err) });
     }
-  }, [walletValid, trimmed]);
+  }, [normalizedWallet, state.kind]);
 
   return (
     <div className="space-y-4">
@@ -93,15 +110,16 @@ export function ComplianceCrossCheck() {
           </span>
           <div className="flex flex-wrap items-center gap-3">
             <input
-              className="min-w-[22rem] flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm"
+              className="min-w-[22rem] flex-1 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 font-mono text-sm disabled:opacity-50"
               placeholder="0x…"
               value={wallet}
+              disabled={state.kind === "loading" || !!configError}
               onChange={(e) => setWallet(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void lookup(); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && state.kind !== "loading" && !configError) void lookup(); }}
             />
             <button
               type="button"
-              disabled={!walletValid || state.kind === "loading"}
+              disabled={!walletValid || state.kind === "loading" || !!configError}
               onClick={() => void lookup()}
               className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
             >
