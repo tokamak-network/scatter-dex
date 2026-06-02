@@ -20,6 +20,10 @@ import {
   useRelayerCaAddress,
   type OperatorIdentityStatus,
 } from "../lib/identity";
+import {
+  useIssuanceApproval,
+  type UseIssuanceApprovalResult,
+} from "../lib/useIssuanceApproval";
 import { formatIsoDate } from "../lib/format";
 import { CA_REGISTRATION_URL, DEMO_NETWORK } from "../lib/network";
 import { safeOperatorUrl } from "../lib/operatorDisplay";
@@ -32,6 +36,7 @@ export default function OperatorCaPage() {
   const { account } = useWallet();
   const caAddress = useRelayerCaAddress();
   const status = useOperatorIdentityStatus();
+  const approval = useIssuanceApproval();
 
   const explorerUrl = buildExplorerUrl(caAddress);
 
@@ -55,7 +60,9 @@ export default function OperatorCaPage() {
 
       <section>
         <SectionHeader title="Active CA" badge="live" />
-        <div className="grid grid-cols-3 gap-4">
+        {/* Per-wallet verification status lives in the "Your onboarding gates"
+            section below (both gates), so this row stays deployment-level. */}
+        <div className="grid grid-cols-2 gap-4">
           <Stat
             label="Network"
             value={DEMO_NETWORK.name ?? "—"}
@@ -65,11 +72,6 @@ export default function OperatorCaPage() {
             label="Registry address"
             value={caAddress ? shortAddr(caAddress) : "—"}
             sub={caAddress ? "From RelayerRegistry.identityRegistry()" : "Resolving…"}
-          />
-          <Stat
-            label="Your status"
-            value={statusLabel(status)}
-            sub={statusSub(status, account)}
           />
         </div>
 
@@ -105,6 +107,29 @@ export default function OperatorCaPage() {
       </section>
 
       <section>
+        <SectionHeader
+          title="Your onboarding gates"
+          badge="live"
+          hint="register() requires BOTH"
+        />
+        {!account ? (
+          <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
+            Connect your wallet to see your two on-chain onboarding gates.
+          </div>
+        ) : (
+          <div className="space-y-4 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+            <GateRow {...gate1(status)} />
+            <GateRow {...gate2(approval)} />
+            <p className="border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
+              <code className="font-mono">RelayerRegistry.register()</code> reverts unless both
+              gates are green — the protocol requires zk-X509 verification{" "}
+              <strong>and</strong> admin KYC approval.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section>
         <SectionHeader title="How verification works" badge="live" />
         <ol className="list-decimal space-y-2 pl-5 text-sm text-[var(--color-text-muted)]">
           <li>
@@ -124,46 +149,6 @@ export default function OperatorCaPage() {
       </section>
     </div>
   );
-}
-
-function statusLabel(status: OperatorIdentityStatus): string {
-  switch (status.kind) {
-    case "verified":
-      return "Verified";
-    case "expired":
-      return "Expired";
-    case "unverified":
-      return "Not verified";
-    case "unconnected":
-      return "Wallet not connected";
-    case "no-registry":
-      return "Registry not configured";
-    case "error":
-      return "Lookup failed";
-    case "loading":
-    default:
-      return "…";
-  }
-}
-
-function statusSub(status: OperatorIdentityStatus, account: string | null): string {
-  switch (status.kind) {
-    case "verified":
-      return `Valid until ${formatExpiry(status.verifiedUntil)}`;
-    case "expired":
-      return `Re-verify — expired ${formatExpiry(status.verifiedUntil)}`;
-    case "unverified":
-      return account ? "Click the button below to start" : "Connect a wallet first";
-    case "unconnected":
-      return "Connect to see your verification";
-    case "no-registry":
-      return "RelayerRegistry env address is unset";
-    case "error":
-      return status.message;
-    case "loading":
-    default:
-      return "Reading on-chain…";
-  }
 }
 
 // uint64.max sentinel from MockIdentityRegistry — production CAs
@@ -190,6 +175,70 @@ function buildExplorerUrl(address: string | null): string | null {
     return u.toString();
   } catch {
     return null;
+  }
+}
+
+type GateState = "ok" | "bad" | "pending";
+
+/** One onboarding-gate row: ✓ (satisfied) / ✗ (blocked) / • (resolving). */
+function GateRow({ state, label, detail }: { state: GateState; label: string; detail: string }) {
+  const icon = state === "ok" ? "✓" : state === "bad" ? "✗" : "•";
+  const color =
+    state === "ok"
+      ? "text-[var(--color-success)]"
+      : state === "bad"
+        ? "text-[var(--color-danger)]"
+        : "text-[var(--color-text-subtle)]";
+  return (
+    <div className="flex items-start gap-3">
+      <span className={`mt-0.5 text-base font-semibold ${color}`}>{icon}</span>
+      <div>
+        <div className="text-sm font-medium">{label}</div>
+        <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">{detail}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Gate 1 — zk-X509 verification (RelayerRegistry.identityRegistry().isVerified). */
+function gate1(status: OperatorIdentityStatus): { state: GateState; label: string; detail: string } {
+  const label = "zk-X509 verification";
+  switch (status.kind) {
+    case "verified":
+      return { state: "ok", label, detail: `Verified · valid until ${formatExpiry(status.verifiedUntil)}` };
+    case "expired":
+      return { state: "bad", label, detail: `Expired ${formatExpiry(status.verifiedUntil)} — re-prove your certificate` };
+    case "unverified":
+      return { state: "bad", label, detail: "Prove your accredited certificate to the Relayer CA" };
+    case "no-registry":
+      return { state: "pending", label, detail: "Relayer identity registry not configured" };
+    case "error":
+      return { state: "bad", label, detail: status.message };
+    case "loading":
+    default:
+      return { state: "pending", label, detail: "Reading on-chain…" };
+  }
+}
+
+/** Gate 2 — admin KYC approval (IssuanceApprovalRegistry.isApproved). */
+function gate2(approval: UseIssuanceApprovalResult): { state: GateState; label: string; detail: string } {
+  const label = "Admin KYC approval";
+  switch (approval.status) {
+    case "approved":
+      return { state: "ok", label, detail: "Your wallet is approved on-chain" };
+    case "not-approved":
+      return { state: "bad", label, detail: "Submit KYC — an admin approves your wallet on-chain" };
+    case "revoked":
+      return { state: "bad", label, detail: `Revoked${approval.revokeReason ? ` — ${approval.revokeReason}` : ""}` };
+    case "expired":
+      return { state: "bad", label, detail: "Approval expired — ask the admin to re-approve" };
+    case "error":
+      return { state: "bad", label, detail: approval.message ?? "Lookup failed" };
+    case "idle":
+      return { state: "pending", label, detail: "Approval registry not configured" };
+    case "checking":
+    default:
+      return { state: "pending", label, detail: "Reading on-chain…" };
   }
 }
 
