@@ -1,5 +1,8 @@
 /** Relayer info as recorded in the on-chain `RelayerRegistry`. */
 export interface RelayerOnChain {
+  /** 0-based index in the registry's `relayerList` — the relayer's
+   *  stable on-chain id, assigned at first registration. */
+  id: number;
   address: string;
   url: string;
   /** Operator-set display name from the registry. May be the empty

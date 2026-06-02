@@ -10,11 +10,24 @@ export async function loadActiveRelayers(
   provider: ethers.Provider,
 ): Promise<RelayerOnChain[]> {
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_ABI, provider);
-  const activeAddresses = (await registry.getActiveRelayers()) as string[];
+  // `getActiveRelayers()` drops the registration order, but the leaderboard
+  // wants each relayer's stable on-chain id (its `relayerList` index). Read
+  // the full ordered list once and build address → index so every active
+  // row can carry its id without an extra round-trip per relayer.
+  const [activeAddresses, count] = await Promise.all([
+    registry.getActiveRelayers() as Promise<string[]>,
+    registry.getRelayerCount() as Promise<bigint>,
+  ]);
+  const listAddresses = await Promise.all(
+    Array.from({ length: Number(count) }, (_, i) => registry.relayerList(i) as Promise<string>),
+  );
+  const idByAddress = new Map<string, number>();
+  listAddresses.forEach((addr, i) => idByAddress.set(addr.toLowerCase(), i));
   return Promise.all(
     activeAddresses.map(async (addr): Promise<RelayerOnChain> => {
       const r = await registry.relayers(addr);
       return {
+        id: idByAddress.get(addr.toLowerCase()) ?? -1,
         address: addr,
         url: r.url,
         name: r.name ?? "",

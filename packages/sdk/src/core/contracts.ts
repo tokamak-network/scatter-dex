@@ -9,6 +9,7 @@ export const RELAYER_REGISTRY_ABI = [
   "function isActiveRelayer(address relayer) external view returns (bool)",
   "function getActiveRelayers() external view returns (address[])",
   "function getRelayerCount() external view returns (uint256)",
+  "function relayerList(uint256) external view returns (address)",
   "function relayers(address) external view returns (string url, string name, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active)",
   "function treasury() external view returns (address)",
   "function minBond() external view returns (uint256)",
