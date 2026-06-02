@@ -6,6 +6,7 @@ import { Stat } from "../components/Stat";
 import { DEMO_NETWORK } from "../lib/network";
 import { useRelayerIdentityRegistry } from "../lib/useRelayerIdentityRegistry";
 import { AttestationPanel } from "./_components/AttestationPanel";
+import { ComplianceCrossCheck } from "./_components/ComplianceCrossCheck";
 
 export default function OperatorCaPage() {
   // The attestation registry is read on-chain from
@@ -84,22 +85,10 @@ export default function OperatorCaPage() {
       <section>
         <SectionHeader
           title="Compliance cross-check"
-          badge="planned"
+          badge="live"
           hint="match the certificate the operator proved against their KYC submission"
         />
-        <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-sm text-[var(--color-text-muted)]">
-          <p>
-            The certificate subject (common name / organization / country) the operator proved
-            to zk-X509 is recorded by the prover and exposed via its compliance API
-            (<code className="font-mono">GET /api/compliance?wallet=</code>). An admin
-            cross-checks it against the operator&apos;s KYC video and documents before approving.
-          </p>
-          <p className="mt-2">
-            Wiring pending — the prover compliance endpoint is being finalized; this panel will
-            then surface the proved subject (and the certificate serial / consent signature)
-            here for side-by-side review with KYC.
-          </p>
-        </div>
+        <ComplianceCrossCheck />
       </section>
     </div>
   );
