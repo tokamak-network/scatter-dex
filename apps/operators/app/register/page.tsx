@@ -1494,7 +1494,7 @@ function FlowContextPanel({
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm"
     >
       <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
-        Where this page fits — the full 9-step flow
+        Where this page fits — the full 6-step flow
       </summary>
       <ol className="mt-3 space-y-1.5 text-xs">
         {FLOW_STEPS.map((s) => {
@@ -1551,9 +1551,10 @@ function FlowContextPanel({
         })}
       </ol>
       <p className="mt-3 text-[10px] text-[var(--color-text-muted)]">
-        Steps 2 + 3 are admin-only and happen on the admin&apos;s instance of
-        this app (<code>/admin/issuance</code>) — not here. Step 5 happens in
-        the zk-X509 portal; steps 7 + 9 happen outside the app entirely.
+        Step 3 (admin approval) happens on the admin&apos;s instance of this app
+        (<code>/operator-ca</code>) — not here; you wait for it. Step 2 (the
+        zk-X509 proof) is done in the zk-X509 portal / desktop app. Step 6
+        (leaderboard) is automatic.
       </p>
     </details>
   );
