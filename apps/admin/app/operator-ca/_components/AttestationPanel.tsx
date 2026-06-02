@@ -50,8 +50,10 @@ export function AttestationPanel({
   const addressValid = isValidEvmAddress(address.trim());
 
   useEffect(() => {
+    // Clear the prior result up-front so switching registryAddress can't flash
+    // the wrong panel (real vs mock) while the new probe is in flight.
+    setIsRealRegistry(null);
     if (!registryConfigured || !registryAddress || !readProvider) {
-      setIsRealRegistry(null);
       return;
     }
     let cancelled = false;
@@ -118,10 +120,16 @@ export function AttestationPanel({
         readProvider,
       );
       const verified = (await c.isVerified(addr)) as boolean;
-      // Ignore a stale response if a newer check started meanwhile.
-      if (seq === checkSeq.current) setVerifyCheck({ kind: "result", addr, verified });
+      // Drop the response if a newer check started (seq) OR the user edited the
+      // input while this was in flight (state reset to idle → no longer
+      // "checking"), so a stale result never overwrites the current state.
+      if (seq === checkSeq.current) {
+        setVerifyCheck((prev) => (prev.kind === "checking" ? { kind: "result", addr, verified } : prev));
+      }
     } catch (err) {
-      if (seq === checkSeq.current) setVerifyCheck({ kind: "error", msg: explainError(err) });
+      if (seq === checkSeq.current) {
+        setVerifyCheck((prev) => (prev.kind === "checking" ? { kind: "error", msg: explainError(err) } : prev));
+      }
     }
   }, [readProvider, registryAddress, addressValid, address]);
 
