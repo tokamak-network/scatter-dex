@@ -4,13 +4,15 @@ export function SectionHeader({
   hint,
 }: {
   title: string;
-  badge: "live" | "mock";
+  badge: "live" | "mock" | "planned";
   hint?: string;
 }) {
   const badgeClass =
     badge === "live"
       ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
-      : "bg-[var(--color-bg)] text-[var(--color-text-subtle)]";
+      : badge === "planned"
+        ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+        : "bg-[var(--color-bg)] text-[var(--color-text-subtle)]";
   return (
     <div className="mb-3 flex items-center gap-2">
       <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">{title}</h2>

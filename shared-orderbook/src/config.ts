@@ -67,12 +67,6 @@ export const config = {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
 
-  // Operator leaf-cert issuance. The CSR subject check reads the approved
-  // identity from IssuanceApprovalRegistry on-chain; both must be set or the
-  // /api/cert issuance surface is disabled (503). Read-only — no signer.
-  certRpcUrl: process.env.CERT_RPC_URL?.trim() || undefined,
-  issuanceRegistryAddress: process.env.ISSUANCE_REGISTRY_ADDRESS?.trim() || undefined,
-
   // Relayer operator KYC onboarding (Stage 1). Uploaded liveness videos +
   // ID documents land under `kycUploadDir/<submissionId>/`. Kept out of the
   // repo (.gitignore) and wiped by `scripts/dev.sh`'s DB reset.

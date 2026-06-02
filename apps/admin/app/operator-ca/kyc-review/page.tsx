@@ -41,7 +41,7 @@ function parseConfigUrl(value: string | undefined, fallback: string): string {
     throw new Error(`URL must be http(s): "${raw}"`);
   }
   // A base URL must not carry a query or fragment — these become broken
-  // when we append paths/params (e.g. `${base}/operator-cert?wallet=…`).
+  // when we append paths/params (e.g. `${base}/register?wallet=…`).
   if (url.search || url.hash) {
     throw new Error(`Base URL must not include a query or fragment: "${raw}"`);
   }
@@ -53,9 +53,9 @@ const ORDERBOOK_URL = parseConfigUrl(
   "http://localhost:4000",
 );
 
-/** Where the operator self-service certificate-issuance screen lives —
- *  the OPERATORS app (operator keys are generated in the operator's own
- *  context, never in the admin app). The approval email links here. */
+/** The OPERATORS app, where an approved operator continues onboarding
+ *  (verify their certificate via zk-X509, then register the relayer). The
+ *  KYC-approval email links here. scatter-dex no longer issues certificates. */
 const OPERATORS_URL = parseConfigUrl(
   process.env.NEXT_PUBLIC_OPERATORS_URL,
   "http://localhost:4004",
@@ -632,19 +632,22 @@ function SubmissionPanel({
   );
 }
 
-/** Open the admin's mail client with the certificate-issuance link
- *  pre-filled — the same Gmail web-compose pattern Pay uses for claim
- *  emails (no server-side SMTP). */
+/** Open the admin's mail client with the onboarding link pre-filled — the
+ *  same Gmail web-compose pattern Pay uses for claim emails (no server-side
+ *  SMTP). scatter-dex no longer issues certificates: after KYC approval the
+ *  operator proves their real certificate via zk-X509 and continues the
+ *  relayer onboarding wizard. */
 function emailIssuanceLink(email: string, wallet: string) {
-  const certUrl = `${OPERATORS_URL}/operator-cert?wallet=${encodeURIComponent(wallet)}`;
-  const subject = "Your relayer certificate-issuance link";
+  const onboardUrl = `${OPERATORS_URL}/register?wallet=${encodeURIComponent(wallet)}`;
+  const subject = "Your relayer onboarding is approved";
   const body = [
     "Hi,",
     "",
-    "Your relayer KYC has been approved. Issue your operator certificate here:",
-    certUrl,
+    "Your relayer KYC has been approved. Continue onboarding here — verify your",
+    "certificate with zk-X509 and register your relayer:",
+    onboardUrl,
     "",
-    "This link is tied to your wallet and only works once your address is approved.",
+    "This link is tied to your wallet and the next steps unlock once your address is approved.",
   ].join("\r\n");
   const gmailUrl =
     `https://mail.google.com/mail/?view=cm&fs=1` +
