@@ -277,7 +277,7 @@ function StatusPill({ info }: { info: NoteStatusInfo }) {
           : "Awaiting on-chain confirmation — the commitment is on-chain; this becomes Available automatically once the CommitmentInserted event is reconciled into your local tree (usually a few seconds)."
       }
     >
-      <span className="animate-pulse">⏳</span>
+      <span className="animate-pulse" aria-hidden="true">⏳</span>
       {info.pendingFromOrder ? "Pending · settling" : "Pending · reconciling"}
     </span>
   );
