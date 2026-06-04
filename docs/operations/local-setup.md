@@ -360,6 +360,20 @@ Run the end-to-end cross-relayer scenario:
 cd zk-relayer && npx tsx test/e2e-cross-relayer.ts
 ```
 
+> **⚠ Matched but never settles? Set `ALLOW_PRIVATE_RELAYER_URLS=1`.**
+> Cross-relayer matching pairs the two orders, then the matcher POSTs a **trade
+> offer to the peer relayer's `RELAYER_PUBLIC_URL`** (e.g. `http://localhost:3003`).
+> An SSRF guard (`zk-relayer/src/lib/url-guard.ts`) blocks outbound requests to
+> private / loopback addresses, so a loopback peer URL is rejected with
+> `unsafe peer URL: … resolves to a private/loopback IP (::1)` and the order
+> stays stuck on `matching`. `dev.sh` and `start-cross-relayer-e2e.sh` set
+> `ALLOW_PRIVATE_RELAYER_URLS=1` automatically — but if you start a relayer **by
+> hand**, you must export it yourself on **every** relayer (the guard runs on the
+> sender). It MUST stay unset in production, where peers use public HTTPS URLs.
+> ```bash
+> ALLOW_PRIVATE_RELAYER_URLS=1 PORT=3003 RELAYER_PUBLIC_URL=http://localhost:3003 … npm run dev
+> ```
+
 **Apps with two relayers:** `dev.sh` already writes `NEXT_PUBLIC_SHARED_ORDERBOOK_URL=http://localhost:4000` and `NEXT_PUBLIC_ZK_RELAYER_URL=http://localhost:3002` into each app's `.env.local`. To let an app forward claims to the second relayer too, append the server-side allowlist to that app's `.env.local` and restart `npm run dev`:
 
 ```
