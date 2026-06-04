@@ -706,6 +706,11 @@ echo "[3/6] Starting shared orderbook (port 4000)..."
 # shared-orderbook AND zk-relayer (started below) both import from the
 # @scatter-dex/types built output — keep it fresh before either boots.
 ensure_types_built
+# Install workspace packages so their internal file: deps (e.g. recipients→ui)
+# are symlinked before any app build resolves them.
+for pkg_dir in "$ROOT_DIR/packages"/*/; do
+  ensure_deps_installed "$pkg_dir" "pkg-$(basename "$pkg_dir")"
+done
 ensure_deps_installed "$ROOT_DIR/shared-orderbook" "shared-orderbook"
 ensure_sqlite_arch "$ROOT_DIR/shared-orderbook"
 cd "$ROOT_DIR/shared-orderbook"
