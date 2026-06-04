@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Contract, parseUnits, type Signer } from "ethers";
-import { isConfiguredAddress, type TokenInfo } from "@zkscatter/sdk";
+import { useEffect, useState } from "react";
+import { Contract, parseUnits } from "ethers";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "../../lib/network";
 import { prettyAmount } from "../../lib/format";
+import { isValidEvmAddress } from "../../lib/x509";
 
 const TREASURY_ABI = [
   "function beneficiary(address) external view returns (bool)",
@@ -61,6 +62,7 @@ export function TreasuryWrites({
   const [wethBalance, setWethBalance] = useState<bigint | null>(null);
   const [paused, setPaused] = useState<boolean | null>(null);
   const [beneficiaries, setBeneficiaries] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     if (!readProvider || !treasuryAddress || !isConfiguredAddress(treasuryAddress)) return;
@@ -81,7 +83,15 @@ export function TreasuryWrites({
       setEthBalance(eth as bigint);
       setPaused(isPaused as boolean);
       setWethBalance((weth as bigint) ?? 0n);
-    }).catch(() => {});
+      setLoadError(false);
+    }).catch((err) => {
+      // Surface the failure instead of leaving balances null → "0 ETH",
+      // which would read as an empty treasury rather than an RPC error.
+      if (!cancelled) {
+        console.error("[treasury] failed to load balances", err);
+        setLoadError(true);
+      }
+    });
 
     // ERC20 balances — exclude WETH (merged into the ETH row)
     const wethAddrLower = DEMO_NETWORK.contracts.weth?.toLowerCase();
@@ -127,6 +137,11 @@ export function TreasuryWrites({
 
   return (
     <div className="space-y-6">
+      {loadError && (
+        <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-5 py-3 text-sm font-medium text-[var(--color-danger)]">
+          ⚠ Failed to read Treasury state from the chain — balances below may be stale. Check the RPC connection and retry.
+        </div>
+      )}
       {paused && (
         <div className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-5 py-3 text-sm font-medium text-[var(--color-warning)]">
           ⚠ Treasury is paused — all withdrawals are blocked.
@@ -158,7 +173,7 @@ export function TreasuryWrites({
               wethBalance={wethBalance ?? 0n}
               wethAddress={DEMO_NETWORK.contracts.weth ?? ""}
               beneficiaries={beneficiaries}
-              paused={!!paused}
+              paused={paused !== false}
               onReload={onReload}
             />
             {balances.map((b) => (
@@ -169,7 +184,7 @@ export function TreasuryWrites({
                 balance={b.balance}
                 treasuryAddress={treasuryAddress}
                 beneficiaries={beneficiaries}
-                paused={!!paused}
+                paused={paused !== false}
                 tokenAddress={b.address}
                 onReload={onReload}
               />
@@ -222,8 +237,14 @@ function EthWethRow({
 
   const totalEth = ethBalance + wethBalance;
 
+  // Reject amounts over the combined balance up-front: a request larger
+  // than the WETH leg would silently skip the native-ETH remainder.
   const amountValid = (() => {
-    try { return amount !== "" && parseUnits(amount, 18) > 0n; } catch { return false; }
+    try {
+      if (amount === "") return false;
+      const parsed = parseUnits(amount, 18);
+      return parsed > 0n && parsed <= totalEth;
+    } catch { return false; }
   })();
 
   // Prefer WETH withdrawal (auto-unwrap) — then native ETH if any remains
@@ -366,7 +387,11 @@ function WithdrawRow({
   }, [beneficiaries, to]);
 
   const amountValid = (() => {
-    try { return amount !== "" && parseUnits(amount, decimals) > 0n; } catch { return false; }
+    try {
+      if (amount === "") return false;
+      const parsed = parseUnits(amount, decimals);
+      return parsed > 0n && parsed <= balance;
+    } catch { return false; }
   })();
 
   const canWithdraw =
@@ -460,7 +485,10 @@ function BeneficiaryManager({
   const [newAddr, setNewAddr] = useState("");
   const [addPhase, setAddPhase] = useState<Phase>({ kind: "idle" });
 
-  const addrValid = /^0x[0-9a-fA-F]{40}$/.test(newAddr.trim());
+  // Use the shared EVM-address validator rather than a local regex.
+  // (isConfiguredAddress only rejects empty/zero — not malformed input —
+  //  so it's not a substitute for format validation here.)
+  const addrValid = isValidEvmAddress(newAddr.trim());
 
   const add = async () => {
     if (!signer || !addrValid) return;
