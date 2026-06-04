@@ -115,10 +115,13 @@ export function TokenWhitelistList({
 function CopyableAddress({ address }: { address: string }) {
   const [copied, setCopied] = useState(false);
   const onCopy = () => {
+    // navigator.clipboard is undefined on insecure origins / old browsers,
+    // and writeText can reject on denied permissions — guard + catch both.
+    if (!navigator.clipboard) return;
     navigator.clipboard.writeText(address).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }).catch((err) => console.error("Failed to copy address:", err));
   };
   return (
     <button

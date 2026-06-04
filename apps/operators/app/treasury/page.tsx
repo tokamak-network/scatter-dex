@@ -419,10 +419,13 @@ function BalanceRow({
   const submitting = write.phase.kind === "submitting";
   const [copied, setCopied] = useState(false);
   const onCopyAddress = () => {
+    // navigator.clipboard is undefined on insecure origins / old browsers,
+    // and writeText can reject on denied permissions — guard + catch both.
+    if (!navigator.clipboard) return;
     navigator.clipboard.writeText(token.address).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    });
+    }).catch((err) => console.error("Failed to copy address:", err));
   };
 
   // Compute the on-claim split — what the platform skims vs. what
