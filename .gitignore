@@ -13,6 +13,8 @@ contracts/foundry.lock
 .env
 .env.local
 *.env.local
+.env.*
+!.env.example
 
 # Database files
 *.db

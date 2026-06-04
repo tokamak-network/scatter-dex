@@ -290,10 +290,9 @@ export default function RegisterPage() {
   // (step1Done=Verify, step2Done=Endpoint, step3Done=Bond);
   // `kycDone` is the new step-1 gate in front of them.
   const step1Done = !!status && status.isVerified; // zk-X509 proof (wizard step 2)
-  // A wallet that's already verified has plainly passed KYC, so don't
-  // force a legacy verified/registered operator back to step 1
-  // (Copilot review on #889).
-  const kycDone = isKycSubmitted(kycStatus) || step1Done;
+  // KYC submission is required independently of zk-X509 — the admin needs
+  // the documents to review before approving (2-gate design).
+  const kycDone = isKycSubmitted(kycStatus);
   // 2nd gate (new flow): AFTER zk-X509 verification the admin compares the
   // proven certificate subject against the KYC documents and approves
   // on-chain (IssuanceApprovalRegistry, reused as the KYC-approval registry).
@@ -306,7 +305,7 @@ export default function RegisterPage() {
   // transient `checking` load, and not for revoked/expired/error (those carry
   // their own messaging), which a bare `!kycApproved` would wrongly include.
   const awaitingAdmin =
-    step1Done && approval.status === "not-approved" && !step3Done;
+    kycDone && step1Done && approval.status === "not-approved" && !step3Done;
   const step2Done =
     step1Done && kycApproved && !urlInvalid && !nameInvalid && !probeBlocks; // Endpoint (step 4)
   // 5-step flow: 1 Submit KYC · 2 Prove zk-X509 · 3 Admin approval ·
@@ -448,7 +447,7 @@ export default function RegisterPage() {
         status={status}
         account={account}
         wrongChain={wrongChain}
-        gated={!kycDone}
+        gated={!kycDone && !step1Done}
         approval={approval}
         onRefresh={() => { refreshIdentity(); refreshStatus(); }}
         defaultOpen={currentStep === 2}

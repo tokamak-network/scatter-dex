@@ -114,6 +114,28 @@ DB_PATH=./zk-relayer-bot-1.db # your relayer's own SQLite file
 > `shared-orderbook/` (`npm install && npm run dev`, default `:4000`) and point
 > `SHARED_ORDERBOOK_URL` at it.
 
+> **⚠ Local / loopback peers — `ALLOW_PRIVATE_RELAYER_URLS=1`.** Cross-relayer
+> matching works in two steps: the matcher pairs your order with a remote
+> relayer's order, then sends a **trade offer to that peer's
+> `RELAYER_PUBLIC_URL`**. An SSRF guard (`zk-relayer/src/lib/url-guard.ts`) blocks
+> outbound requests to private / loopback addresses by default, so when peers
+> advertise `http://localhost:<port>` (every local multi-relayer setup) the
+> offer is **rejected**. The relayer logs structured JSON — the message is
+> `Trade offer rejected` with the guard error in `meta.reason`:
+> ```json
+> {"level":"warn","mod":"authorize-cross","msg":"Trade offer rejected","meta":{"reason":"unsafe peer URL: URL hostname localhost resolves to a private/loopback IP (::1)"}}
+> ```
+> The order matches but never settles. Fix: set **`ALLOW_PRIVATE_RELAYER_URLS=1`**
+> on **every** relayer in the local stack (not just one — the guard runs on the
+> sender side). Add it to your `.env`:
+> ```bash
+> ALLOW_PRIVATE_RELAYER_URLS=1   # local/loopback peers only — MUST stay unset in production
+> ```
+> `dev.sh` sets this automatically for the relayers it launches; you only need it
+> when starting a relayer by hand. **Never set it in production** — it disables
+> the SSRF protection that stops a malicious peer URL from reaching internal
+> services.
+
 ## 3. Start it
 
 ```bash
@@ -171,6 +193,14 @@ Pay/Pro — it's now eligible to match orders.
   probe must reach the URL you submit.
 - **Endpoint probe warns "chainId mismatch"** — `RPC_URL` points at a different
   chain than the apps. Align it with the deployment's chain.
+- **Orders match but never settle (cross-relayer)** — the order shows `matching`
+  on both relayers but no settlement tx fires, and the sender's log shows a
+  `msg":"Trade offer rejected"` line with `meta.reason` =
+  `unsafe peer URL: … resolves to a private/loopback IP`.
+  The SSRF guard is blocking the loopback peer URL. Set
+  `ALLOW_PRIVATE_RELAYER_URLS=1` on **every** relayer in a local stack and
+  restart. Production peers use public HTTPS URLs, so this never trips there —
+  keep the flag unset in production. See the env note in step 2.
 
 See also: [Registering a Relayer](./registering-a-relayer.md) (full onboarding),
 [Deployment](./deployment.md) (production hardening), [Security Hardening](./relayer-security.md).

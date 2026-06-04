@@ -270,14 +270,15 @@ function StatusPill({ info }: { info: NoteStatusInfo }) {
   }
   return (
     <span
-      className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
+      className="inline-flex items-center gap-1 rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
       title={
         info.pendingFromOrder
-          ? `Pending change from ${info.pendingFromOrder.label}`
-          : "Awaiting on-chain confirmation"
+          ? `Pending change from ${info.pendingFromOrder.label} — becomes Available once the order settles and its CommitmentInserted event is reconciled.`
+          : "Awaiting on-chain confirmation — the commitment is on-chain; this becomes Available automatically once the CommitmentInserted event is reconciled into your local tree (usually a few seconds)."
       }
     >
-      Pending
+      <span className="animate-pulse" aria-hidden="true">⏳</span>
+      {info.pendingFromOrder ? "Pending · settling" : "Pending · reconciling"}
     </span>
   );
 }

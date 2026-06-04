@@ -1,3 +1,18 @@
+import { formatUnits } from "ethers";
+
+/** Format a (wei, decimals) pair with thousand-separator commas on the
+ *  integer part and the full fractional part minus trailing zeros — so
+ *  "100000.0" reads as "100,000" while dust ("0.00012") stays visible at
+ *  its native precision. Distinct from the SDK's `formatTokenAmount`,
+ *  which omits the comma grouping the admin tables rely on. */
+export function prettyAmount(wei: bigint, decimals: number): string {
+  const raw = formatUnits(wei, decimals);
+  const [intPart, fracPartRaw = ""] = raw.split(".");
+  const intWithCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const frac = fracPartRaw.replace(/0+$/, "");
+  return frac === "" ? intWithCommas : `${intWithCommas}.${frac}`;
+}
+
 /** Centralised error explainer for ethers v6 + plain Error throws.
  *  Each admin write panel routes its catch through this so reverts
  *  / RPC errors / validation failures surface with the same copy.

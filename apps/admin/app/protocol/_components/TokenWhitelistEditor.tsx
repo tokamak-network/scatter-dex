@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Contract } from "ethers";
-import { ZERO_ADDRESS, eqAddr } from "@zkscatter/sdk";
+import { ZERO_ADDRESS, eqAddr, type TokenInfo } from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { isValidEvmAddress } from "../../lib/x509";
+import { DEMO_NETWORK } from "../../lib/network";
 
 const POOL_ABI = [
   "function setTokenWhitelist(address token, bool allowed) external",
@@ -17,12 +18,142 @@ const SETTLEMENT_ABI = POOL_ABI;
 interface Props {
   poolAddress: string;
   settlementAddress: string;
+  /** Called after a confirmed write so the parent can refresh the list. */
+  onWrite?: () => void;
+}
+
+interface TokenWhitelistRow {
+  token: TokenInfo;
+  pool: boolean | null;
+  settlement: boolean | null;
+}
+
+/** Read-only list of the network's configured tokens with their
+ *  current Pool / Settlement whitelist state, so the admin sees what's
+ *  active without typing each address. Re-reads when `reloadKey` bumps
+ *  (e.g. after the editor writes). */
+export function TokenWhitelistList({
+  poolAddress,
+  settlementAddress,
+  reloadKey,
+}: {
+  poolAddress: string;
+  settlementAddress: string;
+  reloadKey: number;
+}) {
+  const { readProvider } = useWallet();
+  const [rows, setRows] = useState<TokenWhitelistRow[]>([]);
+
+  useEffect(() => {
+    if (!readProvider) return;
+    let cancelled = false;
+    const pool = new Contract(poolAddress, POOL_ABI, readProvider);
+    const settlement = new Contract(settlementAddress, SETTLEMENT_ABI, readProvider);
+    void Promise.all(
+      DEMO_NETWORK.tokens.map(async (token) => {
+        const [p, s] = await Promise.allSettled([
+          pool.whitelistedTokens(token.address) as Promise<boolean>,
+          settlement.whitelistedTokens(token.address) as Promise<boolean>,
+        ]);
+        return {
+          token,
+          pool: p.status === "fulfilled" ? p.value : null,
+          settlement: s.status === "fulfilled" ? s.value : null,
+        };
+      })
+    ).then((r) => { if (!cancelled) setRows(r); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [poolAddress, settlementAddress, readProvider, reloadKey]);
+
+  if (DEMO_NETWORK.tokens.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+        No tokens in <code className="font-mono">NEXT_PUBLIC_TOKENS</code>.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-4 py-3">Token</th>
+            <th className="px-4 py-3 text-center">CommitmentPool</th>
+            <th className="px-4 py-3 text-center">PrivateSettlement</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ token, pool, settlement }) => {
+            const mismatch = pool !== null && settlement !== null && pool !== settlement;
+            return (
+              <tr key={token.address} className="border-t border-[var(--color-border)]">
+                <td className="px-4 py-3">
+                  <div className="font-medium">{token.symbol}</div>
+                  <CopyableAddress address={token.address} />
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <WhitelistBadge value={pool} />
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <WhitelistBadge value={settlement} />
+                  {mismatch && (
+                    <div className="mt-1 text-[10px] text-[var(--color-warning)]" title="Pool and Settlement disagree — deposits and settlement won't both work until they match">
+                      ⚠ out of sync
+                    </div>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CopyableAddress({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = () => {
+    // navigator.clipboard is undefined on insecure origins / old browsers,
+    // and writeText can reject on denied permissions — guard + catch both.
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(address).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }).catch((err) => console.error("Failed to copy address:", err));
+  };
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      title={`${address} — click to copy`}
+      className="font-mono text-[10px] text-[var(--color-text-subtle)] hover:text-[var(--color-primary)] cursor-pointer transition-colors"
+    >
+      {copied ? "Copied!" : shortAddr(address)}
+    </button>
+  );
+}
+
+function WhitelistBadge({ value }: { value: boolean | null }) {
+  if (value === null) {
+    return <span className="text-xs text-[var(--color-text-muted)]">…</span>;
+  }
+  return value ? (
+    <span className="rounded-full bg-[var(--color-success-soft)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-success)]">
+      Whitelisted
+    </span>
+  ) : (
+    <span className="rounded-full bg-[var(--color-bg)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]">
+      Not listed
+    </span>
+  );
 }
 
 /** Shared whitelist editor — writes to both CommitmentPool and
  *  PrivateSettlement so the two mappings stay in lockstep. Callers
  *  pick which contracts to apply via the checkboxes. */
-export function TokenWhitelistEditor({ poolAddress, settlementAddress }: Props) {
+export function TokenWhitelistEditor({ poolAddress, settlementAddress, onWrite }: Props) {
   const { signer, readProvider } = useWallet();
   const [token, setToken] = useState("");
   const [allowed, setAllowed] = useState(true);
@@ -102,7 +233,7 @@ export function TokenWhitelistEditor({ poolAddress, settlementAddress }: Props) 
       submitLabel={allowed ? "Whitelist token" : "Remove from whitelist"}
       disabled={!valid || (!applyPool && !applySettlement)}
       onSubmit={submit}
-      onSuccess={() => setReloadKey((k) => k + 1)}
+      onSuccess={() => { setReloadKey((k) => k + 1); onWrite?.(); }}
     >
       <label className="block text-xs">
         <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
