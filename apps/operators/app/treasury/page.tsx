@@ -417,6 +417,13 @@ function BalanceRow({
   const { token, balance } = entry;
   const empty = balance === 0n;
   const submitting = write.phase.kind === "submitting";
+  const [copied, setCopied] = useState(false);
+  const onCopyAddress = () => {
+    navigator.clipboard.writeText(token.address).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
 
   // Compute the on-claim split — what the platform skims vs. what
   // hits the relayer's treasury — so the operator sees the actual
@@ -434,9 +441,14 @@ function BalanceRow({
     <tr className="border-t border-[var(--color-border)] align-top">
       <td className="px-5 py-3">
         <div className="font-medium">{token.symbol}</div>
-        <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
-          {shortAddr(token.address)}
-        </div>
+        <button
+          type="button"
+          onClick={onCopyAddress}
+          title={token.address}
+          className="font-mono text-[10px] text-[var(--color-text-subtle)] hover:text-[var(--color-primary)] cursor-pointer transition-colors"
+        >
+          {copied ? "Copied!" : shortAddr(token.address)}
+        </button>
       </td>
       <td className="px-5 py-3 text-right font-mono">
         {formatTokenAmount(balance, token.decimals)}

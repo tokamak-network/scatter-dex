@@ -243,7 +243,7 @@ export function CancelOrderModal({ open, onClose, order }: Props) {
         title: `${order.label} cancelled`,
         description:
           dispatch.kind === "onchain"
-            ? `On-chain cancellation submitted. Tx ${dispatch.txHash.slice(0, 10)}…`
+            ? `On-chain cancellation submitted (tx ${dispatch.txHash.slice(0, 10)}…). Your funds were rotated to a fresh note — it shows as Pending in Escrow for a few seconds, then becomes Available once the commitment event is reconciled.`
             : "Cancel proof generated. On-chain rotation activates once the network has a deployed PrivateSettlement contract.",
       });
     } catch (e) {

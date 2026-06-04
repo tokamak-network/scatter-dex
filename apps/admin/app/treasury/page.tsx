@@ -1,47 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Contract, formatUnits, type Signer } from "ethers";
+import { Contract, type Signer } from "ethers";
 import { isConfiguredAddress, type TokenInfo } from "@zkscatter/sdk";
 import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
-import { explainError } from "../lib/format";
+import { explainError, prettyAmount } from "../lib/format";
 import { DEMO_NETWORK } from "../lib/network";
 import { FeeVaultWrites } from "./_components/FeeVaultWrites";
+import { TreasuryWrites } from "./_components/TreasuryWrites";
 
 const FEE_VAULT_ABI = [
   "function platformRevenue(address token) external view returns (uint256)",
+  "function totalTracked(address token) external view returns (uint256)",
   "function platformFeeBps() external view returns (uint256)",
   "function pendingFeeBps() external view returns (uint256)",
   "function pendingFeeEffectiveTime() external view returns (uint256)",
   "function treasury() external view returns (address)",
   "function owner() external view returns (address)",
   "function withdrawPlatformRevenue(address token) external",
-  // PlatformFeeFromRelayerClaim fires every time a relayer's claim
-  // skims `platformFeeBps`. Those funds bypass `platformRevenue` and
-  // ship straight to `treasury`, so summing this event is the only
-  // way the UI can show "how much revenue arrived via claims" — the
-  // accumulator slot stays 0 for that path.
-  "event PlatformFeeFromRelayerClaim(address indexed token, uint256 amount, address indexed relayer)",
 ];
-
-/** Format a (wei, decimals) pair with thousand-separator commas on
- *  the integer part and a trimmed fractional part. Replaces the bare
- *  `formatUnits(...)` which produced strings like "1000002.31825" or
- *  "100000.0" — readable as raw numbers, but easy to misread at a
- *  glance when scanning a column. Keeps 4 significant fractional
- *  digits so dust isn't hidden ("0.00012" stays visible). */
-function prettyAmount(wei: bigint, decimals: number): string {
-  const raw = formatUnits(wei, decimals);
-  const [intPart, fracPartRaw = ""] = raw.split(".");
-  const intWithCommas = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  // Trim trailing zeros but keep at least 2 digits for sub-1 values,
-  // so "0.00" reads as "0" rather than "0." while "0.00123" keeps
-  // its precision.
-  const frac = fracPartRaw.replace(/0+$/, "");
-  return frac === "" ? intWithCommas : `${intWithCommas}.${frac}`;
-}
 
 // Minimal WETH9-compatible ABI. The native-ETH revenue row is stored
 // on-chain as WETH balance held by `treasury` after withdraw; calling
@@ -215,11 +194,25 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
       <div className="space-y-10">
         <section>
           <SectionHeader
-            title="Platform revenue"
+            title="Platform revenue from Pay / Pro"
             badge="live"
-            hint={`${tokenRows.length} token${tokenRows.length === 1 ? "" : "s"} from NetworkConfig`}
+            hint="Platform cut embedded in relayer balances. Arrives in treasury automatically when each relayer calls claim()."
           />
-          <PlatformRevenueTable
+          <RelayerClaimTable
+            feeVaultAddress={feeVaultAddress}
+            rows={tokenRows}
+            reloadKey={reloadKey}
+            platformFeeBps={snap.platformFeeBps}
+          />
+        </section>
+
+        <section>
+          <SectionHeader
+            title="Platform revenue from DEX"
+            badge="live"
+            hint="platformRevenue — DEX surplus &amp; fees held in FeeVault. Withdraw to move to treasury."
+          />
+          <DexRevenueTable
             feeVaultAddress={feeVaultAddress}
             treasuryAddress={snap.treasury}
             rows={tokenRows}
@@ -229,7 +222,20 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
         </section>
 
         <section>
-          <SectionHeader title="Treasury writes" badge="live" />
+          <SectionHeader
+            title="Treasury withdraw"
+            badge="live"
+            hint="Withdraw funds from the Treasury contract to an allowlisted beneficiary address."
+          />
+          <TreasuryWrites
+            treasuryAddress={snap.treasury}
+            reloadKey={reloadKey}
+            onReload={() => setReloadKey((k) => k + 1)}
+          />
+        </section>
+
+        <section>
+          <SectionHeader title="Platform fee settings" badge="live" />
           <FeeVaultWrites
             feeVaultAddress={feeVaultAddress}
             hasPendingChange={
@@ -287,7 +293,7 @@ function rowMeta(row: TokenRow): RowMeta {
     : row.token;
 }
 
-function PlatformRevenueTable({
+function DexRevenueTable({
   feeVaultAddress,
   treasuryAddress,
   rows,
@@ -297,9 +303,6 @@ function PlatformRevenueTable({
   feeVaultAddress: string;
   treasuryAddress: string | null;
   rows: TokenRow[];
-  /** Bumped by the parent's auto-poll interval and the post-withdraw
-   *  `onWithdrawn` callback. Each TokenRevenueRow watches it so a
-   *  new relayer-claim event surfaces without a manual refresh. */
   reloadKey: number;
   onWithdrawn: () => void;
 }) {
@@ -319,20 +322,11 @@ function PlatformRevenueTable({
             <th className="px-4 py-3">Token</th>
             <th
               className="px-4 py-3 text-right"
-              title="Sum of PlatformFeeFromRelayerClaim event amounts (all-time). Relayer-claim platform fees ship straight to the treasury wallet — already received."
-            >
-              From claims
-              <div className="text-[10px] font-normal normal-case tracking-normal text-[var(--color-text-muted)]">
-                already in treasury
-              </div>
-            </th>
-            <th
-              className="px-4 py-3 text-right"
-              title="FeeVault.platformRevenue — DEX-path fees still held in the vault. Use Withdraw to move them into the treasury wallet."
+              title="FeeVault.platformRevenue — DEX surplus &amp; fees held in vault. Use Withdraw to move to treasury."
             >
               In vault
               <div className="text-[10px] font-normal normal-case tracking-normal text-[var(--color-text-muted)]">
-                pending withdraw
+                withdrawable
               </div>
             </th>
             <th className="px-4 py-3 text-right">Action</th>
@@ -352,6 +346,99 @@ function PlatformRevenueTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function RelayerClaimTable({
+  feeVaultAddress,
+  rows,
+  reloadKey,
+  platformFeeBps,
+}: {
+  feeVaultAddress: string;
+  rows: TokenRow[];
+  reloadKey: number;
+  platformFeeBps: bigint | null;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <table className="w-full text-left text-sm">
+        <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+          <tr>
+            <th className="px-4 py-3">Token</th>
+            <th
+              className="px-4 py-3 text-right"
+              title="totalTracked × platformFeeBps / 10000 — platform cut embedded in unclaimed relayer balances. Arrives automatically when each relayer calls claim()."
+            >
+              Pending in vault
+              <div className="text-[10px] font-normal normal-case tracking-normal text-[var(--color-text-muted)]">
+                arrives on relayer claim
+              </div>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <RelayerClaimRow
+              key={`${row.kind}:${rowMeta(row).address}`}
+              feeVaultAddress={feeVaultAddress}
+              row={row}
+              reloadKey={reloadKey}
+              platformFeeBps={platformFeeBps}
+            />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RelayerClaimRow({
+  feeVaultAddress,
+  row,
+  reloadKey,
+  platformFeeBps,
+}: {
+  feeVaultAddress: string;
+  row: TokenRow;
+  reloadKey: number;
+  platformFeeBps: bigint | null;
+}) {
+  const { readProvider } = useWallet();
+  const [totalTracked, setTotalTracked] = useState<bigint | null>(null);
+  const meta = rowMeta(row);
+  const isNative = row.kind === "native";
+
+  const pending =
+    totalTracked != null && platformFeeBps != null
+      ? (totalTracked * platformFeeBps) / 10000n
+      : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    const feeVault = new Contract(feeVaultAddress, FEE_VAULT_ABI, readProvider);
+    void feeVault
+      .totalTracked(meta.address)
+      .then((v: bigint) => { if (!cancelled) setTotalTracked(v); })
+      .catch(() => { if (!cancelled) setTotalTracked(null); });
+    return () => { cancelled = true; };
+  }, [feeVaultAddress, meta.address, readProvider, reloadKey]);
+
+  return (
+    <tr className="border-t border-[var(--color-border)]">
+      <td className="px-4 py-3">
+        <div className="font-medium">{meta.symbol}</div>
+        <div className="text-xs text-[var(--color-text-muted)]">
+          {isNative ? "Native ETH" : "ERC20"}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-right font-mono whitespace-nowrap text-[var(--color-text-muted)]">
+        {pending == null
+          ? "…"
+          : `${prettyAmount(pending, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
+      </td>
+    </tr>
   );
 }
 
@@ -379,45 +466,18 @@ function TokenRevenueRow({
 }) {
   const { account, signer, connect, readProvider } = useWallet();
   const [revenue, setRevenue] = useState<bigint | null>(null);
-  // All-time direct revenue — sum of PlatformFeeFromRelayerClaim
-  // event `amount`s for this token. The "where did my claim fee
-  // go?" answer that the page silently omitted before this fix.
-  const [directClaimed, setDirectClaimed] = useState<bigint | null>(null);
   const [phase, setPhase] = useState<RowPhase>({ kind: "idle" });
   const meta = rowMeta(row);
 
   useEffect(() => {
     let cancelled = false;
     const feeVault = new Contract(feeVaultAddress, FEE_VAULT_ABI, readProvider);
-    // platformRevenue mapping — the DEX-path accumulator that the
-    // Withdraw button drains. Stays 0 for the relayer-claim path
-    // (those funds ship direct to treasury).
+    // platformRevenue — DEX-path accumulator drained by Withdraw.
     void feeVault
       .platformRevenue(meta.address)
       .then((v: bigint) => { if (!cancelled) setRevenue(v); })
       .catch(() => { if (!cancelled) setRevenue(null); });
-    // All-time direct-claim revenue via event log scan. Block-0 sweep
-    // is fine for dev / fresh testnets; a production indexer would
-    // start from FeeVault's deploy block to bound the scan. The same
-    // pattern is used by `apps/admin/app/sanctions/_components/SanctionsContext.tsx`.
-    void feeVault
-      .queryFilter(feeVault.filters.PlatformFeeFromRelayerClaim(meta.address))
-      .then((logs) => {
-        if (cancelled) return;
-        let sum = 0n;
-        for (const log of logs) {
-          // `queryFilter` returns `(EventLog | Log)[]` — the bare
-          // `Log` form has no decoded args. Skip those defensively
-          // rather than crashing the row on an undecoded log.
-          const args = (log as { args?: { amount?: bigint } }).args;
-          if (args?.amount !== undefined) sum += args.amount;
-        }
-        setDirectClaimed(sum);
-      })
-      .catch(() => { if (!cancelled) setDirectClaimed(null); });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [feeVaultAddress, meta.address, readProvider, phase.kind, reloadKey]);
 
   const submit = useCallback(async () => {
@@ -487,11 +547,6 @@ function TokenRevenueRow({
         <div className="text-xs text-[var(--color-text-muted)]">
           {isNative ? "Native ETH (auto-unwrap from WETH on withdraw)" : "ERC20"}
         </div>
-      </td>
-      <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
-        {directClaimed == null
-          ? "…"
-          : `${prettyAmount(directClaimed, meta.decimals)} ${isNative ? "ETH" : meta.symbol}`}
       </td>
       <td className="px-4 py-3 text-right font-mono whitespace-nowrap">
         {revenue == null
