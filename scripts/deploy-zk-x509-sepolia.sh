@@ -71,6 +71,15 @@ REQUIRED_ORG="${REQUIRED_ORG:-$ZERO32}"
 REQUIRED_ORG_UNIT="${REQUIRED_ORG_UNIT:-$ZERO32}"
 REQUIRED_COMMON_NAME="${REQUIRED_COMMON_NAME:-$ZERO32}"
 
+# Numeric fields are written UNQUOTED into JSON ledgers, and JSON rejects hex
+# literals (e.g. 0x0F — MIN_DISCLOSURE_MASK is documented as hex-capable).
+# `$(( ))` accepts both 0x.. and decimal input and always yields decimal, so the
+# emitted JSON is valid regardless of how the caller passed the value.
+MIN_DISCLOSURE_MASK=$(( MIN_DISCLOSURE_MASK ))
+MAX_PROOF_AGE=$(( MAX_PROOF_AGE ))
+USERS_MAX_WALLETS=$(( USERS_MAX_WALLETS ))
+RELAYERS_MAX_WALLETS=$(( RELAYERS_MAX_WALLETS ))
+
 echo "[zk-x509-deploy] factory flow: users(maxWallets=$USERS_MAX_WALLETS) + relayers(maxWallets=$RELAYERS_MAX_WALLETS)"
 echo "[zk-x509-deploy] config: mask=$MIN_DISCLOSURE_MASK proofAge=${MAX_PROOF_AGE}s delegatedProving=$DELEGATED_PROVING"
 
@@ -148,7 +157,8 @@ DEPLOYER_ADDR="$(cast wallet address --private-key "$DEPLOYER_KEY")"
 
 # Refuse to write an incomplete ledger — validate every resolved field.
 for pair in "factory=$FACTORY" "users=$USERS_REGISTRY" "relayers=$RELAYERS_REGISTRY" \
-            "impl=$IMPL" "chainId=$CHAIN_ID" "block=$BLOCK" "deployer=$DEPLOYER_ADDR"; do
+            "impl=$IMPL" "beacon=$BEACON" "sp1Verifier=$SP1_VERIFIER" "vkey=$PROGRAM_V_KEY" \
+            "chainId=$CHAIN_ID" "block=$BLOCK" "deployer=$DEPLOYER_ADDR"; do
   [ -n "${pair#*=}" ] || { echo "ERROR: failed to resolve ${pair%%=*} — refusing to write an incomplete ledger" >&2; exit 1; }
 done
 
