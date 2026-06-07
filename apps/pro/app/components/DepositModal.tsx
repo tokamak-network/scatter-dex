@@ -9,7 +9,9 @@ import {
 } from "@zkscatter/sdk/zk";
 import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 import { useFolder } from "../lib/folder";
+import { useProTokens } from "../lib/useProTokens";
 import { useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useVault } from "../lib/vault";
@@ -17,42 +19,23 @@ import { useCommitmentTree } from "../lib/commitmentTree";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
-import { DEMO_NETWORK } from "../lib/network";
 import { dispatchDeposit } from "../lib/dispatch";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
 
-// Depositable tokens are the full LAUNCH_TOKENS lineup —
-// ETH / USDC / USDT / TON — every entry on the SDK's UI whitelist
-// plus a synthesised WETH twin pointing at the same on-chain address
-// as ETH. The two share a contract; the difference is the deposit
-// path:
-//   - ETH  (isNative=true)  → balance = wallet's native ETH;
-//     submit wraps ETH→WETH via `WETH.deposit{value}` first, then
-//     the standard ERC20 approve+CommitmentPool.deposit flow.
-//   - WETH (isNative=false) → balance = WETH `balanceOf`; submit
-//     is the direct ERC20 approve+deposit flow.
-// Each entry is marked "(not deployed)" and disables Deposit when
-// its address resolves to ZERO_ADDRESS on the active network.
-const ZERO = "0x0000000000000000000000000000000000000000";
-function isConfigured(addr: string): boolean {
-  return addr.toLowerCase() !== ZERO;
-}
-const DEPOSITABLE = (() => {
-  const tokens = DEMO_NETWORK.tokens;
-  const eth = tokens.find((t) => t.isNative && isConfigured(t.address));
-  if (!eth) return tokens;
-  return [
-    ...tokens,
-    {
-      ...eth,
-      symbol: "WETH",
-      name: "Wrapped Ether",
-      isNative: false,
-    },
-  ];
-})();
+// The depositable list — the LAUNCH_TOKENS lineup (ETH / USDC / USDT /
+// TON) plus a synthesised WETH twin sharing ETH's on-chain address —
+// is built per-render from the on-chain whitelist by `useProTokens`
+// (see its `depositable`). The two ETH/WETH entries share a contract;
+// the difference is the deposit path:
+//   - ETH  (isNative=true)  → balance = wallet's native ETH; submit
+//     wraps ETH→WETH via `WETH.deposit{value}` first, then the
+//     standard ERC20 approve+CommitmentPool.deposit flow.
+//   - WETH (isNative=false) → balance = WETH `balanceOf`; submit is
+//     the direct ERC20 approve+deposit flow.
+// Each entry is marked "(not deployed)" and disables Deposit when its
+// address resolves to ZERO_ADDRESS on the active network.
 
 type Phase =
   | { kind: "idle" }
@@ -91,6 +74,9 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   // Otherwise a successful on-chain deposit would have nowhere to
   // write the note and the commitment would be unrecoverable.
   const { ready: folderReady } = useFolder();
+  // Depositable tokens (curated lineup + WETH twin) with on-chain
+  // addresses; replaces the old module-scope DEPOSITABLE constant.
+  const { depositable } = useProTokens();
   const { derive: deriveEdDSA, isDeriving } = useEdDSAKey();
   const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState(initialTokenSymbol ?? "ETH");
@@ -146,8 +132,8 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   // funds source the submit path will draw from.
   const [balance, setBalance] = useState<bigint | null>(null);
   const selectedToken = useMemo(
-    () => DEPOSITABLE.find((t) => t.symbol === tokenSymbol),
-    [tokenSymbol],
+    () => depositable.find((t) => t.symbol === tokenSymbol),
+    [tokenSymbol, depositable],
   );
   // Extract the only phase transition the balance effect cares about
   // (deposit success → balance changed). Pulling this out keeps the
@@ -159,7 +145,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
       setBalance(null);
       return;
     }
-    if (!isConfigured(selectedToken.address)) {
+    if (!isConfiguredAddress(selectedToken.address)) {
       setBalance(null);
       return;
     }
@@ -208,7 +194,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   }, [abortCtrl, reset, onClose]);
 
   const submit = useCallback(async () => {
-    const token = DEPOSITABLE.find((t) => t.symbol === tokenSymbol);
+    const token = depositable.find((t) => t.symbol === tokenSymbol);
     if (!token) return;
     if (!account) {
       setPhase({
@@ -356,7 +342,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
     } finally {
       setAbortCtrl(null);
     }
-  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast, commitmentTree, folderReady]);
+  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast, commitmentTree, folderReady, depositable]);
 
   if (!open) return null;
 
@@ -382,10 +368,10 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
             onChange={(e) => setTokenSymbol(e.target.value)}
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
           >
-            {DEPOSITABLE.map((t) => (
+            {depositable.map((t) => (
               <option key={t.symbol} value={t.symbol}>
                 {t.symbol}
-                {isConfigured(t.address) ? "" : " (not deployed)"}
+                {isConfiguredAddress(t.address) ? "" : " (not deployed)"}
               </option>
             ))}
           </select>
@@ -415,7 +401,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
                 Max
               </button>
             </div>
-            {account && selectedToken && isConfigured(selectedToken.address) && (
+            {account && selectedToken && isConfiguredAddress(selectedToken.address) && (
               <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
                 <span className="font-mono">
                   {account.slice(0, 6)}…{account.slice(-4)}
@@ -459,7 +445,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
               // (`ERC20InsufficientBalance`) so users see the issue
               // before paying gas + prove time.
               const picked = selectedToken;
-              const tokenConfigured = picked ? isConfigured(picked.address) : false;
+              const tokenConfigured = picked ? isConfiguredAddress(picked.address) : false;
               let amountWei: bigint | null = null;
               try {
                 if (picked && amount.trim()) {

@@ -30,7 +30,7 @@ import {
   useTradeForm,
   type RecipientRow,
 } from "../lib/tradeForm";
-import { DEMO_NETWORK } from "../lib/network";
+import { useProTokens } from "../lib/useProTokens";
 import { AUTHORIZE_PUBLIC_SIGNAL_NAMES, buildAuthorizeOrderBody, dispatchAuthorize } from "../lib/dispatch";
 import { Button, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
@@ -229,6 +229,9 @@ export function OrderModal({
     activeTier,
     takeMode,
   } = useTradeForm();
+  // Token addresses + decimals from the on-chain whitelist
+  // (env-independent); display metadata stays from the curated lineup.
+  const { tokens } = useProTokens();
 
   // Gross buy in token-base units, computed from the form's `side` /
   // `price` / `size` once and reused by submit, the confirm-step
@@ -239,8 +242,8 @@ export function OrderModal({
   const confirmGrossBuy = useMemo<
     { gross: bigint; decimals: number; symbol: string } | null
   >(() => {
-    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
-    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    const baseTok = tokens.find((t) => t.symbol === activePair.base);
+    const quoteTok = tokens.find((t) => t.symbol === activePair.quote);
     const buyTok = side === "sell" ? quoteTok : baseTok;
     if (!baseTok || !quoteTok || !buyTok) return null;
     try {
@@ -259,7 +262,7 @@ export function OrderModal({
     } catch {
       return null;
     }
-  }, [side, activePair.base, activePair.quote, price, size]);
+  }, [side, activePair.base, activePair.quote, price, size, tokens]);
 
   // Funding-note commitment summary for the confirm dialog: the
   // hash of the spent commitment + the residual amount the order
@@ -272,8 +275,8 @@ export function OrderModal({
     { spentHex: string; sellSymbol: string; sellDecimals: number; change: bigint } | null
   >(() => {
     if (!note) return null;
-    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
-    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    const baseTok = tokens.find((t) => t.symbol === activePair.base);
+    const quoteTok = tokens.find((t) => t.symbol === activePair.quote);
     const sellTok = side === "sell" ? baseTok : quoteTok;
     if (!baseTok || !quoteTok || !sellTok) return null;
     let sellAmt = 0n;
@@ -299,7 +302,7 @@ export function OrderModal({
       sellDecimals: sellTok.decimals,
       change,
     };
-  }, [note, side, activePair.base, activePair.quote, price, size]);
+  }, [note, side, activePair.base, activePair.quote, price, size, tokens]);
 
   // Probe each non-empty recipient against the IdentityRegistry so
   // we can short-circuit submit before paying the 1–2 s prove cost
@@ -388,8 +391,8 @@ export function OrderModal({
     // buy side flips them. The vault note must be in the sell-side
     // token — surface that mismatch as a precise error before paying
     // the 1–2 s prove cost.
-    const baseToken = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.base);
-    const quoteToken = DEMO_NETWORK.tokens.find((t) => t.symbol === activePair.quote);
+    const baseToken = tokens.find((t) => t.symbol === activePair.base);
+    const quoteToken = tokens.find((t) => t.symbol === activePair.quote);
     if (!baseToken || !quoteToken) {
       setPhase({
         kind: "error",
@@ -800,7 +803,7 @@ export function OrderModal({
     side, pair, price, size, account, note, noteOwnershipMismatch,
     activePair, recipients,
     deriveEdDSA, addOrder, toast, commitmentTree,
-    selectedRelayer, recipientIdentity, activeNetwork,
+    selectedRelayer, recipientIdentity, activeNetwork, tokens,
   ]);
 
   const busy =
@@ -888,7 +891,7 @@ export function OrderModal({
         // (e.g. "1,000.0" and "1000" both render as "1000"); fall
         // back to a "—" placeholder when the row can't parse so a typo
         // doesn't look like a valid amount at the most critical step.
-        const receiveToken = DEMO_NETWORK.tokens.find((t) => t.symbol === receiveSymbol);
+        const receiveToken = tokens.find((t) => t.symbol === receiveSymbol);
         const receiveDecimals = receiveToken?.decimals ?? 18;
         const formatRowAmount = (raw: string): string => {
           if (!raw.trim()) return "—";

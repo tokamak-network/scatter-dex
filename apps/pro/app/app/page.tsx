@@ -22,7 +22,7 @@ import { NoteSelect } from "../components/NoteSelect";
 import { RelayerPicker } from "../components/RelayerPicker";
 import { DepositModal } from "../components/DepositModal";
 import { WorkspaceBar } from "../components/WorkspaceBar";
-import { DEMO_NETWORK } from "../lib/network";
+import { useProTokens } from "../lib/useProTokens";
 import { formatTokenAmount } from "../lib/format";
 import { useRelayers } from "../lib/relayers";
 import { applyFeeBig } from "../lib/fee";
@@ -78,6 +78,9 @@ export default function Workbench() {
     takeMode, setTakeMode,
   } = useTradeForm();
   const isTakeMode = takeMode !== null;
+  // Token addresses + decimals come from the on-chain whitelist
+  // (env-independent); display metadata stays from the curated lineup.
+  const { tokens } = useProTokens();
   // Auto-release the Take Order lock if the user flips PairSelector
   // or Side off the pair/side the prefill landed on. Without this,
   // OrderModal would sign `takeMode.{sell,buy}Wei` against the
@@ -153,21 +156,21 @@ export default function Workbench() {
   // ask/bid classifier. Falls back to the placeholder so the
   // projection still runs against mock orderbook data.
   const baseAddress = useMemo(() => {
-    const t = DEMO_NETWORK.tokens.find((x) => x.symbol === pair.base);
+    const t = tokens.find((x) => x.symbol === pair.base);
     return t?.address ?? "0x0000000000000000000000000000000000000001";
-  }, [pair.base]);
+  }, [pair.base, tokens]);
 
   // Orderbook keys pairs as the sorted-lowercase address tuple
   // `0xtokena-0xtokenb` (see packages/types pairKey). Sending the
   // display name (`ETH/USDC`) returns a 400 from the shared service.
   const pairKey = useMemo(() => {
-    const base = DEMO_NETWORK.tokens.find((x) => x.symbol === pair.base)?.address;
-    const quote = DEMO_NETWORK.tokens.find((x) => x.symbol === pair.quote)?.address;
+    const base = tokens.find((x) => x.symbol === pair.base)?.address;
+    const quote = tokens.find((x) => x.symbol === pair.quote)?.address;
     if (!base || !quote) return null;
     const a = base.toLowerCase();
     const b = quote.toLowerCase();
     return a < b ? `${a}-${b}` : `${b}-${a}`;
-  }, [pair.base, pair.quote]);
+  }, [pair.base, pair.quote, tokens]);
   const ob = useSharedOrderbook(pairKey);
 
   // Sell-side token address — drives the funding-note filter. Sell
@@ -176,9 +179,9 @@ export default function Workbench() {
   // pre-filtering here just keeps the dropdown honest.
   const sellTokenAddress = useMemo(() => {
     const symbol = side === "sell" ? pair.base : pair.quote;
-    const t = DEMO_NETWORK.tokens.find((x) => x.symbol === symbol);
+    const t = tokens.find((x) => x.symbol === symbol);
     return t?.address ?? "0x0000000000000000000000000000000000000001";
-  }, [side, pair.base, pair.quote]);
+  }, [side, pair.base, pair.quote, tokens]);
 
   // Active funding note: explicit pick wins; otherwise the first
   // note whose token matches the sell side. Falls back to null when
@@ -260,8 +263,8 @@ export default function Workbench() {
     relayerFeeDisplay,
     netReceiveDisplay,
   } = useMemo(() => {
-    const baseTok = DEMO_NETWORK.tokens.find((t) => t.symbol === pair.base);
-    const quoteTok = DEMO_NETWORK.tokens.find((t) => t.symbol === pair.quote);
+    const baseTok = tokens.find((t) => t.symbol === pair.base);
+    const quoteTok = tokens.find((t) => t.symbol === pair.quote);
     const buySymbol = side === "sell" ? pair.quote : pair.base;
     const buyTok = side === "sell" ? quoteTok : baseTok;
     const decimals = buyTok?.decimals ?? 18;
@@ -310,7 +313,7 @@ export default function Workbench() {
         effectiveFeeBps > 0 ? formatTokenAmount(fee, decimals) : "",
       netReceiveDisplay: formatTokenAmount(net, decimals),
     };
-  }, [side, pair.base, pair.quote, price, size, effectiveFeeBps, takeMode]);
+  }, [side, pair.base, pair.quote, price, size, effectiveFeeBps, takeMode, tokens]);
 
   const fillFromRow = (row: RowData) => {
     setPrice(row.price);
@@ -371,7 +374,7 @@ export default function Workbench() {
   const handleTakeOrderApplied = useCallback(
     (sellSideSymbol: string, sellSideAmount: string) => {
       const normalizedSymbol = sellSideSymbol.toUpperCase();
-      const tokenAddr = DEMO_NETWORK.tokens.find(
+      const tokenAddr = tokens.find(
         (t) => t.symbol.toUpperCase() === normalizedSymbol,
       )?.address;
       const hasMatching = tokenAddr
@@ -385,7 +388,7 @@ export default function Workbench() {
         setDepositOpen(true);
       }
     },
-    [fundableNotes],
+    [fundableNotes, tokens],
   );
 
   return (
@@ -999,10 +1002,11 @@ function TakeOrderSummary({
   // Resolve the sell- and buy-side tokens. Sell side = the token
   // the *taker* spends (= the maker's buyToken). Workbench's `side`
   // tracks which orientation we landed on; resolve accordingly.
+  const { tokens } = useProTokens();
   const sellSymbol = side === "sell" ? pair.base : pair.quote;
   const buySymbol = side === "sell" ? pair.quote : pair.base;
-  const sellTok = DEMO_NETWORK.tokens.find((t) => t.symbol === sellSymbol);
-  const buyTok = DEMO_NETWORK.tokens.find((t) => t.symbol === buySymbol);
+  const sellTok = tokens.find((t) => t.symbol === sellSymbol);
+  const buyTok = tokens.find((t) => t.symbol === buySymbol);
   // formatTokenAmount keeps full BigInt precision (no Number cast)
   // and uses the same en-US formatter the rest of the workbench
   // uses for token-denominated rows.
