@@ -80,7 +80,13 @@ function useProTokensValue(): UseProTokensResult {
     return [...tokens, { ...eth, symbol: "WETH", isNative: false }];
   }, [tokens]);
 
-  return { tokens, depositable, loading, source };
+  // Memoize the context value so consumers don't re-render on every
+  // provider render — `tokens`/`depositable` are already stable, this
+  // gives the wrapper object a stable identity too.
+  return useMemo(
+    () => ({ tokens, depositable, loading, source }),
+    [tokens, depositable, loading, source],
+  );
 }
 
 const TokensCtx = createContext<UseProTokensResult | null>(null);
