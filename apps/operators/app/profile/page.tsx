@@ -420,6 +420,9 @@ function CooldownPanel({
   const { readProvider } = useWallet();
   const [forceRemoval, setForceRemoval] = useState<ForceRemoval | null>(null);
   useEffect(() => {
+    // Reset first so a previous account's reason never lingers across an
+    // address change, a disconnect, or a failed read.
+    setForceRemoval(null);
     if (!readProvider) return;
     let cancelled = false;
     loadForceRemoval(REGISTRY, row.address, readProvider)

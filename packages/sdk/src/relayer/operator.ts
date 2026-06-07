@@ -139,14 +139,20 @@ export async function loadForceRemoval(
   fromBlock?: ethers.BlockTag,
 ): Promise<ForceRemoval | null> {
   const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, provider);
-  const logs = (await registry.queryFilter(
+  const logs = await registry.queryFilter(
     registry.filters.RelayerForceRemoved(relayer),
     fromBlock,
-  )) as ethers.EventLog[];
-  if (logs.length === 0) return null;
+  );
+  // ethers v6 returns `(EventLog | Log)[]`; keep only decoded EventLogs —
+  // a bare `Log` (ABI mismatch / corrupt RPC response) has no `args` and
+  // would blow up on `latest.args` below.
+  const decoded = logs.filter(
+    (l): l is ethers.EventLog => "args" in l && l.args != null,
+  );
+  if (decoded.length === 0) return null;
   // A relayer can be re-registered then removed again; the last event
   // describes the current removal.
-  const latest = logs[logs.length - 1]!;
+  const latest = decoded[decoded.length - 1]!;
   return {
     reason: latest.args.reason as string,
     exitAfter: Number(latest.args.exitAfter),
