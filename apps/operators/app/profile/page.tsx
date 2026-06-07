@@ -9,10 +9,12 @@ import {
   EXIT_COOLDOWN_SECONDS,
   executeRelayerExit,
   loadBondAllowance,
+  loadForceRemoval,
   MAX_RELAYER_FEE_BPS,
   NATIVE_BOND_TOKEN,
   requestRelayerExit,
   updateRelayerInfo,
+  type ForceRemoval,
 } from "@zkscatter/sdk/relayer";
 import { Stat } from "../components/Stat";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
@@ -410,6 +412,25 @@ function CooldownPanel({
     return () => clearInterval(id);
   }, []);
 
+  // An admin force-removal sets the same `exitRequestedAt` cool-down as
+  // a voluntary exit, so the row alone can't tell them apart — read the
+  // `RelayerForceRemoved` event. `null` ⇒ the operator exited on their
+  // own. The bond-return path (executeExit below) is identical either
+  // way; only the copy changes.
+  const { readProvider } = useWallet();
+  const [forceRemoval, setForceRemoval] = useState<ForceRemoval | null>(null);
+  useEffect(() => {
+    // Reset first so a previous account's reason never lingers across an
+    // address change, a disconnect, or a failed read.
+    setForceRemoval(null);
+    if (!readProvider) return;
+    let cancelled = false;
+    loadForceRemoval(REGISTRY, row.address, readProvider)
+      .then((fr) => { if (!cancelled) setForceRemoval(fr); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [readProvider, row.address]);
+
   if (now === undefined) {
     return (
       <section className="rounded-xl border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-6 text-sm text-[var(--color-text-muted)]">
@@ -424,26 +445,49 @@ function CooldownPanel({
   return (
     <section className={`rounded-xl border p-6 ${ready ? "border-[var(--color-success)] bg-[var(--color-success-soft)]" : "border-[var(--color-warning)] bg-[var(--color-warning-soft)]"}`}>
       <h2 className={`mb-2 font-semibold ${ready ? "text-[var(--color-success)]" : "text-[var(--color-warning)]"}`}>
-        {ready ? "Bond ready to withdraw" : "Cool-down in progress"}
+        {forceRemoval
+          ? (ready ? "Removed by an admin · bond ready" : "Removed by an admin")
+          : (ready ? "Bond ready to withdraw" : "Cool-down in progress")}
       </h2>
-      <p className="mb-4 text-sm text-[var(--color-text-muted)]">
-        {ready ? (
-          `Cool-down complete. Withdrawing returns ${bondLabel(row)} and removes you from the active relayer set.`
-        ) : (
-          <>
-            Exit requested. Bond will be withdrawable in{" "}
-            <span className="font-mono font-semibold text-[var(--color-text)]">
-              {formatRemaining(remaining)}
-            </span>
-            . <code className="font-mono">isActiveRelayer</code> is{" "}
-            <code className="font-mono">false</code> for the whole window —
-            both new orders and settlement of in-flight orders revert with{" "}
-            <code className="font-mono">NotActiveRelayer</code>. Cancelling
-            the exit is not supported by the current registry; you must wait
-            and re-register after <code className="font-mono">executeExit</code>.
-          </>
-        )}
-      </p>
+      {forceRemoval ? (
+        <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+          An admin removed this relayer from the registry
+          {forceRemoval.reason ? (
+            <> — reason:{" "}
+              <span className="font-medium text-[var(--color-text)]">{forceRemoval.reason}</span></>
+          ) : null}
+          . Your bond ({bondLabel(row)}) is still returned —{" "}
+          {ready ? (
+            "the cool-down is complete; withdraw it below."
+          ) : (
+            <>withdrawable in{" "}
+              <span className="font-mono font-semibold text-[var(--color-text)]">
+                {formatRemaining(remaining)}
+              </span>.</>
+          )}{" "}
+          <code className="font-mono">isActiveRelayer</code> is{" "}
+          <code className="font-mono">false</code> for the whole window.
+        </p>
+      ) : (
+        <p className="mb-4 text-sm text-[var(--color-text-muted)]">
+          {ready ? (
+            `Cool-down complete. Withdrawing returns ${bondLabel(row)} and removes you from the active relayer set.`
+          ) : (
+            <>
+              Exit requested. Bond will be withdrawable in{" "}
+              <span className="font-mono font-semibold text-[var(--color-text)]">
+                {formatRemaining(remaining)}
+              </span>
+              . <code className="font-mono">isActiveRelayer</code> is{" "}
+              <code className="font-mono">false</code> for the whole window —
+              both new orders and settlement of in-flight orders revert with{" "}
+              <code className="font-mono">NotActiveRelayer</code>. Cancelling
+              the exit is not supported by the current registry; you must wait
+              and re-register after <code className="font-mono">executeExit</code>.
+            </>
+          )}
+        </p>
+      )}
       <button
         onClick={onExecute}
         disabled={!signer || !ready || phase.kind === "submitting"}

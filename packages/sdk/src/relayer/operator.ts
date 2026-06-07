@@ -110,3 +110,51 @@ export async function loadOperatorRow(
     bondToken,
   };
 }
+
+/** Details of an admin-initiated removal (`adminRemoveRelayer`). */
+export interface ForceRemoval {
+  /** The reason the admin recorded with the removal (may be empty). */
+  reason: string;
+  /** Unix seconds the bond becomes withdrawable
+   *  (`exitRequestedAt + EXIT_COOLDOWN`), straight from the event. */
+  exitAfter: number;
+}
+
+/** Whether `relayer` was removed by an admin (vs a voluntary exit).
+ *  Returns the most recent `RelayerForceRemoved` event's details, or
+ *  `null` when the relayer exited on their own (no such event).
+ *
+ *  An admin removal sets the same `exitRequestedAt` cool-down as a self
+ *  `requestExit`, so a forced relayer's row is indistinguishable from a
+ *  voluntary exit by state alone — the event is the only signal. Only
+ *  meaningful while the operator is in the `cooldown` status; call it
+ *  there, not on every row read.
+ *
+ *  Uses `queryFilter` (not `contract.on`) — event subscriptions stop
+ *  firing on anvil, and this is a one-shot read anyway. */
+export async function loadForceRemoval(
+  registryAddress: string,
+  relayer: string,
+  provider: ethers.Provider,
+  fromBlock?: ethers.BlockTag,
+): Promise<ForceRemoval | null> {
+  const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, provider);
+  const logs = await registry.queryFilter(
+    registry.filters.RelayerForceRemoved(relayer),
+    fromBlock,
+  );
+  // ethers v6 returns `(EventLog | Log)[]`; keep only decoded EventLogs —
+  // a bare `Log` (ABI mismatch / corrupt RPC response) has no `args` and
+  // would blow up on `latest.args` below.
+  const decoded = logs.filter(
+    (l): l is ethers.EventLog => "args" in l && l.args != null,
+  );
+  if (decoded.length === 0) return null;
+  // A relayer can be re-registered then removed again; the last event
+  // describes the current removal.
+  const latest = decoded[decoded.length - 1]!;
+  return {
+    reason: latest.args.reason as string,
+    exitAfter: Number(latest.args.exitAfter),
+  };
+}

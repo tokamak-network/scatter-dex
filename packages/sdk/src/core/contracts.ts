@@ -27,6 +27,12 @@ export const RELAYER_REGISTRY_ABI = [
   "event IdentityRegistryUpdated(address oldRegistry, address newRegistry)",
   "event TreasuryUpdated(address oldTreasury, address newTreasury)",
   "event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond)",
+  // Emitted by the owner-only `adminRemoveRelayer` — sets the same
+  // `exitRequestedAt` cool-down as a self `requestExit`, so the
+  // existing exit/executeExit (bond return) path covers it; the event
+  // carries the admin's reason so the UI can distinguish a forced
+  // removal from a voluntary exit.
+  "event RelayerForceRemoved(address indexed relayer, string reason, uint256 exitAfter)",
   // Custom-error fragments — needed for ethers v6 to decode reverts
   // by name. Without them, registry reverts arrive as raw selector
   // hex and `explainRegisterError`'s name match silently misses.
