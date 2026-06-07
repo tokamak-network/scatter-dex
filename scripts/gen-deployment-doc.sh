@@ -34,20 +34,31 @@ python3 - "$CHAIN_ID" "$LEDGER" "$BROADCAST" "$DEPLOY_DIR" "$OUT" <<'PY'
 import json, os, sys
 
 chain_id, ledger_path, broadcast_path, deploy_dir, out_path = sys.argv[1:6]
-L = json.load(open(ledger_path))
+
+# Always read/write as UTF-8 — ledgers carry non-ASCII (em-dash) and the host's
+# default encoding may not be UTF-8.
+def load_json(path):
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+L = load_json(ledger_path)
 
 # address(lower) -> CREATE tx hash, from the forge broadcast (if present).
 tx_by_addr = {}
 if os.path.isfile(broadcast_path):
-    bc = json.load(open(broadcast_path))
+    bc = load_json(broadcast_path)
     for t in bc.get("transactions", []):
         if t.get("transactionType") == "CREATE" and t.get("contractAddress"):
             tx_by_addr[t["contractAddress"].lower()] = t.get("hash", "")
 
 def tx(addr):
-    if not isinstance(addr, str) or not addr.startswith("0x") or len(addr) != 42:
-        return ""
-    return tx_by_addr.get(addr.lower(), "")
+    # Render a tx-hash table cell: `0x…` when known, an em-dash otherwise (never
+    # an empty `` cell, which reads as a missing column).
+    if isinstance(addr, str) and addr.startswith("0x") and len(addr) == 42:
+        h = tx_by_addr.get(addr.lower(), "")
+        if h:
+            return f"`{h}`"
+    return "—"
 
 def row(*cells):
     return "| " + " | ".join(str(c) for c in cells) + " |"
@@ -89,7 +100,7 @@ admin = L.get("proxyAdmin", "?")
 for label, pk, ik in UPGRADEABLE:
     p, i = L.get(pk, "?"), L.get(ik, "?")
     cells = [label, f"`{p}`", f"`{i}`", f"`{admin}`"]
-    if tx_by_addr: cells += [f"`{tx(p)}`", f"`{tx(i)}`"]
+    if tx_by_addr: cells += [tx(p), tx(i)]
     A(row(*cells))
 A("")
 
@@ -101,7 +112,7 @@ hdr = ["Contract", "Address"] + (["tx"] if tx_by_addr else [])
 A(row(*hdr)); A(row(*(["---"] * len(hdr))))
 for label, k in PLAIN:
     a = L.get(k, "?")
-    cells = [label, f"`{a}`"] + ([f"`{tx(a)}`"] if tx_by_addr else [])
+    cells = [label, f"`{a}`"] + ([tx(a)] if tx_by_addr else [])
     A(row(*cells))
 A("")
 
@@ -123,7 +134,7 @@ hdr = ["Circuit", "Address"] + (["tx"] if tx_by_addr else [])
 A(row(*hdr)); A(row(*(["---"] * len(hdr))))
 for label, k in VERIFIERS:
     a = L.get(k, "?")
-    cells = [label, f"`{a}`"] + ([f"`{tx(a)}`"] if tx_by_addr else [])
+    cells = [label, f"`{a}`"] + ([tx(a)] if tx_by_addr else [])
     A(row(*cells))
 A("")
 
@@ -145,7 +156,7 @@ zk = []
 for role in ("users", "relayers"):
     p = os.path.join(deploy_dir, f"zk-x509-{role}-{chain_id}.json")
     if os.path.isfile(p):
-        zk.append((role, json.load(open(p))))
+        zk.append((role, load_json(p)))
 if zk:
     A("## zk-X509 IdentityRegistries")
     A("")
@@ -154,7 +165,7 @@ if zk:
     # proxy + logic + factory + beacon set, not just the registry proxies.
     fpath = os.path.join(deploy_dir, f"zk-x509-factory-{chain_id}.json")
     if os.path.isfile(fpath):
-        f = json.load(open(fpath))
+        f = load_json(fpath)
         A("**Factory / beacon (shared by all registries):**")
         A("")
         A(row("Name", "Address"))
@@ -174,6 +185,6 @@ if zk:
               z.get("maxWalletsPerCert", "?"), z.get("deployBlock", "?")))
     A("")
 
-open(out_path, "w").write("\n".join(lines) + "\n")
+open(out_path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
 print(f"wrote {out_path} ({len(UPGRADEABLE)} proxies, {len(VERIFIERS)} verifiers, {len(zk)} zk-X509 ledgers)")
 PY

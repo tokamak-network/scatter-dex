@@ -69,7 +69,7 @@ contract DeployLocal is Script {
         address vault;
         address treasury;
         address batchExecutor;
-        // OFAC SDN-style address blocklist behind TransparentUpgradeableProxy.
+        // OFAC SDN-style address blocklist behind SharedAdminProxy.
         // Empty by default in local deploys; owner can `addSanction(addr)` or
         // `addSanctionsBatch(addrs)` post-deploy. Production deploys may
         // swap the implementation via the proxy admin for any other
@@ -107,10 +107,10 @@ contract DeployLocal is Script {
             console.log("IdentityRegistry (Relayer CA):", relayerRegistry_);
         }
 
-        // 2. Identity gate (User CA) — behind TransparentUpgradeableProxy.
+        // 2. Identity gate (User CA) — behind SharedAdminProxy.
         IdentityGate gate = _deployIdentityGateProxy(deployer, userRegistry);
 
-        // 3. Relayer registry (Relayer CA) — behind TransparentUpgradeableProxy.
+        // 3. Relayer registry (Relayer CA) — behind SharedAdminProxy.
         RelayerRegistry relayerRegistry = _deployRelayerRegistryProxy(deployer, relayerRegistry_);
 
         // 3b. Issuance-approval registry — admin records "this wallet
@@ -178,7 +178,7 @@ contract DeployLocal is Script {
             privateSettlement.setTokenWhitelist(wtonAddr, true);
         }
 
-        // 11. Deploy Treasury behind TransparentUpgradeableProxy, then
+        // 11. Deploy Treasury behind SharedAdminProxy, then
         //     deploy FeeVault pointing at it as the platform-fee recipient.
         //     - Treasury owner: TREASURY_ADDRESS env if a non-zero address
         //       is provided (production: external multisig such as Safe;
@@ -227,7 +227,7 @@ contract DeployLocal is Script {
         }
         console.log("ZK contracts configured (relayer gate + fee vault + DEX routers)");
 
-        // 14. Deploy SanctionsList behind TransparentUpgradeableProxy
+        // 14. Deploy SanctionsList behind SharedAdminProxy
         //     and register it on both boundary contracts. The helper
         //     does the proxy deploy AND both `setSanctionsList` calls
         //     in one frame — `run()` never sees the proxy as a local,
@@ -391,7 +391,7 @@ contract DeployLocal is Script {
         console.log("Shared ProxyAdmin (governs all proxies):", _proxyAdmin);
     }
 
-    /// @dev Deploy SanctionsList behind a TransparentUpgradeableProxy
+    /// @dev Deploy SanctionsList behind a SharedAdminProxy
     ///      and register it on both boundary contracts. Does not
     ///      return the proxy address — the caller (and the summary
     ///      path) read it back from `pool.sanctionsList()` to keep
@@ -439,7 +439,7 @@ contract DeployLocal is Script {
         console.log("IdentityGate registered on CommitmentPool + PrivateSettlement");
     }
 
-    /// @dev Deploy FeeVault behind a TransparentUpgradeableProxy.
+    /// @dev Deploy FeeVault behind a SharedAdminProxy.
     ///      Vault owner = deployer (so the script can finish wiring).
     ///      `treasury_` is the address that receives platform-fee skims
     ///      on claim()/withdrawPlatformRevenue — pre-Treasury this was
@@ -454,7 +454,7 @@ contract DeployLocal is Script {
         return FeeVault(payable(address(proxy)));
     }
 
-    /// @dev Deploy Treasury behind a TransparentUpgradeableProxy.
+    /// @dev Deploy Treasury behind a SharedAdminProxy.
     ///      Treasury owner = `TREASURY_ADDRESS` env (multisig in
     ///      production; the contract only enforces `!= address(0)`),
     ///      else `deployer` on local dev. ProxyAdmin owner =

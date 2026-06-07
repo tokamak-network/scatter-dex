@@ -23,7 +23,7 @@
   "privateSettlement": "0x9546B0A1f9cf52405645f3EFD86E06f7ea76Ef74",
   "privateSettlementImpl": "0x0Ac9b896d3614f1f3f66BdAED7303C085110aC22",
   "proxyAdmin": "0xe3418eE6ECbFF595837DFABB88F999ED35e1010D",
-  "proxyType": "TransparentUpgradeableProxy (shared single ProxyAdmin)",
+  "proxyType": "SharedAdminProxy (transparent proxy, single shared ProxyAdmin)",
   "relayerIdentityRegistry": "0x9fDE6182B1fd10F2eDfE15b704FE95787C170914",
   "relayerRegistry": "0x64fd8485793717fa3aBdb1FFc3406eC7fEee08fD",
   "relayerRegistryImpl": "0x31c96DCe47586752cd829AFA903A2DC451A6d7b5",

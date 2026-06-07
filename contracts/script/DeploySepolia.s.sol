@@ -482,7 +482,7 @@ contract DeploySepolia is Script {
         // Upgradeability: every proxy below is a SharedAdminProxy (transparent
         // pattern) governed by the SINGLE proxyAdmin recorded here; one
         // transferOwnership on proxyAdmin hands off the whole system.
-        vm.serializeString(o, "proxyType", "TransparentUpgradeableProxy (shared single ProxyAdmin)");
+        vm.serializeString(o, "proxyType", "SharedAdminProxy (transparent proxy, single shared ProxyAdmin)");
         vm.serializeAddress(o, "proxyAdmin", d.proxyAdmin);
         vm.serializeAddress(o, "upgradeOwner", _upgradeOwner);
         // ── Upgradeable contracts: proxy (facade) + impl (logic) for each ──
