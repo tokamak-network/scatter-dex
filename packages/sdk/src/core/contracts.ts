@@ -107,6 +107,10 @@ export const PRIVATE_SETTLEMENT_ABI = [
   // up so the tooling already has the keys it needs.
   "function authorizeVerifierByTier(uint8) view returns (address)",
   "function claimVerifierByTier(uint8) view returns (address)",
+  // Settlement-side token whitelist (settle/claim eligibility). The UI
+  // intersects this with CommitmentPool's list so only tokens usable
+  // for the full deposit→settle→claim flow surface in pickers.
+  "function getWhitelistedTokens() external view returns (address[])",
   "function dexPlatformFeeBps() view returns (uint256)",
   "function cancelPrivate((uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitmentRoot, bytes32 oldNullifier, bytes32 oldNonceNullifier, bytes32 newCommitment) p) external",
   `function settleWithDex((${AUTHORIZE_PROOF_TUPLE} proof, address dexRouter, bytes dexCalldata, uint256 deadline) p) external`,
@@ -128,6 +132,11 @@ export const COMMITMENT_POOL_ABI = [
   "function deposit(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 commitment, address token, uint256 amount) external",
   "function withdraw(uint256[2] proofA, uint256[2][2] proofB, uint256[2] proofC, uint256 root, uint256 nullifierHash, uint256 newCommitment, address token, uint256 amount, address recipient, address relayer) external",
   "function isKnownRoot(uint256 root) view returns (bool)",
+  // Enumerable token whitelist — owner adds tokens post-deploy via
+  // `setTokenWhitelist`; this getter lets the UI build its token list
+  // from chain state instead of a hand-maintained `NEXT_PUBLIC_TOKENS`
+  // env. Returns every currently-whitelisted ERC-20 address.
+  "function getWhitelistedTokens() external view returns (address[])",
   // CommitmentPool exposes the nullifier map directly via the
   // generated public-mapping getter; there's no `isSpent(uint256)`
   // function. Callers test "already withdrawn" via this getter.

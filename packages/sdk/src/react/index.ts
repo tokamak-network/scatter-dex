@@ -8,4 +8,5 @@ export * from "./vaultProvider";
 export * from "./eddsaKey";
 export * from "./relayersProvider";
 export * from "./useTimedRefresh";
+export * from "./useWhitelistedTokens";
 export * from "./LiveFreshness";

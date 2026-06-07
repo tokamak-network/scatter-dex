@@ -13,7 +13,9 @@
  *  for any specific chain.
  */
 
+import { ethers } from "ethers";
 import { ZERO_ADDRESS, isConfiguredAddress } from "./addresses";
+import { COMMITMENT_POOL_ABI, PRIVATE_SETTLEMENT_ABI, ERC20_ABI } from "./contracts";
 import type { TokenInfo } from "./tokens";
 
 /** Markets a token can serve as the **quote** side of (Upbit-style
@@ -168,4 +170,174 @@ export function tokensBySymbol(
     if (isConfiguredAddress(t.address)) out[t.symbol] = t;
   }
   return out;
+}
+
+/** Options for {@link fetchWhitelistedTokens}. */
+export interface FetchWhitelistedTokensOptions {
+  /** Metadata/label overlay — typically `parseTokenList(NEXT_PUBLIC_TOKENS)`.
+   *  When an on-chain token's address matches an overlay entry, the
+   *  overlay's `symbol` wins (a deliberate label override, e.g. relabel
+   *  a deploy's mock "TestUSDC" to "USDC" without redeploying). Decimals
+   *  always come from the chain — see below. Overlay also acts as a
+   *  symbol/decimals fallback when a token's `symbol()`/`decimals()`
+   *  call reverts (non-standard ERC-20). Addresses are matched
+   *  case-insensitively. */
+  overlay?: readonly TokenInfo[];
+}
+
+/** Build the live token list from on-chain whitelist state, so a team
+ *  deployment can add tokens via `setTokenWhitelist` and have every app
+ *  pick them up with **no `NEXT_PUBLIC_TOKENS` edit**.
+ *
+ *  A token must be whitelisted on **both** the CommitmentPool (deposit)
+ *  and the PrivateSettlement (settle/claim) to be usable end-to-end, so
+ *  the result is the **intersection** of the two contracts' lists.
+ *
+ *  The on-chain order is NOT stable — `EnumerableSet` removal does a
+ *  swap-and-pop, so a token list can reshuffle when any token is
+ *  removed. The result is therefore sorted deterministically: overlay
+ *  tokens first in overlay (`NEXT_PUBLIC_TOKENS` / launch) order so the
+ *  curated lineup keeps its intended ordering, then any on-chain-only
+ *  tokens by symbol then address. This keeps picker order — and thus
+ *  the default trading pair — stable across reads.
+ *
+ *  Each token's `symbol` and `decimals` are read on-chain. `decimals` is
+ *  always taken from the chain (so non-standard tokens like 27-decimals
+ *  WTON are exact); the optional {@link FetchWhitelistedTokensOptions.overlay}
+ *  can override `symbol` (label) and provides a fallback if a read
+ *  reverts. Tokens whose symbol/decimals can be resolved from neither
+ *  the chain nor the overlay are dropped (an unreadable ERC-20 is
+ *  unusable in a picker).
+ *
+ *  Returns `[]` (not a throw) when either address is unconfigured —
+ *  callers treat that as "fall back to the env list". A getter revert
+ *  (e.g. a contract predating the whitelist getter) **throws** so the
+ *  caller's catch can fall back rather than silently showing nothing.
+ *
+ *  The native-ETH alias is intentionally *not* applied here; callers
+ *  layer it via `withNativeEthAlias(list, wethAddress)`. */
+export async function fetchWhitelistedTokens(
+  provider: ethers.Provider,
+  poolAddress: string,
+  settlementAddress: string,
+  options: FetchWhitelistedTokensOptions = {},
+): Promise<TokenInfo[]> {
+  if (
+    !isConfiguredAddress(poolAddress) ||
+    !isConfiguredAddress(settlementAddress)
+  ) {
+    return [];
+  }
+
+  const pool = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
+  const settlement = new ethers.Contract(
+    settlementAddress,
+    PRIVATE_SETTLEMENT_ABI,
+    provider,
+  );
+  const [poolList, settlementList] = await Promise.all([
+    pool.getWhitelistedTokens() as Promise<string[]>,
+    settlement.getWhitelistedTokens() as Promise<string[]>,
+  ]);
+
+  const settlementSet = new Set(settlementList.map((a) => a.toLowerCase()));
+  const seen = new Set<string>();
+  const intersection: string[] = [];
+  for (const addr of poolList) {
+    const key = addr.toLowerCase();
+    if (settlementSet.has(key) && !seen.has(key)) {
+      seen.add(key);
+      intersection.push(addr);
+    }
+  }
+
+  // One pass over the overlay gives both the per-token metadata (for
+  // symbol override / read-revert fallback) and the order index (for
+  // the deterministic sort).
+  const overlayMap = buildOverlayMap(options.overlay);
+  const resolved = (
+    await Promise.all(
+      intersection.map((address) =>
+        buildTokenInfo(provider, address, overlayMap.get(address.toLowerCase())?.token),
+      ),
+    )
+  ).filter((t): t is TokenInfo => t !== null);
+
+  return sortTokens(resolved, overlayMap);
+}
+
+/** Lowercase-address → `{ token, index }` from the overlay, where
+ *  `index` is the token's position in the overlay (its curated order). */
+function buildOverlayMap(
+  overlay?: readonly TokenInfo[],
+): Map<string, { token: TokenInfo; index: number }> {
+  const map = new Map<string, { token: TokenInfo; index: number }>();
+  overlay?.forEach((token, index) => {
+    if (token.address) map.set(token.address.toLowerCase(), { token, index });
+  });
+  return map;
+}
+
+/** Deterministic order independent of the on-chain set's ordering:
+ *  overlay tokens first in overlay order, then the rest by symbol then
+ *  address (both case-insensitive). */
+function sortTokens(
+  tokens: TokenInfo[],
+  overlayMap: Map<string, { token: TokenInfo; index: number }>,
+): TokenInfo[] {
+  return tokens.slice().sort((a, b) => {
+    const ai = overlayMap.get(a.address.toLowerCase())?.index;
+    const bi = overlayMap.get(b.address.toLowerCase())?.index;
+    if (ai !== undefined && bi !== undefined) return ai - bi;
+    if (ai !== undefined) return -1; // overlay tokens sort ahead of extras
+    if (bi !== undefined) return 1;
+    // Case-insensitive and locale-independent: compare lowercased
+    // strings by code unit (`<`/`>`) so the order is identical across
+    // environments, not subject to `localeCompare`'s ICU/locale rules.
+    const sa = a.symbol.toLowerCase();
+    const sb = b.symbol.toLowerCase();
+    if (sa !== sb) return sa < sb ? -1 : 1;
+    const aa = a.address.toLowerCase();
+    const ab = b.address.toLowerCase();
+    if (aa !== ab) return aa < ab ? -1 : 1;
+    return 0;
+  });
+}
+
+/** Resolve one whitelisted address into a `TokenInfo`, reading
+ *  `symbol()`/`decimals()` on-chain with the overlay as override
+ *  (symbol) and fallback (symbol + decimals). Returns `null` when
+ *  neither source yields a usable symbol+decimals. */
+async function buildTokenInfo(
+  provider: ethers.Provider,
+  address: string,
+  overlay: TokenInfo | undefined,
+): Promise<TokenInfo | null> {
+  const erc20 = new ethers.Contract(address, ERC20_ABI, provider);
+  const [symbolRes, decimalsRes] = await Promise.allSettled([
+    erc20.symbol() as Promise<string>,
+    erc20.decimals() as Promise<bigint | number>,
+  ]);
+
+  const onChainSymbol =
+    symbolRes.status === "fulfilled" ? symbolRes.value : undefined;
+  const onChainDecimals =
+    decimalsRes.status === "fulfilled" ? Number(decimalsRes.value) : undefined;
+
+  // Overlay symbol is a deliberate label override; otherwise use the
+  // on-chain symbol. Decimals always prefer the chain (exact for
+  // non-standard tokens); overlay only backstops a reverted read.
+  const symbol = overlay?.symbol ?? onChainSymbol;
+  const decimals = onChainDecimals ?? overlay?.decimals;
+
+  if (
+    symbol === undefined ||
+    symbol.length === 0 ||
+    decimals === undefined ||
+    !Number.isInteger(decimals) ||
+    decimals < 0
+  ) {
+    return null;
+  }
+  return { address, symbol, decimals, isNative: false };
 }
