@@ -12,6 +12,7 @@ import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
 import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
+import {AddressArrayLib} from "./utils/AddressArrayLib.sol";
 
 contract PsToken is ERC20 {
     constructor() ERC20("Ps", "PS") {}
@@ -26,6 +27,8 @@ contract PsToken is ERC20 {
 ///         that the integration suites don't exercise. Not a happy-path
 ///         settle test — those live in SettleAuth / SettleWithDex.
 contract PrivateSettlementAdminTest is Test {
+    using AddressArrayLib for address[];
+
     PrivateSettlement settlement;
     CommitmentPool pool;
     MockWETH weth;
@@ -86,6 +89,50 @@ contract PrivateSettlementAdminTest is Test {
         assertTrue(settlement.whitelistedTokens(address(token)));
         settlement.setTokenWhitelist(address(token), false);
         assertFalse(settlement.whitelistedTokens(address(token)));
+    }
+
+    // ─── getWhitelistedTokens (enumerable mirror) ────────────────
+
+    /// @dev `setUp` whitelists nothing, so the enumerable set starts empty.
+    function test_getWhitelistedTokens_initial_empty() public view {
+        assertEq(settlement.getWhitelistedTokens().length, 0);
+    }
+
+    function test_getWhitelistedTokens_add_enumerates() public {
+        address a = address(0xAAA1);
+        settlement.setTokenWhitelist(address(token), true);
+        settlement.setTokenWhitelist(a, true);
+
+        address[] memory list = settlement.getWhitelistedTokens();
+        assertEq(list.length, 2);
+        assertTrue(list.contains(address(token)));
+        assertTrue(list.contains(a));
+    }
+
+    function test_getWhitelistedTokens_remove_disappears() public {
+        address a = address(0xAAA1);
+        settlement.setTokenWhitelist(address(token), true);
+        settlement.setTokenWhitelist(a, true);
+        settlement.setTokenWhitelist(address(token), false);
+
+        address[] memory list = settlement.getWhitelistedTokens();
+        assertEq(list.length, 1);
+        assertEq(list[0], a);
+        assertFalse(list.contains(address(token)));
+    }
+
+    /// @dev Re-whitelisting an already-whitelisted token is a no-op on the set.
+    function test_getWhitelistedTokens_readd_idempotent() public {
+        settlement.setTokenWhitelist(address(token), true);
+        settlement.setTokenWhitelist(address(token), true);
+        assertEq(settlement.getWhitelistedTokens().length, 1);
+    }
+
+    /// @dev Removing a token that was never whitelisted does not revert and
+    ///      leaves the set unchanged.
+    function test_getWhitelistedTokens_remove_absent_idempotent() public {
+        settlement.setTokenWhitelist(address(0xDEAD), false);
+        assertEq(settlement.getWhitelistedTokens().length, 0);
     }
 
     // ─── setRelayerRegistry ─────────────────────────────────────

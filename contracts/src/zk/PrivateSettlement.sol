@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import {ReentrancyGuardUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Ownable2StepUpgradeable.sol";
@@ -31,6 +32,7 @@ import {SettleVerifyLib} from "./SettleVerifyLib.sol";
 ///         a per-settle `claimsRoot` without revealing which settle.
 contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, PausableUpgradeable, Ownable2StepUpgradeable {
     using SafeERC20 for IERC20;
+    using EnumerableSet for EnumerableSet.AddressSet;
 
     // ─── Errors ──────────────────────────────────────────────────
     error ZeroAddress();
@@ -225,8 +227,21 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     ///         check — same opt-in model as `sanctionsList`.
     IIdentityRegistry public identityGate;
 
+    /// @notice Enumerable mirror of `whitelistedTokens`, kept in sync by
+    ///         `setTokenWhitelist`. Lets off-chain clients (and the frontend,
+    ///         which reads the on-chain whitelist as its source of truth) list
+    ///         every whitelisted token in one call via `getWhitelistedTokens`,
+    ///         without scanning logs. The `whitelistedTokens` mapping stays the
+    ///         O(1) hot-path check used by the settle/scatter/claim paths; this
+    ///         set is never read on those paths.
+    /// @dev Appended at the end of the storage layout (consuming 2 slots — an
+    ///      `EnumerableSet.AddressSet` wraps a `bytes32[]` plus a mapping);
+    ///      `__gap` is reduced by 2 to keep every downstream slot stable for
+    ///      already-deployed proxies (append-only upgrade rule).
+    EnumerableSet.AddressSet private _whitelistedTokenSet;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[49] private __gap;
+    uint256[47] private __gap;
 
     // ─── Initializer ─────────────────────────────────────────────
 
@@ -272,7 +287,25 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
         whitelistedTokens[token] = allowed;
+        // Keep the enumerable mirror in sync. `add`/`remove` are idempotent
+        // (return false on a no-op), so re-whitelisting or double-removing a
+        // token leaves the set unchanged.
+        if (allowed) {
+            _whitelistedTokenSet.add(token);
+        } else {
+            _whitelistedTokenSet.remove(token);
+        }
     }
+
+    /// @notice Return every currently whitelisted token.
+    /// @dev O(n) over the whitelist; intended for off-chain reads (the frontend
+    ///      uses this as its source of truth) and not called on any write path.
+    ///      Order is not guaranteed — `EnumerableSet.remove` swaps the removed
+    ///      element with the last one.
+    function getWhitelistedTokens() external view returns (address[] memory) {
+        return _whitelistedTokenSet.values();
+    }
+
     error NotAContract();
 
     /// @notice Set the relayer registry. Pass address(0) to disable relayer gating.
