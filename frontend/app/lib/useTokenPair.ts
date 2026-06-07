@@ -40,12 +40,14 @@ function clampIdx(i: number, len: number): number {
  * can encode its own policy (e.g. private-order allows same-token
  * "scatter" mode while dex-trade rejects it).
  *
- * All index writes (initial defaults and public setters) are clamped to
- * `[0, tokens.length - 1]`, so a misconfigured env or a stale deep-link
- * can't drive state off the end of the array.
- *
- * Assumes `tokens` is stable (module-level memoized list). Indices are
- * NOT re-clamped if the list later shrinks.
+ * Indices are stored raw and **clamped on read**, so neither a stale
+ * deep-link nor a list whose size changes can drive a dereference off
+ * the end of the array. This also covers async population (the on-chain
+ * whitelist fetch via `useTokenList`): the list can start empty/short
+ * and grow to ≥2 once the fetch resolves — the defaults (0, 1) simply
+ * resolve to a real, distinct pair the moment the list is usable, with
+ * no re-seeding effect. The returned `sellTokenIdx` / `buyTokenIdx` are
+ * the clamped values, so callers highlight the actually-selected option.
  */
 export function useTokenPair(
   tokens: TokenInfo[],
@@ -54,22 +56,30 @@ export function useTokenPair(
 ): UseTokenPairResult {
   const len = tokens.length;
 
-  const [sellTokenIdx, setSellTokenIdxRaw] = useState(() => clampIdx(defaultSellIdx, len));
-  const [buyTokenIdx, setBuyTokenIdxRaw] = useState(() => clampIdx(defaultBuyIdx, len));
+  const [sellTokenIdx, setSellTokenIdx] = useState(defaultSellIdx);
+  const [buyTokenIdx, setBuyTokenIdx] = useState(defaultBuyIdx);
 
-  const setSellTokenIdx = useCallback((i: number) => setSellTokenIdxRaw(clampIdx(i, len)), [len]);
-  const setBuyTokenIdx = useCallback((i: number) => setBuyTokenIdxRaw(clampIdx(i, len)), [len]);
+  const clampedSell = clampIdx(sellTokenIdx, len);
+  const clampedBuy = clampIdx(buyTokenIdx, len);
 
-  const sellToken = tokens[sellTokenIdx];
-  const buyToken = tokens[buyTokenIdx];
+  const sellToken = tokens[clampedSell];
+  const buyToken = tokens[clampedBuy];
 
   const swap = useCallback(() => {
-    const prevSell = sellTokenIdx;
-    setSellTokenIdxRaw(buyTokenIdx);
-    setBuyTokenIdxRaw(prevSell);
-  }, [sellTokenIdx, buyTokenIdx]);
+    setSellTokenIdx(clampedBuy);
+    setBuyTokenIdx(clampedSell);
+  }, [clampedSell, clampedBuy]);
 
   const isReady = len >= 2 && sellToken !== undefined && buyToken !== undefined;
 
-  return { sellToken, buyToken, sellTokenIdx, buyTokenIdx, setSellTokenIdx, setBuyTokenIdx, swap, isReady };
+  return {
+    sellToken,
+    buyToken,
+    sellTokenIdx: clampedSell,
+    buyTokenIdx: clampedBuy,
+    setSellTokenIdx,
+    setBuyTokenIdx,
+    swap,
+    isReady,
+  };
 }

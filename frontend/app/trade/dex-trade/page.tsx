@@ -4,13 +4,14 @@ import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from "rea
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
-import { Shield, Key, Loader2, AlertCircle, Check, Plus, Trash2, Clock, Lock, Wallet, Zap, ArrowLeftRight } from "lucide-react";
+import { Shield, Key, Loader2, Check, Plus, Trash2, Clock, Lock, Wallet, Zap, ArrowLeftRight } from "lucide-react";
 import { useWallet } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { terminateAuthorizeWorker } from "../../lib/zk/authorize-worker-client";
 import { useTerminateWorkerOnUnmount } from "../../lib/zk/useTerminateWorkerOnUnmount";
-import { getTradableTokens } from "../../lib/tokens";
+import { useTokenList } from "../../lib/useTokenList";
 import EmptyState from "../../components/EmptyState";
+import { TokenListLoading, TokenListUnavailable } from "../../components/TokenListStates";
 import { useTokenPair } from "../../lib/useTokenPair";
 import { AddressPicker } from "../../components/AddressPicker";
 import { eqAddr } from "../../lib/address";
@@ -67,7 +68,9 @@ function DexTradePageInner() {
   const { account, signer, chainId, connect } = useWallet();
   const { relayers } = useRelayers();
   useTerminateWorkerOnUnmount(terminateAuthorizeWorker);
-  const tokens = useMemo(() => getTradableTokens(), []);
+  // On-chain whitelist (pool∩settlement) with env list as overlay +
+  // fallback; `tradable` is the non-native list useTokenPair expects.
+  const { tradable: tokens, loading: tokensLoading } = useTokenList();
 
   const zkRelayers = useMemo(() =>
     relayers.filter((r) => r.online && r.api?.name?.includes("ZK")),
@@ -546,14 +549,12 @@ function DexTradePageInner() {
     );
   }
 
+  if (tokensLoading && !tokenPairReady) {
+    return <TokenListLoading />;
+  }
+
   if (!tokenPairReady) {
-    return (
-      <EmptyState
-        icon={AlertCircle}
-        title="Token list unavailable"
-        description={<>At least two tokens must be configured via <code>NEXT_PUBLIC_TOKENS</code> for trading. Contact the deployment operator if you&apos;re seeing this on a production build.</>}
-      />
-    );
+    return <TokenListUnavailable />;
   }
 
   return (
