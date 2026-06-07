@@ -106,7 +106,7 @@
 | **C1** 토큰 호환 | `maker.sellToken == taker.buyToken` 그리고 `maker.buyToken == taker.sellToken` |
 | **C2** 가격 보호 | `taker.sellAmount × taker.buyAmount ≥ maker.sellAmount × maker.buyAmount` |
 | **C4** 클레임+수수료 캡 | `totalLockedMaker + feeTokenMaker ≤ taker.sellAmount` (반대편 동일) |
-| **수수료 상한** | `feeTokenMaker ≤ taker.sellAmount × taker.maxFee / 10000` |
+| **수수료 상한** | `feeTokenMaker × 10000 ≤ maker.buyAmount × maker.maxFee` (taker 쪽 동일: `feeTokenTaker × 10000 ≤ taker.buyAmount × taker.maxFee`) — 각 쪽 사용자 서명 `maxFee` 기준(`SettleVerifyLib.validateCrossSide`) |
 | **만료** | 각 쪽의 `expiry ≥ block.timestamp` |
 | **상호 배제** | `makerNullifier ≠ takerNullifier`, `makerNonceNullifier ≠ takerNonceNullifier` |
 | **루트 유효성** | 각 쪽의 `commitmentRoot` 가 pool 의 최근 링 버퍼에 존재 (비동기 루트 허용) |

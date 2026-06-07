@@ -44,12 +44,12 @@
 ### 주요 함수
 | 함수 | 설명 |
 |------|------|
-| `register(url, name, fee, bondAmount)` | 본드 ≥ `minBond`, `fee ≤ 500bps`, **zk-X509 `isVerified` 통과**. `kycApprovalRegistry` 설정 시 **AND 게이트**로 `isApproved` 도 요구(미설정 시 zk-X509 단독). |
-| `addBond(bondAmount) payable` | 본드 증액. |
+| `register(url, name, fee, bondAmount)` | 본드 ≥ `minBond`, `fee ≤ 500bps`, **zk-X509 `isVerified` 통과**. `kycApprovalRegistry` 설정 시 **AND 게이트**로 `isApproved` 도 요구(미설정 시 zk-X509 단독). **결제 모드**: 네이티브(`bondToken==0`)면 본드는 `msg.value`, `bondAmount` 는 0; ERC20 모드면 `bondAmount` 를 `transferFrom`(사전 `approve` 필요), `msg.value` 는 0. 혼용 시 `WrongPaymentMode` revert. |
+| `addBond(bondAmount) payable` | 본드 증액(`register` 와 동일 결제 모드 규칙). |
 | `updateInfo(url, name, fee)` | 정보 갱신(exit 중이면 금지). |
 | `requestExit()` | 자가 exit 대기 시작(7일). 즉시 활성 집합에서 숨김. |
 | `executeExit()` | 쿨다운 후 본드 회수(`active=false`). 자가·강제 exit 공통 환급 경로. |
-| `adminRemoveRelayer(relayer, reason)` (owner) | **관리자 강제 제거** — 대신 `exitRequestedAt` 설정(멱등)해 즉시 서비스에서 숨기고 쿨다운 시작. `active` 는 유지하여 본드가 묶이지 않음(쿨다운 후 릴레이어가 `executeExit` 로 회수). 이 콜에서 본드를 push 하지 않아 악의 수신자의 자기-제거 차단(griefing) 불가. 슬래싱 아님. |
+| `adminRemoveRelayer(relayer, reason)` (owner) | **관리자 강제 제거** — 대신 `exitRequestedAt` 설정(멱등)해 즉시 서비스에서 숨기고 쿨다운 시작. `active` 는 유지하여 본드가 묶이지 않음(쿨다운 후 릴레이어가 `executeExit` 로 회수). 이 콜에서 본드를 push 하지 않아 악의 릴레이어가 수신 거부로 자신의 강제 제거를 막는(griefing) 것이 불가. 슬래싱 아님. |
 | `setKycApprovalRegistry(addr)` (owner) | KYC AND 게이트 설정/해제(`address(0)`). 신규 `register` 에만 적용. |
 | `isActiveRelayer / getFee / getSettlementInfo` | PrivateSettlement 가 호출. `exitRequestedAt > 0` 이면 비활성으로 집계. |
 
@@ -166,7 +166,7 @@ PrivateSettlement 의 EIP-170 (24KB 바이트코드) 초과를 피하기 위해 
 
 ## 10. 업그레이드 가능성
 
-- **Immutable**: `IncrementalMerkleTree` 의 `levels` / `ROOT_HISTORY_SIZE`, PrivateSettlement 의 `weth`. (CommitmentPool 의 verifier 는 프록시 이전엔 immutable 이었으나 현재는 `initialize` 에서 1회 설정 후 불변인 상태 변수 — 재할당 없음.)
+- **Immutable**: `IncrementalMerkleTree` 의 `levels` / `ROOT_HISTORY_SIZE`. (CommitmentPool 의 verifier 와 PrivateSettlement 의 `weth` 는 프록시 이전엔 immutable 이었으나 현재는 `initialize` 에서 1회 설정 후 불변인 상태 변수 — 재할당 없음.)
 - **Ownable + 타임락**: `authorizedSettlement` 변경(24h), `platformFeeBps` 변경(1일).
 - **Ownable 즉시 교체**: `authorizeVerifier`, `cancelVerifier`, `batchAuthorizeVerifier`, 화이트리스트, sanctions list.
 - **소유권 이전**: 모두 `Ownable2Step` 로 실수로 인한 락아웃 방지.
