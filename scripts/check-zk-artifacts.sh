@@ -39,10 +39,11 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 #   - frontend/public/zk/  — circuits/build.sh copies ALL circuits
 #     (see build.sh:117-123). The browser generates every proof type,
 #     including withdraw.
-#   - mobile/assets/zk/    — mobile/scripts/copy-zk-assets.sh omits
-#     `withdraw` (mobile doesn't generate withdraw proofs today).
+#   - mobile/assets/zk-native/ — mobile/scripts/copy-zk-assets.sh bundles
+#     the tier-16 circuits (deposit/withdraw/claim/authorize/cancel);
+#     the tier-64/128 zkeys are too large to ship in an RN binary.
 #
-# Separate predicates so `--verify` flags frontend-side withdraw drift
+# Separate predicates so `--verify` flags frontend-side tier-64/128 drift
 # even though mobile has no corresponding file to compare.
 CIRCUITS=(
   deposit
@@ -75,7 +76,7 @@ frontend_copies() {
 }
 
 BUILD_DIR="$ROOT_DIR/circuits/build"
-MOBILE_DIR="$ROOT_DIR/mobile/assets/zk"
+MOBILE_DIR="$ROOT_DIR/mobile/assets/zk-native"
 FRONTEND_DIR="$ROOT_DIR/frontend/public/zk"
 MANIFEST="$ROOT_DIR/.dev-logs/zk-manifest.json"
 
@@ -86,7 +87,7 @@ case "${1:-}" in
   --help|-h)
     cat <<'HELP'
 Verify ZK circuit artifact consistency across circuits/build,
-mobile/assets/zk, frontend/public/zk, and the deploy-time manifest
+mobile/assets/zk-native, frontend/public/zk, and the deploy-time manifest
 (.dev-logs/zk-manifest.json).
 
 Usage:
