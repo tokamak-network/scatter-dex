@@ -82,6 +82,16 @@ contract DeploySepolia is Script {
         address authVerifier16;
         address authVerifier64;
         address authVerifier128;
+        // Owners / bond token + the full verifier set, for a complete ledger.
+        address deployer;
+        address treasuryOwner;
+        address bondToken;
+        address withdrawVerifier;
+        address depositVerifier;
+        address claimVerifier16;
+        address claimVerifier64;
+        address claimVerifier128;
+        address cancelVerifier;
     }
 
     Deployed internal d;
@@ -108,6 +118,7 @@ contract DeploySepolia is Script {
         d.weth = weth;
         d.identityRegistry = userRegistry;
         d.relayerIdentityRegistry = relayerIdRegistry;
+        d.treasuryOwner = treasuryOwner;
 
         // Signing: env key (B) if DEPLOYER_KEY is set, else CLI keystore (A)
         // via `--account`. No anvil-key default — a missing key on a real
@@ -118,7 +129,12 @@ contract DeploySepolia is Script {
         } else {
             vm.startBroadcast();
         }
-        address deployer = msg.sender;
+        // Derive the deployer deterministically: in env-key mode it's the key's
+        // address (independent of any --sender / Foundry default-sender nuance);
+        // in keystore mode it's msg.sender (== the required --sender). This is the
+        // initial owner of the proxies, so it must match the broadcasting account.
+        address deployer = deployerKey != 0 ? vm.addr(deployerKey) : msg.sender;
+        d.deployer = deployer;
         console.log("=== DeploySepolia (chainid", block.chainid, ") ===");
         console.log("Deployer (temp owner):", deployer);
         console.log("UPGRADE_OWNER (ProxyAdmin):", _upgradeOwner);
@@ -131,8 +147,8 @@ contract DeploySepolia is Script {
         // bondToken is set ONCE here (structural — no setter). minBond is NOT set
         // at deploy: the admin sets it on-chain post-deploy via the admin site
         // (setMinBond), e.g. a fixed 2000 TON. Until then minBond = 0.
-        RelayerRegistry relayerRegistry =
-            _relayerRegistryProxy(deployer, relayerIdRegistry, vm.envOr("SEPOLIA_TON_ADDRESS", address(0)));
+        d.bondToken = vm.envOr("SEPOLIA_TON_ADDRESS", address(0));
+        RelayerRegistry relayerRegistry = _relayerRegistryProxy(deployer, relayerIdRegistry, d.bondToken);
         d.gate = address(gate);
         d.relayerRegistry = address(relayerRegistry);
 
@@ -340,6 +356,12 @@ contract DeploySepolia is Script {
         d.authVerifier16 = authorizeVerifier;
         d.authVerifier64 = authorizeVerifier64;
         d.authVerifier128 = authorizeVerifier128;
+        d.withdrawVerifier = withdrawVerifier;
+        d.depositVerifier = depositVerifier;
+        d.claimVerifier16 = claimVerifier;
+        d.claimVerifier64 = claimVerifier64;
+        d.claimVerifier128 = claimVerifier128;
+        d.cancelVerifier = cancelVerifier;
         console.log("Verifiers deployed (withdraw/claim x3/deposit/authorize x3/cancel)");
 
         pool = _commitmentPoolProxy(withdrawVerifier, depositVerifier);
@@ -373,6 +395,7 @@ contract DeploySepolia is Script {
         console.log("");
         console.log("=== SEPOLIA DEPLOYMENT SUMMARY ===");
         console.log(string.concat("NEXT_PUBLIC_CHAIN_ID=", vm.toString(block.chainid)));
+        console.log(string.concat("NEXT_PUBLIC_DEPLOY_BLOCK=", vm.toString(block.number)));
         console.log(string.concat("NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS=", vm.toString(d.relayerRegistry)));
         console.log(string.concat("NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS=", vm.toString(d.pool)));
         console.log(string.concat("NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS=", vm.toString(d.settlement)));
@@ -383,6 +406,9 @@ contract DeploySepolia is Script {
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(d.batchExecutor)));
         console.log(string.concat("NEXT_PUBLIC_WETH_ADDRESS=", vm.toString(d.weth)));
         console.log(string.concat("IssuanceApprovalRegistry=", vm.toString(d.issuanceApproval)));
+        console.log(string.concat("IdentityRegistry(User-CA)=", vm.toString(d.identityRegistry)));
+        console.log(string.concat("IdentityRegistry(Relayer-CA)=", vm.toString(d.relayerIdentityRegistry)));
+        console.log(string.concat("Relayer bondToken(0=native)=", vm.toString(d.bondToken)));
         console.log(string.concat("AuthorizeVerifier(16)=", vm.toString(d.authVerifier16)));
         console.log(string.concat("AuthorizeVerifier(64)=", vm.toString(d.authVerifier64)));
         console.log(string.concat("AuthorizeVerifier(128)=", vm.toString(d.authVerifier128)));
@@ -416,7 +442,17 @@ contract DeploySepolia is Script {
         vm.serializeAddress(o, "weth", d.weth);
         vm.serializeAddress(o, "authorizeVerifier16", d.authVerifier16);
         vm.serializeAddress(o, "authorizeVerifier64", d.authVerifier64);
-        string memory out = vm.serializeAddress(o, "authorizeVerifier128", d.authVerifier128);
+        vm.serializeAddress(o, "authorizeVerifier128", d.authVerifier128);
+        vm.serializeAddress(o, "withdrawVerifier", d.withdrawVerifier);
+        vm.serializeAddress(o, "depositVerifier", d.depositVerifier);
+        vm.serializeAddress(o, "claimVerifier16", d.claimVerifier16);
+        vm.serializeAddress(o, "claimVerifier64", d.claimVerifier64);
+        vm.serializeAddress(o, "claimVerifier128", d.claimVerifier128);
+        vm.serializeAddress(o, "cancelVerifier", d.cancelVerifier);
+        vm.serializeAddress(o, "bondToken", d.bondToken);
+        vm.serializeAddress(o, "deployer", d.deployer);
+        vm.serializeAddress(o, "treasuryOwner", d.treasuryOwner);
+        string memory out = vm.serializeAddress(o, "upgradeOwner", _upgradeOwner);
         string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
         vm.writeJson(out, path);
         console.log("Deployments ledger written:", path);
