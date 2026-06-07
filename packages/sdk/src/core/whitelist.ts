@@ -291,10 +291,16 @@ function sortTokens(
     if (ai !== undefined && bi !== undefined) return ai - bi;
     if (ai !== undefined) return -1; // overlay tokens sort ahead of extras
     if (bi !== undefined) return 1;
-    return (
-      a.symbol.localeCompare(b.symbol) ||
-      a.address.toLowerCase().localeCompare(b.address.toLowerCase())
-    );
+    // Case-insensitive and locale-independent: compare lowercased
+    // strings by code unit (`<`/`>`) so the order is identical across
+    // environments, not subject to `localeCompare`'s ICU/locale rules.
+    const sa = a.symbol.toLowerCase();
+    const sb = b.symbol.toLowerCase();
+    if (sa !== sb) return sa < sb ? -1 : 1;
+    const aa = a.address.toLowerCase();
+    const ab = b.address.toLowerCase();
+    if (aa !== ab) return aa < ab ? -1 : 1;
+    return 0;
   });
 }
 

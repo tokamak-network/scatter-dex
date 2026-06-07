@@ -26,7 +26,8 @@ export interface UseWhitelistedTokensParams {
    *  fetch can't produce a list. Pass the non-native list — the
    *  native-ETH alias (if wanted) is the caller's concern. */
   fallback: TokenInfo[];
-  /** Skip the on-chain fetch and stay on `fallback`. Default true. */
+  /** Enable the on-chain fetch. When false, the hook stays on
+   *  `fallback` and never touches the chain. Default true. */
   enabled?: boolean;
 }
 
@@ -71,9 +72,17 @@ export function useWhitelistedTokens({
   // can't write stale results over a newer one (or a dead component).
   const runId = useRef(0);
 
+  // Read `fallback` through a ref so `load` doesn't depend on the array
+  // identity — a caller passing an unmemoized `fallback` (e.g.
+  // `getTradableTokens()` inline) would otherwise rebuild `load` every
+  // render and re-trigger the fetch effect in a loop.
+  const fallbackRef = useRef(fallback);
+  fallbackRef.current = fallback;
+
   const load = useCallback(() => {
+    const currentFallback = fallbackRef.current;
     if (!shouldFetch || !provider) {
-      setTokens(fallback);
+      setTokens(currentFallback);
       setLoading(false);
       setError(null);
       setSource("fallback");
@@ -83,9 +92,9 @@ export function useWhitelistedTokens({
     setLoading(true);
     setError(null);
     setSource("loading");
-    setTokens(fallback); // show env list while the fetch runs
+    setTokens(currentFallback); // show env list while the fetch runs
     fetchWhitelistedTokens(provider, poolAddress, settlementAddress, {
-      overlay: fallback,
+      overlay: currentFallback,
     })
       .then((live) => {
         if (id !== runId.current) return;
@@ -95,21 +104,21 @@ export function useWhitelistedTokens({
         } else {
           // Chain reachable but whitelist empty — keep the env list so
           // a dev stack without on-chain whitelisting still works.
-          setTokens(fallback);
+          setTokens(currentFallback);
           setSource("fallback");
         }
       })
       .catch((err: unknown) => {
         if (id !== runId.current) return;
         setError(err instanceof Error ? err.message : "Failed to load tokens");
-        setTokens(fallback);
+        setTokens(currentFallback);
         setSource("fallback");
       })
       .finally(() => {
         if (id !== runId.current) return;
         setLoading(false);
       });
-  }, [shouldFetch, provider, poolAddress, settlementAddress, fallback]);
+  }, [shouldFetch, provider, poolAddress, settlementAddress]);
 
   useEffect(() => {
     load();
