@@ -129,7 +129,11 @@ contract DeploySepolia is Script {
         } else {
             vm.startBroadcast();
         }
-        address deployer = msg.sender;
+        // Derive the deployer deterministically: in env-key mode it's the key's
+        // address (independent of any --sender / Foundry default-sender nuance);
+        // in keystore mode it's msg.sender (== the required --sender). This is the
+        // initial owner of the proxies, so it must match the broadcasting account.
+        address deployer = deployerKey != 0 ? vm.addr(deployerKey) : msg.sender;
         d.deployer = deployer;
         console.log("=== DeploySepolia (chainid", block.chainid, ") ===");
         console.log("Deployer (temp owner):", deployer);
