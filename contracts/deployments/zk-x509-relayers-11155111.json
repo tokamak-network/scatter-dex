@@ -1,0 +1,17 @@
+{
+  "role": "relayers",
+  "chainId": 11155111,
+  "deployBlock": 11008530,
+  "proxyType": "BeaconProxy (via RegistryFactory)",
+  "identityRegistry": "0x9fDE6182B1fd10F2eDfE15b704FE95787C170914",
+  "identityRegistryImpl": "0xf38cA535Aba180c96E9EdCC75f3fcBcdCE7E0EDC",
+  "registryFactory": "0x9e937dF6ac0E85979622519068412A518fa085d9",
+  "beacon": "0xE2c5C5B6E4b598aFA5e50549f797222c50dC9e8C",
+  "owner": "0xc1eba383D94c6021160042491A5dfaF1d82694E6",
+  "maxWalletsPerCert": 2,
+  "minDisclosureMask": 0,
+  "maxProofAge": 3600,
+  "delegatedProving": false,
+  "caMerkleRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "deployer": "0xc1eba383D94c6021160042491A5dfaF1d82694E6"
+}
