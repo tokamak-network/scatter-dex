@@ -10,7 +10,8 @@ import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {SanctionsList} from "../src/SanctionsList.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {SharedAdminProxy} from "../src/proxy/SharedAdminProxy.sol";
 import {BatchExecutor} from "../src/BatchExecutor.sol";
 
 /// @notice Production-shaped deploy for a PUBLIC TESTNET (Sepolia et al.).
@@ -52,17 +53,40 @@ import {BatchExecutor} from "../src/BatchExecutor.sol";
 ///   SEPOLIA_IDENTITY_REGISTRY          real zk-X509 User-CA IdentityRegistry (gates deposits/claims)
 ///   SEPOLIA_RELAYER_IDENTITY_REGISTRY  real zk-X509 Relayer-CA IdentityRegistry (gates register())
 ///   SEPOLIA_WETH_ADDRESS               canonical WETH9 already deployed on the target chain
-///   UPGRADE_OWNER                      ProxyAdmin owner for every proxy (multisig recommended)
+///   UPGRADE_OWNER                      owner of the single shared ProxyAdmin (multisig recommended)
 ///   TREASURY_ADDRESS                   Treasury owner / platform-fee recipient (multisig recommended)
 /// Optional env:
 ///   SANCTIONS_EXTERNAL_ORACLE  external sanctions oracle, OR-combined into SanctionsList
 /// Tokens (USDC/USDT/TON/…) are NOT whitelisted at deploy — owner adds them
 /// on-chain post-deploy via setTokenWhitelist; the frontend reads them on-chain.
-/// RPC/verify: --rpc-url sepolia (foundry.toml → SEPOLIA_RPC_URL), --verify (ETHERSCAN_API_KEY)
+/// RPC: --rpc-url sepolia (foundry.toml → SEPOLIA_RPC_URL).
+///
+/// ⚠️ DO NOT pass `--verify` while this deployment is PRIVATE. Etherscan
+///    verification PUBLISHES the full contract source code on a public
+///    explorer — irreversible exposure. This is a team-only testnet that must
+///    not be public, so deploy WITHOUT `--verify`. Source can be verified
+///    later, deliberately, once the project is meant to be public.
+///
+/// Stability — ALWAYS deploy with `--slow` (and `--resume` to recover):
+///   forge script ... --rpc-url sepolia --broadcast --slow      # NO --verify
+///   `--slow` sends each tx and waits for its receipt before the next, so the
+///   ~45 deploy txs land one-per-block instead of one burst — this is what
+///   prevents a half-finished deploy if a tx is dropped/reordered. If a run is
+///   interrupted, re-run the SAME command with `--resume` to continue from the
+///   last confirmed tx (do NOT start fresh — that double-deploys). The single
+///   ProxyAdmin (see UPGRADE_OWNER) governs every proxy: one transferOwnership
+///   on it later hands upgrade rights for the whole system to a multisig.
 contract DeploySepolia is Script {
-    /// @dev ProxyAdmin owner for every TransparentUpgradeableProxy below.
-    ///      Resolved once from UPGRADE_OWNER; read by every `_deploy…Proxy`.
+    /// @dev Owner of the single shared ProxyAdmin below. Resolved once from
+    ///      UPGRADE_OWNER; passed to `new ProxyAdmin(...)` exactly once.
     address internal _upgradeOwner;
+
+    /// @dev The ONE ProxyAdmin that governs every proxy in this deployment.
+    ///      Deployed once in `run()`; passed to every `_deploy…Proxy` (via
+    ///      {SharedAdminProxy}) so all proxies share a single admin — handing
+    ///      off upgrade rights for the whole system is then one
+    ///      `transferOwnership` on this contract. Read by the ledger writer.
+    address internal _proxyAdmin;
 
     /// @dev Collected for the copy-paste summary so `run()` doesn't carry a
     ///      dozen live locals (Solidity's 16-slot stack limit).
@@ -92,6 +116,16 @@ contract DeploySepolia is Script {
         address claimVerifier64;
         address claimVerifier128;
         address cancelVerifier;
+        // The single shared ProxyAdmin + every proxy's implementation (logic)
+        // address, so the ledger lists proxy + logic + admin for each contract.
+        address proxyAdmin;
+        address gateImpl;
+        address relayerRegistryImpl;
+        address poolImpl;
+        address settlementImpl;
+        address treasuryImpl;
+        address vaultImpl;
+        address sanctionsImpl;
     }
 
     Deployed internal d;
@@ -137,9 +171,18 @@ contract DeploySepolia is Script {
         d.deployer = deployer;
         console.log("=== DeploySepolia (chainid", block.chainid, ") ===");
         console.log("Deployer (temp owner):", deployer);
-        console.log("UPGRADE_OWNER (ProxyAdmin):", _upgradeOwner);
+        console.log("UPGRADE_OWNER (ProxyAdmin owner):", _upgradeOwner);
         console.log("IdentityRegistry (User CA):", userRegistry);
         console.log("IdentityRegistry (Relayer CA):", relayerIdRegistry);
+
+        // ── 0b. The ONE shared ProxyAdmin governing every proxy below ──
+        //        Deployed once and reused by every _xProxy helper (via
+        //        SharedAdminProxy), so all proxies share a single admin: a
+        //        later handoff to a multisig/timelock is one transferOwnership
+        //        on this contract, moving upgrade rights for the whole system.
+        _proxyAdmin = address(new ProxyAdmin(_upgradeOwner));
+        d.proxyAdmin = _proxyAdmin;
+        console.log("Shared ProxyAdmin (governs all proxies):", _proxyAdmin);
 
         // ── 1. Identity gate (User CA) + relayer registry (Relayer CA) ──
         IdentityGate gate = _identityGateProxy(deployer, userRegistry);
@@ -250,8 +293,9 @@ contract DeploySepolia is Script {
 
     function _identityGateProxy(address deployer, address initialRegistry) internal returns (IdentityGate) {
         IdentityGate impl = new IdentityGate();
+        d.gateImpl = address(impl);
         bytes memory initData = abi.encodeCall(IdentityGate.initialize, (deployer, initialRegistry));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("IdentityGate impl:", address(impl));
         console.log("IdentityGate proxy:", address(proxy));
         return IdentityGate(address(proxy));
@@ -265,11 +309,12 @@ contract DeploySepolia is Script {
             require(bondToken_.code.length > 0, "SEPOLIA_TON_ADDRESS (bondToken) has no code on this chain");
         }
         RelayerRegistry impl = new RelayerRegistry();
+        d.relayerRegistryImpl = address(impl);
         // (owner, treasury, identityRegistry, bondToken). bondToken=0 → native mode;
         // non-zero → ERC20 bond. Here TON: relayers post a fixed TON bond (minBond).
         bytes memory initData =
             abi.encodeCall(RelayerRegistry.initialize, (deployer, deployer, relayerIdRegistry, bondToken_));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("RelayerRegistry impl:", address(impl));
         console.log("RelayerRegistry proxy:", address(proxy));
         return RelayerRegistry(payable(address(proxy)));
@@ -277,8 +322,9 @@ contract DeploySepolia is Script {
 
     function _treasuryProxy(address treasuryOwner) internal returns (Treasury) {
         Treasury impl = new Treasury();
+        d.treasuryImpl = address(impl);
         bytes memory initData = abi.encodeCall(Treasury.initialize, (treasuryOwner));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("Treasury impl:", address(impl));
         console.log("Treasury proxy:", address(proxy));
         console.log("Treasury owner:", treasuryOwner);
@@ -287,9 +333,10 @@ contract DeploySepolia is Script {
 
     function _feeVaultProxy(address deployer, address treasury_) internal returns (FeeVault) {
         FeeVault impl = new FeeVault();
+        d.vaultImpl = address(impl);
         // (owner, treasury, platformFeeBps=500). owner=deployer so this script can wire it.
         bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, treasury_, 500));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("FeeVault impl:", address(impl));
         console.log("FeeVault proxy:", address(proxy));
         return FeeVault(payable(address(proxy)));
@@ -298,10 +345,11 @@ contract DeploySepolia is Script {
     function _commitmentPoolProxy(address withdrawVerifier, address depositVerifier) internal returns (CommitmentPool) {
         address deployer = msg.sender;
         CommitmentPool impl = new CommitmentPool();
+        d.poolImpl = address(impl);
         bytes memory initData = abi.encodeCall(
             CommitmentPool.initialize, (deployer, withdrawVerifier, depositVerifier, uint32(20), uint32(30))
         );
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("CommitmentPool impl:", address(impl));
         console.log("CommitmentPool proxy:", address(proxy));
         return CommitmentPool(address(proxy));
@@ -313,8 +361,9 @@ contract DeploySepolia is Script {
     {
         address deployer = msg.sender;
         PrivateSettlement impl = new PrivateSettlement();
+        d.settlementImpl = address(impl);
         bytes memory initData = abi.encodeCall(PrivateSettlement.initialize, (deployer, pool_, claimVerifier, weth_));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("PrivateSettlement impl:", address(impl));
         console.log("PrivateSettlement proxy:", address(proxy));
         return PrivateSettlement(payable(address(proxy)));
@@ -322,8 +371,9 @@ contract DeploySepolia is Script {
 
     function _deployAndWireSanctionsList(address pool_, address settlement_) internal {
         SanctionsList impl = new SanctionsList();
+        d.sanctionsImpl = address(impl);
         bytes memory initData = abi.encodeCall(SanctionsList.initialize, (msg.sender));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         d.sanctions = address(proxy);
         console.log("SanctionsList impl:", address(impl));
         console.log("SanctionsList proxy:", address(proxy));
@@ -405,6 +455,7 @@ contract DeploySepolia is Script {
         console.log(string.concat("NEXT_PUBLIC_SANCTIONS_LIST_ADDRESS=", vm.toString(d.sanctions)));
         console.log(string.concat("NEXT_PUBLIC_BATCH_EXECUTOR_ADDRESS=", vm.toString(d.batchExecutor)));
         console.log(string.concat("NEXT_PUBLIC_WETH_ADDRESS=", vm.toString(d.weth)));
+        console.log(string.concat("SHARED_PROXY_ADMIN=", vm.toString(d.proxyAdmin)));
         console.log(string.concat("IssuanceApprovalRegistry=", vm.toString(d.issuanceApproval)));
         console.log(string.concat("IdentityRegistry(User-CA)=", vm.toString(d.identityRegistry)));
         console.log(string.concat("IdentityRegistry(Relayer-CA)=", vm.toString(d.relayerIdentityRegistry)));
@@ -428,18 +479,35 @@ contract DeploySepolia is Script {
         string memory o = "deploy";
         vm.serializeUint(o, "chainId", block.chainid);
         vm.serializeUint(o, "deployBlock", block.number);
+        // Upgradeability: every proxy below is a SharedAdminProxy (transparent
+        // pattern) governed by the SINGLE proxyAdmin recorded here; one
+        // transferOwnership on proxyAdmin hands off the whole system.
+        vm.serializeString(o, "proxyType", "TransparentUpgradeableProxy (shared single ProxyAdmin)");
+        vm.serializeAddress(o, "proxyAdmin", d.proxyAdmin);
+        vm.serializeAddress(o, "upgradeOwner", _upgradeOwner);
+        // ── Upgradeable contracts: proxy (facade) + impl (logic) for each ──
         vm.serializeAddress(o, "commitmentPool", d.pool);
+        vm.serializeAddress(o, "commitmentPoolImpl", d.poolImpl);
         vm.serializeAddress(o, "privateSettlement", d.settlement);
+        vm.serializeAddress(o, "privateSettlementImpl", d.settlementImpl);
         vm.serializeAddress(o, "identityGate", d.gate);
+        vm.serializeAddress(o, "identityGateImpl", d.gateImpl);
         vm.serializeAddress(o, "relayerRegistry", d.relayerRegistry);
+        vm.serializeAddress(o, "relayerRegistryImpl", d.relayerRegistryImpl);
         vm.serializeAddress(o, "feeVault", d.vault);
+        vm.serializeAddress(o, "feeVaultImpl", d.vaultImpl);
         vm.serializeAddress(o, "treasury", d.treasury);
+        vm.serializeAddress(o, "treasuryImpl", d.treasuryImpl);
         vm.serializeAddress(o, "sanctionsList", d.sanctions);
+        vm.serializeAddress(o, "sanctionsListImpl", d.sanctionsImpl);
+        // ── Non-upgradeable (plain) contracts ──
         vm.serializeAddress(o, "batchExecutor", d.batchExecutor);
         vm.serializeAddress(o, "issuanceApprovalRegistry", d.issuanceApproval);
+        // ── External / pre-existing (reused, not deployed here) ──
         vm.serializeAddress(o, "identityRegistry", d.identityRegistry);
         vm.serializeAddress(o, "relayerIdentityRegistry", d.relayerIdentityRegistry);
         vm.serializeAddress(o, "weth", d.weth);
+        // ── ZK verifiers (plain, generated from circuits/build) ──
         vm.serializeAddress(o, "authorizeVerifier16", d.authVerifier16);
         vm.serializeAddress(o, "authorizeVerifier64", d.authVerifier64);
         vm.serializeAddress(o, "authorizeVerifier128", d.authVerifier128);
@@ -449,10 +517,10 @@ contract DeploySepolia is Script {
         vm.serializeAddress(o, "claimVerifier64", d.claimVerifier64);
         vm.serializeAddress(o, "claimVerifier128", d.claimVerifier128);
         vm.serializeAddress(o, "cancelVerifier", d.cancelVerifier);
+        // ── Roles / config ──
         vm.serializeAddress(o, "bondToken", d.bondToken);
         vm.serializeAddress(o, "deployer", d.deployer);
-        vm.serializeAddress(o, "treasuryOwner", d.treasuryOwner);
-        string memory out = vm.serializeAddress(o, "upgradeOwner", _upgradeOwner);
+        string memory out = vm.serializeAddress(o, "treasuryOwner", d.treasuryOwner);
         string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
         vm.writeJson(out, path);
         console.log("Deployments ledger written:", path);

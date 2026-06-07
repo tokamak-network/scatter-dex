@@ -10,7 +10,8 @@ import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {FeeVault} from "../src/FeeVault.sol";
 import {Treasury} from "../src/Treasury.sol";
 import {SanctionsList} from "../src/SanctionsList.sol";
-import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {SharedAdminProxy} from "../src/proxy/SharedAdminProxy.sol";
 import {IIdentityRegistry} from "../src/interfaces/IIdentityRegistry.sol";
 import {MockToken} from "./DeployTestTokens.s.sol";
 import {MockWETH} from "../test/mocks/MockWETH.sol";
@@ -47,6 +48,13 @@ contract DeployLocal is Script {
     ///      `vm.envOr` themselves, so we don't re-print the default warning
     ///      five times per deploy.
     address internal _upgradeOwner;
+
+    /// @dev The ONE shared ProxyAdmin governing every proxy this script
+    ///      deploys (matches DeploySepolia). Deployed once in
+    ///      `_resolveUpgradeOwner` and passed to every `_deployXProxy` via
+    ///      {SharedAdminProxy}, so handing off upgrade authority is a single
+    ///      `transferOwnership` on this contract rather than one per proxy.
+    address internal _proxyAdmin;
 
     struct Deployed {
         address relayerRegistry;
@@ -374,7 +382,13 @@ contract DeployLocal is Script {
         } else {
             _upgradeOwner = envOwner;
         }
-        console.log("UPGRADE_OWNER (ProxyAdmin):", _upgradeOwner);
+        console.log("UPGRADE_OWNER (ProxyAdmin owner):", _upgradeOwner);
+
+        // Deploy the ONE shared ProxyAdmin (owned by _upgradeOwner) that every
+        // proxy below points at via SharedAdminProxy — single upgrade authority
+        // for the whole local deployment, mirroring DeploySepolia.
+        _proxyAdmin = address(new ProxyAdmin(_upgradeOwner));
+        console.log("Shared ProxyAdmin (governs all proxies):", _proxyAdmin);
     }
 
     /// @dev Deploy SanctionsList behind a TransparentUpgradeableProxy
@@ -398,7 +412,7 @@ contract DeployLocal is Script {
     function _deployAndWireSanctionsList(address pool_, address settlement_) internal {
         SanctionsList impl = new SanctionsList();
         bytes memory initData = abi.encodeCall(SanctionsList.initialize, (msg.sender));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("SanctionsList impl:", address(impl));
         console.log("SanctionsList proxy:", address(proxy));
         CommitmentPool(pool_).setSanctionsList(address(proxy));
@@ -434,7 +448,7 @@ contract DeployLocal is Script {
     function _deployFeeVaultProxy(address deployer, address treasury_) internal returns (FeeVault) {
         FeeVault impl = new FeeVault();
         bytes memory initData = abi.encodeCall(FeeVault.initialize, (deployer, treasury_, 500));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("FeeVault impl:", address(impl));
         console.log("FeeVault proxy:", address(proxy));
         return FeeVault(payable(address(proxy)));
@@ -476,7 +490,7 @@ contract DeployLocal is Script {
         }
         Treasury impl = new Treasury();
         bytes memory initData = abi.encodeCall(Treasury.initialize, (treasuryOwner));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("Treasury impl:", address(impl));
         console.log("Treasury proxy:", address(proxy));
         console.log("Treasury owner:", treasuryOwner);
@@ -486,7 +500,7 @@ contract DeployLocal is Script {
     function _deployIdentityGateProxy(address deployer, address initialRegistry) internal returns (IdentityGate) {
         IdentityGate impl = new IdentityGate();
         bytes memory initData = abi.encodeCall(IdentityGate.initialize, (deployer, initialRegistry));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("IdentityGate impl:", address(impl));
         console.log("IdentityGate proxy:", address(proxy));
         return IdentityGate(address(proxy));
@@ -499,7 +513,7 @@ contract DeployLocal is Script {
         address deployer = msg.sender;
         PrivateSettlement impl = new PrivateSettlement();
         bytes memory initData = abi.encodeCall(PrivateSettlement.initialize, (deployer, pool_, claimVerifier, weth_));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("PrivateSettlement impl:", address(impl));
         console.log("PrivateSettlement proxy:", address(proxy));
         return PrivateSettlement(payable(address(proxy)));
@@ -514,7 +528,7 @@ contract DeployLocal is Script {
         bytes memory initData = abi.encodeCall(
             CommitmentPool.initialize, (deployer, withdrawVerifier, depositVerifier, uint32(20), uint32(30))
         );
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("CommitmentPool impl:", address(impl));
         console.log("CommitmentPool proxy:", address(proxy));
         return CommitmentPool(address(proxy));
@@ -527,7 +541,7 @@ contract DeployLocal is Script {
         RelayerRegistry impl = new RelayerRegistry();
         bytes memory initData =
             abi.encodeCall(RelayerRegistry.initialize, (deployer, deployer, relayerIdRegistry, address(0)));
-        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
+        SharedAdminProxy proxy = new SharedAdminProxy(address(impl), _proxyAdmin, initData);
         console.log("RelayerRegistry impl:", address(impl));
         console.log("RelayerRegistry proxy:", address(proxy));
         return RelayerRegistry(payable(address(proxy)));

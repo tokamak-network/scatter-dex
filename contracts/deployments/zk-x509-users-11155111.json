@@ -1,0 +1,15 @@
+{
+  "role": "users",
+  "chainId": 11155111,
+  "deployBlock": 11007892,
+  "proxyType": "UUPS (ERC1967Proxy)",
+  "identityRegistry": "0x87Ac496C0dAdB7347aaA8E12E2D8889072c67856",
+  "identityRegistryImpl": "0x258Cb6641c06149b879E5093B4B3B94516ECF5de",
+  "proxyAdmin": "(none — UUPS: upgrades gated by owner())",
+  "owner": "0xc1eba383D94c6021160042491A5dfaF1d82694E6",
+  "sp1Verifier": "0x3B6041173B80E77f038f3F2C0f9744f04837185e",
+  "programVKey": "0x006e7699b0c514af2003f5c24a0c841e4580056dafaa78a6806594330659d215",
+  "maxWalletsPerCert": 10,
+  "caMerkleRoot": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "deployer": "0xc1eba383D94c6021160042491A5dfaF1d82694E6"
+}

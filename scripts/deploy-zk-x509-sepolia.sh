@@ -47,8 +47,20 @@ source "$ENV_FILE"; set +a
 : "${DEPLOYER_KEY:?DEPLOYER_KEY missing in contracts/.env}"
 : "${SEPOLIA_RPC_URL:?SEPOLIA_RPC_URL missing in contracts/.env}"
 
-MAX_WALLETS_PER_CERT="${MAX_WALLETS_PER_CERT:-10}"
+# Role = which CA registry to deploy. Each has its own default wallets-per-cert
+# cap and its own DeploySepolia env var + ledger file, so the two registries
+# stay distinct. Pass as $1 or ROLE=.
+#   users    → SEPOLIA_IDENTITY_REGISTRY          (default 10 wallets/cert)
+#   relayers → SEPOLIA_RELAYER_IDENTITY_REGISTRY  (default  2 wallets/cert)
+ROLE="${ROLE:-${1:-users}}"
+case "$ROLE" in
+  users)    DEFAULT_MAXW=10; ENV_VAR="SEPOLIA_IDENTITY_REGISTRY" ;;
+  relayers) DEFAULT_MAXW=2;  ENV_VAR="SEPOLIA_RELAYER_IDENTITY_REGISTRY" ;;
+  *) echo "ERROR: ROLE must be 'users' or 'relayers' (got '$ROLE')" >&2; exit 2 ;;
+esac
+MAX_WALLETS_PER_CERT="${MAX_WALLETS_PER_CERT:-$DEFAULT_MAXW}"
 SP1_VERIFIER_ADDRESS="${SP1_VERIFIER_ADDRESS:-0x3B6041173B80E77f038f3F2C0f9744f04837185e}"
+echo "[zk-x509-deploy] role=$ROLE  maxWalletsPerCert=$MAX_WALLETS_PER_CERT  env=$ENV_VAR"
 
 echo "[zk-x509-deploy] generating program vkey…"
 # set +e window: pipefail would otherwise abort before our explicit check,
@@ -92,19 +104,39 @@ CHAIN_ID="$(cast chain-id --rpc-url "$SEPOLIA_RPC_URL")"
 BLOCK="$(cast block-number --rpc-url "$SEPOLIA_RPC_URL")"
 DEPLOYER_ADDR="$(cast wallet address --private-key "$DEPLOYER_KEY")"
 
+# Upgrade authority: the IdentityRegistry is upgradeable, so record WHO controls
+# upgrades and HOW. zk-X509's Deploy.s.sol uses a UUPS (ERC1967) proxy — there is
+# no ProxyAdmin contract; upgrade rights live in the registry's own owner().
+# Detect the pattern from the ERC-1967 admin slot rather than assuming it: a
+# zeroed admin slot ⇒ UUPS; a set slot ⇒ a TransparentUpgradeableProxy + ProxyAdmin.
+OWNER="$(cast call "$REGISTRY" "owner()(address)" --rpc-url "$SEPOLIA_RPC_URL")"
+ERC1967_ADMIN_SLOT=0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6103
+ADMIN_RAW="$(cast storage "$REGISTRY" "$ERC1967_ADMIN_SLOT" --rpc-url "$SEPOLIA_RPC_URL")"
+PROXY_ADMIN="0x${ADMIN_RAW: -40}"
+if [ "$PROXY_ADMIN" = "0x0000000000000000000000000000000000000000" ]; then
+  PROXY_TYPE="UUPS (ERC1967Proxy)"
+  PROXY_ADMIN="(none — UUPS: upgrades gated by owner())"
+else
+  PROXY_TYPE="TransparentUpgradeableProxy"
+fi
+
 # Refuse to write an incomplete ledger — validate every field, not just the proxy.
-for pair in "registry=$REGISTRY" "impl=$IMPL" "chainId=$CHAIN_ID" "block=$BLOCK" "deployer=$DEPLOYER_ADDR"; do
+for pair in "registry=$REGISTRY" "impl=$IMPL" "chainId=$CHAIN_ID" "block=$BLOCK" "deployer=$DEPLOYER_ADDR" "owner=$OWNER"; do
   [ -n "${pair#*=}" ] || { echo "ERROR: failed to resolve ${pair%%=*} — refusing to write an incomplete ledger" >&2; exit 1; }
 done
 
 mkdir -p "$LEDGER_DIR"
-LEDGER="$LEDGER_DIR/zk-x509-${CHAIN_ID}.json"
+LEDGER="$LEDGER_DIR/zk-x509-${ROLE}-${CHAIN_ID}.json"
 cat > "$LEDGER" <<JSON
 {
+  "role": "${ROLE}",
   "chainId": ${CHAIN_ID},
   "deployBlock": ${BLOCK},
+  "proxyType": "${PROXY_TYPE}",
   "identityRegistry": "${REGISTRY}",
   "identityRegistryImpl": "${IMPL}",
+  "proxyAdmin": "${PROXY_ADMIN}",
+  "owner": "${OWNER}",
   "sp1Verifier": "${SP1_VERIFIER_ADDRESS}",
   "programVKey": "${PROGRAM_V_KEY}",
   "maxWalletsPerCert": ${MAX_WALLETS_PER_CERT},
@@ -118,7 +150,6 @@ echo "[zk-x509-deploy] ✅ ledger written: $LEDGER"
 echo "[zk-x509-deploy] IdentityRegistry: $REGISTRY  (chain $CHAIN_ID, block $BLOCK)"
 echo ""
 echo "Paste into contracts/.env for DeploySepolia:"
-echo "  SEPOLIA_IDENTITY_REGISTRY=$REGISTRY"
-echo "  SEPOLIA_RELAYER_IDENTITY_REGISTRY=$REGISTRY"
+echo "  ${ENV_VAR}=$REGISTRY"
 echo ""
 echo "Then: register CAs (addCA) so register() works, and run DeploySepolia."
