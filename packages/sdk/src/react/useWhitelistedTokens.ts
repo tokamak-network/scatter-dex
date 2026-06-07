@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ethers } from "ethers";
-import { fetchWhitelistedTokens } from "../core/whitelist";
+import { fetchWhitelistedTokensCached } from "../core/whitelistCache";
 import { isConfiguredAddress } from "../core/addresses";
 import type { TokenInfo } from "../core/tokens";
 
@@ -79,7 +79,7 @@ export function useWhitelistedTokens({
   const fallbackRef = useRef(fallback);
   fallbackRef.current = fallback;
 
-  const load = useCallback(() => {
+  const load = useCallback((force = false) => {
     const currentFallback = fallbackRef.current;
     if (!shouldFetch || !provider) {
       setTokens(currentFallback);
@@ -93,8 +93,12 @@ export function useWhitelistedTokens({
     setError(null);
     setSource("loading");
     setTokens(currentFallback); // show env list while the fetch runs
-    fetchWhitelistedTokens(provider, poolAddress, settlementAddress, {
+    // Cached read: a warm cache (same pool/settlement seen this session)
+    // resolves without an RPC round-trip; concurrent mounts share one
+    // in-flight read. `refresh()` forces a bypass.
+    fetchWhitelistedTokensCached(provider, poolAddress, settlementAddress, {
       overlay: currentFallback,
+      force,
     })
       .then((live) => {
         if (id !== runId.current) return;
@@ -128,7 +132,7 @@ export function useWhitelistedTokens({
     };
   }, [load]);
 
-  const refresh = useCallback(() => load(), [load]);
+  const refresh = useCallback(() => load(true), [load]);
 
   return { tokens, loading, error, source, refresh };
 }
