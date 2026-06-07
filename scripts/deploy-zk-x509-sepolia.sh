@@ -196,7 +196,53 @@ JSON
 write_role_ledger users "$USERS_REGISTRY" "$USERS_MAX_WALLETS"
 write_role_ledger relayers "$RELAYERS_REGISTRY" "$RELAYERS_MAX_WALLETS"
 
+# ── zk-X509-side ledger: keep the deployment record WITH the zk-X509 project,
+#    one comprehensive file per network (chainId) so zk-X509 can be operated /
+#    managed per-network on its own. Network name is derived for readability. ──
+case "$CHAIN_ID" in
+  1)        NETWORK="mainnet" ;;
+  11155111) NETWORK="sepolia" ;;
+  31337)    NETWORK="anvil" ;;
+  31338)    NETWORK="anvil-fork" ;;
+  *)        NETWORK="chain-${CHAIN_ID}" ;;
+esac
+ZK_LEDGER_DIR="$ZK_X509_REPO/deployments"
+mkdir -p "$ZK_LEDGER_DIR"
+cat > "$ZK_LEDGER_DIR/${CHAIN_ID}.json" <<JSON
+{
+  "network": "${NETWORK}",
+  "chainId": ${CHAIN_ID},
+  "deployBlock": ${BLOCK},
+  "deployer": "${DEPLOYER_ADDR}",
+  "owner": "${DEPLOYER_ADDR}",
+  "registryFactory": "${FACTORY}",
+  "beacon": "${BEACON}",
+  "registryImpl": "${IMPL}",
+  "sp1Verifier": "${SP1_VERIFIER}",
+  "programVKey": "${PROGRAM_V_KEY}",
+  "registries": {
+    "users": {
+      "address": "${USERS_REGISTRY}",
+      "maxWalletsPerCert": ${USERS_MAX_WALLETS},
+      "minDisclosureMask": ${MIN_DISCLOSURE_MASK},
+      "maxProofAge": ${MAX_PROOF_AGE},
+      "delegatedProving": ${DELEGATED_PROVING}
+    },
+    "relayers": {
+      "address": "${RELAYERS_REGISTRY}",
+      "maxWalletsPerCert": ${RELAYERS_MAX_WALLETS},
+      "minDisclosureMask": ${MIN_DISCLOSURE_MASK},
+      "maxProofAge": ${MAX_PROOF_AGE},
+      "delegatedProving": ${DELEGATED_PROVING}
+    }
+  },
+  "proxyType": "BeaconProxy (via RegistryFactory)",
+  "caMerkleRoot": "${ZERO32}"
+}
+JSON
+
 echo ""
+echo "[zk-x509-deploy] ✅ zk-X509 ledger: $ZK_LEDGER_DIR/${CHAIN_ID}.json  (network=$NETWORK)"
 echo "[zk-x509-deploy] ✅ ledgers written to $LEDGER_DIR/"
 echo "[zk-x509-deploy] RegistryFactory: $FACTORY  (chain $CHAIN_ID, block $BLOCK)"
 echo "[zk-x509-deploy] Users registry:    $USERS_REGISTRY    (maxWallets $USERS_MAX_WALLETS)"
