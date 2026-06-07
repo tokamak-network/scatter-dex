@@ -134,6 +134,15 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     /// @dev Only authorized depositors can call this. Caller must have already
     ///      transferred tokens to this contract. Verifies that the vault's actual
     ///      token balance covers total tracked liabilities after the new deposit.
+    ///
+    ///      INVARIANT — no fee-on-transfer / rebasing fee tokens. This credits the
+    ///      *requested* `amount` and then calls `_assertBalanceBacked`, which
+    ///      requires `balanceOf(this) >= totalTracked + platformRevenue`. If a
+    ///      fee-on-transfer token shaved the transfer, the actual balance falls
+    ///      short of the credited total and the call reverts with
+    ///      `InsufficientTokenBalance` — so under-funded (fee-on-transfer/rebasing)
+    ///      deposits are rejected rather than silently over-crediting the relayer.
+    ///      Fee tokens are expected to be standard ERC20s (e.g. TON).
     function deposit(address relayer, address token, uint256 amount) external nonReentrant {
         if (!authorizedDepositors[msg.sender]) revert NotAuthorized();
         if (relayer == address(0) || token == address(0)) revert ZeroAddress();
