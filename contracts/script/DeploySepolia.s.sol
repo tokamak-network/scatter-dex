@@ -127,7 +127,12 @@ contract DeploySepolia is Script {
 
         // ── 1. Identity gate (User CA) + relayer registry (Relayer CA) ──
         IdentityGate gate = _identityGateProxy(deployer, userRegistry);
-        RelayerRegistry relayerRegistry = _relayerRegistryProxy(deployer, relayerIdRegistry);
+        // Bond token = TON (ERC20 bond) via SEPOLIA_TON_ADDRESS; 0 → native-bond mode.
+        // bondToken is set ONCE here (structural — no setter). minBond is NOT set
+        // at deploy: the admin sets it on-chain post-deploy via the admin site
+        // (setMinBond), e.g. a fixed 2000 TON. Until then minBond = 0.
+        RelayerRegistry relayerRegistry =
+            _relayerRegistryProxy(deployer, relayerIdRegistry, vm.envOr("SEPOLIA_TON_ADDRESS", address(0)));
         d.gate = address(gate);
         d.relayerRegistry = address(relayerRegistry);
 
@@ -179,11 +184,10 @@ contract DeploySepolia is Script {
         pool.setTokenWhitelist(weth, true);
         settlement.setTokenWhitelist(weth, true);
         console.log("WETH whitelisted on CommitmentPool + PrivateSettlement");
-        // Non-WETH tokens are intentionally NOT whitelisted here. The owner adds
-        // them on-chain post-deploy via setTokenWhitelist (admin UI / cast) on
-        // BOTH CommitmentPool and PrivateSettlement; the frontend reads the live
-        // set on-chain via getWhitelistedTokens() (#927/#928), so the on-chain
-        // whitelist is the single source of truth — no deploy-time token env.
+        // Non-WETH tokens (USDC/USDT/TON) are registered ON-CHAIN post-deploy by
+        // the owner via setTokenWhitelist (admin UI / cast) on BOTH boundary
+        // contracts — not from env. The frontend reads the live set on-chain via
+        // getWhitelistedTokens() (#927/#928), so on-chain is the single source.
 
         // 4b. FeeVault: settlement may deposit fees; WETH unwraps to ETH on claim.
         vault.setAuthorizedDepositor(address(settlement), true);
@@ -237,11 +241,18 @@ contract DeploySepolia is Script {
         return IdentityGate(address(proxy));
     }
 
-    function _relayerRegistryProxy(address deployer, address relayerIdRegistry) internal returns (RelayerRegistry) {
+    function _relayerRegistryProxy(address deployer, address relayerIdRegistry, address bondToken_)
+        internal
+        returns (RelayerRegistry)
+    {
+        if (bondToken_ != address(0)) {
+            require(bondToken_.code.length > 0, "SEPOLIA_TON_ADDRESS (bondToken) has no code on this chain");
+        }
         RelayerRegistry impl = new RelayerRegistry();
-        // (owner, treasury, identityRegistry, bondToken). bondToken=0 → native-bond mode.
+        // (owner, treasury, identityRegistry, bondToken). bondToken=0 → native mode;
+        // non-zero → ERC20 bond. Here TON: relayers post a fixed TON bond (minBond).
         bytes memory initData =
-            abi.encodeCall(RelayerRegistry.initialize, (deployer, deployer, relayerIdRegistry, address(0)));
+            abi.encodeCall(RelayerRegistry.initialize, (deployer, deployer, relayerIdRegistry, bondToken_));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
         console.log("RelayerRegistry impl:", address(impl));
         console.log("RelayerRegistry proxy:", address(proxy));
