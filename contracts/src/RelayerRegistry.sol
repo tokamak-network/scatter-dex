@@ -228,6 +228,16 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      MUST be 0 — supplying both is an API misuse). In ERC20 mode, transfers
     ///      `bondAmount` from caller via `safeTransferFrom` and returns the same value
     ///      (`msg.value` MUST be 0).
+    ///
+    ///      INVARIANT — no fee-on-transfer / rebasing bond tokens. The ERC20 path
+    ///      records the *requested* `bondAmount` as the relayer's bond rather than
+    ///      measuring the balance delta, so the recorded bond must equal what the
+    ///      contract actually received. A fee-on-transfer or rebasing `bondToken`
+    ///      would break this (recorded > received), letting a relayer withdraw more
+    ///      on exit than was deposited. `bondToken` is therefore expected to be a
+    ///      standard ERC20 (e.g. TON) and is locked once at `initialize`. (Unlike
+    ///      `CommitmentPool.deposit`, which defends against fee-on-transfer via a
+    ///      balance-delta check, the bond path relies on this invariant.)
     function _pullBond(uint256 bondAmount) internal returns (uint256) {
         // `bondToken` is a storage var post-upgradeable migration (was `immutable`);
         // cache to avoid a redundant SLOAD on the ERC20 path.
