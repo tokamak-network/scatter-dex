@@ -24,7 +24,7 @@ import {BatchExecutor} from "../src/BatchExecutor.sol";
 ///      | deploys+mints 4 mock tokens    | NO token deploy; owner whitelists later |
 ///      | wraps 1100 ETH to anvil testers| (removed — would revert: no funds)      |
 ///      | auto-registers anvil acct #1   | NO register; operator uses /register UI |
-///      | reads DEPLOYER_KEY (plaintext) | NO key in-script; use --account keystore|
+///      | reads DEPLOYER_KEY (anvil default) | no key on CLI: DEPLOYER_KEY env OR --account |
 ///
 ///      Token policy: only WETH is wired at deploy, because it is a
 ///      structural init param of PrivateSettlement (and FeeVault's
