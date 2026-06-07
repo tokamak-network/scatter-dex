@@ -71,6 +71,15 @@ REQUIRED_ORG="${REQUIRED_ORG:-$ZERO32}"
 REQUIRED_ORG_UNIT="${REQUIRED_ORG_UNIT:-$ZERO32}"
 REQUIRED_COMMON_NAME="${REQUIRED_COMMON_NAME:-$ZERO32}"
 
+# Numeric fields are written UNQUOTED into JSON ledgers, and JSON rejects hex
+# literals (e.g. 0x0F — MIN_DISCLOSURE_MASK is documented as hex-capable).
+# `$(( ))` accepts both 0x.. and decimal input and always yields decimal, so the
+# emitted JSON is valid regardless of how the caller passed the value.
+MIN_DISCLOSURE_MASK=$(( MIN_DISCLOSURE_MASK ))
+MAX_PROOF_AGE=$(( MAX_PROOF_AGE ))
+USERS_MAX_WALLETS=$(( USERS_MAX_WALLETS ))
+RELAYERS_MAX_WALLETS=$(( RELAYERS_MAX_WALLETS ))
+
 echo "[zk-x509-deploy] factory flow: users(maxWallets=$USERS_MAX_WALLETS) + relayers(maxWallets=$RELAYERS_MAX_WALLETS)"
 echo "[zk-x509-deploy] config: mask=$MIN_DISCLOSURE_MASK proofAge=${MAX_PROOF_AGE}s delegatedProving=$DELEGATED_PROVING"
 
@@ -148,7 +157,8 @@ DEPLOYER_ADDR="$(cast wallet address --private-key "$DEPLOYER_KEY")"
 
 # Refuse to write an incomplete ledger — validate every resolved field.
 for pair in "factory=$FACTORY" "users=$USERS_REGISTRY" "relayers=$RELAYERS_REGISTRY" \
-            "impl=$IMPL" "chainId=$CHAIN_ID" "block=$BLOCK" "deployer=$DEPLOYER_ADDR"; do
+            "impl=$IMPL" "beacon=$BEACON" "sp1Verifier=$SP1_VERIFIER" "vkey=$PROGRAM_V_KEY" \
+            "chainId=$CHAIN_ID" "block=$BLOCK" "deployer=$DEPLOYER_ADDR"; do
   [ -n "${pair#*=}" ] || { echo "ERROR: failed to resolve ${pair%%=*} — refusing to write an incomplete ledger" >&2; exit 1; }
 done
 
@@ -196,7 +206,53 @@ JSON
 write_role_ledger users "$USERS_REGISTRY" "$USERS_MAX_WALLETS"
 write_role_ledger relayers "$RELAYERS_REGISTRY" "$RELAYERS_MAX_WALLETS"
 
+# ── zk-X509-side ledger: keep the deployment record WITH the zk-X509 project,
+#    one comprehensive file per network (chainId) so zk-X509 can be operated /
+#    managed per-network on its own. Network name is derived for readability. ──
+case "$CHAIN_ID" in
+  1)        NETWORK="mainnet" ;;
+  11155111) NETWORK="sepolia" ;;
+  31337)    NETWORK="anvil" ;;
+  31338)    NETWORK="anvil-fork" ;;
+  *)        NETWORK="chain-${CHAIN_ID}" ;;
+esac
+ZK_LEDGER_DIR="$ZK_X509_REPO/deployments"
+mkdir -p "$ZK_LEDGER_DIR"
+cat > "$ZK_LEDGER_DIR/${CHAIN_ID}.json" <<JSON
+{
+  "network": "${NETWORK}",
+  "chainId": ${CHAIN_ID},
+  "deployBlock": ${BLOCK},
+  "deployer": "${DEPLOYER_ADDR}",
+  "owner": "${DEPLOYER_ADDR}",
+  "registryFactory": "${FACTORY}",
+  "beacon": "${BEACON}",
+  "registryImpl": "${IMPL}",
+  "sp1Verifier": "${SP1_VERIFIER}",
+  "programVKey": "${PROGRAM_V_KEY}",
+  "registries": {
+    "users": {
+      "address": "${USERS_REGISTRY}",
+      "maxWalletsPerCert": ${USERS_MAX_WALLETS},
+      "minDisclosureMask": ${MIN_DISCLOSURE_MASK},
+      "maxProofAge": ${MAX_PROOF_AGE},
+      "delegatedProving": ${DELEGATED_PROVING}
+    },
+    "relayers": {
+      "address": "${RELAYERS_REGISTRY}",
+      "maxWalletsPerCert": ${RELAYERS_MAX_WALLETS},
+      "minDisclosureMask": ${MIN_DISCLOSURE_MASK},
+      "maxProofAge": ${MAX_PROOF_AGE},
+      "delegatedProving": ${DELEGATED_PROVING}
+    }
+  },
+  "proxyType": "BeaconProxy (via RegistryFactory)",
+  "caMerkleRoot": "${ZERO32}"
+}
+JSON
+
 echo ""
+echo "[zk-x509-deploy] ✅ zk-X509 ledger: $ZK_LEDGER_DIR/${CHAIN_ID}.json  (network=$NETWORK)"
 echo "[zk-x509-deploy] ✅ ledgers written to $LEDGER_DIR/"
 echo "[zk-x509-deploy] RegistryFactory: $FACTORY  (chain $CHAIN_ID, block $BLOCK)"
 echo "[zk-x509-deploy] Users registry:    $USERS_REGISTRY    (maxWallets $USERS_MAX_WALLETS)"
