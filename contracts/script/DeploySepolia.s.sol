@@ -194,6 +194,10 @@ contract DeploySepolia is Script {
         // 4c. Wire relayer registry + fee vault into settlement.
         settlement.setRelayerRegistry(address(relayerRegistry));
         settlement.setFeeVault(address(vault));
+        // Point the relayer registry at the protocol Treasury (not the deployer
+        // EOA it was initialized with) so RelayerRegistry.treasury() returns the
+        // real treasury for slashing/bond accounting. (review #930)
+        relayerRegistry.setTreasury(vault.treasury());
 
         // 4d. DEX routers — whitelist only if present on this chain. On
         //     most testnets 1inch/Uniswap are absent; market orders
