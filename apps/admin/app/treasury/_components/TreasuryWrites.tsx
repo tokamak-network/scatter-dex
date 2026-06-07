@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Contract, parseUnits } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
-import { shortAddr, useWallet } from "@zkscatter/sdk/react";
+import { shortAddr, useNetworkTokens, useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "../../lib/network";
 import { prettyAmount } from "../../lib/format";
 import { isValidEvmAddress } from "../../lib/x509";
@@ -57,6 +57,8 @@ export function TreasuryWrites({
   onReload: () => void;
 }) {
   const { readProvider } = useWallet();
+  // On-chain token set (Pool∩Settlement) with env fallback.
+  const { tokens: networkTokens } = useNetworkTokens(DEMO_NETWORK);
   const [balances, setBalances] = useState<TokenBalance[]>([]);
   const [ethBalance, setEthBalance] = useState<bigint | null>(null);
   const [wethBalance, setWethBalance] = useState<bigint | null>(null);
@@ -95,7 +97,7 @@ export function TreasuryWrites({
 
     // ERC20 balances — exclude WETH (merged into the ETH row)
     const wethAddrLower = DEMO_NETWORK.contracts.weth?.toLowerCase();
-    const tokens = DEMO_NETWORK.tokens.filter(
+    const tokens = networkTokens.filter(
       (t) => t.address.toLowerCase() !== wethAddrLower
     );
     void Promise.all(
@@ -121,7 +123,7 @@ export function TreasuryWrites({
       }).catch(() => {});
 
     return () => { cancelled = true; };
-  }, [readProvider, treasuryAddress, reloadKey]);
+  }, [readProvider, treasuryAddress, reloadKey, networkTokens]);
 
   if (!treasuryAddress || !isConfiguredAddress(treasuryAddress)) {
     return (
