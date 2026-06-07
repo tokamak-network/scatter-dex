@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useWallet, useNetworkTokens } from "@zkscatter/sdk/react";
 import {
   loadFeeVaultBalances,
   loadPendingFeeChange,
@@ -47,6 +47,10 @@ const FeeVaultCtx = createContext<FeeVaultState | null>(null);
 
 export function FeeVaultProvider({ children }: { children: ReactNode }) {
   const { account, readProvider } = useWallet();
+  // Token set to read balances for, sourced from the on-chain whitelist
+  // (Pool∩Settlement) with NEXT_PUBLIC_TOKENS as fallback — so a vault
+  // that accrued fees in a token added post-deploy still shows it.
+  const { tokens: networkTokens } = useNetworkTokens(DEMO_NETWORK);
   const [balances, setBalances] = useState<FeeVaultBalance[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +82,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    loadFeeVaultBalances(vaultAddress, account, DEMO_NETWORK.tokens, readProvider)
+    loadFeeVaultBalances(vaultAddress, account, networkTokens, readProvider)
       .then((b) => { if (!cancelled) setBalances(b); })
       .catch((e) => {
         if (cancelled) return;
@@ -87,7 +91,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [account, vaultDeployed, vaultAddress, readProvider, tick]);
+  }, [account, vaultDeployed, vaultAddress, readProvider, networkTokens, tick]);
 
   // Platform-fee read is account-independent and rarely changes
   // (owner-only `applyFeeChange` with a timelock), so we fetch it
