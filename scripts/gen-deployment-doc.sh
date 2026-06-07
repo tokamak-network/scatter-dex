@@ -149,6 +149,23 @@ for role in ("users", "relayers"):
 if zk:
     A("## zk-X509 IdentityRegistries")
     A("")
+    # RegistryFactory ledger (the non-upgradeable hub + shared beacon/impl that
+    # every registry BeaconProxy points at). Surfaced so the doc lists the full
+    # proxy + logic + factory + beacon set, not just the registry proxies.
+    fpath = os.path.join(deploy_dir, f"zk-x509-factory-{chain_id}.json")
+    if os.path.isfile(fpath):
+        f = json.load(open(fpath))
+        A("**Factory / beacon (shared by all registries):**")
+        A("")
+        A(row("Name", "Address"))
+        A(row("---", "---"))
+        A(row("RegistryFactory (plain, non-upgradeable)", f"`{f.get('registryFactory','?')}`"))
+        A(row("UpgradeableBeacon", f"`{f.get('beacon','?')}`"))
+        A(row("Registry implementation (logic, shared)", f"`{f.get('registryImpl','?')}`"))
+        A(row("SP1 verifier", f"`{f.get('sp1Verifier','?')}`"))
+        A("")
+    A("**Registries (BeaconProxy):**")
+    A("")
     A(row("Role", "Registry (proxy)", "Logic (impl)", "Type", "Owner", "Wallets/cert", "Block"))
     A(row(*(["---"] * 7)))
     for role, z in zk:
