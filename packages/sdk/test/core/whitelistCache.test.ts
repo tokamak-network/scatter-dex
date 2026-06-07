@@ -25,6 +25,7 @@ import {
 const POOL = "0x" + "1".repeat(40);
 const SET = "0x" + "2".repeat(40);
 const POOL2 = "0x" + "3".repeat(40);
+const A = "0x" + "a".repeat(40);
 const B = "0x" + "b".repeat(40);
 
 const provider = {} as never;
@@ -115,6 +116,47 @@ describe("fetchWhitelistedTokensCached", () => {
     invalidateWhitelistCache(POOL, SET);
     await fetchWhitelistedTokensCached(provider, POOL, SET, { now });
     expect(getterCalls).toBe(4);
+  });
+
+  it("a forced refetch in-flight wins — the superseded read can't cache a stale result", async () => {
+    // Controllable getters: every getWhitelistedTokens() parks its
+    // resolver so we can settle the two fetches out of order.
+    const resolvers: Array<(v: string[]) => void> = [];
+    contractHandler = (address: string) => {
+      const addr = address.toLowerCase();
+      if (addr === POOL.toLowerCase() || addr === SET.toLowerCase()) {
+        return {
+          getWhitelistedTokens: () =>
+            new Promise<string[]>((res) => {
+              getterCalls++;
+              resolvers.push(res);
+            }),
+        };
+      }
+      return { symbol: async () => "USDC", decimals: async () => 6n };
+    };
+
+    const now = () => 1000;
+    const p1 = fetchWhitelistedTokensCached(provider, POOL, SET, { now }); // resolvers 0,1
+    const p2 = fetchWhitelistedTokensCached(provider, POOL, SET, { now, force: true }); // resolvers 2,3
+
+    // Settle the forced fetch (p2) first → cache should hold [B].
+    resolvers[2]([B]);
+    resolvers[3]([B]);
+    const r2 = await p2;
+    expect(r2.map((t) => t.address)).toEqual([B]);
+
+    // Now settle the superseded original (p1) with a DIFFERENT set [A].
+    resolvers[0]([A]);
+    resolvers[1]([A]);
+    await p1;
+
+    // The cache must still hold the forced result [B], not the stale [A],
+    // and the next read is a hit (no extra fetch).
+    getterCalls = 0;
+    const r3 = await fetchWhitelistedTokensCached(provider, POOL, SET, { now });
+    expect(getterCalls).toBe(0);
+    expect(r3.map((t) => t.address)).toEqual([B]);
   });
 });
 

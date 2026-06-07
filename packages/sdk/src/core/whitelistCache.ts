@@ -96,10 +96,14 @@ function clearSession(key?: string): void {
       store.removeItem(SESSION_PREFIX + key);
       return;
     }
-    for (let i = store.length - 1; i >= 0; i--) {
+    // Collect first, then remove — mutating sessionStorage while
+    // index-walking it would shift indices and skip keys.
+    const toRemove: string[] = [];
+    for (let i = 0; i < store.length; i++) {
       const k = store.key(i);
-      if (k && k.startsWith(SESSION_PREFIX)) store.removeItem(k);
+      if (k && k.startsWith(SESSION_PREFIX)) toRemove.push(k);
     }
+    for (const k of toRemove) store.removeItem(k);
   } catch {
     // ignore
   }
@@ -158,13 +162,19 @@ export async function fetchWhitelistedTokensCached(
 
   const p = fetchWhitelistedTokens(provider, poolAddress, settlementAddress, options)
     .then((tokens) => {
-      const entry: CacheEntry = { tokens, expires: now() + ttl };
-      memory.set(key, entry);
-      writeSession(key, entry);
+      // Only commit if this is still the current in-flight read. A
+      // concurrent force/invalidate may have superseded it — writing
+      // then would cache a stale (pre-invalidation) result.
+      if (inflight.get(key) === p) {
+        const entry: CacheEntry = { tokens, expires: now() + ttl };
+        memory.set(key, entry);
+        writeSession(key, entry);
+      }
       return tokens;
     })
     .finally(() => {
-      inflight.delete(key);
+      // Don't evict a newer in-flight read that already replaced this one.
+      if (inflight.get(key) === p) inflight.delete(key);
     });
   inflight.set(key, p);
   return p;
