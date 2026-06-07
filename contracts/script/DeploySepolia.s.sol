@@ -55,8 +55,9 @@ import {BatchExecutor} from "../src/BatchExecutor.sol";
 ///   UPGRADE_OWNER                      ProxyAdmin owner for every proxy (multisig recommended)
 ///   TREASURY_ADDRESS                   Treasury owner / platform-fee recipient (multisig recommended)
 /// Optional env:
-///   SEPOLIA_WHITELIST_TOKENS   comma-separated live ERC20s to whitelist at deploy (USDC,USDT,TON…)
 ///   SANCTIONS_EXTERNAL_ORACLE  external sanctions oracle, OR-combined into SanctionsList
+/// Tokens (USDC/USDT/TON/…) are NOT whitelisted at deploy — owner adds them
+/// on-chain post-deploy via setTokenWhitelist; the frontend reads them on-chain.
 /// RPC/verify: --rpc-url sepolia (foundry.toml → SEPOLIA_RPC_URL), --verify (ETHERSCAN_API_KEY)
 contract DeploySepolia is Script {
     /// @dev ProxyAdmin owner for every TransparentUpgradeableProxy below.
@@ -178,18 +179,11 @@ contract DeploySepolia is Script {
         pool.setTokenWhitelist(weth, true);
         settlement.setTokenWhitelist(weth, true);
         console.log("WETH whitelisted on CommitmentPool + PrivateSettlement");
-
-        // Optional: extra already-on-chain tokens to whitelist at deploy
-        // (comma-separated `WHITELIST_TOKENS`, e.g. USDC,USDT,TON,WTON). No
-        // tokens are deployed — these must be live ERC20s on the target chain.
-        // Anything not listed can still be added post-deploy via setTokenWhitelist.
-        address[] memory extraTokens = vm.envOr("SEPOLIA_WHITELIST_TOKENS", ",", new address[](0));
-        for (uint256 i = 0; i < extraTokens.length; i++) {
-            require(extraTokens[i].code.length > 0, "SEPOLIA_WHITELIST_TOKENS entry has no code on this chain");
-            pool.setTokenWhitelist(extraTokens[i], true);
-            settlement.setTokenWhitelist(extraTokens[i], true);
-            console.log("Token whitelisted:", extraTokens[i]);
-        }
+        // Non-WETH tokens are intentionally NOT whitelisted here. The owner adds
+        // them on-chain post-deploy via setTokenWhitelist (admin UI / cast) on
+        // BOTH CommitmentPool and PrivateSettlement; the frontend reads the live
+        // set on-chain via getWhitelistedTokens() (#927/#928), so the on-chain
+        // whitelist is the single source of truth — no deploy-time token env.
 
         // 4b. FeeVault: settlement may deposit fees; WETH unwraps to ETH on claim.
         vault.setAuthorizedDepositor(address(settlement), true);
