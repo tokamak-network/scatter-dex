@@ -165,6 +165,104 @@ contract RelayerRegistryTest is Test {
         registry.requestExit();
     }
 
+    // ─── Admin force-removal ─────────────────────────────────────
+
+    event RelayerForceRemoved(address indexed relayer, string reason, uint256 exitAfter);
+
+    function test_adminRemoveRelayer_hides_and_starts_cooldown() public {
+        vm.prank(relayer1);
+        registry.register{value: 1 ether}("http://relay1.com", "Relayer-test", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        uint256 ts = block.timestamp;
+        vm.expectEmit(true, false, false, true);
+        emit RelayerForceRemoved(relayer1, "kyc revoked", ts + registry.EXIT_COOLDOWN());
+        registry.adminRemoveRelayer(relayer1, "kyc revoked");
+
+        // Hidden from the active set immediately, but still in cooldown limbo:
+        // `active` stays true so the bond can be recovered via executeExit.
+        assertFalse(registry.isActiveRelayer(relayer1));
+        assertEq(registry.getActiveRelayers().length, 0);
+        (,,, uint256 bond,, uint256 exitAt, bool active) = registry.relayers(relayer1);
+        assertEq(exitAt, ts);
+        assertTrue(active);
+        assertEq(bond, 1 ether);
+    }
+
+    function test_adminRemoveRelayer_only_owner_reverts() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
+
+        vm.prank(relayer2);
+        vm.expectRevert();
+        registry.adminRemoveRelayer(relayer1, "nope");
+    }
+
+    function test_adminRemoveRelayer_not_registered_reverts() public {
+        vm.expectRevert(RelayerRegistry.NotRegistered.selector);
+        registry.adminRemoveRelayer(relayer1, "ghost");
+    }
+
+    /// @dev Core guarantee: a force-removed relayer's bond is never stranded —
+    ///      they recover it via the normal executeExit path after cooldown.
+    function test_adminRemoveRelayer_then_executeExit_returns_bond() public {
+        vm.prank(relayer1);
+        registry.register{value: 1 ether}("http://relay1.com", "Relayer-test", 30, 0);
+
+        registry.adminRemoveRelayer(relayer1, "compromised key");
+
+        // Cannot exit before cooldown.
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.CooldownNotPassed.selector);
+        registry.executeExit();
+
+        vm.warp(block.timestamp + 7 days);
+        uint256 balBefore = relayer1.balance;
+        vm.prank(relayer1);
+        registry.executeExit();
+
+        assertEq(relayer1.balance, balBefore + 1 ether);
+        (,,, uint256 bond,,, bool active) = registry.relayers(relayer1);
+        assertFalse(active);
+        assertEq(bond, 0);
+    }
+
+    /// @dev Re-invoking on an already-exiting relayer must not extend or reset
+    ///      the cooldown (no griefing the relayer with a longer wait).
+    function test_adminRemoveRelayer_preserves_existing_exit_timestamp() public {
+        vm.startPrank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
+        registry.requestExit();
+        vm.stopPrank();
+        (,,,,, uint256 exitAtBefore,) = registry.relayers(relayer1);
+
+        vm.warp(block.timestamp + 3 days);
+        registry.adminRemoveRelayer(relayer1, "late force");
+
+        (,,,,, uint256 exitAtAfter,) = registry.relayers(relayer1);
+        assertEq(exitAtAfter, exitAtBefore);
+    }
+
+    /// @dev A force-removed relayer cannot wriggle out of the exit.
+    function test_adminRemoveRelayer_blocks_update_and_reregister() public {
+        vm.prank(relayer1);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
+
+        registry.adminRemoveRelayer(relayer1, "out");
+
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.AlreadyExiting.selector);
+        registry.updateInfo("http://new.com", "Relayer-test", 20);
+
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.AlreadyRegistered.selector);
+        registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
+
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.AlreadyExiting.selector);
+        registry.requestExit();
+    }
+
     // ─── Views ───────────────────────────────────────────────────
 
     function test_getActiveRelayers() public {

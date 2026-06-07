@@ -79,6 +79,9 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
     event IdentityRegistryUpdated(address oldRegistry, address newRegistry);
     event KycApprovalRegistryUpdated(address oldRegistry, address newRegistry);
+    /// @param exitAfter Timestamp after which the relayer can `executeExit` to
+    ///        recover their bond (the cooldown deadline).
+    event RelayerForceRemoved(address indexed relayer, string reason, uint256 exitAfter);
 
     // ─── Errors ──────────────────────────────────────────────────
     error AlreadyRegistered();
@@ -323,6 +326,31 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     function setMinBond(uint256 _minBond) external onlyOwner {
         emit MinBondUpdated(minBond, _minBond);
         minBond = _minBond;
+    }
+
+    /// @notice Admin-forced removal of a relayer (e.g. revoked KYC approval,
+    ///         compromised key, or misbehaviour).
+    /// @dev Forces the relayer into the same exit pipeline as a self
+    ///      `requestExit`: it is hidden from the active set immediately and the
+    ///      cooldown starts, but the bond is deliberately NOT touched here.
+    ///        - Keeping `active == true` lets the relayer recover the full bond
+    ///          via the normal `executeExit` after cooldown — flipping it to
+    ///          false would strand the bond (`executeExit` requires `active`).
+    ///          This does not slash; slashing, if added, is separate.
+    ///        - Not pushing the bond here means a malicious relayer can't block
+    ///          their own removal with a reverting receiver; the
+    ///          relayer-initiated `executeExit` owns the transfer.
+    ///      The removal can't be undone or dodged: while exiting, every
+    ///      active-set view excludes the relayer and
+    ///      `updateInfo`/`register`/`requestExit` revert. Idempotent on the
+    ///      timestamp — a re-invocation preserves the original cooldown.
+    function adminRemoveRelayer(address relayer, string calldata reason) external onlyOwner {
+        Relayer storage r = relayers[relayer];
+        if (!r.active) revert NotRegistered();
+        if (r.exitRequestedAt == 0) {
+            r.exitRequestedAt = block.timestamp;
+        }
+        emit RelayerForceRemoved(relayer, reason, r.exitRequestedAt + EXIT_COOLDOWN);
     }
 
     /// @notice Swap the IdentityRegistry the registry checks for relayer verification.
