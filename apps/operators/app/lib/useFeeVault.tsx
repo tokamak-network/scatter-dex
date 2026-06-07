@@ -50,7 +50,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   // Token set to read balances for, sourced from the on-chain whitelist
   // (Pool∩Settlement) with NEXT_PUBLIC_TOKENS as fallback — so a vault
   // that accrued fees in a token added post-deploy still shows it.
-  const { tokens: networkTokens } = useNetworkTokens(DEMO_NETWORK);
+  const { tokens: networkTokens, loading: tokensLoading } = useNetworkTokens(DEMO_NETWORK);
   const [balances, setBalances] = useState<FeeVaultBalance[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +75,10 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
   }, [account, vaultAddress]);
 
   useEffect(() => {
-    if (!account || !vaultDeployed || !vaultAddress) {
+    // Wait for the on-chain token list to resolve before reading
+    // balances — otherwise the first pass fires against the transient
+    // env fallback (often empty) and then has to refetch.
+    if (!account || !vaultDeployed || !vaultAddress || tokensLoading) {
       setLoading(false);
       return;
     }
@@ -91,7 +94,7 @@ export function FeeVaultProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [account, vaultDeployed, vaultAddress, readProvider, networkTokens, tick]);
+  }, [account, vaultDeployed, vaultAddress, readProvider, networkTokens, tokensLoading, tick]);
 
   // Platform-fee read is account-independent and rarely changes
   // (owner-only `applyFeeChange` with a timelock), so we fetch it

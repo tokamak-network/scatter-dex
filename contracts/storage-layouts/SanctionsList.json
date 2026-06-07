@@ -1,7 +1,7 @@
 {
   "storage": [
     {
-      "astId": 47006,
+      "astId": 44840,
       "contract": "src/SanctionsList.sol:SanctionsList",
       "label": "sanctioned",
       "offset": 0,
@@ -9,15 +9,15 @@
       "type": "t_mapping(t_address,t_bool)"
     },
     {
-      "astId": 47013,
+      "astId": 44847,
       "contract": "src/SanctionsList.sol:SanctionsList",
       "label": "externalOracle",
       "offset": 0,
       "slot": "1",
-      "type": "t_contract(ISanctionsList)48158"
+      "type": "t_contract(ISanctionsList)45240"
     },
     {
-      "astId": 47018,
+      "astId": 44852,
       "contract": "src/SanctionsList.sol:SanctionsList",
       "label": "__gap",
       "offset": 0,
@@ -42,7 +42,7 @@
       "label": "bool",
       "numberOfBytes": "1"
     },
-    "t_contract(ISanctionsList)48158": {
+    "t_contract(ISanctionsList)45240": {
       "encoding": "inplace",
       "label": "contract ISanctionsList",
       "numberOfBytes": "20"
