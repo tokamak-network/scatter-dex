@@ -46,14 +46,18 @@ import {BatchExecutor} from "../src/BatchExecutor.sol";
 ///   DO NOT pass `--private-key 0x...` inline — that DOES leak into shell
 ///   history, `ps` output, and any session log.
 ///
-/// Required env (all revert if unset/zero — no silent defaults on a real chain):
-///   IDENTITY_REGISTRY          real zk-X509 User-CA IdentityRegistry (gates deposits/claims)
-///   RELAYER_IDENTITY_REGISTRY  real zk-X509 Relayer-CA IdentityRegistry (gates register())
-///   UPGRADE_OWNER              ProxyAdmin owner for every proxy (multisig recommended)
-///   TREASURY_ADDRESS          Treasury owner / platform-fee recipient (multisig recommended)
-///   WETH_ADDRESS              canonical WETH9 already deployed on the target chain
+/// Required env (all revert if unset/zero — no silent defaults on a real chain).
+/// Network-specific addresses are SEPOLIA_-prefixed (matches SEPOLIA_RPC_URL);
+/// cross-network roles stay generic.
+///   SEPOLIA_IDENTITY_REGISTRY          real zk-X509 User-CA IdentityRegistry (gates deposits/claims)
+///   SEPOLIA_RELAYER_IDENTITY_REGISTRY  real zk-X509 Relayer-CA IdentityRegistry (gates register())
+///   SEPOLIA_WETH_ADDRESS               canonical WETH9 already deployed on the target chain
+///   UPGRADE_OWNER                      ProxyAdmin owner for every proxy (multisig recommended)
+///   TREASURY_ADDRESS                   Treasury owner / platform-fee recipient (multisig recommended)
 /// Optional env:
+///   SEPOLIA_WHITELIST_TOKENS   comma-separated live ERC20s to whitelist at deploy (USDC,USDT,TON…)
 ///   SANCTIONS_EXTERNAL_ORACLE  external sanctions oracle, OR-combined into SanctionsList
+/// RPC/verify: --rpc-url sepolia (foundry.toml → SEPOLIA_RPC_URL), --verify (ETHERSCAN_API_KEY)
 contract DeploySepolia is Script {
     /// @dev ProxyAdmin owner for every TransparentUpgradeableProxy below.
     ///      Resolved once from UPGRADE_OWNER; read by every `_deploy…Proxy`.
@@ -83,23 +87,23 @@ contract DeploySepolia is Script {
 
     function run() external {
         // ── 0. Required external addresses — no mocks, no defaults ──
-        address userRegistry = vm.envAddress("IDENTITY_REGISTRY");
-        address relayerIdRegistry = vm.envAddress("RELAYER_IDENTITY_REGISTRY");
+        address userRegistry = vm.envAddress("SEPOLIA_IDENTITY_REGISTRY");
+        address relayerIdRegistry = vm.envAddress("SEPOLIA_RELAYER_IDENTITY_REGISTRY");
         address treasuryOwner = vm.envAddress("TREASURY_ADDRESS");
-        address weth = vm.envAddress("WETH_ADDRESS");
+        address weth = vm.envAddress("SEPOLIA_WETH_ADDRESS");
         _upgradeOwner = vm.envAddress("UPGRADE_OWNER");
-        require(userRegistry != address(0), "IDENTITY_REGISTRY=0");
-        require(relayerIdRegistry != address(0), "RELAYER_IDENTITY_REGISTRY=0");
+        require(userRegistry != address(0), "SEPOLIA_IDENTITY_REGISTRY=0");
+        require(relayerIdRegistry != address(0), "SEPOLIA_RELAYER_IDENTITY_REGISTRY=0");
         require(treasuryOwner != address(0), "TREASURY_ADDRESS=0");
         require(_upgradeOwner != address(0), "UPGRADE_OWNER=0");
-        require(weth != address(0), "WETH_ADDRESS=0");
+        require(weth != address(0), "SEPOLIA_WETH_ADDRESS=0");
         // Catch wrong-network / typo'd addresses before they silently break at
         // runtime: WETH is a structural init param of PrivateSettlement, and
         // the registries are queried (isVerified) on every deposit/register —
         // an EOA or wrong address there would deploy fine but brick the flow.
-        require(weth.code.length > 0, "WETH_ADDRESS has no code on this chain");
-        require(userRegistry.code.length > 0, "IDENTITY_REGISTRY has no code on this chain");
-        require(relayerIdRegistry.code.length > 0, "RELAYER_IDENTITY_REGISTRY has no code on this chain");
+        require(weth.code.length > 0, "SEPOLIA_WETH_ADDRESS has no code on this chain");
+        require(userRegistry.code.length > 0, "SEPOLIA_IDENTITY_REGISTRY has no code on this chain");
+        require(relayerIdRegistry.code.length > 0, "SEPOLIA_RELAYER_IDENTITY_REGISTRY has no code on this chain");
         d.weth = weth;
         d.identityRegistry = userRegistry;
         d.relayerIdentityRegistry = relayerIdRegistry;
@@ -179,9 +183,9 @@ contract DeploySepolia is Script {
         // (comma-separated `WHITELIST_TOKENS`, e.g. USDC,USDT,TON,WTON). No
         // tokens are deployed — these must be live ERC20s on the target chain.
         // Anything not listed can still be added post-deploy via setTokenWhitelist.
-        address[] memory extraTokens = vm.envOr("WHITELIST_TOKENS", ",", new address[](0));
+        address[] memory extraTokens = vm.envOr("SEPOLIA_WHITELIST_TOKENS", ",", new address[](0));
         for (uint256 i = 0; i < extraTokens.length; i++) {
-            require(extraTokens[i].code.length > 0, "WHITELIST_TOKENS entry has no code on this chain");
+            require(extraTokens[i].code.length > 0, "SEPOLIA_WHITELIST_TOKENS entry has no code on this chain");
             pool.setTokenWhitelist(extraTokens[i], true);
             settlement.setTokenWhitelist(extraTokens[i], true);
             console.log("Token whitelisted:", extraTokens[i]);
