@@ -51,11 +51,27 @@ MAX_WALLETS_PER_CERT="${MAX_WALLETS_PER_CERT:-10}"
 SP1_VERIFIER_ADDRESS="${SP1_VERIFIER_ADDRESS:-0x3B6041173B80E77f038f3F2C0f9744f04837185e}"
 
 echo "[zk-x509-deploy] generating program vkey…"
-PROGRAM_V_KEY="$(cd "$ZK_X509_REPO" && cargo run --release --bin vkey 2>/dev/null | grep -oE '0x[0-9a-fA-F]{64}' | head -1)"
-[ -n "$PROGRAM_V_KEY" ] || { echo "ERROR: could not derive PROGRAM_V_KEY (cargo run --bin vkey failed)"; exit 1; }
+# set +e window: pipefail would otherwise abort before our explicit check,
+# swallowing the cargo error. Keep stderr so a build failure is visible.
+set +e
+VKEY_OUT="$(cd "$ZK_X509_REPO" && cargo run --release --bin vkey 2>&1)"; vkey_rc=$?
+set -e
+PROGRAM_V_KEY="$(echo "$VKEY_OUT" | grep -oE '0x[0-9a-fA-F]{64}' | head -1)"
+if [ "$vkey_rc" -ne 0 ] || [ -z "$PROGRAM_V_KEY" ]; then
+  echo "ERROR: could not derive PROGRAM_V_KEY (cargo run --bin vkey rc=$vkey_rc):" >&2
+  echo "$VKEY_OUT" | tail -10 >&2
+  exit 1
+fi
 echo "[zk-x509-deploy] PROGRAM_V_KEY=$PROGRAM_V_KEY"
 
 echo "[zk-x509-deploy] deploying IdentityRegistry (MAX_WALLETS_PER_CERT=$MAX_WALLETS_PER_CERT)…"
+# set +e window: forge can exit non-zero even on a SUCCESSFUL broadcast, so
+# success is decided by parsing the output (ONCHAIN EXECUTION COMPLETE), not $?.
+# NOTE: --private-key puts the key in this process's args (visible to `ps` on
+# this host for the forge run's duration). zk-X509's Deploy.s.sol uses a no-arg
+# vm.startBroadcast(), so a CLI key is required. For stricter handling, import
+# the key into a Foundry keystore and run Deploy.s.sol manually with --account.
+set +e
 OUT="$(cd "$ZK_X509_REPO/contracts" && \
   SP1_VERIFIER_ADDRESS="$SP1_VERIFIER_ADDRESS" \
   PROGRAM_V_KEY="$PROGRAM_V_KEY" \
@@ -64,17 +80,22 @@ OUT="$(cd "$ZK_X509_REPO/contracts" && \
   forge script script/Deploy.s.sol --tc DeployScript \
     --rpc-url "$SEPOLIA_RPC_URL" --broadcast \
     --private-key "$DEPLOYER_KEY" 2>&1)"
+set -e
 
 echo "$OUT" | grep -iE "Max wallets|IdentityRegistry|WARNING|ONCHAIN EXECUTION" || true
-echo "$OUT" | grep -qi "ONCHAIN EXECUTION COMPLETE" || { echo "ERROR: deploy did not complete:"; echo "$OUT" | tail -20; exit 1; }
+echo "$OUT" | grep -qi "ONCHAIN EXECUTION COMPLETE" || { echo "ERROR: deploy did not complete:" >&2; echo "$OUT" | tail -20 >&2; exit 1; }
 
 REGISTRY="$(echo "$OUT" | grep -i "IdentityRegistry proxy" | grep -oE '0x[0-9a-fA-F]{40}' | head -1)"
 IMPL="$(echo "$OUT" | grep -i "IdentityRegistry implementation" | grep -oE '0x[0-9a-fA-F]{40}' | head -1)"
-[ -n "$REGISTRY" ] || { echo "ERROR: could not parse IdentityRegistry proxy address"; exit 1; }
+# No 2>/dev/null — an RPC failure here must surface, not silently empty a field.
+CHAIN_ID="$(cast chain-id --rpc-url "$SEPOLIA_RPC_URL")"
+BLOCK="$(cast block-number --rpc-url "$SEPOLIA_RPC_URL")"
+DEPLOYER_ADDR="$(cast wallet address --private-key "$DEPLOYER_KEY")"
 
-CHAIN_ID="$(cast chain-id --rpc-url "$SEPOLIA_RPC_URL" 2>/dev/null)"
-BLOCK="$(cast block-number --rpc-url "$SEPOLIA_RPC_URL" 2>/dev/null)"
-DEPLOYER_ADDR="$(cast wallet address --private-key "$DEPLOYER_KEY" 2>/dev/null)"
+# Refuse to write an incomplete ledger — validate every field, not just the proxy.
+for pair in "registry=$REGISTRY" "impl=$IMPL" "chainId=$CHAIN_ID" "block=$BLOCK" "deployer=$DEPLOYER_ADDR"; do
+  [ -n "${pair#*=}" ] || { echo "ERROR: failed to resolve ${pair%%=*} — refusing to write an incomplete ledger" >&2; exit 1; }
+done
 
 mkdir -p "$LEDGER_DIR"
 LEDGER="$LEDGER_DIR/zk-x509-${CHAIN_ID}.json"
