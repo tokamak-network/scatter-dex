@@ -287,6 +287,25 @@ describe("fetchWhitelistMembership", () => {
     expect(rows.map((r) => r.token.symbol)).toEqual(["WTON", "USDC", "ZZZ"]);
   });
 
+  it("keeps a whitelisted token with unreadable metadata as an address-labelled placeholder", async () => {
+    // B is whitelisted on the pool but its symbol()/decimals() revert
+    // and there's no overlay entry — the admin must still see it (to
+    // remove/relabel a broken token), so it must NOT be dropped.
+    setChain({
+      poolList: [A, B],
+      settlementList: [A],
+      erc20: {
+        [A.toLowerCase()]: { symbol: async () => "AAA", decimals: async () => 18n },
+      },
+    });
+
+    const rows = await fetchWhitelistMembership(provider, POOL, SET);
+    expect(rows.map((r) => r.token.address).sort()).toEqual([A, B].sort());
+    const bRow = rows.find((r) => r.token.address === B)!;
+    expect(bRow.token.symbol).toBe(B); // placeholder = the address
+    expect(bRow).toMatchObject({ inPool: true, inSettlement: false });
+  });
+
   it("returns [] without touching the chain when an address is unconfigured", async () => {
     expect(await fetchWhitelistMembership(provider, ZERO_ADDRESS, SET)).toEqual([]);
     expect(await fetchWhitelistMembership(provider, POOL, ZERO_ADDRESS)).toEqual([]);

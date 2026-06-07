@@ -372,6 +372,9 @@ export interface WhitelistMembership {
  *
  *  `symbol`/`decimals` are read on-chain (overlay overrides the label
  *  and backstops a reverted read — see {@link FetchWhitelistedTokensOptions}).
+ *  Unlike {@link fetchWhitelistedTokens}, a token whose metadata can't be
+ *  resolved is **not dropped** — it's whitelisted, so the admin must see
+ *  it; it's kept with an address-labelled placeholder symbol.
  *  Result is sorted deterministically (overlay order first, then
  *  symbol/address). Returns `[]` when either address is unconfigured; a
  *  getter revert throws so the caller can fall back. */
@@ -414,24 +417,31 @@ export async function fetchWhitelistMembership(
   }
 
   const overlayMap = buildOverlayMap(options.overlay);
-  const resolved = (
-    await Promise.all(
-      union.map(async (address) => {
-        const token = await buildTokenInfo(
-          provider,
-          address,
-          overlayMap.get(address.toLowerCase())?.token,
-        );
-        if (!token) return null;
-        const key = address.toLowerCase();
-        return {
-          token,
-          inPool: poolSet.has(key),
-          inSettlement: settlementSet.has(key),
-        };
-      }),
-    )
-  ).filter((m): m is WhitelistMembership => m !== null);
+  const resolved = await Promise.all(
+    union.map(async (address) => {
+      const built = await buildTokenInfo(
+        provider,
+        address,
+        overlayMap.get(address.toLowerCase())?.token,
+      );
+      // Unlike the intersection picker, the admin/union view keeps a
+      // whitelisted token even when its ERC-20 metadata is unreadable —
+      // a broken/non-standard token is exactly what an operator needs to
+      // see and remove. Fall back to an address-labelled placeholder.
+      const token: TokenInfo = built ?? {
+        address,
+        symbol: address,
+        decimals: 18,
+        isNative: false,
+      };
+      const key = address.toLowerCase();
+      return {
+        token,
+        inPool: poolSet.has(key),
+        inSettlement: settlementSet.has(key),
+      };
+    }),
+  );
 
   resolved.sort((a, b) => compareTokens(a.token, b.token, overlayMap));
   return resolved;

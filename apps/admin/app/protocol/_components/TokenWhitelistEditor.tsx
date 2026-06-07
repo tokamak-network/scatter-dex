@@ -45,16 +45,25 @@ export function TokenWhitelistList({
   const { readProvider } = useWallet();
   const [rows, setRows] = useState<WhitelistMembership[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!readProvider) return;
     let cancelled = false;
     setLoading(true);
+    setError(null);
     fetchWhitelistMembership(readProvider, poolAddress, settlementAddress, {
       overlay: DEMO_NETWORK.tokens,
     })
       .then((r) => { if (!cancelled) setRows(r); })
-      .catch(() => { if (!cancelled) setRows([]); })
+      .catch((err) => {
+        if (cancelled) return;
+        // Surface the failure instead of falling through to the empty
+        // state — a getter revert / RPC error must not read as "nothing
+        // is whitelisted".
+        setError(err instanceof Error ? err.message : "Failed to read whitelist");
+        setRows([]);
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [poolAddress, settlementAddress, readProvider, reloadKey]);
@@ -63,6 +72,14 @@ export function TokenWhitelistList({
     return (
       <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center text-sm text-[var(--color-text-muted)]">
         Reading the on-chain token whitelist…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-[var(--color-danger)] bg-[var(--color-surface)] p-6 text-center text-sm text-[var(--color-danger)]">
+        ⚠ Failed to read the on-chain token whitelist: {error}
       </div>
     );
   }
