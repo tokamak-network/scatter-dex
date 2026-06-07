@@ -45,9 +45,12 @@ contract IncrementalMerkleTreeZerosTest is Test {
         }
     }
 
-    /// @dev `_zeros` only defines levels 0..19; anything beyond is out of range.
-    function test_zeros_out_of_range_reverts() public {
+    /// @dev `_zeros` only defines levels 0..19; ANY level >= 20 must revert
+    ///      with `LevelOutOfRange` (never a panic or a stray value). Fuzzed
+    ///      across the whole out-of-range space rather than just the boundary.
+    function test_zeros_out_of_range_reverts(uint32 i) public {
+        i = uint32(bound(i, 20, type(uint32).max));
         vm.expectRevert(IncrementalMerkleTree.LevelOutOfRange.selector);
-        h.zeros(20);
+        h.zeros(i);
     }
 }
