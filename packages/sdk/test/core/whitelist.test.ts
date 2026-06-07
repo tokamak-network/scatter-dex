@@ -18,7 +18,10 @@ vi.mock("ethers", async (importOriginal) => {
   return { ...actual, ethers: { ...actual.ethers, Contract: MockContract } };
 });
 
-import { fetchWhitelistedTokens } from "../../src/core/whitelist";
+import {
+  fetchWhitelistedTokens,
+  fetchWhitelistMembership,
+} from "../../src/core/whitelist";
 import { ZERO_ADDRESS } from "../../src/core/addresses";
 
 const POOL = "0x1111111111111111111111111111111111111111";
@@ -224,5 +227,82 @@ describe("fetchWhitelistedTokens", () => {
     };
 
     await expect(fetchWhitelistedTokens(provider, POOL, SET)).rejects.toThrow();
+  });
+});
+
+describe("fetchWhitelistMembership", () => {
+  it("returns the union with per-contract membership flags", async () => {
+    // pool: A, B   settlement: B, C   → union A, B, C
+    setChain({
+      poolList: [A, B],
+      settlementList: [B, C],
+      erc20: {
+        [A.toLowerCase()]: { symbol: async () => "AAA", decimals: async () => 18n },
+        [B.toLowerCase()]: { symbol: async () => "BBB", decimals: async () => 6n },
+        [C.toLowerCase()]: { symbol: async () => "CCC", decimals: async () => 18n },
+      },
+    });
+
+    const rows = await fetchWhitelistMembership(provider, POOL, SET);
+
+    const byAddr = new Map(rows.map((r) => [r.token.address, r]));
+    expect(rows.map((r) => r.token.address).sort()).toEqual([A, B, C].sort());
+    expect(byAddr.get(A)).toMatchObject({ inPool: true, inSettlement: false });
+    expect(byAddr.get(B)).toMatchObject({ inPool: true, inSettlement: true });
+    expect(byAddr.get(C)).toMatchObject({ inPool: false, inSettlement: true });
+    // metadata resolved on-chain
+    expect(byAddr.get(B)!.token).toMatchObject({ symbol: "BBB", decimals: 6 });
+  });
+
+  it("flags a pool/settlement mismatch (in one contract only)", async () => {
+    setChain({
+      poolList: [A],
+      settlementList: [],
+      erc20: { [A.toLowerCase()]: { symbol: async () => "AAA", decimals: async () => 18n } },
+    });
+
+    const [row] = await fetchWhitelistMembership(provider, POOL, SET);
+    expect(row.inPool).toBe(true);
+    expect(row.inSettlement).toBe(false);
+    expect(row.inPool !== row.inSettlement).toBe(true); // the mismatch the admin UI surfaces
+  });
+
+  it("orders overlay tokens first, then extras by symbol", async () => {
+    setChain({
+      poolList: [A, B, C],
+      settlementList: [A, B, C],
+      erc20: {
+        [A.toLowerCase()]: { symbol: async () => "ZZZ", decimals: async () => 18n },
+        [B.toLowerCase()]: { symbol: async () => "USDC", decimals: async () => 6n },
+        [C.toLowerCase()]: { symbol: async () => "WTON", decimals: async () => 18n },
+      },
+    });
+
+    const rows = await fetchWhitelistMembership(provider, POOL, SET, {
+      overlay: [
+        { address: C, symbol: "WTON", decimals: 18, isNative: false },
+        { address: B, symbol: "USDC", decimals: 6, isNative: false },
+      ],
+    });
+    expect(rows.map((r) => r.token.symbol)).toEqual(["WTON", "USDC", "ZZZ"]);
+  });
+
+  it("returns [] without touching the chain when an address is unconfigured", async () => {
+    expect(await fetchWhitelistMembership(provider, ZERO_ADDRESS, SET)).toEqual([]);
+    expect(await fetchWhitelistMembership(provider, POOL, ZERO_ADDRESS)).toEqual([]);
+  });
+
+  it("throws when a whitelist getter reverts so callers can fall back", async () => {
+    contractHandler = (address: string) => {
+      if (address.toLowerCase() === POOL.toLowerCase()) {
+        return {
+          getWhitelistedTokens: async () => {
+            throw new Error("no such function");
+          },
+        };
+      }
+      return { getWhitelistedTokens: async () => [] };
+    };
+    await expect(fetchWhitelistMembership(provider, POOL, SET)).rejects.toThrow();
   });
 });

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Contract, type Signer } from "ethers";
 import { isConfiguredAddress, type TokenInfo } from "@zkscatter/sdk";
-import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
+import { shortAddr, useMounted, useNetworkTokens, useWallet } from "@zkscatter/sdk/react";
 import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
 import { explainError, prettyAmount } from "../lib/format";
@@ -90,6 +90,9 @@ export default function TreasuryPage() {
 
 function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
   const { readProvider } = useWallet();
+  // Treasury rows cover the tokens usable end-to-end (Pool∩Settlement),
+  // sourced on-chain with NEXT_PUBLIC_TOKENS as fallback.
+  const { tokens: networkTokens } = useNetworkTokens(DEMO_NETWORK);
   const [snap, setSnap] = useState<FeeVaultSnapshot>(EMPTY_SNAPSHOT);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -130,7 +133,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
     };
   }, [feeVaultAddress, readProvider, reloadKey]);
 
-  const tokenRows = buildTokenRows();
+  const tokenRows = buildTokenRows(networkTokens);
 
   return (
     <>
@@ -259,7 +262,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
   );
 }
 
-function buildTokenRows(): TokenRow[] {
+function buildTokenRows(tokens: TokenInfo[]): TokenRow[] {
   const rows: TokenRow[] = [];
   // Native ETH row — uses the WETH slot the way the rest of the
   // protocol does. Skip if WETH isn't configured (the FeeVault has
@@ -272,7 +275,7 @@ function buildTokenRows(): TokenRow[] {
       address: DEMO_NETWORK.contracts.weth,
     });
   }
-  for (const token of DEMO_NETWORK.tokens) {
+  for (const token of tokens) {
     // Skip the WETH entry from the token list since we already
     // surfaced it as the native ETH row.
     if (token.address.toLowerCase() === DEMO_NETWORK.contracts.weth.toLowerCase()) continue;

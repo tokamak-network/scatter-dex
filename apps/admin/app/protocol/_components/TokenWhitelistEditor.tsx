@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Contract } from "ethers";
-import { ZERO_ADDRESS, eqAddr, type TokenInfo } from "@zkscatter/sdk";
+import {
+  ZERO_ADDRESS,
+  eqAddr,
+  fetchWhitelistMembership,
+  type WhitelistMembership,
+} from "@zkscatter/sdk";
 import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { isValidEvmAddress } from "../../lib/x509";
@@ -22,16 +27,12 @@ interface Props {
   onWrite?: () => void;
 }
 
-interface TokenWhitelistRow {
-  token: TokenInfo;
-  pool: boolean | null;
-  settlement: boolean | null;
-}
-
-/** Read-only list of the network's configured tokens with their
- *  current Pool / Settlement whitelist state, so the admin sees what's
- *  active without typing each address. Re-reads when `reloadKey` bumps
- *  (e.g. after the editor writes). */
+/** Read-only list of the tokens whitelisted on **either** contract (the
+ *  on-chain union from `getWhitelistedTokens()`), each with its Pool /
+ *  Settlement state, so the admin sees what's active — including a
+ *  one-sided whitelist that needs fixing — without a `NEXT_PUBLIC_TOKENS`
+ *  edit. `DEMO_NETWORK.tokens` is kept only as a label overlay. Re-reads
+ *  when `reloadKey` bumps (e.g. after the editor writes). */
 export function TokenWhitelistList({
   poolAddress,
   settlementAddress,
@@ -42,33 +43,35 @@ export function TokenWhitelistList({
   reloadKey: number;
 }) {
   const { readProvider } = useWallet();
-  const [rows, setRows] = useState<TokenWhitelistRow[]>([]);
+  const [rows, setRows] = useState<WhitelistMembership[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!readProvider) return;
     let cancelled = false;
-    const pool = new Contract(poolAddress, POOL_ABI, readProvider);
-    const settlement = new Contract(settlementAddress, SETTLEMENT_ABI, readProvider);
-    void Promise.all(
-      DEMO_NETWORK.tokens.map(async (token) => {
-        const [p, s] = await Promise.allSettled([
-          pool.whitelistedTokens(token.address) as Promise<boolean>,
-          settlement.whitelistedTokens(token.address) as Promise<boolean>,
-        ]);
-        return {
-          token,
-          pool: p.status === "fulfilled" ? p.value : null,
-          settlement: s.status === "fulfilled" ? s.value : null,
-        };
-      })
-    ).then((r) => { if (!cancelled) setRows(r); }).catch(() => {});
+    setLoading(true);
+    fetchWhitelistMembership(readProvider, poolAddress, settlementAddress, {
+      overlay: DEMO_NETWORK.tokens,
+    })
+      .then((r) => { if (!cancelled) setRows(r); })
+      .catch(() => { if (!cancelled) setRows([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [poolAddress, settlementAddress, readProvider, reloadKey]);
 
-  if (DEMO_NETWORK.tokens.length === 0) {
+  if (loading && rows.length === 0) {
     return (
       <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center text-sm text-[var(--color-text-muted)]">
-        No tokens in <code className="font-mono">NEXT_PUBLIC_TOKENS</code>.
+        Reading the on-chain token whitelist…
+      </div>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-[var(--color-border)] bg-[var(--color-surface)] p-6 text-center text-sm text-[var(--color-text-muted)]">
+        No tokens whitelisted on the CommitmentPool or PrivateSettlement yet.
+        Add one below.
       </div>
     );
   }
@@ -84,8 +87,8 @@ export function TokenWhitelistList({
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ token, pool, settlement }) => {
-            const mismatch = pool !== null && settlement !== null && pool !== settlement;
+          {rows.map(({ token, inPool, inSettlement }) => {
+            const mismatch = inPool !== inSettlement;
             return (
               <tr key={token.address} className="border-t border-[var(--color-border)]">
                 <td className="px-4 py-3">
@@ -93,10 +96,10 @@ export function TokenWhitelistList({
                   <CopyableAddress address={token.address} />
                 </td>
                 <td className="px-4 py-3 text-center">
-                  <WhitelistBadge value={pool} />
+                  <WhitelistBadge value={inPool} />
                 </td>
                 <td className="px-4 py-3 text-center">
-                  <WhitelistBadge value={settlement} />
+                  <WhitelistBadge value={inSettlement} />
                   {mismatch && (
                     <div className="mt-1 text-[10px] text-[var(--color-warning)]" title="Pool and Settlement disagree — deposits and settlement won't both work until they match">
                       ⚠ out of sync

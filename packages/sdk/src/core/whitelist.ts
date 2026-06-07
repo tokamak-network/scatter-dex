@@ -280,28 +280,36 @@ function buildOverlayMap(
 
 /** Deterministic order independent of the on-chain set's ordering:
  *  overlay tokens first in overlay order, then the rest by symbol then
- *  address (both case-insensitive). */
+ *  address. See {@link compareTokens}. */
 function sortTokens(
   tokens: TokenInfo[],
   overlayMap: Map<string, { token: TokenInfo; index: number }>,
 ): TokenInfo[] {
-  return tokens.slice().sort((a, b) => {
-    const ai = overlayMap.get(a.address.toLowerCase())?.index;
-    const bi = overlayMap.get(b.address.toLowerCase())?.index;
-    if (ai !== undefined && bi !== undefined) return ai - bi;
-    if (ai !== undefined) return -1; // overlay tokens sort ahead of extras
-    if (bi !== undefined) return 1;
-    // Case-insensitive and locale-independent: compare lowercased
-    // strings by code unit (`<`/`>`) so the order is identical across
-    // environments, not subject to `localeCompare`'s ICU/locale rules.
-    const sa = a.symbol.toLowerCase();
-    const sb = b.symbol.toLowerCase();
-    if (sa !== sb) return sa < sb ? -1 : 1;
-    const aa = a.address.toLowerCase();
-    const ab = b.address.toLowerCase();
-    if (aa !== ab) return aa < ab ? -1 : 1;
-    return 0;
-  });
+  return tokens.slice().sort((a, b) => compareTokens(a, b, overlayMap));
+}
+
+/** Ordering: overlay tokens first in overlay order, then the rest by
+ *  symbol then address — both compared as lowercased strings by code
+ *  unit (`<`/`>`), so the order is case-insensitive and identical
+ *  across environments (not subject to `localeCompare`'s ICU/locale
+ *  rules). */
+function compareTokens(
+  a: TokenInfo,
+  b: TokenInfo,
+  overlayMap: Map<string, { token: TokenInfo; index: number }>,
+): number {
+  const ai = overlayMap.get(a.address.toLowerCase())?.index;
+  const bi = overlayMap.get(b.address.toLowerCase())?.index;
+  if (ai !== undefined && bi !== undefined) return ai - bi;
+  if (ai !== undefined) return -1; // overlay tokens sort ahead of extras
+  if (bi !== undefined) return 1;
+  const sa = a.symbol.toLowerCase();
+  const sb = b.symbol.toLowerCase();
+  if (sa !== sb) return sa < sb ? -1 : 1;
+  const aa = a.address.toLowerCase();
+  const ab = b.address.toLowerCase();
+  if (aa !== ab) return aa < ab ? -1 : 1;
+  return 0;
 }
 
 /** Resolve one whitelisted address into a `TokenInfo`, reading
@@ -340,4 +348,91 @@ async function buildTokenInfo(
     return null;
   }
   return { address, symbol, decimals, isNative: false };
+}
+
+/** One token's whitelist state across the two contracts. */
+export interface WhitelistMembership {
+  token: TokenInfo;
+  /** Whitelisted on the CommitmentPool (deposit side). */
+  inPool: boolean;
+  /** Whitelisted on the PrivateSettlement (settle/claim side). */
+  inSettlement: boolean;
+}
+
+/** Admin view of the whitelist: every token listed on **either**
+ *  contract (the **union** of the two `getWhitelistedTokens()` sets),
+ *  each tagged with its per-contract membership so an operator can spot
+ *  and fix a pool/settlement mismatch (`inPool !== inSettlement`).
+ *
+ *  This is the counterpart to {@link fetchWhitelistedTokens}, which
+ *  returns the **intersection** for end-user pickers. The union is the
+ *  right set for a management UI: a token whitelisted on only one
+ *  contract is exactly what the admin needs to see (and fix), but it
+ *  would be invisible in the intersection.
+ *
+ *  `symbol`/`decimals` are read on-chain (overlay overrides the label
+ *  and backstops a reverted read — see {@link FetchWhitelistedTokensOptions}).
+ *  Result is sorted deterministically (overlay order first, then
+ *  symbol/address). Returns `[]` when either address is unconfigured; a
+ *  getter revert throws so the caller can fall back. */
+export async function fetchWhitelistMembership(
+  provider: ethers.Provider,
+  poolAddress: string,
+  settlementAddress: string,
+  options: FetchWhitelistedTokensOptions = {},
+): Promise<WhitelistMembership[]> {
+  if (
+    !isConfiguredAddress(poolAddress) ||
+    !isConfiguredAddress(settlementAddress)
+  ) {
+    return [];
+  }
+
+  const pool = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
+  const settlement = new ethers.Contract(
+    settlementAddress,
+    PRIVATE_SETTLEMENT_ABI,
+    provider,
+  );
+  const [poolList, settlementList] = await Promise.all([
+    pool.getWhitelistedTokens() as Promise<string[]>,
+    settlement.getWhitelistedTokens() as Promise<string[]>,
+  ]);
+
+  const poolSet = new Set(poolList.map((a) => a.toLowerCase()));
+  const settlementSet = new Set(settlementList.map((a) => a.toLowerCase()));
+
+  // Union of the two lists, de-duplicated by lowercase address.
+  const seen = new Set<string>();
+  const union: string[] = [];
+  for (const addr of [...poolList, ...settlementList]) {
+    const key = addr.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      union.push(addr);
+    }
+  }
+
+  const overlayMap = buildOverlayMap(options.overlay);
+  const resolved = (
+    await Promise.all(
+      union.map(async (address) => {
+        const token = await buildTokenInfo(
+          provider,
+          address,
+          overlayMap.get(address.toLowerCase())?.token,
+        );
+        if (!token) return null;
+        const key = address.toLowerCase();
+        return {
+          token,
+          inPool: poolSet.has(key),
+          inSettlement: settlementSet.has(key),
+        };
+      }),
+    )
+  ).filter((m): m is WhitelistMembership => m !== null);
+
+  resolved.sort((a, b) => compareTokens(a.token, b.token, overlayMap));
+  return resolved;
 }
