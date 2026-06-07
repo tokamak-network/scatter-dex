@@ -20,6 +20,7 @@ import { ClaimReconciler } from "./lib/claimReconciler";
 import { SettleReconciler } from "./lib/settleReconciler";
 import { EdDSAKeyProvider } from "@zkscatter/sdk/react";
 import { RelayersProvider } from "./lib/relayers";
+import { TokensProvider } from "./lib/useProTokens";
 import { TradeFormProvider } from "./lib/tradeForm";
 import { ActiveNetworkProvider } from "./lib/activeNetwork";
 import { FolderProvider } from "./lib/folder";
@@ -50,6 +51,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <CommitmentTreeProvider>
                 <EdDSAKeyProvider>
                   <RelayersProvider>
+                   <TokensProvider>
                     <VaultProvider>
                       <VaultReconciler />
                       <OrdersProvider>
@@ -94,6 +96,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                         </TradeFormProvider>
                       </OrdersProvider>
                     </VaultProvider>
+                   </TokensProvider>
                   </RelayersProvider>
                 </EdDSAKeyProvider>
               </CommitmentTreeProvider>
