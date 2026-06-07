@@ -135,6 +135,52 @@ contract PrivateSettlementAdminTest is Test {
         assertEq(settlement.getWhitelistedTokens().length, 0);
     }
 
+    // ─── syncWhitelistedTokenSet (post-upgrade backfill) ─────────
+
+    /// @dev Reproduce the post-upgrade gap by writing the legacy
+    ///      `whitelistedTokens` mapping slot directly (slot 15 per
+    ///      storage-layouts/PrivateSettlement.json, guarded by
+    ///      script/storage-layout/check.sh) so the enumerable set is NOT
+    ///      updated, mimicking a proxy upgraded from the pre-getter impl.
+    function test_syncWhitelistedTokenSet_backfills_legacy_entries() public {
+        address legacy = address(0x1E6Ac1);
+        bytes32 slot = keccak256(abi.encode(legacy, uint256(15)));
+        vm.store(address(settlement), slot, bytes32(uint256(1)));
+
+        assertTrue(settlement.whitelistedTokens(legacy));
+        assertEq(settlement.getWhitelistedTokens().length, 0); // gap reproduced
+
+        address[] memory toSync = new address[](1);
+        toSync[0] = legacy;
+        settlement.syncWhitelistedTokenSet(toSync);
+
+        address[] memory list = settlement.getWhitelistedTokens();
+        assertEq(list.length, 1);
+        assertEq(list[0], legacy);
+    }
+
+    /// @dev Backfill only adds tokens still flagged in the mapping; addresses
+    ///      that aren't whitelisted are skipped.
+    function test_syncWhitelistedTokenSet_skips_non_whitelisted() public {
+        settlement.setTokenWhitelist(address(token), true);
+        address[] memory toSync = new address[](2);
+        toSync[0] = address(token); // whitelisted — idempotent re-add
+        toSync[1] = address(0xDEAD); // never whitelisted — skipped
+        settlement.syncWhitelistedTokenSet(toSync);
+
+        address[] memory list = settlement.getWhitelistedTokens();
+        assertEq(list.length, 1);
+        assertEq(list[0], address(token));
+    }
+
+    function test_syncWhitelistedTokenSet_onlyOwner() public {
+        address[] memory toSync = new address[](1);
+        toSync[0] = address(token);
+        vm.prank(alice);
+        vm.expectRevert();
+        settlement.syncWhitelistedTokenSet(toSync);
+    }
+
     // ─── setRelayerRegistry ─────────────────────────────────────
 
     function test_setRelayerRegistry_eoa_reverts() public {

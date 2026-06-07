@@ -286,14 +286,33 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
     function setTokenWhitelist(address token, bool allowed) external onlyOwner {
         if (token == address(0)) revert ZeroAddress();
+        // No-op if already in the desired state: skip the redundant SSTORE and
+        // the idempotent set operation.
+        if (whitelistedTokens[token] == allowed) return;
         whitelistedTokens[token] = allowed;
-        // Keep the enumerable mirror in sync. `add`/`remove` are idempotent
-        // (return false on a no-op), so re-whitelisting or double-removing a
-        // token leaves the set unchanged.
+        // Keep the enumerable mirror in sync.
         if (allowed) {
             _whitelistedTokenSet.add(token);
         } else {
             _whitelistedTokenSet.remove(token);
+        }
+    }
+
+    /// @notice Backfill the enumerable token set from the legacy
+    ///         `whitelistedTokens` mapping after an upgrade.
+    /// @dev One-shot migration aid for proxies deployed before
+    ///      `getWhitelistedTokens` existed: their `whitelistedTokens` mapping
+    ///      may already hold entries that the new `_whitelistedTokenSet` does
+    ///      not. Mappings are not enumerable on-chain, so the owner passes the
+    ///      known previously-whitelisted tokens; only those still flagged in
+    ///      the mapping are added, keeping the set a subset of the mapping.
+    ///      Idempotent — safe to call repeatedly and unnecessary for tokens
+    ///      added via `setTokenWhitelist` after the upgrade.
+    function syncWhitelistedTokenSet(address[] calldata tokens) external onlyOwner {
+        for (uint256 i = 0; i < tokens.length; i++) {
+            if (whitelistedTokens[tokens[i]]) {
+                _whitelistedTokenSet.add(tokens[i]);
+            }
         }
     }
 

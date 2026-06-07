@@ -390,6 +390,64 @@ contract CommitmentPoolTest is Test {
         assertEq(list[0], address(token));
     }
 
+    /// @dev Re-whitelisting an already-whitelisted token is a no-op and must
+    ///      not emit a (spurious) TokenWhitelistUpdated event.
+    function test_setTokenWhitelist_noop_emits_nothing() public {
+        vm.recordLogs();
+        pool.setTokenWhitelist(address(token), true); // already whitelisted in setUp
+        assertEq(vm.getRecordedLogs().length, 0);
+    }
+
+    // ─── syncWhitelistedTokenSet (post-upgrade backfill) ─────────
+
+    /// @dev Reproduce the post-upgrade gap: a token whitelisted in the legacy
+    ///      `whitelistedTokens` mapping before `_whitelistedTokenSet` existed.
+    ///      We write the mapping slot directly (slot 58 per
+    ///      storage-layouts/CommitmentPool.json, guarded by
+    ///      script/storage-layout/check.sh) so the enumerable set is NOT
+    ///      updated, mimicking a proxy upgraded from the pre-getter impl.
+    function test_syncWhitelistedTokenSet_backfills_legacy_entries() public {
+        address legacy = address(0x1E6Ac1);
+        bytes32 slot = keccak256(abi.encode(legacy, uint256(58)));
+        vm.store(address(pool), slot, bytes32(uint256(1)));
+
+        // Gap reproduced: mapping sees it, getter does not.
+        assertTrue(pool.whitelistedTokens(legacy));
+        address[] memory before = pool.getWhitelistedTokens();
+        assertEq(before.length, 1); // only setUp's `token`
+        assertFalse(before.contains(legacy));
+
+        address[] memory toSync = new address[](1);
+        toSync[0] = legacy;
+        pool.syncWhitelistedTokenSet(toSync);
+
+        address[] memory after_ = pool.getWhitelistedTokens();
+        assertEq(after_.length, 2);
+        assertTrue(after_.contains(legacy));
+        assertTrue(after_.contains(address(token)));
+    }
+
+    /// @dev Backfill only adds tokens still flagged in the mapping; addresses
+    ///      that aren't whitelisted are skipped (set stays a subset of mapping).
+    function test_syncWhitelistedTokenSet_skips_non_whitelisted() public {
+        address[] memory toSync = new address[](2);
+        toSync[0] = address(token); // whitelisted (setUp) — idempotent re-add
+        toSync[1] = address(0xDEAD); // never whitelisted — skipped
+        pool.syncWhitelistedTokenSet(toSync);
+
+        address[] memory list = pool.getWhitelistedTokens();
+        assertEq(list.length, 1);
+        assertEq(list[0], address(token));
+    }
+
+    function test_syncWhitelistedTokenSet_onlyOwner() public {
+        address[] memory toSync = new address[](1);
+        toSync[0] = address(token);
+        vm.prank(alice);
+        vm.expectRevert();
+        pool.syncWhitelistedTokenSet(toSync);
+    }
+
     function test_setSanctionsList_eoa_reverts() public {
         vm.expectRevert(CommitmentPool.NotAContract.selector);
         pool.setSanctionsList(alice);
