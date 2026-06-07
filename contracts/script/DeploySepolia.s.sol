@@ -128,11 +128,13 @@ contract DeploySepolia is Script {
         // ── 1. Identity gate (User CA) + relayer registry (Relayer CA) ──
         IdentityGate gate = _identityGateProxy(deployer, userRegistry);
         // Bond token = TON (ERC20 bond) via SEPOLIA_TON_ADDRESS; 0 → native-bond mode.
+        // bondToken is set ONCE here (structural — no setter). minBond is NOT set
+        // at deploy: the admin sets it on-chain post-deploy via the admin site
+        // (setMinBond), e.g. a fixed 2000 TON. Until then minBond = 0.
         RelayerRegistry relayerRegistry =
             _relayerRegistryProxy(deployer, relayerIdRegistry, vm.envOr("SEPOLIA_TON_ADDRESS", address(0)));
         d.gate = address(gate);
         d.relayerRegistry = address(relayerRegistry);
-        _configureMinBond(relayerRegistry);
 
         // ── 2. Issuance-approval registry (admin gate for cert-issuance CTA) ──
         d.issuanceApproval = address(new IssuanceApprovalRegistry(deployer));
@@ -214,20 +216,6 @@ contract DeploySepolia is Script {
         console.log("IdentityGate registered on CommitmentPool + PrivateSettlement");
     }
 
-    /// @dev Set the relayer minimum bond from SEPOLIA_MIN_BOND (bond-token units).
-    ///      Intended value = a fixed TON amount ≈ $1000-worth at deploy time; an
-    ///      admin/keeper re-runs setMinBond to keep it pegged as TON/USD moves
-    ///      (no on-chain TON/USD oracle on testnet). 0 → no bond required.
-    function _configureMinBond(RelayerRegistry relayerRegistry) internal {
-        uint256 minBond = vm.envOr("SEPOLIA_MIN_BOND", uint256(0));
-        if (minBond == 0) {
-            console.log("SEPOLIA_MIN_BOND unset -> minBond stays 0 (no bond required)");
-            return;
-        }
-        relayerRegistry.setMinBond(minBond);
-        console.log("Relayer minBond set (bond-token units):", minBond);
-    }
-
     /// @dev Whitelist a DEX router only if it exists on the target chain.
     ///      On most testnets 1inch/Uniswap are absent, so market orders
     ///      (settleWithDex) stay unavailable until a router is whitelisted.
@@ -262,7 +250,7 @@ contract DeploySepolia is Script {
         }
         RelayerRegistry impl = new RelayerRegistry();
         // (owner, treasury, identityRegistry, bondToken). bondToken=0 → native mode;
-        // non-zero → ERC20 bond. Here TON, so relayers post a $1000-worth-of-TON bond.
+        // non-zero → ERC20 bond. Here TON: relayers post a fixed TON bond (minBond).
         bytes memory initData =
             abi.encodeCall(RelayerRegistry.initialize, (deployer, deployer, relayerIdRegistry, bondToken_));
         TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(address(impl), _upgradeOwner, initData);
