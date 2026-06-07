@@ -9,4 +9,5 @@ export * from "./eddsaKey";
 export * from "./relayersProvider";
 export * from "./useTimedRefresh";
 export * from "./useWhitelistedTokens";
+export * from "./useNetworkTokens";
 export * from "./LiveFreshness";
