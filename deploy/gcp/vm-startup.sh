@@ -92,7 +92,10 @@ gcp_secret() {
 umask 077
 
 log "fetching secret '${RELAYER_SECRET_NAME}' (optional — only zk-relayer uses it)"
-token=$(gcp_token)
+# `|| token=""` so a missing/denied service-account token does not abort the
+# whole startup under `set -e` — the secret fetches below then fail gracefully
+# (empty relayer placeholder) and RPC_URL falls back to the metadata endpoint.
+token=$(gcp_token) || token=""
 if gcp_secret "${RELAYER_SECRET_NAME}" > /var/lib/zkscatter/secrets/relayer.key 2>/dev/null \
 	&& [[ -s /var/lib/zkscatter/secrets/relayer.key ]]; then
 	log "secret written"
