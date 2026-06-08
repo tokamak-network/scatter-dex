@@ -9,6 +9,8 @@
  * choose whether to expose unverified rows.
  */
 
+import { DEFAULT_CHAIN_ID } from "../core/chain.js";
+
 /** Which settlement entry-point produced this row, used downstream to
  *  split Pay vs Pro on the operators leaderboard. Pre-PR rows store
  *  NULL — the byApp aggregator treats those as "unknown" and skips
@@ -18,6 +20,10 @@ export const SETTLEMENT_TYPES: readonly SettlementType[] = ["settleAuth", "scatt
 
 export interface SettlementInsert {
   txHash: string;
+  /** EVM network (chainId) the settlement tx landed on. Optional on the
+   *  wire for backward compatibility with pre-multitenancy relayers; the
+   *  orderbook defaults a missing value to Sepolia (11155111). */
+  chainId?: number;
   blockNumber: number;
   blockTime?: number; // optional — relayer doesn't always know yet
   makerRelayer: string;
@@ -52,6 +58,7 @@ export interface StoredSettlement extends SettlementInsert {
 }
 
 export interface SettlementListFilter {
+  chainId?: number;        // scope to one EVM network; omitted → all networks
   relayer?: string;       // matches submitter OR makerRelayer OR takerRelayer
   pair?: [string, string]; // [tokenA, tokenB] sorted, both directions counted
   since?: number;          // unix seconds
@@ -132,6 +139,7 @@ export const LEADERBOARD_METRICS = ["count", "verifiedCount", "successRate"] as 
 export type LeaderboardMetric = typeof LEADERBOARD_METRICS[number];
 
 export interface NetworkSettlementTotals {
+  chainId: number;         // the EVM network these totals are scoped to
   txCount: number;
   txCountVerified: number;
   volumeByToken: TokenVolumeRow[];
@@ -218,6 +226,12 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (r.type !== undefined && !(SETTLEMENT_TYPES as readonly string[]).includes(r.type as string)) {
     throw new Error(`type: must be one of ${SETTLEMENT_TYPES.join("|")} when provided`);
   }
+  if (r.chainId !== undefined) {
+    const c = r.chainId;
+    if (typeof c !== "number" || !Number.isInteger(c) || c <= 0 || c > Number.MAX_SAFE_INTEGER) {
+      throw new Error("chainId: must be a positive integer when provided");
+    }
+  }
 
   const out: SettlementInsert = {
     txHash: r.txHash.toLowerCase(),
@@ -230,6 +244,10 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     userMaxFeeMaker: r.userMaxFeeMaker as number,
     userMaxFeeTaker: r.userMaxFeeTaker as number,
   };
+  // Always stamp chainId (default Sepolia) so the parsed payload is symmetric
+  // with parseOrderSummary — downstream never has to re-default it. Validation
+  // above already rejected a present-but-invalid value.
+  out.chainId = typeof r.chainId === "number" ? r.chainId : DEFAULT_CHAIN_ID;
   if (typeof r.blockTime === "number") out.blockTime = r.blockTime;
   if (r.takerRelayer) out.takerRelayer = (r.takerRelayer as string).toLowerCase();
   if (isStringField(r.makerOrderId)) out.makerOrderId = r.makerOrderId;

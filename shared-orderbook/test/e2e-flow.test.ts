@@ -407,7 +407,7 @@ describe("E2E: Shared Orderbook Full Flow", () => {
   // ─── Step 13: Relayer-specific order listing ───
 
   it("relayer A's orders retrievable from DB", async () => {
-    const orders = db.listByRelayer(relayerA.address.toLowerCase());
+    const orders = db.listByRelayer(11155111, relayerA.address.toLowerCase());
     expect(orders.length).toBeGreaterThanOrEqual(1);
     expect(orders[0].order.relayer).toBe(relayerA.address.toLowerCase());
   });

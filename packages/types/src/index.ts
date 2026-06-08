@@ -15,6 +15,11 @@ export interface OrderSummary {
   /** Opaque offer handle (matches {@link OFFER_HANDLE_RE}). Also used
    *  as the target in `TradeOfferRequest.offerHandle`. */
   id: string;
+  /** EVM network (chainId) this order lives on. Optional for backward
+   *  compatibility with pre-multitenancy relayers / SDK clients; the shared
+   *  orderbook treats a missing value as the default chain (Sepolia
+   *  11155111) so legacy single-network deployments keep working. */
+  chainId?: number;
   relayer: string;       // relayer Ethereum address (lowercase)
   relayerUrl: string;    // relayer REST endpoint
   sellToken: string;     // token address (0x-prefixed hex, lowercase)

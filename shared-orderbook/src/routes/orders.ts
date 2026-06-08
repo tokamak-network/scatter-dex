@@ -7,6 +7,7 @@ import { parseOrderSummary, pairKey, isValidPair } from "../types/order.js";
 import type { OrderStatus } from "@scatter-dex/types";
 import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
 import { assertSafeOutboundUrl, UnsafeUrlError } from "../lib/url-guard.js";
+import { parseChainIdQuery } from "../core/chain.js";
 
 export function createOrderRoutes(
   orderbook: SharedOrderbook,
@@ -92,6 +93,8 @@ export function createOrderRoutes(
    */
   router.get("/", readLimiter, (req, res) => {
     try {
+      const chainId = parseChainIdQuery(req.query.chainId);
+      if (chainId instanceof Error) { res.status(400).json({ error: chainId.message }); return; }
       const pairRaw = typeof req.query.pair === "string" ? req.query.pair : undefined;
       const limit = Math.min(Number(req.query.limit) || 100, 500);
       const offset = Number(req.query.offset) || 0;
@@ -115,11 +118,11 @@ export function createOrderRoutes(
         }
         // Pair filter stays open-only for now — bucket tabs in the
         // UI are global; per-pair status drilldown is a follow-up.
-        orders = db.listByPair(tokens[0], tokens[1], limit, offset);
+        orders = db.listByPair(chainId, tokens[0], tokens[1], limit, offset);
       } else if (includeTerminal || statusFilter) {
-        orders = db.listAll(limit, offset, statusFilter);
+        orders = db.listAll(chainId, limit, offset, statusFilter);
       } else {
-        orders = db.listOpen(limit, offset);
+        orders = db.listOpen(chainId, limit, offset);
       }
 
       // Include `status` on each row so the bucket-tab UI can filter
@@ -132,7 +135,7 @@ export function createOrderRoutes(
         orders: orders.map((s) => ({ ...s.order, status: s.status })),
         count: orders.length,
         offset,
-        counts: includeTerminal || statusFilter ? db.countByStatus() : undefined,
+        counts: includeTerminal || statusFilter ? db.countByStatus(chainId) : undefined,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";
@@ -152,10 +155,12 @@ export function createOrderRoutes(
         return;
       }
 
+      const chainId = parseChainIdQuery(req.query.chainId);
+      if (chainId instanceof Error) { res.status(400).json({ error: chainId.message }); return; }
       const limit = Math.min(Number(req.query.limit) || 100, 500);
       const offset = Number(req.query.offset) || 0;
 
-      const orders = db.listByPair(tokens[0], tokens[1], limit, offset);
+      const orders = db.listByPair(chainId, tokens[0], tokens[1], limit, offset);
       res.json({
         pair: pairKey(tokens[0], tokens[1]),
         orders: orders.map(s => s.order),

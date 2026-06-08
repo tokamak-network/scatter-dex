@@ -8,6 +8,7 @@ const TEST_DB = "/tmp/shared-orderbook-test.db";
 function makeOrder(overrides: Partial<OrderSummary> = {}): OrderSummary {
   return {
     id: overrides.id ?? "0xrelayer1-1",
+    chainId: overrides.chainId,
     relayer: overrides.relayer ?? "0xrelayer1",
     relayerUrl: overrides.relayerUrl ?? "http://localhost:3002",
     nonce: overrides.nonce ?? "1",
@@ -52,7 +53,7 @@ describe("OrderbookDB", () => {
   it("lists open orders", () => {
     db.insertOrder(makeOrder({ id: "r1-1" }));
     db.insertOrder(makeOrder({ id: "r1-2" }));
-    const orders = db.listOpen();
+    const orders = db.listOpen(11155111);
     expect(orders).toHaveLength(2);
   });
 
@@ -64,7 +65,7 @@ describe("OrderbookDB", () => {
     db.insertOrder(makeOrder({ id: "r2-1", sellToken: tokenB, buyToken: tokenA }));
 
     // Both orders should appear regardless of query direction
-    const orders = db.listByPair(tokenA, tokenB);
+    const orders = db.listByPair(11155111, tokenA, tokenB);
     expect(orders).toHaveLength(2);
   });
 
@@ -72,7 +73,7 @@ describe("OrderbookDB", () => {
     db.insertOrder(makeOrder({ id: "r1-1", relayer: "0xrelayer1" }));
     db.insertOrder(makeOrder({ id: "r2-1", relayer: "0xrelayer2" }));
 
-    const orders = db.listByRelayer("0xrelayer1");
+    const orders = db.listByRelayer(11155111, "0xrelayer1");
     expect(orders).toHaveLength(1);
     expect(orders[0].order.relayer).toBe("0xrelayer1");
   });
@@ -87,7 +88,35 @@ describe("OrderbookDB", () => {
   it("counts by relayer", () => {
     db.insertOrder(makeOrder({ id: "r1-1", relayer: "0xrelayer1" }));
     db.insertOrder(makeOrder({ id: "r1-2", relayer: "0xrelayer1" }));
-    expect(db.countByRelayer("0xrelayer1")).toBe(2);
+    expect(db.countByRelayer(11155111, "0xrelayer1")).toBe(2);
+  });
+
+  it("isolates orders by chainId (multitenancy)", () => {
+    // Same relayer + pair on two networks. Reads scoped to one chain must
+    // never surface the other's rows.
+    db.insertOrder(makeOrder({ id: "sep-1", chainId: 11155111, relayer: "0xrelayer1" }));
+    db.insertOrder(makeOrder({ id: "main-1", chainId: 1, relayer: "0xrelayer1" }));
+    db.insertOrder(makeOrder({ id: "main-2", chainId: 1, relayer: "0xrelayer1" }));
+
+    expect(db.listOpen(11155111).map((o) => o.order.id)).toEqual(["sep-1"]);
+    expect(db.listOpen(1).map((o) => o.order.id).sort()).toEqual(["main-1", "main-2"]);
+    expect(db.getOrder("sep-1")!.order.chainId).toBe(11155111);
+    expect(db.getOrder("main-1")!.order.chainId).toBe(1);
+
+    expect(db.countByRelayer(11155111, "0xrelayer1")).toBe(1);
+    expect(db.countByRelayer(1, "0xrelayer1")).toBe(2);
+
+    const tokenA = "0x" + "a".repeat(40);
+    const tokenB = "0x" + "b".repeat(40);
+    expect(db.listByPair(1, tokenA, tokenB)).toHaveLength(2);
+    expect(db.listByPair(11155111, tokenA, tokenB)).toHaveLength(1);
+  });
+
+  it("defaults a chainId-less order to Sepolia (backward compatibility)", () => {
+    db.insertOrder(makeOrder({ id: "legacy-1" })); // no chainId on the wire
+    expect(db.getOrder("legacy-1")!.order.chainId).toBe(11155111);
+    expect(db.listOpen(11155111).map((o) => o.order.id)).toContain("legacy-1");
+    expect(db.listOpen(1)).toHaveLength(0);
   });
 
   it("purges expired orders", () => {
