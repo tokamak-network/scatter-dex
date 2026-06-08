@@ -38,17 +38,22 @@ does **not** start one).
 | **Frontends (hub/pay/pro/operators/admin)** | run locally per team member | `localhost:400x` |
 
 The orderbook is **multi-network** (`chain_id` partitioned): reads take
-`?chainId=`, the verifier runs one loop per chain (`CHAINS` env, single-chain
-`RPC_URL`/`CHAIN_ID` fallback), and a relayer pins its network with `CHAIN_ID`.
-A missing chainId defaults to Sepolia (`11155111`), so the live single-network
-deployment is unaffected.
+`?chainId=`, the verifier runs one loop per chain (`CHAINS` env, with a
+single-chain `RPC_URL` / `PRIVATE_SETTLEMENT_ADDRESS` / `CHAIN_ID` fallback),
+and a relayer pins its network with `CHAIN_ID`. A missing chainId defaults to
+Sepolia (`11155111`), so the live single-network deployment is unaffected.
 
-**Redeploy / restart** (central box): push updated metadata then re-run the
-startup script — `gcloud compute instances add-metadata zkscatter-node --zone
-us-central1-a --metadata-from-file startup-script=deploy/gcp/vm-startup.sh` then
-`gcloud compute ssh zkscatter-node --zone us-central1-a --command 'sudo
-google_metadata_script_runner startup'`. The startup migration is idempotent and
-safe on the existing DB.
+**Redeploy / restart** (central box) — push updated metadata, then re-run the
+startup script (idempotent; the DB migration is safe to re-run):
+
+```bash
+gcloud compute instances add-metadata zkscatter-node --zone us-central1-a \
+  --metadata-from-file startup-script=deploy/gcp/vm-startup.sh
+gcloud compute ssh zkscatter-node --zone us-central1-a \
+  --command 'sudo google_metadata_script_runner startup'
+# Verified on the deployed COS image (google-guest-agent 20250701). On a newer
+# guest agent the equivalent is: ... --script-type startup
+```
 
 > COS note: `/var` (incl. `HOME=/var/lib/zkscatter`) is mounted **noexec**, so
 > the docker-compose plugin is staged under `/var/lib/docker/cli-plugins`
