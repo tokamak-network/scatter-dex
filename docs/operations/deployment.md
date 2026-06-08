@@ -23,6 +23,55 @@
               └──────────────────────────────┘
 ```
 
+## Live deployment — team Sepolia (current)
+
+The central box and a relayer are deployed **separately**: the shared orderbook
+is hosted once for the whole team; each relayer operator runs their own
+`zk-relayer` (it is behind the `relayer` Compose profile, so the central box
+does **not** start one).
+
+| What | Where | Endpoint |
+| --- | --- | --- |
+| **shared-orderbook + settlement-verifier** | GCP e2-micro (`zkscatter-node`, `us-central1-a`, COS) — `deploy/gcp` | `http://136.115.115.93:4000` (`GET /health` → `{"status":"ok"}`) |
+| **zk-relayer** | per-operator (not on the central box) | operator's own `:3002` |
+| **zk-X509 CMS backend** | Firebase (`zkscatter` project) — Cloud Functions + Firestore | `https://zkscatter.web.app/api/registries` |
+| **Frontends (hub/pay/pro/operators/admin)** | run locally per team member | `localhost:400x` |
+
+The orderbook is **multi-network** (`chain_id` partitioned): reads take
+`?chainId=`, the verifier runs one loop per chain (`CHAINS` env, single-chain
+`RPC_URL`/`CHAIN_ID` fallback), and a relayer pins its network with `CHAIN_ID`.
+A missing chainId defaults to Sepolia (`11155111`), so the live single-network
+deployment is unaffected.
+
+**Redeploy / restart** (central box): push updated metadata then re-run the
+startup script — `gcloud compute instances add-metadata zkscatter-node --zone
+us-central1-a --metadata-from-file startup-script=deploy/gcp/vm-startup.sh` then
+`gcloud compute ssh zkscatter-node --zone us-central1-a --command 'sudo
+google_metadata_script_runner startup'`. The startup migration is idempotent and
+safe on the existing DB.
+
+> COS note: `/var` (incl. `HOME=/var/lib/zkscatter`) is mounted **noexec**, so
+> the docker-compose plugin is staged under `/var/lib/docker/cli-plugins`
+> (exec-capable) and symlinked into `~/.docker/cli-plugins`. See
+> `deploy/gcp/vm-startup.sh`.
+
+### Operating cost (testnet volume)
+
+| Item | Tier | Monthly |
+| --- | --- | --- |
+| e2-micro VM (orderbook + verifier) | GCP Always Free (1×, us-central1) | **$0** |
+| 30 GB pd-standard disk | free 30 GB | **$0** |
+| **Static external IPv4** (in-use) | charged since 2024 (~$0.005/hr) | **~$3.65** |
+| Secret Manager / Artifact Registry / Logging / egress | free tier | **$0** |
+| Firebase Functions + Firestore + Hosting (zk-X509 CMS) | Blaze, ~free at this volume | **~$0** |
+| Frontends | run locally | **$0** |
+| **Total** | | **~$3.65 / mo** |
+
+The only real charge is the static external IPv4. Static↔ephemeral makes no
+difference (in-use IPv4 is billed either way), so the static IP is kept for a
+stable team endpoint. Mainnet / production traffic would push Functions,
+Firestore and egress past the free tiers.
+
 ## Let an AI agent do it
 
 Hand this doc to an AI coding agent (e.g. Claude Code) and paste the prompt
@@ -194,6 +243,13 @@ builds this tx for you with a live endpoint probe.
 | `PORT` | `4000` | HTTP/WS port |
 | `DB_PATH` | `shared-orderbook.db` | SQLite database path |
 
+The settlement-verifier (same image, `verify.js` entrypoint) is multi-network:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHAINS` | — | JSON array of per-chain configs `[{"chainId":…,"rpcUrl":…,"settlementAddress":…}]`. Runs one verify loop per chain. |
+| `RPC_URL` / `PRIVATE_SETTLEMENT_ADDRESS` / `CHAIN_ID` | — / — / `11155111` | Single-chain fallback when `CHAINS` is unset. |
+
 ### Relayer
 
 | Variable | Default | Description |
@@ -206,6 +262,7 @@ builds this tx for you with a live endpoint probe.
 | `PORT` | `3002` | API port |
 | `RELAYER_FEE` | `30` | Fee in basis points (0.3%) |
 | `SHARED_ORDERBOOK_URL` | — | Shared orderbook server URL (optional) |
+| `CHAIN_ID` | `11155111` | EVM network this relayer trades on; stamped onto orders/settlements pushed to the (multi-network) shared orderbook and used to scope reads |
 | `RELAYER_PUBLIC_URL` | — | This relayer's public URL for P2P |
 | `RELAYER_NAME` | — | Human-readable name |
 | `DB_PATH` | `zk-relayer.db` | SQLite database path |
