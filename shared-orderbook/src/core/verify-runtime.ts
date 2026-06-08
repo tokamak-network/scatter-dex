@@ -116,6 +116,10 @@ export class VerifyMonitor {
 }
 
 export interface RunLoopOpts {
+  /** EVM network this loop verifies. Only this chain's settlement rows are
+   *  scanned, so several loops can share one DB without cross-checking each
+   *  other's chains. */
+  chainId: number;
   intervalSec: number;
   /** How many confirmations to wait before scanning. Lets a reorg
    *  settle so the verifier doesn't flip rows that subsequently
@@ -159,7 +163,7 @@ export async function runVerifyLoop(
     try {
       const latest = await opts.provider.getBlockNumber();
       const maxBlock = Math.max(0, latest - opts.blockSafetyMargin);
-      const r = await runVerifyPass(db, fetcher, { maxBlock, limit: opts.limitPerPass });
+      const r = await runVerifyPass(db, fetcher, { chainId: opts.chainId, maxBlock, limit: opts.limitPerPass });
 
       const unmatchedByReason: VerifyPassStats["unmatchedByReason"] = {
         "no-event": 0,

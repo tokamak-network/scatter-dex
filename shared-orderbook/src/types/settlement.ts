@@ -9,6 +9,8 @@
  * choose whether to expose unverified rows.
  */
 
+import { chainIdOrDefault } from "../core/chain.js";
+
 /** Which settlement entry-point produced this row, used downstream to
  *  split Pay vs Pro on the operators leaderboard. Pre-PR rows store
  *  NULL — the byApp aggregator treats those as "unknown" and skips
@@ -18,6 +20,10 @@ export const SETTLEMENT_TYPES: readonly SettlementType[] = ["settleAuth", "scatt
 
 export interface SettlementInsert {
   txHash: string;
+  /** EVM network (chainId) the settlement tx landed on. Optional on the
+   *  wire for backward compatibility with pre-multitenancy relayers; the
+   *  orderbook defaults a missing value to Sepolia (11155111). */
+  chainId?: number;
   blockNumber: number;
   blockTime?: number; // optional — relayer doesn't always know yet
   makerRelayer: string;
@@ -52,6 +58,11 @@ export interface StoredSettlement extends SettlementInsert {
 }
 
 export interface SettlementListFilter {
+  // Scope to one EVM network. Omitted → no chain filter (all networks) at the
+  // DB layer — but the public read routes always pass a chainId, defaulting an
+  // absent `?chainId=` to Sepolia, so the HTTP API never aggregates across
+  // chains by default.
+  chainId?: number;
   relayer?: string;       // matches submitter OR makerRelayer OR takerRelayer
   pair?: [string, string]; // [tokenA, tokenB] sorted, both directions counted
   since?: number;          // unix seconds
@@ -132,6 +143,7 @@ export const LEADERBOARD_METRICS = ["count", "verifiedCount", "successRate"] as 
 export type LeaderboardMetric = typeof LEADERBOARD_METRICS[number];
 
 export interface NetworkSettlementTotals {
+  chainId: number;         // the EVM network these totals are scoped to
   txCount: number;
   txCountVerified: number;
   volumeByToken: TokenVolumeRow[];
@@ -218,6 +230,15 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (r.type !== undefined && !(SETTLEMENT_TYPES as readonly string[]).includes(r.type as string)) {
     throw new Error(`type: must be one of ${SETTLEMENT_TYPES.join("|")} when provided`);
   }
+  // chainId: accept a number OR a numeric string (symmetric with
+  // parseOrderSummary, which goes through the same coercion). Validate up
+  // front so a present-but-invalid value 400s with a clear message.
+  let chainId: number;
+  try {
+    chainId = chainIdOrDefault(r.chainId);
+  } catch {
+    throw new Error("chainId: must be a positive integer when provided");
+  }
 
   const out: SettlementInsert = {
     txHash: r.txHash.toLowerCase(),
@@ -230,6 +251,9 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     userMaxFeeMaker: r.userMaxFeeMaker as number,
     userMaxFeeTaker: r.userMaxFeeTaker as number,
   };
+  // Always stamp chainId (resolved/defaulted above) so the parsed payload is
+  // symmetric with parseOrderSummary — downstream never has to re-default it.
+  out.chainId = chainId;
   if (typeof r.blockTime === "number") out.blockTime = r.blockTime;
   if (r.takerRelayer) out.takerRelayer = (r.takerRelayer as string).toLowerCase();
   if (isStringField(r.makerOrderId)) out.makerOrderId = r.makerOrderId;

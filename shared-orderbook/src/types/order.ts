@@ -29,12 +29,16 @@ export interface MatchNotification {
 
 import type { OrderSummary } from "@scatter-dex/types";
 import { ETH_ADDRESS_RE, OFFER_HANDLE_RE } from "@scatter-dex/types";
+import { chainIdOrDefault } from "../core/chain.js";
 
 export function parseOrderSummary(
   raw: Record<string, unknown>,
   relayer: string,
   relayerUrl: string,
 ): OrderSummary {
+  // Throws on a present-but-invalid chainId (caller maps to 400); a missing
+  // value defaults to Sepolia for backward compatibility.
+  const chainId = chainIdOrDefault(raw.chainId);
   const sellToken = String(raw.sellToken ?? "");
   const buyToken = String(raw.buyToken ?? "");
   const sellAmount = String(raw.sellAmount ?? "");
@@ -64,6 +68,7 @@ export function parseOrderSummary(
 
   return {
     id,
+    chainId,
     relayer: relayer.toLowerCase(),
     relayerUrl,
     sellToken: sellToken.toLowerCase(),

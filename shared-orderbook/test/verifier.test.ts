@@ -130,7 +130,7 @@ describe("runVerifyPass (DB-integrated)", () => {
         expect(to).toBe(100);
         return [makeEvent()];
       },
-      { maxBlock: 1000 },
+      { chainId: 11155111, maxBlock: 1000 },
     );
 
     expect(result.scanned).toBe(1);
@@ -144,7 +144,7 @@ describe("runVerifyPass (DB-integrated)", () => {
   it("leaves verified=0 and reports the reason when the event is missing", async () => {
     const row = makeRow();
     db.insertSettlement(row.makerRelayer, row);
-    const result = await runVerifyPass(db, async () => [], { maxBlock: 1000 });
+    const result = await runVerifyPass(db, async () => [], { chainId: 11155111, maxBlock: 1000 });
     expect(result.flipped).toBe(0);
     expect(result.report.unmatched).toHaveLength(1);
     expect(result.report.unmatched[0].reason).toBe("no-event");
@@ -159,7 +159,7 @@ describe("runVerifyPass (DB-integrated)", () => {
         calls++;
         return [];
       },
-      { maxBlock: 1000 },
+      { chainId: 11155111, maxBlock: 1000 },
     );
     expect(result.scanned).toBe(0);
     expect(result.flipped).toBe(0);
@@ -171,10 +171,10 @@ describe("runVerifyPass (DB-integrated)", () => {
     db.insertSettlement(row.makerRelayer, row);
 
     const fetcher = async () => [makeEvent()];
-    const first = await runVerifyPass(db, fetcher, { maxBlock: 1000 });
+    const first = await runVerifyPass(db, fetcher, { chainId: 11155111, maxBlock: 1000 });
     expect(first.flipped).toBe(1);
 
-    const second = await runVerifyPass(db, fetcher, { maxBlock: 1000 });
+    const second = await runVerifyPass(db, fetcher, { chainId: 11155111, maxBlock: 1000 });
     expect(second.scanned).toBe(0);
     expect(second.flipped).toBe(0);
   });
@@ -188,7 +188,7 @@ describe("runVerifyPass (DB-integrated)", () => {
     const result = await runVerifyPass(
       db,
       async () => [makeEvent({ blockTime: 1_750_000_000 })],
-      { maxBlock: 1000 },
+      { chainId: 11155111, maxBlock: 1000 },
     );
     expect(result.flipped).toBe(1);
     // The on-chain timestamp wins.
@@ -207,7 +207,7 @@ describe("runVerifyPass (DB-integrated)", () => {
         expect(to).toBe(100);
         return [makeEvent()];
       },
-      { maxBlock: 200 },
+      { chainId: 11155111, maxBlock: 200 },
     );
     expect(result.scanned).toBe(1);
     expect(result.flipped).toBe(1);

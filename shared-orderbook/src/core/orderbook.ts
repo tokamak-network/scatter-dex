@@ -1,6 +1,16 @@
 import type { OrderSummary, StoredOrder, OrderStatus } from "../types/order.js";
 import { pairKey } from "../types/order.js";
 import { config } from "../config.js";
+import { DEFAULT_CHAIN_ID } from "./chain.js";
+
+/**
+ * Pair-index key for the in-memory book. Scoped by chainId so a buy on one
+ * network and a sell on another never land in the same counterparty set —
+ * orders only ever match within a single chain.
+ */
+function indexKey(order: Pick<OrderSummary, "chainId" | "sellToken" | "buyToken">): string {
+  return `${order.chainId ?? DEFAULT_CHAIN_ID}:${pairKey(order.sellToken, order.buyToken)}`;
+}
 
 /**
  * Relayer registry — models the Steam bot registration pattern.
@@ -111,7 +121,7 @@ export class SharedOrderbook {
     this.orders.set(order.id, stored);
 
     // Index by pair + side
-    const pair = pairKey(order.sellToken, order.buyToken);
+    const pair = indexKey(order);
     const isSellSide = order.sellToken.toLowerCase() < order.buyToken.toLowerCase();
 
     if (isSellSide) {
@@ -141,7 +151,7 @@ export class SharedOrderbook {
 
     this.orders.delete(id);
     const { order } = stored;
-    const pair = pairKey(order.sellToken, order.buyToken);
+    const pair = indexKey(order);
     this.sellSide.get(pair)?.delete(id);
     this.buySide.get(pair)?.delete(id);
     this.relayerOrders.get(order.relayer.toLowerCase())?.delete(id);
@@ -164,7 +174,7 @@ export class SharedOrderbook {
     // Remove from pair index if no longer open
     if (status !== "open" && wasOpen) {
       const { order } = stored;
-      const pair = pairKey(order.sellToken, order.buyToken);
+      const pair = indexKey(order);
       this.sellSide.get(pair)?.delete(id);
       this.buySide.get(pair)?.delete(id);
 
@@ -176,7 +186,7 @@ export class SharedOrderbook {
 
   /** Get counterparty orders for a given order (opposite side of the pair) */
   getCounterpartyOrders(order: OrderSummary): StoredOrder[] {
-    const pair = pairKey(order.sellToken, order.buyToken);
+    const pair = indexKey(order);
     const isSellSide = order.sellToken.toLowerCase() < order.buyToken.toLowerCase();
 
     // If this order is on sell side, counterparties are on buy side and vice versa
@@ -194,11 +204,12 @@ export class SharedOrderbook {
     return result;
   }
 
-  /** List all open orders, optionally filtered by pair */
-  listOpen(pair?: string): StoredOrder[] {
+  /** List all open orders, optionally filtered by pair (within `chainId`). */
+  listOpen(pair?: string, chainId: number = DEFAULT_CHAIN_ID): StoredOrder[] {
     if (pair) {
-      const sellIds = this.sellSide.get(pair) ?? new Set<string>();
-      const buyIds = this.buySide.get(pair) ?? new Set<string>();
+      const key = `${chainId}:${pair}`;
+      const sellIds = this.sellSide.get(key) ?? new Set<string>();
+      const buyIds = this.buySide.get(key) ?? new Set<string>();
       const result: StoredOrder[] = [];
       for (const id of [...sellIds, ...buyIds]) {
         const stored = this.orders.get(id);
@@ -208,7 +219,7 @@ export class SharedOrderbook {
     }
 
     return [...this.orders.values()]
-      .filter(s => s.status === "open")
+      .filter(s => s.status === "open" && (s.order.chainId ?? DEFAULT_CHAIN_ID) === chainId)
       .sort((a, b) => a.order.createdAt - b.order.createdAt);
   }
 
@@ -260,7 +271,7 @@ export class SharedOrderbook {
     for (const stored of orders) {
       if (stored.status !== "open") continue;
       this.orders.set(stored.order.id, stored);
-      const pair = pairKey(stored.order.sellToken, stored.order.buyToken);
+      const pair = indexKey(stored.order);
       const isSellSide = stored.order.sellToken.toLowerCase() < stored.order.buyToken.toLowerCase();
       if (isSellSide) {
         if (!this.sellSide.has(pair)) this.sellSide.set(pair, new Set());

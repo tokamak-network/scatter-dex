@@ -5,6 +5,7 @@ import type { OrderbookDB } from "../core/db.js";
 import { parseSettlementInsert, LEADERBOARD_METRICS, type LeaderboardMetric } from "../types/settlement.js";
 import { isValidPair } from "../types/order.js";
 import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
+import { parseChainIdQuery } from "../core/chain.js";
 
 const HEX_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const MAX_LIMIT = 500;
@@ -100,8 +101,10 @@ export function createSettlementRoutes(
         return;
       }
       const { limit, offset } = parseLimitOffset(q);
+      const chainId = parseChainIdQuery(q.chainId);
+      if (chainId instanceof Error) { res.status(400).json({ error: chainId.message }); return; }
 
-      const rows = db.listSettlements({ relayer, pair, since, limit, offset });
+      const rows = db.listSettlements({ chainId, relayer, pair, since, limit, offset });
       res.json({ settlements: rows, count: rows.length, offset });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "unknown error" });
@@ -130,8 +133,10 @@ export function createSettlementStatsRoutes(
     }
     const since = parseSinceQuery(req.query.since);
     if (since instanceof Error) { res.status(400).json({ error: since.message }); return; }
+    const chainId = parseChainIdQuery(req.query.chainId);
+    if (chainId instanceof Error) { res.status(400).json({ error: chainId.message }); return; }
     try {
-      res.json(db.getRelayerSettlementStats(addr, since));
+      res.json(db.getRelayerSettlementStats(addr, chainId, since));
     } catch (err: unknown) {
       // DB locked / corrupt / unexpected aggregation error — return JSON
       // 500 like other DB-backed routes instead of Express's HTML default.
@@ -142,8 +147,10 @@ export function createSettlementStatsRoutes(
   router.get("/network/totals", readLimiter, (req, res) => {
     const since = parseSinceQuery(req.query.since);
     if (since instanceof Error) { res.status(400).json({ error: since.message }); return; }
+    const chainId = parseChainIdQuery(req.query.chainId);
+    if (chainId instanceof Error) { res.status(400).json({ error: chainId.message }); return; }
     try {
-      res.json(db.getNetworkSettlementTotals(since));
+      res.json(db.getNetworkSettlementTotals(chainId, since));
     } catch (err: unknown) {
       res.status(500).json({ error: err instanceof Error ? err.message : "totals failed" });
     }
@@ -168,8 +175,10 @@ export function createSettlementStatsRoutes(
       }
       limit = n;
     }
+    const chainId = parseChainIdQuery(req.query.chainId);
+    if (chainId instanceof Error) { res.status(400).json({ error: chainId.message }); return; }
     try {
-      const rows = db.getLeaderboard(metric, since, limit);
+      const rows = db.getLeaderboard(chainId, metric, since, limit);
       res.json({ metric, since: since ?? null, count: rows.length, rows });
     } catch (err: unknown) {
       res.status(500).json({ error: err instanceof Error ? err.message : "leaderboard failed" });

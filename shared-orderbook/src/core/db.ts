@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { clampLimit } from "@scatter-dex/types";
 import { config } from "../config.js";
+import { DEFAULT_CHAIN_ID } from "./chain.js";
 import type { OrderSummary, OrderStatus, StoredOrder, MatchResult } from "../types/order.js";
 import type {
   SettlementInsert,
@@ -61,9 +62,24 @@ export class OrderbookDB {
   }
 
   private createTables(): void {
+    // Multi-network migration — MUST run before the CREATE INDEX statements
+    // below, which reference chain_id. On a legacy (pre-multitenancy) DB the
+    // table already exists, so `CREATE TABLE IF NOT EXISTS` won't add the
+    // column; we ALTER it in here first (NOT NULL DEFAULT backfills existing
+    // rows to Sepolia). A table that doesn't exist yet (fresh DB) has no
+    // columns to probe — skip it; the CREATE TABLE below makes it with
+    // chain_id already present.
+    for (const table of ["orders", "matches", "settlements"]) {
+      const cols = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+      if (cols.length > 0 && !cols.some((c) => c.name === "chain_id")) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN chain_id INTEGER NOT NULL DEFAULT ${DEFAULT_CHAIN_ID}`);
+      }
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
+        chain_id INTEGER NOT NULL DEFAULT 11155111,
         relayer TEXT NOT NULL,
         relayer_url TEXT NOT NULL,
         sell_token TEXT NOT NULL,
@@ -78,13 +94,16 @@ export class OrderbookDB {
         match_id TEXT
       );
 
-      CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status, created_at);
-      CREATE INDEX IF NOT EXISTS idx_orders_pair ON orders(sell_token, buy_token);
-      CREATE INDEX IF NOT EXISTS idx_orders_relayer ON orders(relayer, created_at);
-      CREATE INDEX IF NOT EXISTS idx_orders_expiry ON orders(expiry);
+      -- All read paths are scoped to a single chain, so every order index
+      -- leads with chain_id (the network is the outermost partition).
+      CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(chain_id, status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_orders_pair ON orders(chain_id, sell_token, buy_token);
+      CREATE INDEX IF NOT EXISTS idx_orders_relayer ON orders(chain_id, relayer, created_at);
+      CREATE INDEX IF NOT EXISTS idx_orders_expiry ON orders(chain_id, expiry);
 
       CREATE TABLE IF NOT EXISTS matches (
         match_id TEXT PRIMARY KEY,
+        chain_id INTEGER NOT NULL DEFAULT 11155111,
         maker_id TEXT NOT NULL REFERENCES orders(id),
         taker_id TEXT NOT NULL REFERENCES orders(id),
         settling_relayer TEXT NOT NULL,
@@ -101,6 +120,7 @@ export class OrderbookDB {
       -- nullifier.
       CREATE TABLE IF NOT EXISTS settlements (
         tx_hash            TEXT PRIMARY KEY,
+        chain_id           INTEGER NOT NULL DEFAULT 11155111,
         block_number       INTEGER NOT NULL,
         block_time         INTEGER,
         submitter          TEXT NOT NULL,
@@ -127,11 +147,14 @@ export class OrderbookDB {
       -- listSettlements' ORDER BY block_number DESC can stream straight
       -- off the index without a filesort. block_time is nullable in
       -- Phase 2.5a (verify job backfills it), so it's a poor sort key.
-      CREATE INDEX IF NOT EXISTS idx_settle_submitter   ON settlements(submitter, block_number);
-      CREATE INDEX IF NOT EXISTS idx_settle_maker       ON settlements(maker_relayer, block_number);
-      CREATE INDEX IF NOT EXISTS idx_settle_taker       ON settlements(taker_relayer, block_number);
-      CREATE INDEX IF NOT EXISTS idx_settle_pair        ON settlements(sell_token, buy_token, block_number);
-      CREATE INDEX IF NOT EXISTS idx_settle_block       ON settlements(block_number);
+      -- Every settlement read path is scoped to a single chain, so the
+      -- secondary indexes lead with chain_id. The verifier's per-chain
+      -- unverified scan and the per-chain since-filter both ride these.
+      CREATE INDEX IF NOT EXISTS idx_settle_submitter   ON settlements(chain_id, submitter, block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_maker       ON settlements(chain_id, maker_relayer, block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_taker       ON settlements(chain_id, taker_relayer, block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_pair        ON settlements(chain_id, sell_token, buy_token, block_number);
+      CREATE INDEX IF NOT EXISTS idx_settle_block       ON settlements(chain_id, block_number);
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_m ON settlements(maker_nullifier);
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_t ON settlements(taker_nullifier);
 
@@ -141,7 +164,7 @@ export class OrderbookDB {
       -- SQLite expression indexes require the filter expression to match
       -- verbatim — keep these in sync with the WHERE clauses.
       CREATE INDEX IF NOT EXISTS idx_settle_time_coalesce
-        ON settlements(COALESCE(block_time, created_at));
+        ON settlements(chain_id, COALESCE(block_time, created_at));
 
       -- Relayer operator KYC onboarding (Stage 1). Submissions arrive on the
       -- public POST /api/kyc/submit endpoint; an admin reviews them (PR2) and
@@ -202,9 +225,9 @@ export class OrderbookDB {
 
   private prepareStatements(): void {
     this.stmtInsertOrder = this.db.prepare(`
-      INSERT INTO orders (id, relayer, relayer_url, sell_token, buy_token,
+      INSERT INTO orders (id, chain_id, relayer, relayer_url, sell_token, buy_token,
         sell_amount, buy_amount, min_fill_amount, max_fee, expiry, created_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
     `);
 
     this.stmtGetOrder = this.db.prepare(`SELECT * FROM orders WHERE id = ?`);
@@ -216,7 +239,7 @@ export class OrderbookDB {
     this.stmtDeleteOrder = this.db.prepare(`DELETE FROM orders WHERE id = ?`);
 
     this.stmtListOpen = this.db.prepare(`
-      SELECT * FROM orders WHERE status = 'open' ORDER BY created_at ASC LIMIT ? OFFSET ?
+      SELECT * FROM orders WHERE chain_id = ? AND status = 'open' ORDER BY created_at ASC LIMIT ? OFFSET ?
     `);
     // Status-bucket queries used by the new /api/orders?status=... view.
     // listAll keeps the original ordering shape (open-first) so the
@@ -224,34 +247,35 @@ export class OrderbookDB {
     // rows fall to the bottom by created_at DESC instead of intermixing.
     this.stmtListAll = this.db.prepare(`
       SELECT * FROM orders
+      WHERE chain_id = ?
       ORDER BY
         CASE status WHEN 'open' THEN 0 ELSE 1 END,
         created_at DESC
       LIMIT ? OFFSET ?
     `);
     this.stmtListByStatus = this.db.prepare(`
-      SELECT * FROM orders WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+      SELECT * FROM orders WHERE chain_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
     this.stmtCountByStatus = this.db.prepare(`
-      SELECT status, COUNT(*) AS count FROM orders GROUP BY status
+      SELECT status, COUNT(*) AS count FROM orders WHERE chain_id = ? GROUP BY status
     `);
 
     // UNION ALL instead of OR — lets SQLite use idx_orders_pair on each branch
     this.stmtListByPair = this.db.prepare(`
       SELECT * FROM (
-        SELECT * FROM orders WHERE status = 'open' AND sell_token = ? AND buy_token = ?
+        SELECT * FROM orders WHERE chain_id = ? AND status = 'open' AND sell_token = ? AND buy_token = ?
         UNION ALL
-        SELECT * FROM orders WHERE status = 'open' AND sell_token = ? AND buy_token = ?
+        SELECT * FROM orders WHERE chain_id = ? AND status = 'open' AND sell_token = ? AND buy_token = ?
       ) ORDER BY created_at ASC
       LIMIT ? OFFSET ?
     `);
 
     this.stmtListByRelayer = this.db.prepare(`
-      SELECT * FROM orders WHERE relayer = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
+      SELECT * FROM orders WHERE chain_id = ? AND relayer = ? ORDER BY created_at DESC LIMIT ? OFFSET ?
     `);
 
     this.stmtCountByRelayer = this.db.prepare(`
-      SELECT COUNT(*) as count FROM orders WHERE relayer = ? AND status = 'open'
+      SELECT COUNT(*) as count FROM orders WHERE chain_id = ? AND relayer = ? AND status = 'open'
     `);
 
     this.stmtPurgeExpired = this.db.prepare(`
@@ -259,12 +283,12 @@ export class OrderbookDB {
     `);
 
     this.stmtInsertMatch = this.db.prepare(`
-      INSERT INTO matches (match_id, maker_id, taker_id, settling_relayer, pair, price, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO matches (match_id, chain_id, maker_id, taker_id, settling_relayer, pair, price, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.stmtGetMatchJoin = this.db.prepare(`
-      SELECT m.match_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
+      SELECT m.match_id, m.chain_id as chain_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
              mk.id as mk_id, mk.relayer as mk_relayer, mk.relayer_url as mk_relayer_url,
              mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
              mk.sell_amount as mk_sell_amount, mk.buy_amount as mk_buy_amount,
@@ -284,19 +308,19 @@ export class OrderbookDB {
     // duplicate tx_hash → no-op; safe for relayer client retries.
     this.stmtInsertSettlement = this.db.prepare(`
       INSERT OR IGNORE INTO settlements (
-        tx_hash, block_number, block_time, submitter,
+        tx_hash, chain_id, block_number, block_time, submitter,
         maker_relayer, taker_relayer, maker_order_id, taker_order_id,
         maker_nullifier, taker_nullifier,
         sell_token, buy_token, sell_amount, buy_amount,
         fee_maker, fee_taker, user_maxfee_maker, user_maxfee_taker,
         verified, type, created_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
     `);
 
     this.stmtGetSettlement = this.db.prepare(`SELECT * FROM settlements WHERE tx_hash = ?`);
 
     this.stmtListMatchesJoin = this.db.prepare(`
-      SELECT m.match_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
+      SELECT m.match_id, m.chain_id as chain_id, m.settling_relayer, m.pair, m.price, m.created_at as match_created_at,
              mk.id as mk_id, mk.relayer as mk_relayer, mk.relayer_url as mk_relayer_url,
              mk.sell_token as mk_sell_token, mk.buy_token as mk_buy_token,
              mk.sell_amount as mk_sell_amount, mk.buy_amount as mk_buy_amount,
@@ -310,6 +334,7 @@ export class OrderbookDB {
       FROM matches m
       JOIN orders mk ON mk.id = m.maker_id
       JOIN orders tk ON tk.id = m.taker_id
+      WHERE m.chain_id = ?
       ORDER BY m.created_at DESC LIMIT ? OFFSET ?
     `);
 
@@ -356,7 +381,7 @@ export class OrderbookDB {
 
   insertOrder(o: OrderSummary): void {
     this.stmtInsertOrder.run(
-      o.id, o.relayer, o.relayerUrl,
+      o.id, o.chainId ?? DEFAULT_CHAIN_ID, o.relayer, o.relayerUrl,
       o.sellToken, o.buyToken,
       o.sellAmount, o.buyAmount, o.minFillAmount,
       o.maxFee, o.expiry, o.createdAt,
@@ -388,8 +413,8 @@ export class OrderbookDB {
     return result.changes > 0;
   }
 
-  listOpen(limit = 100, offset = 0): StoredOrder[] {
-    const rows = this.stmtListOpen.all(limit, offset) as Record<string, unknown>[];
+  listOpen(chainId: number, limit = 100, offset = 0): StoredOrder[] {
+    const rows = this.stmtListOpen.all(chainId, limit, offset) as Record<string, unknown>[];
     return rows.map(r => this.rowToStoredOrder(r));
   }
 
@@ -397,37 +422,37 @@ export class OrderbookDB {
    *  return every row (terminal + open) sorted open-first. A defined
    *  status is forwarded as-is so the SDK / UI keep one query
    *  surface for both the bucket tabs and the legacy "open" view. */
-  listAll(limit = 100, offset = 0, status?: OrderStatus): StoredOrder[] {
+  listAll(chainId: number, limit = 100, offset = 0, status?: OrderStatus): StoredOrder[] {
     const rows = status
-      ? (this.stmtListByStatus.all(status, limit, offset) as Record<string, unknown>[])
-      : (this.stmtListAll.all(limit, offset) as Record<string, unknown>[]);
+      ? (this.stmtListByStatus.all(chainId, status, limit, offset) as Record<string, unknown>[])
+      : (this.stmtListAll.all(chainId, limit, offset) as Record<string, unknown>[]);
     return rows.map(r => this.rowToStoredOrder(r));
   }
 
   /** Per-status counts for the UI's tab labels (`All (5) · Open (3)
    *  · Expired (1) · …`). Returned as a partial map so a missing
    *  bucket reads as 0 client-side. */
-  countByStatus(): Partial<Record<OrderStatus, number>> {
-    const rows = this.stmtCountByStatus.all() as Array<{ status: string; count: number }>;
+  countByStatus(chainId: number): Partial<Record<OrderStatus, number>> {
+    const rows = this.stmtCountByStatus.all(chainId) as Array<{ status: string; count: number }>;
     const out: Partial<Record<OrderStatus, number>> = {};
     for (const r of rows) out[r.status as OrderStatus] = r.count;
     return out;
   }
 
-  listByPair(tokenA: string, tokenB: string, limit = 100, offset = 0): StoredOrder[] {
+  listByPair(chainId: number, tokenA: string, tokenB: string, limit = 100, offset = 0): StoredOrder[] {
     const a = tokenA.toLowerCase();
     const b = tokenB.toLowerCase();
-    const rows = this.stmtListByPair.all(a, b, b, a, limit, offset) as Record<string, unknown>[];
+    const rows = this.stmtListByPair.all(chainId, a, b, chainId, b, a, limit, offset) as Record<string, unknown>[];
     return rows.map(r => this.rowToStoredOrder(r));
   }
 
-  listByRelayer(relayer: string, limit = 100, offset = 0): StoredOrder[] {
-    const rows = this.stmtListByRelayer.all(relayer.toLowerCase(), limit, offset) as Record<string, unknown>[];
+  listByRelayer(chainId: number, relayer: string, limit = 100, offset = 0): StoredOrder[] {
+    const rows = this.stmtListByRelayer.all(chainId, relayer.toLowerCase(), limit, offset) as Record<string, unknown>[];
     return rows.map(r => this.rowToStoredOrder(r));
   }
 
-  countByRelayer(relayer: string): number {
-    const row = this.stmtCountByRelayer.get(relayer.toLowerCase()) as { count: number };
+  countByRelayer(chainId: number, relayer: string): number {
+    const row = this.stmtCountByRelayer.get(chainId, relayer.toLowerCase()) as { count: number };
     return row.count;
   }
 
@@ -438,8 +463,10 @@ export class OrderbookDB {
   }
 
   insertMatch(m: MatchResult): void {
+    // Both legs are on the same chain (cross-chain orders never match), so
+    // the maker's chainId is the match's chainId.
     this.stmtInsertMatch.run(
-      m.matchId, m.maker.id, m.taker.id,
+      m.matchId, m.maker.chainId ?? DEFAULT_CHAIN_ID, m.maker.id, m.taker.id,
       m.settlingRelayer, m.pair, m.price, m.createdAt,
     );
   }
@@ -450,16 +477,18 @@ export class OrderbookDB {
     return this.rowToMatchResult(row);
   }
 
-  listMatches(limit = 50, offset = 0): MatchResult[] {
-    const rows = this.stmtListMatchesJoin.all(limit, offset) as Record<string, unknown>[];
+  listMatches(chainId: number, limit = 50, offset = 0): MatchResult[] {
+    const rows = this.stmtListMatchesJoin.all(chainId, limit, offset) as Record<string, unknown>[];
     return rows.map(row => this.rowToMatchResult(row));
   }
 
   private rowToMatchResult(row: Record<string, unknown>): MatchResult {
+    const chainId = (row.chain_id as number | null) ?? DEFAULT_CHAIN_ID;
     return {
       matchId: row.match_id as string,
       maker: {
         id: row.mk_id as string,
+        chainId,
         relayer: row.mk_relayer as string,
         relayerUrl: row.mk_relayer_url as string,
         sellToken: row.mk_sell_token as string,
@@ -473,6 +502,7 @@ export class OrderbookDB {
       },
       taker: {
         id: row.tk_id as string,
+        chainId,
         relayer: row.tk_relayer as string,
         relayerUrl: row.tk_relayer_url as string,
         sellToken: row.tk_sell_token as string,
@@ -501,7 +531,9 @@ export class OrderbookDB {
     txn();
   }
 
-  /** Load all open orders from DB (for in-memory orderbook restoration) */
+  /** Load all open orders across ALL chains from DB (for in-memory orderbook
+   *  restoration). The in-memory book keys its pair index by chainId, so the
+   *  multi-chain union restores without cross-chain collisions. */
   loadAllOpen(): StoredOrder[] {
     const rows = this.db.prepare(
       `SELECT * FROM orders WHERE status = 'open' ORDER BY created_at ASC`,
@@ -540,6 +572,7 @@ export class OrderbookDB {
     }
     const result = this.stmtInsertSettlement.run(
       payload.txHash,
+      payload.chainId ?? DEFAULT_CHAIN_ID,
       payload.blockNumber,
       payload.blockTime ?? null,
       submitter.toLowerCase(),
@@ -587,9 +620,17 @@ export class OrderbookDB {
    * the oldest unverified rows first — verified=0 rows can pile up
    * during a chain re-org without starving the queue.
    */
-  listUnverifiedSettlements(opts: { maxBlock?: number; limit?: number } = {}): StoredSettlement[] {
+  listUnverifiedSettlements(opts: { chainId?: number; maxBlock?: number; limit?: number } = {}): StoredSettlement[] {
+    // Scoped to one chain when chainId is given — each verifier loop owns a
+    // single network's RPC + settlement contract and must not pick up another
+    // chain's rows. Omitting chainId (e.g. the admin verify-stats sample)
+    // scans across all networks.
     const where: string[] = ["verified = 0"];
     const params: unknown[] = [];
+    if (typeof opts.chainId === "number") {
+      where.push("chain_id = ?");
+      params.push(opts.chainId);
+    }
     if (typeof opts.maxBlock === "number") {
       where.push("block_number <= ?");
       params.push(opts.maxBlock);
@@ -640,6 +681,10 @@ export class OrderbookDB {
   listSettlements(filter: SettlementListFilter = {}): StoredSettlement[] {
     const where: string[] = [];
     const params: unknown[] = [];
+    if (typeof filter.chainId === "number") {
+      where.push("chain_id = ?");
+      params.push(filter.chainId);
+    }
     if (filter.relayer) {
       const r = filter.relayer.toLowerCase();
       where.push("(submitter = ? OR maker_relayer = ? OR taker_relayer = ?)");
@@ -671,6 +716,7 @@ export class OrderbookDB {
   private rowToSettlement(row: Record<string, unknown>): StoredSettlement {
     return {
       txHash: row.tx_hash as string,
+      chainId: (row.chain_id as number | null) ?? DEFAULT_CHAIN_ID,
       blockNumber: row.block_number as number,
       blockTime: (row.block_time as number | null) ?? undefined,
       submitter: row.submitter as string,
@@ -797,17 +843,18 @@ export class OrderbookDB {
    * Per-relayer aggregate stats across all settlements where the relayer
    * appears as submitter, maker, or taker. Used by GET /api/relayers/:addr/stats.
    */
-  getRelayerSettlementStats(addr: string, since?: number): RelayerSettlementStats {
+  getRelayerSettlementStats(addr: string, chainId: number, since?: number): RelayerSettlementStats {
     const a = addr.toLowerCase();
     const sinceClause = typeof since === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
     // UNION (not UNION ALL) deduplicates rows that match more than one
     // role — it's common for the submitter to also be the maker. SQLite
     // can satisfy each branch from idx_settle_submitter/_maker/_taker
-    // individually, which a single OR-across-3-cols cannot.
+    // individually (all chain_id-leading), which a single OR cannot.
     const branchSql = (col: string) =>
-      `SELECT * FROM settlements WHERE ${col} = ? ${sinceClause}`;
+      `SELECT * FROM settlements WHERE chain_id = ? AND ${col} = ? ${sinceClause}`;
     const sql = `${branchSql("submitter")} UNION ${branchSql("maker_relayer")} UNION ${branchSql("taker_relayer")}`;
-    const args = typeof since === "number" ? [a, since, a, since, a, since] : [a, a, a];
+    const branchArgs = typeof since === "number" ? [chainId, a, since] : [chainId, a];
+    const args = [...branchArgs, ...branchArgs, ...branchArgs];
     // .iterate() streams rows so a relayer with millions of settlements
     // doesn't OOM the Node heap; .all() materialises the whole set first.
     const rowIter = this.db.prepare(sql).iterate(...args) as Iterable<Record<string, unknown>>;
@@ -864,9 +911,12 @@ export class OrderbookDB {
    * row to Node just to count it; only the volume aggregation needs JS
    * (BigInt sums on TEXT columns).
    */
-  getNetworkSettlementTotals(since?: number): NetworkSettlementTotals {
-    const where = typeof since === "number" ? "WHERE COALESCE(block_time, created_at) >= ?" : "";
-    const args: unknown[] = typeof since === "number" ? [since] : [];
+  getNetworkSettlementTotals(chainId: number, since?: number): NetworkSettlementTotals {
+    // chain_id is always scoped; `since` is optional. `where` is therefore
+    // never empty, which also simplifies the taker-NULL predicate below.
+    const sinceClause = typeof since === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
+    const where = `WHERE chain_id = ? ${sinceClause}`;
+    const args: unknown[] = typeof since === "number" ? [chainId, since] : [chainId];
 
     const counters = this.db.prepare(
       `SELECT
@@ -885,7 +935,7 @@ export class OrderbookDB {
     // rather than pulling every row to Node. The taker branch keeps NULLs
     // out via an additional predicate so they don't get DISTINCT-counted
     // against actual addresses.
-    const takerExtra = where ? "AND taker_relayer IS NOT NULL" : "WHERE taker_relayer IS NOT NULL";
+    const takerExtra = "AND taker_relayer IS NOT NULL";
     const relayerCount = this.db.prepare(
       `SELECT COUNT(DISTINCT addr) AS c FROM (
          SELECT submitter AS addr FROM settlements ${where}
@@ -903,6 +953,7 @@ export class OrderbookDB {
     const { tokenAgg, tokenAggVerified } = this.aggregateSettlementRows(rows);
 
     return {
+      chainId,
       txCount: counters.tx_count as number,
       txCountVerified: counters.tx_count_verified as number,
       volumeByToken: this.materialiseTokenVolume(tokenAgg),
@@ -927,12 +978,17 @@ export class OrderbookDB {
    *                        appear (a relayer with 0 settlements has no rate)
    */
   getLeaderboard(
+    chainId: number,
     metric: LeaderboardMetric = "count",
     sinceSec?: number,
     limit = 50,
   ): LeaderboardRow[] {
-    const where = typeof sinceSec === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
-    const args: unknown[] = typeof sinceSec === "number" ? [sinceSec, sinceSec, sinceSec] : [];
+    // Each appearances branch is `WHERE <role> IS NOT NULL ${where}`, so the
+    // chain_id / since predicates are appended with a leading AND.
+    const sinceClause = typeof sinceSec === "number" ? "AND COALESCE(block_time, created_at) >= ?" : "";
+    const where = `AND chain_id = ? ${sinceClause}`;
+    const branchArgs = typeof sinceSec === "number" ? [chainId, sinceSec] : [chainId];
+    const args: unknown[] = [...branchArgs, ...branchArgs, ...branchArgs];
     const cappedLimit = clampLimit(limit, 500, 50);
 
     const orderBy = metric === "verifiedCount"
@@ -1097,6 +1153,7 @@ export class OrderbookDB {
     return {
       order: {
         id: row.id as string,
+        chainId: (row.chain_id as number | null) ?? DEFAULT_CHAIN_ID,
         relayer: row.relayer as string,
         relayerUrl: row.relayer_url as string,
         sellToken: row.sell_token as string,

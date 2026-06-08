@@ -133,9 +133,11 @@ export type EventFetcher = (fromBlock: number, toBlock: number) => Promise<Settl
 export async function runVerifyPass(
   db: OrderbookDB,
   fetcher: EventFetcher,
-  opts: { maxBlock: number; limit?: number } = { maxBlock: Number.MAX_SAFE_INTEGER },
+  opts: { chainId: number; maxBlock?: number; limit?: number },
 ): Promise<{ scanned: number; flipped: number; report: VerifyReport }> {
-  const rows = db.listUnverifiedSettlements({ maxBlock: opts.maxBlock, limit: opts.limit });
+  // Scoped to one chain: this pass's fetcher binds a single network's RPC +
+  // settlement contract, so it must only pull that network's unverified rows.
+  const rows = db.listUnverifiedSettlements({ chainId: opts.chainId, maxBlock: opts.maxBlock, limit: opts.limit });
   if (rows.length === 0) {
     return { scanned: 0, flipped: 0, report: { matched: [], unmatched: [] } };
   }
