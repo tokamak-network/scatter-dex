@@ -164,8 +164,19 @@ if ! docker compose version >/dev/null 2>&1; then
 		*) log "unsupported arch $(uname -m) — cannot install docker compose plugin"; exit 1 ;;
 	esac
 	log "installing docker compose ${compose_version} (${compose_arch})"
-	mkdir -p "${HOME}/.docker/cli-plugins"
-	compose_bin="${HOME}/.docker/cli-plugins/docker-compose"
+	# COS mounts /var/lib (including HOME=/var/lib/zkscatter) noexec, so the
+	# plugin binary cannot be executed from there. Stage it under
+	# /var/lib/docker — a separate ext4 mount that IS exec — and symlink it
+	# into the cli-plugins dir docker actually searches
+	# (${HOME}/.docker/cli-plugins). Exec follows the symlink to the exec mount.
+	compose_store=/var/lib/docker/cli-plugins
+	mkdir -p "${compose_store}" "${HOME}/.docker/cli-plugins"
+	# umask 077 (set above for secrets) would make these dirs 700, so a non-root
+	# operator running `docker compose` couldn't traverse them to the plugin.
+	# The compose binary is a public release, not a secret — make the dirs
+	# world-traversable.
+	chmod 755 "${compose_store}" "${HOME}/.docker/cli-plugins"
+	compose_bin="${compose_store}/docker-compose"
 	curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-${compose_arch}" \
 		-o "${compose_bin}"
 	if ! echo "${compose_sha}  ${compose_bin}" | sha256sum -c - >/dev/null 2>&1; then
@@ -173,7 +184,10 @@ if ! docker compose version >/dev/null 2>&1; then
 		rm -f "${compose_bin}"
 		exit 1
 	fi
-	chmod +x "${compose_bin}"
+	# 755 (not just +x): under umask 077 the download is 600, and +x would
+	# leave it 700 — executable by root only. The plugin is a public binary.
+	chmod 755 "${compose_bin}"
+	ln -sf "${compose_bin}" "${HOME}/.docker/cli-plugins/docker-compose"
 	docker compose version
 fi
 
