@@ -4,7 +4,9 @@ End-to-end deploy tooling for zkScatter. Frontend → Firebase Hosting (free),
 backend → a single GCP e2-micro VM in `us-central1` (Always Free tier). The
 central box runs **shared-orderbook + settlement-verifier**; `zk-relayer` is
 run per-operator (each relayer operator hosts their own) and sits behind the
-`relayer` Compose profile, so the default bring-up does not start it.
+`relayer` Compose profile, so the default bring-up does not start it. The
+domain/TLS `zk.<DOMAIN>` route therefore applies only where a relayer is
+co-located — see [Adding a domain](#adding-a-domain-later).
 
 ```
 deploy/
@@ -42,9 +44,11 @@ gcloud config set project zkscatter
 
 # 2b. (optional) keep a keyed RPC provider out of VM metadata by storing it in
 #     Secret Manager — vm-startup.sh prefers `rpc-url` over the keyless
-#     metadata endpoint (a public node) when the secret exists.
+#     metadata endpoint (a public node) when the secret exists. Create the
+#     secret once (idempotent), then add the value as a new version.
+gcloud secrets create rpc-url --replication-policy=automatic 2>/dev/null || true
 printf 'https://eth-sepolia.g.alchemy.com/v2/<KEY>' \
-  | gcloud secrets create rpc-url --data-file=-
+  | gcloud secrets versions add rpc-url --data-file=-
 
 # 3. set a budget alarm (optional but recommended)
 ./gcp/budget-alert.sh           # picks ~$1 worth in the billing currency
@@ -95,8 +99,14 @@ and exposes `http://<host>:3002` — see `deploy/runtime/README.md`.
 
 ## Adding a domain (later)
 
-Once a domain is ready and DNS A records for `orderbook.<DOMAIN>` and
-`zk.<DOMAIN>` point at the VM's external IP:
+> The TLS overlay's `zk.<DOMAIN>` route points at `zk-relayer`, which is
+> **not** running on the central box (it's behind the `relayer` profile). On
+> the orderbook box, set up `orderbook.<DOMAIN>` only; `zk.<DOMAIN>` is for a
+> host that co-locates a relayer (`docker compose --profile relayer up`).
+
+Once a domain is ready and a DNS A record for `orderbook.<DOMAIN>` (plus
+`zk.<DOMAIN>` only where a relayer is co-located) points at the VM's external
+IP:
 
 ```bash
 gcloud compute instances add-metadata zkscatter-node \

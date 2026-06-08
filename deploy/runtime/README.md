@@ -44,7 +44,7 @@ reads the chain and the shared DB). `zk-relayer` is **not** started.
 `zk-relayer` runs per-operator, not on the central box. An operator who wants
 it co-located enables the `relayer` Compose profile — this additionally needs
 `ZK_RELAYER_IMAGE`, `RPC_URL`, `COMMITMENT_POOL_ADDRESS`,
-`${RELAYER_KEY_FILE}`, and `${CIRCUITS_BUILD_DIR}`:
+`PRIVATE_SETTLEMENT_ADDRESS`, `${RELAYER_KEY_FILE}`, and `${CIRCUITS_BUILD_DIR}`:
 
 ```bash
 docker compose --profile relayer up -d
@@ -54,7 +54,13 @@ It then exposes `http://<host>:3002`.
 
 ## TLS mode (with a domain)
 
-Point `orderbook.<DOMAIN>` and `zk.<DOMAIN>` A records at the VM, then:
+> `Caddyfile` routes `zk.<DOMAIN>` → `zk-relayer`. That backend only exists
+> when the `relayer` profile is enabled, so on the default (orderbook-only)
+> box just point `orderbook.<DOMAIN>`; `zk.<DOMAIN>` applies only to a host
+> that co-locates a relayer.
+
+Point `orderbook.<DOMAIN>` (and `zk.<DOMAIN>` only with the `relayer` profile)
+A records at the VM, then:
 
 ```bash
 # In .env
