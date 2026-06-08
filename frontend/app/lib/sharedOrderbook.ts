@@ -3,7 +3,7 @@
  * Fetches stats, relayer list, and global orders from the shared orderbook server.
  */
 
-import { getSharedOrderbookUrl } from "./config";
+import { getSharedOrderbookUrl, EXPECTED_CHAIN_ID } from "./config";
 
 export interface SharedOrderbookStats {
   totalOrders: number;
@@ -21,6 +21,7 @@ export interface SharedRelayer {
 
 export interface SharedOrder {
   id: string;
+  chainId?: number;
   relayer: string;
   relayerUrl: string;
   nonce: string;
@@ -67,12 +68,22 @@ export async function getRelayers(): Promise<SharedRelayer[]> {
 }
 
 export async function getOrders(limit = 500): Promise<SharedOrder[]> {
-  const result = await fetchJSON<{ orders: SharedOrder[]; count: number }>(`/api/orders?limit=${limit}`);
+  // Orders are partitioned by network on the shared orderbook — scope reads to
+  // the active chain (absent → backend default Sepolia).
+  const params = new URLSearchParams({ limit: String(limit), chainId: String(EXPECTED_CHAIN_ID) });
+  const result = await fetchJSON<{ orders: SharedOrder[]; count: number }>(
+    `/api/orders?${params.toString()}`,
+  );
   return result?.orders ?? [];
 }
 
 export async function getOrdersByPair(pair: string): Promise<SharedOrder[]> {
-  const result = await fetchJSON<{ orders: SharedOrder[]; count: number }>(`/api/orders/${pair}`);
+  // Encode the pair into the path (matches the SDK client) so an unexpected
+  // character can't produce a malformed URL; chainId via URLSearchParams.
+  const params = new URLSearchParams({ chainId: String(EXPECTED_CHAIN_ID) });
+  const result = await fetchJSON<{ orders: SharedOrder[]; count: number }>(
+    `/api/orders/${encodeURIComponent(pair)}?${params.toString()}`,
+  );
   return result?.orders ?? [];
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useSharedObFetch, windowToSince, type SharedObWindow } from "./sharedObFetch";
+import { EXPECTED_CHAIN_ID } from "./config";
 
 export type TradeStatsWindow = SharedObWindow;
 
@@ -56,8 +57,8 @@ export function useRelayerTradeStats(
       // addresses lowercased — a checksummed input would miss.
       const addr = address.toLowerCase();
       const since = windowToSince(window);
-      const sinceParam = since !== null ? `?since=${since}` : "";
-      return `/api/relayers/${addr}/stats${sinceParam}`;
+      const sinceParam = since !== null ? `&since=${since}` : "";
+      return `/api/relayers/${addr}/stats?chainId=${EXPECTED_CHAIN_ID}${sinceParam}`;
     },
     [address, window],
   );

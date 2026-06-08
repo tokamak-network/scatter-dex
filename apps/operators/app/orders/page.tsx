@@ -31,6 +31,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { eqAddr } from "@zkscatter/sdk";
 import { SharedOrderbookClient, type SharedOrder } from "@zkscatter/sdk/orderbook";
+import { DEMO_NETWORK } from "../lib/network";
 import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { useOperator } from "../lib/useOperator";
@@ -165,7 +166,7 @@ function OrdersBody({ auth }: { auth: Auth }) {
       setLoadingShared(true);
       setSharedError(null);
       try {
-        const client = new SharedOrderbookClient(SHARED_URL);
+        const client = new SharedOrderbookClient(SHARED_URL, { chainId: DEMO_NETWORK.chainId });
         // `getOrders` swallows transport/parse errors and returns
         // `[]`, so a silent outage would otherwise read as "no
         // orders" with no banner. Probe `isOnline` first and surface
