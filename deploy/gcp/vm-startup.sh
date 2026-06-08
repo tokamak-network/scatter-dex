@@ -164,8 +164,14 @@ if ! docker compose version >/dev/null 2>&1; then
 		*) log "unsupported arch $(uname -m) — cannot install docker compose plugin"; exit 1 ;;
 	esac
 	log "installing docker compose ${compose_version} (${compose_arch})"
-	mkdir -p "${HOME}/.docker/cli-plugins"
-	compose_bin="${HOME}/.docker/cli-plugins/docker-compose"
+	# COS mounts /var/lib (including HOME=/var/lib/zkscatter) noexec, so the
+	# plugin binary cannot be executed from there. Stage it under
+	# /var/lib/docker — a separate ext4 mount that IS exec — and symlink it
+	# into the cli-plugins dir docker actually searches
+	# (${HOME}/.docker/cli-plugins). Exec follows the symlink to the exec mount.
+	compose_store=/var/lib/docker/cli-plugins
+	mkdir -p "${compose_store}" "${HOME}/.docker/cli-plugins"
+	compose_bin="${compose_store}/docker-compose"
 	curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-${compose_arch}" \
 		-o "${compose_bin}"
 	if ! echo "${compose_sha}  ${compose_bin}" | sha256sum -c - >/dev/null 2>&1; then
@@ -174,6 +180,7 @@ if ! docker compose version >/dev/null 2>&1; then
 		exit 1
 	fi
 	chmod +x "${compose_bin}"
+	ln -sf "${compose_bin}" "${HOME}/.docker/cli-plugins/docker-compose"
 	docker compose version
 fi
 
