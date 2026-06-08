@@ -95,8 +95,8 @@ echo "[zk-x509-deploy] deriving program vkey from pinned ELF…"
 # relative ZK_X509_REPO (e.g. ../zk-X509) would otherwise resolve wrong there.
 PINNED_ELF="$(cd "$ZK_X509_REPO" && pwd)/elf/zk-x509-program"
 [ -f "$PINNED_ELF" ] || { echo "ERROR: pinned ELF not found at $PINNED_ELF — run 'make elf' in the zk-X509 repo first (its Docker-built ELF guarantees the deployed vkey matches the desktop app)." >&2; exit 1; }
-# set +e window: pipefail would otherwise abort before our explicit check,
-# swallowing the cargo error. Keep stderr so a build failure is visible.
+# set +e window: errexit (set -e) would otherwise abort on a non-zero cargo
+# exit before our explicit check, swallowing the error. Keep stderr visible.
 set +e
 VKEY_OUT="$(cd "$ZK_X509_REPO" && PREBUILT_ELF="$PINNED_ELF" cargo run --release --bin vkey 2>&1)"; vkey_rc=$?
 set -e
