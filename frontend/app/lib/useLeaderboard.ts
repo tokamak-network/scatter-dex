@@ -1,6 +1,7 @@
 "use client";
 
 import { useSharedObFetch, windowToSince, type SharedObWindow } from "./sharedObFetch";
+import { EXPECTED_CHAIN_ID } from "./config";
 
 export type LeaderboardMetric = "count" | "verifiedCount" | "successRate";
 export type LeaderboardWindow = SharedObWindow;
@@ -36,7 +37,7 @@ export function useLeaderboard(metric: LeaderboardMetric, window: LeaderboardWin
     () => {
       const since = windowToSince(window);
       const sinceParam = since !== null ? `&since=${since}` : "";
-      return `/api/leaderboard?metric=${metric}${sinceParam}&limit=100`;
+      return `/api/leaderboard?metric=${metric}${sinceParam}&limit=100&chainId=${EXPECTED_CHAIN_ID}`;
     },
     [metric, window],
     { timeoutMs: 8000 },

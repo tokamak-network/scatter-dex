@@ -82,6 +82,10 @@ services:
       - PORT=3002
       - DB_PATH=/data/zk-relayer.db
       - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
+      # Local anvil chain. The relayer stamps this onto orders/settlements it
+      # pushes to the multi-network orderbook so the frontend (which reads
+      # ?chainId=31337 by default in local dev) sees them.
+      - CHAIN_ID=${CHAIN_ID:-31337}
       - RELAYER_PUBLIC_URL=${RELAYER_A_PUBLIC_URL:-http://zk-relayer:3002}
       - RELAYER_NAME=Relayer-A
       # Local-mock peer URLs use Docker hostnames that resolve to
@@ -119,6 +123,10 @@ services:
       - PORT=3003
       - DB_PATH=/data/zk-relayer-b.db
       - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
+      # Local anvil chain. The relayer stamps this onto orders/settlements it
+      # pushes to the multi-network orderbook so the frontend (which reads
+      # ?chainId=31337 by default in local dev) sees them.
+      - CHAIN_ID=${CHAIN_ID:-31337}
       - RELAYER_PUBLIC_URL=${RELAYER_B_PUBLIC_URL:-http://zk-relayer-b:3003}
       - RELAYER_NAME=Relayer-B
       - ALLOW_PRIVATE_RELAYER_URLS=1

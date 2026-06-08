@@ -37,7 +37,7 @@ export function useSharedOrderbook(pair: string | null, pollMs = 10_000): Orderb
       return;
     }
     let cancelled = false;
-    const client = new SharedOrderbookClient(url);
+    const client = new SharedOrderbookClient(url, { chainId: DEMO_NETWORK.chainId });
 
     const fetchOnce = async () => {
       try {

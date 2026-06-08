@@ -124,7 +124,7 @@ export default function SharedOrderbookPage() {
   // path: every tick retries.
   useEffect(() => {
     if (!configured || !url) return;
-    const client = new SharedOrderbookClient(url);
+    const client = new SharedOrderbookClient(url, { chainId: network.chainId });
     let stopped = false;
     let timerId: ReturnType<typeof setTimeout> | null = null;
 
@@ -171,7 +171,7 @@ export default function SharedOrderbookPage() {
       stopped = true;
       if (timerId !== null) clearTimeout(timerId);
     };
-  }, [configured, url, statusBucket]);
+  }, [configured, url, statusBucket, network.chainId]);
 
   // Build the pair-filter dropdown options from the actual order
   // set instead of the token list — that way the user only sees

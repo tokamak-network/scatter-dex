@@ -9,6 +9,7 @@ import {
 } from "@zkscatter/sdk/orderbook";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import { shortAddr } from "@zkscatter/sdk/react";
+import { DEMO_NETWORK } from "../../lib/network";
 import { SectionHeader } from "../../components/SectionHeader";
 import { formatRelative } from "../../lib/format";
 import { formatAmount, tokenInfo } from "../../lib/tokenRegistry";
@@ -78,7 +79,7 @@ export default function SharedOrdersPage() {
       return;
     }
     let cancelled = false;
-    const client = new SharedOrderbookClient(url);
+    const client = new SharedOrderbookClient(url, { chainId: DEMO_NETWORK.chainId });
     // `SharedOrderbookClient.getOrdersWithCounts` swallows transport
     // errors and returns []/{}; gate on the `isOnline` probe first so
     // a service outage surfaces as an error instead of a misleading
