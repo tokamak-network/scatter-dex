@@ -41,6 +41,12 @@ fi
 # the free credit.
 echo "creating VM ${VM_NAME} (${VM_MACHINE_TYPE}, ${ZONE})"
 
+# Optional pre-reserved static IP. Built as an array so the flag is either two
+# clean argv words or nothing at all — no quoting/word-splitting ambiguity. The
+# `[@]+` guard keeps the empty-array expansion safe under `set -u`.
+address_args=()
+[[ -n "${VM_STATIC_IP:-}" ]] && address_args=(--address "${VM_STATIC_IP}")
+
 # `|` delimiter so commas in CORS_ORIGINS survive. File bodies go via
 # --metadata-from-file to avoid in-line escaping entirely.
 gcloud compute instances create "${VM_NAME}" \
@@ -53,6 +59,7 @@ gcloud compute instances create "${VM_NAME}" \
 	--service-account="${VM_SA_EMAIL}" \
 	--scopes=cloud-platform \
 	--tags="${VM_TAG}" \
+	${address_args[@]+"${address_args[@]}"} \
 	--metadata=^\|^"\
 project-id=${PROJECT_ID}|\
 ar-path=${AR_PATH}|\

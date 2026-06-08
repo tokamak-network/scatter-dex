@@ -20,6 +20,13 @@
 
 set -euo pipefail
 
+# COS's metadata-script-runner invokes this without HOME set; under `set -u`
+# the later `${HOME}/.docker` reference (docker-credential-gcr) would abort the
+# whole startup. COS also has a READ-ONLY root fs, so /root/.docker can't be
+# created — point HOME at the writable /var/lib/zkscatter tree instead.
+export HOME=/var/lib/zkscatter
+mkdir -p "${HOME}"
+
 log() { echo "[startup $(date -u +%FT%TZ)] $*"; }
 
 mget() {
@@ -70,17 +77,48 @@ gcp_token() {
 		| python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])'
 }
 
+# Fetch Secret Manager secret $1 (latest version) and write its decoded bytes to
+# stdout. Non-zero exit with no output when the secret/version is absent (under
+# `set -o pipefail` the failed `curl -f` propagates). Both curl and python3
+# stderr are silenced so an intentionally-absent optional secret leaves no
+# JSON-traceback noise in the boot log. Reuses ${token} set by gcp_token below.
+gcp_secret() {
+	curl -s -f -H "Authorization: Bearer ${token}" \
+		"https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/$1/versions/latest:access" 2>/dev/null \
+		| python3 -c 'import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)["payload"]["data"]))' 2>/dev/null
+}
+
 # Tight umask so the secret + .env files we write below are never
 # briefly readable by other users between create and chmod.
 umask 077
 
-log "fetching secret '${RELAYER_SECRET_NAME}'"
-token=$(gcp_token)
-curl -s -f -H "Authorization: Bearer ${token}" \
-	"https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/${RELAYER_SECRET_NAME}/versions/latest:access" \
-	| python3 -c 'import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)["payload"]["data"]))' \
-	> /var/lib/zkscatter/secrets/relayer.key
-log "secret written"
+log "fetching secret '${RELAYER_SECRET_NAME}' (optional — only zk-relayer uses it)"
+# `|| token=""` so a missing/denied service-account token does not abort the
+# whole startup under `set -e` — the secret fetches below then fail gracefully
+# (empty relayer placeholder) and RPC_URL falls back to the metadata endpoint.
+token=$(gcp_token) || token=""
+if gcp_secret "${RELAYER_SECRET_NAME}" > /var/lib/zkscatter/secrets/relayer.key \
+	&& [[ -s /var/lib/zkscatter/secrets/relayer.key ]]; then
+	log "secret written"
+else
+	# No secret version — expected on the central orderbook box, where
+	# zk-relayer is disabled (run per-operator). Leave an empty placeholder so
+	# the compose `relayer_key` secret file resolves; the profiled-off zk-relayer
+	# never reads it.
+	: > /var/lib/zkscatter/secrets/relayer.key
+	log "no relayer secret — empty placeholder written (zk-relayer disabled)"
+fi
+
+# RPC_URL: prefer Secret Manager (keeps a provider API key, e.g. Alchemy, OUT of
+# VM metadata — which is readable by anyone with compute.instances.get). Falls
+# back to the metadata rpc-url (a keyless publicnode endpoint) when unset.
+RPC_FROM_SECRET=$(gcp_secret rpc-url) || RPC_FROM_SECRET=""
+if [[ -n "${RPC_FROM_SECRET}" ]]; then
+	RPC_URL="${RPC_FROM_SECRET}"
+	log "RPC_URL loaded from Secret Manager (rpc-url)"
+else
+	log "RPC_URL from metadata (no rpc-url secret set)"
+fi
 
 # COS ships docker-credential-gcr but only registers gcr.io by default.
 # Configure the AR host once and let the helper supply fresh tokens
@@ -112,6 +150,32 @@ RELAYER_KEY_FILE=/var/lib/zkscatter/secrets/relayer.key
 DOMAIN=${DOMAIN}
 ACME_EMAIL=${ACME_EMAIL}
 EOF
+
+# COS ships the Docker daemon but NOT the compose v2 plugin. Install it into the
+# writable cli-plugins dir (HOME=/var/lib/zkscatter) so `docker compose` works.
+# Pin the version + per-arch SHA256 so boot never depends on an unverified
+# remote binary, and pick the binary by `uname -m` (e2-micro is x86_64; aarch64
+# COS images also work).
+if ! docker compose version >/dev/null 2>&1; then
+	compose_version=v2.29.7
+	case "$(uname -m)" in
+		x86_64)  compose_arch=x86_64;  compose_sha=383ce6698cd5d5bbf958d2c8489ed75094e34a77d340404d9f32c4ae9e12baf0 ;;
+		aarch64) compose_arch=aarch64; compose_sha=6e9fbd5daa20dca5d7d89145081ae8155d68ef2928b497d9f85b54fe0f9dbb2c ;;
+		*) log "unsupported arch $(uname -m) — cannot install docker compose plugin"; exit 1 ;;
+	esac
+	log "installing docker compose ${compose_version} (${compose_arch})"
+	mkdir -p "${HOME}/.docker/cli-plugins"
+	compose_bin="${HOME}/.docker/cli-plugins/docker-compose"
+	curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-${compose_arch}" \
+		-o "${compose_bin}"
+	if ! echo "${compose_sha}  ${compose_bin}" | sha256sum -c - >/dev/null 2>&1; then
+		log "docker compose checksum mismatch — aborting"
+		rm -f "${compose_bin}"
+		exit 1
+	fi
+	chmod +x "${compose_bin}"
+	docker compose version
+fi
 
 files=(-f compose.yml)
 [[ -n "${DOMAIN}" ]] && files+=(-f compose.tls.yml)

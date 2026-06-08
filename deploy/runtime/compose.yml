@@ -51,7 +51,12 @@ services:
       - orderbook-data:/data
     command: ["node", "dist/verify.js", "--watch"]
 
+  # zk-relayer is run per-operator (each relayer operator hosts their own),
+  # NOT on the central orderbook box. Behind the "relayer" compose profile so
+  # the default `up` (orderbook + settlement-verifier) does not start it.
+  # An operator who wants it co-located runs `docker compose --profile relayer up`.
   zk-relayer:
+    profiles: ["relayer"]
     image: ${ZK_RELAYER_IMAGE}:${IMAGE_TAG:-latest}
     container_name: zk-relayer
     restart: unless-stopped
