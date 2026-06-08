@@ -91,7 +91,9 @@ echo "[zk-x509-deploy] config: mask=$MIN_DISCLOSURE_MASK proofAge=${MAX_PROOF_AG
 # recompile the program against whatever sp1-zkvm crate the local Cargo.lock
 # resolves and can yield a different vkey than the shipped app.
 echo "[zk-x509-deploy] deriving program vkey from pinned ELF…"
-PINNED_ELF="$ZK_X509_REPO/elf/zk-x509-program"
+# Absolute path: PREBUILT_ELF is read after `cd "$ZK_X509_REPO"` below, so a
+# relative ZK_X509_REPO (e.g. ../zk-X509) would otherwise resolve wrong there.
+PINNED_ELF="$(cd "$ZK_X509_REPO" && pwd)/elf/zk-x509-program"
 [ -f "$PINNED_ELF" ] || { echo "ERROR: pinned ELF not found at $PINNED_ELF — run 'make elf' in the zk-X509 repo first (its Docker-built ELF guarantees the deployed vkey matches the desktop app)." >&2; exit 1; }
 # set +e window: pipefail would otherwise abort before our explicit check,
 # swallowing the cargo error. Keep stderr so a build failure is visible.
