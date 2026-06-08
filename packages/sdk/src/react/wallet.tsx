@@ -11,7 +11,7 @@ import React, {
 } from "react";
 import { ethers } from "ethers";
 import type { NetworkConfig } from "../core/network";
-import { getReadProvider } from "../core/provider";
+import { getReadProvider, InjectedMulticallProvider } from "../core/provider";
 
 /** Subset of EIP-1193 provider that wallets expose, plus the vendor
  *  flags that let us label the connected wallet. Apps that augment
@@ -51,9 +51,21 @@ export interface WalletState {
   signer: ethers.Signer | null;
   /** Browser provider wrapping the wallet's EIP-1193. */
   provider: ethers.BrowserProvider | null;
-  /** Read-only RPC provider built from `network.rpcUrl`.
-   *  Always available regardless of wallet state. */
-  readProvider: ethers.JsonRpcProvider;
+  /** Read provider for view calls. Always non-null. When a wallet is
+   *  connected on the right chain this is an `InjectedMulticallProvider`
+   *  reading through the user's own node (with Multicall3 batching);
+   *  otherwise it's a public-RPC `JsonRpcProvider` fallback built from
+   *  `network.rpcUrl`. Drop-in either way — pass it to `new Contract`. */
+  readProvider: ethers.Provider;
+  /** Which node the current `readProvider` reads from — `"wallet"` (the
+   *  user's connected node) or `"rpc"` (public fallback). Useful for a
+   *  debug/status indicator. */
+  readSource: "wallet" | "rpc";
+  /** Always-public JsonRpcProvider built from `network.rpcUrl`. Use it for
+   *  write preflight (gas/fee estimation via `runWrite`) so a throttled
+   *  wallet RPC can't make the estimate fail; the tx still broadcasts
+   *  through the connected wallet. */
+  rpcProvider: ethers.JsonRpcProvider;
   /** Best-effort wallet vendor name; null when disconnected. */
   walletName: string | null;
   /** Last error from a `connect()` attempt — covers both the
@@ -95,9 +107,31 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
   const [walletName, setWalletName] = useState<string | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
 
-  // Cache one read provider per rpcUrl so component re-renders don't
-  // churn JsonRpcProvider instances (each opens its own keep-alive).
-  const readProvider = useMemo(() => getReadProvider(network.rpcUrl), [network.rpcUrl]);
+  // Always-available public-RPC provider (cached per rpcUrl). It doubles as
+  // the disconnected/wrong-chain read fallback AND the reliable preflight
+  // provider for writes (see `runWrite`) — so a throttled wallet RPC never
+  // gates gas/fee estimation.
+  const rpcProvider = useMemo(() => getReadProvider(network.rpcUrl), [network.rpcUrl]);
+
+  // Resolve the read provider: prefer the user's connected wallet node (so
+  // the app needs no private app-owned RPC for normal use), and only fall
+  // back to `rpcProvider` when disconnected or on the wrong chain — so
+  // landing/pre-connect pages still render.
+  const { readProvider, readSource } = useMemo<{
+    readProvider: ethers.Provider;
+    readSource: "wallet" | "rpc";
+  }>(() => {
+    const eth = injectedFromWindow();
+    if (eth && account && chainId === network.chainId) {
+      // Pass the chainId as a static network so ethers skips eth_chainId
+      // detection round-trips against the wallet RPC.
+      return {
+        readProvider: new InjectedMulticallProvider(eth, network.chainId),
+        readSource: "wallet",
+      };
+    }
+    return { readProvider: rpcProvider, readSource: "rpc" };
+  }, [account, chainId, network.chainId, rpcProvider]);
 
   // Tracks lifecycle so async refreshes can no-op after unmount and
   // avoid React's "setState on unmounted component" warnings.
@@ -245,6 +279,8 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
       provider,
       signer,
       readProvider,
+      readSource,
+      rpcProvider,
       walletName,
       connectError,
       connect,
@@ -256,6 +292,8 @@ export function WalletProvider({ network, children }: WalletProviderProps) {
       provider,
       signer,
       readProvider,
+      readSource,
+      rpcProvider,
       walletName,
       connectError,
       connect,

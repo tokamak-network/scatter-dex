@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Contract, parseUnits } from "ethers";
-import { isConfiguredAddress } from "@zkscatter/sdk";
+import { isConfiguredAddress, runWrite } from "@zkscatter/sdk";
 import { shortAddr, useNetworkTokens, useWallet } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "../../lib/network";
 import { prettyAmount } from "../../lib/format";
@@ -228,7 +228,7 @@ function EthWethRow({
   paused: boolean;
   onReload: () => void;
 }) {
-  const { signer } = useWallet();
+  const { signer, rpcProvider } = useWallet();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -265,7 +265,7 @@ function EthWethRow({
       if (wethBalance > 0n && isConfiguredAddress(wethAddress)) {
         // Step 1: Treasury.withdraw(weth, to, amount) → WETH lands at beneficiary
         const wethToSend = parsed > wethBalance ? wethBalance : parsed;
-        const tx1 = (await treasury.withdraw(wethAddress, to, wethToSend)) as { hash: string; wait(): Promise<{ hash?: string } | null> };
+        const tx1 = await runWrite(treasury, "withdraw", [wethAddress, to, wethToSend], { estimateProvider: rpcProvider });
         const r1 = await tx1.wait();
         finalHash = r1?.hash ?? tx1.hash;
 
@@ -274,7 +274,7 @@ function EthWethRow({
         if (signerAddr === to.toLowerCase()) {
           try {
             const wethContract = new Contract(wethAddress, WETH_ABI, signer);
-            const unwrapTx = (await wethContract.withdraw(wethToSend)) as { hash: string; wait(): Promise<{ hash?: string } | null> };
+            const unwrapTx = await runWrite(wethContract, "withdraw", [wethToSend], { estimateProvider: rpcProvider });
             const r2 = await unwrapTx.wait();
             finalHash = r2?.hash ?? unwrapTx.hash;
           } catch {
@@ -285,13 +285,13 @@ function EthWethRow({
         // Remaining ETH if requested more than WETH balance
         const remaining = parsed - wethToSend;
         if (remaining > 0n && ethBalance >= remaining) {
-          const tx3 = (await treasury.withdrawETH(to, remaining)) as { hash: string; wait(): Promise<{ hash?: string } | null> };
+          const tx3 = await runWrite(treasury, "withdrawETH", [to, remaining], { estimateProvider: rpcProvider });
           const r3 = await tx3.wait();
           finalHash = r3?.hash ?? tx3.hash;
         }
       } else if (ethBalance >= parsed) {
         // Only native ETH
-        const tx = (await treasury.withdrawETH(to, parsed)) as { hash: string; wait(): Promise<{ hash?: string } | null> };
+        const tx = await runWrite(treasury, "withdrawETH", [to, parsed], { estimateProvider: rpcProvider });
         const r = await tx.wait();
         finalHash = r?.hash ?? tx.hash;
       }
@@ -379,7 +379,7 @@ function WithdrawRow({
   tokenAddress: string;
   onReload: () => void;
 }) {
-  const { signer } = useWallet();
+  const { signer, rpcProvider } = useWallet();
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -410,7 +410,7 @@ function WithdrawRow({
     try {
       const parsed = parseUnits(amount, decimals);
       const treasury = new Contract(treasuryAddress, TREASURY_ABI, signer);
-      const tx = (await treasury.withdraw(tokenAddress, to, parsed)) as { hash: string; wait(): Promise<{ hash?: string } | null> };
+      const tx = await runWrite(treasury, "withdraw", [tokenAddress, to, parsed], { estimateProvider: rpcProvider });
       const receipt = await tx.wait();
       setPhase({ kind: "success", hash: receipt?.hash ?? tx.hash });
       setAmount("");
@@ -483,7 +483,7 @@ function BeneficiaryManager({
   reloadKey: number;
   onReload: () => void;
 }) {
-  const { signer } = useWallet();
+  const { signer, rpcProvider } = useWallet();
   const [newAddr, setNewAddr] = useState("");
   const [addPhase, setAddPhase] = useState<Phase>({ kind: "idle" });
 
@@ -497,7 +497,7 @@ function BeneficiaryManager({
     setAddPhase({ kind: "submitting" });
     try {
       const treasury = new Contract(treasuryAddress, TREASURY_ABI, signer);
-      const tx = (await treasury.setBeneficiary(newAddr.trim(), true)) as { hash: string; wait(): Promise<{ hash?: string } | null> };
+      const tx = await runWrite(treasury, "setBeneficiary", [newAddr.trim(), true], { estimateProvider: rpcProvider });
       await tx.wait();
       setAddPhase({ kind: "success", hash: tx.hash });
       setNewAddr("");
@@ -510,7 +510,7 @@ function BeneficiaryManager({
   const makeRemove = (addr: string) => async () => {
     if (!signer) return;
     const treasury = new Contract(treasuryAddress, TREASURY_ABI, signer);
-    const tx = (await treasury.setBeneficiary(addr, false)) as { hash: string; wait(): Promise<{ hash?: string } | null> };
+    const tx = await runWrite(treasury, "setBeneficiary", [addr, false], { estimateProvider: rpcProvider });
     await tx.wait();
     onReload();
   };
