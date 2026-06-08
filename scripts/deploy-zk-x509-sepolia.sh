@@ -83,12 +83,22 @@ RELAYERS_MAX_WALLETS=$(( RELAYERS_MAX_WALLETS ))
 echo "[zk-x509-deploy] factory flow: users(maxWallets=$USERS_MAX_WALLETS) + relayers(maxWallets=$RELAYERS_MAX_WALLETS)"
 echo "[zk-x509-deploy] config: mask=$MIN_DISCLOSURE_MASK proofAge=${MAX_PROOF_AGE}s delegatedProving=$DELEGATED_PROVING"
 
-# ── 1. program vkey ─────────────────────────────────────────────────
-echo "[zk-x509-deploy] generating program vkey…"
-# set +e window: pipefail would otherwise abort before our explicit check,
-# swallowing the cargo error. Keep stderr so a build failure is visible.
+# ── 1. program vkey (from the pinned Docker ELF) ────────────────────
+# Derive the vkey from elf/zk-x509-program (the Docker-built ELF produced by
+# `make elf`), NOT a fresh local compile. The desktop app embeds this same
+# pinned ELF, so deploying its vkey keeps on-chain == app with no drift and no
+# post-deploy updateProgramVKey rotation. A bare `cargo run --bin vkey` would
+# recompile the program against whatever sp1-zkvm crate the local Cargo.lock
+# resolves and can yield a different vkey than the shipped app.
+echo "[zk-x509-deploy] deriving program vkey from pinned ELF…"
+# Absolute path: PREBUILT_ELF is read after `cd "$ZK_X509_REPO"` below, so a
+# relative ZK_X509_REPO (e.g. ../zk-X509) would otherwise resolve wrong there.
+PINNED_ELF="$(cd "$ZK_X509_REPO" && pwd)/elf/zk-x509-program"
+[ -f "$PINNED_ELF" ] || { echo "ERROR: pinned ELF not found at $PINNED_ELF — run 'make elf' in the zk-X509 repo first (its Docker-built ELF guarantees the deployed vkey matches the desktop app)." >&2; exit 1; }
+# set +e window: errexit (set -e) would otherwise abort on a non-zero cargo
+# exit before our explicit check, swallowing the error. Keep stderr visible.
 set +e
-VKEY_OUT="$(cd "$ZK_X509_REPO" && cargo run --release --bin vkey 2>&1)"; vkey_rc=$?
+VKEY_OUT="$(cd "$ZK_X509_REPO" && PREBUILT_ELF="$PINNED_ELF" cargo run --release --bin vkey 2>&1)"; vkey_rc=$?
 set -e
 PROGRAM_V_KEY="$(echo "$VKEY_OUT" | grep -oE '0x[0-9a-fA-F]{64}' | head -1)"
 if [ "$vkey_rc" -ne 0 ] || [ -z "$PROGRAM_V_KEY" ]; then
