@@ -6,6 +6,10 @@ import { timeoutSignal } from "../util/http";
  *  failure so missing service surfaces as an empty state in the
  *  UI rather than a thrown error. */
 
+/** Sepolia — the default network when a caller doesn't pin a chainId, kept in
+ *  sync with the orderbook backend's DEFAULT_CHAIN_ID for backward compat. */
+const DEFAULT_CHAIN_ID = 11155111;
+
 export interface SharedOrderbookStats {
   totalOrders: number;
   pairs: number;
@@ -39,6 +43,9 @@ export interface SharedOrder {
   maxFee: number;
   expiry: number;
   createdAt: number;
+  /** EVM network this order lives on. Present on every row the
+   *  multi-network backend returns; undefined from a legacy backend. */
+  chainId?: number;
   /** Present when the API was queried with `status=<bucket>` or
    *  `status=all`. Undefined for legacy callers reading the default
    *  "open"-only view — those rows are always open by definition. */
@@ -48,17 +55,22 @@ export interface SharedOrder {
 interface ClientOpts {
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** EVM network this client reads. The shared orderbook is multi-network;
+   *  order reads are scoped to this chain. Defaults to Sepolia. */
+  chainId?: number;
 }
 
 export class SharedOrderbookClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly chainId: number;
 
   constructor(baseUrl: string, opts: ClientOpts = {}) {
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
     this.timeoutMs = opts.timeoutMs ?? 5_000;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.chainId = opts.chainId ?? DEFAULT_CHAIN_ID;
   }
 
   async isOnline(): Promise<boolean> {
@@ -78,7 +90,7 @@ export class SharedOrderbookClient {
   }
 
   async getOrders(limit = 500, status?: SharedOrderStatus | "all"): Promise<SharedOrder[]> {
-    const params = new URLSearchParams({ limit: String(limit) });
+    const params = new URLSearchParams({ limit: String(limit), chainId: String(this.chainId) });
     if (status) params.set("status", status);
     const result = await this.fetchJSON<{ orders: SharedOrder[]; count: number }>(
       `/api/orders?${params.toString()}`,
@@ -94,7 +106,7 @@ export class SharedOrderbookClient {
     limit = 500,
     status?: SharedOrderStatus | "all",
   ): Promise<{ orders: SharedOrder[]; counts: Partial<Record<SharedOrderStatus, number>> }> {
-    const params = new URLSearchParams({ limit: String(limit) });
+    const params = new URLSearchParams({ limit: String(limit), chainId: String(this.chainId) });
     if (status) params.set("status", status);
     const result = await this.fetchJSON<{
       orders: SharedOrder[];
@@ -104,8 +116,9 @@ export class SharedOrderbookClient {
   }
 
   async getOrdersByPair(pair: string): Promise<SharedOrder[]> {
+    const params = new URLSearchParams({ chainId: String(this.chainId) });
     const result = await this.fetchJSON<{ orders: SharedOrder[]; count: number }>(
-      `/api/orders/${encodeURIComponent(pair)}`,
+      `/api/orders/${encodeURIComponent(pair)}?${params.toString()}`,
     );
     return result?.orders ?? [];
   }
