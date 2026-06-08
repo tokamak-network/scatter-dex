@@ -219,7 +219,7 @@ export class SharedOrderbook {
     }
 
     return [...this.orders.values()]
-      .filter(s => s.status === "open")
+      .filter(s => s.status === "open" && (s.order.chainId ?? DEFAULT_CHAIN_ID) === chainId)
       .sort((a, b) => a.order.createdAt - b.order.createdAt);
   }
 

@@ -30,7 +30,7 @@
  *   node dist/verify.js --watch     # loop per chain until SIGINT/SIGTERM
  */
 import "dotenv/config";
-import { JsonRpcProvider } from "ethers";
+import { JsonRpcProvider, isAddress } from "ethers";
 import { OrderbookDB } from "./core/db.js";
 import { runVerifyPass } from "./core/verifier.js";
 import { makeEventFetcher, runVerifyLoop, VerifyMonitor } from "./core/verify-runtime.js";
@@ -82,28 +82,44 @@ function resolveChains(): ChainConfig[] {
       process.exit(2);
     }
     return parsed.map((c, i) => {
+      if (typeof c !== "object" || c === null) {
+        console.error(`[verifier] CHAINS[${i}] must be an object`);
+        process.exit(2);
+      }
       const o = c as Record<string, unknown>;
+      // Trim surrounding whitespace so a stray space in config doesn't make an
+      // address silently never match on-chain.
       const reqStr = (field: string): string => {
         const v = o[field];
-        if (typeof v !== "string" || !v) {
+        if (typeof v !== "string" || !v.trim()) {
           console.error(`[verifier] CHAINS[${i}].${field} must be a non-empty string`);
           process.exit(2);
         }
-        return v;
+        return v.trim();
       };
       const chainId = Number(o.chainId);
       if (!Number.isInteger(chainId) || chainId <= 0) {
         console.error(`[verifier] CHAINS[${i}].chainId must be a positive integer`);
         process.exit(2);
       }
-      return { chainId, rpcUrl: reqStr("rpcUrl"), settlementAddress: reqStr("settlementAddress") };
+      const settlementAddress = reqStr("settlementAddress");
+      if (!isAddress(settlementAddress)) {
+        console.error(`[verifier] CHAINS[${i}].settlementAddress is not a valid EVM address`);
+        process.exit(2);
+      }
+      return { chainId, rpcUrl: reqStr("rpcUrl"), settlementAddress };
     });
   }
   // Single-chain fallback.
+  const settlementAddress = envRequired("PRIVATE_SETTLEMENT_ADDRESS").trim();
+  if (!isAddress(settlementAddress)) {
+    console.error("[verifier] PRIVATE_SETTLEMENT_ADDRESS is not a valid EVM address");
+    process.exit(2);
+  }
   return [{
     chainId: envInt("CHAIN_ID", DEFAULT_CHAIN_ID),
     rpcUrl: envRequired("RPC_URL"),
-    settlementAddress: envRequired("PRIVATE_SETTLEMENT_ADDRESS"),
+    settlementAddress,
   }];
 }
 

@@ -9,7 +9,7 @@
  * choose whether to expose unverified rows.
  */
 
-import { DEFAULT_CHAIN_ID } from "../core/chain.js";
+import { chainIdOrDefault } from "../core/chain.js";
 
 /** Which settlement entry-point produced this row, used downstream to
  *  split Pay vs Pro on the operators leaderboard. Pre-PR rows store
@@ -58,7 +58,11 @@ export interface StoredSettlement extends SettlementInsert {
 }
 
 export interface SettlementListFilter {
-  chainId?: number;        // scope to one EVM network; omitted → all networks
+  // Scope to one EVM network. Omitted → no chain filter (all networks) at the
+  // DB layer — but the public read routes always pass a chainId, defaulting an
+  // absent `?chainId=` to Sepolia, so the HTTP API never aggregates across
+  // chains by default.
+  chainId?: number;
   relayer?: string;       // matches submitter OR makerRelayer OR takerRelayer
   pair?: [string, string]; // [tokenA, tokenB] sorted, both directions counted
   since?: number;          // unix seconds
@@ -226,11 +230,14 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (r.type !== undefined && !(SETTLEMENT_TYPES as readonly string[]).includes(r.type as string)) {
     throw new Error(`type: must be one of ${SETTLEMENT_TYPES.join("|")} when provided`);
   }
-  if (r.chainId !== undefined) {
-    const c = r.chainId;
-    if (typeof c !== "number" || !Number.isInteger(c) || c <= 0 || c > Number.MAX_SAFE_INTEGER) {
-      throw new Error("chainId: must be a positive integer when provided");
-    }
+  // chainId: accept a number OR a numeric string (symmetric with
+  // parseOrderSummary, which goes through the same coercion). Validate up
+  // front so a present-but-invalid value 400s with a clear message.
+  let chainId: number;
+  try {
+    chainId = chainIdOrDefault(r.chainId);
+  } catch {
+    throw new Error("chainId: must be a positive integer when provided");
   }
 
   const out: SettlementInsert = {
@@ -244,10 +251,9 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     userMaxFeeMaker: r.userMaxFeeMaker as number,
     userMaxFeeTaker: r.userMaxFeeTaker as number,
   };
-  // Always stamp chainId (default Sepolia) so the parsed payload is symmetric
-  // with parseOrderSummary — downstream never has to re-default it. Validation
-  // above already rejected a present-but-invalid value.
-  out.chainId = typeof r.chainId === "number" ? r.chainId : DEFAULT_CHAIN_ID;
+  // Always stamp chainId (resolved/defaulted above) so the parsed payload is
+  // symmetric with parseOrderSummary — downstream never has to re-default it.
+  out.chainId = chainId;
   if (typeof r.blockTime === "number") out.blockTime = r.blockTime;
   if (r.takerRelayer) out.takerRelayer = (r.takerRelayer as string).toLowerCase();
   if (isStringField(r.makerOrderId)) out.makerOrderId = r.makerOrderId;

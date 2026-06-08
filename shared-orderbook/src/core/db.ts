@@ -62,6 +62,20 @@ export class OrderbookDB {
   }
 
   private createTables(): void {
+    // Multi-network migration — MUST run before the CREATE INDEX statements
+    // below, which reference chain_id. On a legacy (pre-multitenancy) DB the
+    // table already exists, so `CREATE TABLE IF NOT EXISTS` won't add the
+    // column; we ALTER it in here first (NOT NULL DEFAULT backfills existing
+    // rows to Sepolia). A table that doesn't exist yet (fresh DB) has no
+    // columns to probe — skip it; the CREATE TABLE below makes it with
+    // chain_id already present.
+    for (const table of ["orders", "matches", "settlements"]) {
+      const cols = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
+      if (cols.length > 0 && !cols.some((c) => c.name === "chain_id")) {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN chain_id INTEGER NOT NULL DEFAULT ${DEFAULT_CHAIN_ID}`);
+      }
+    }
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS orders (
         id TEXT PRIMARY KEY,
@@ -206,19 +220,6 @@ export class OrderbookDB {
     const columns = this.db.pragma("table_info(settlements)") as Array<{ name: string }>;
     if (!columns.some((c) => c.name === "type")) {
       this.db.exec("ALTER TABLE settlements ADD COLUMN type TEXT");
-    }
-
-    // Multi-network migration: add `chain_id` to pre-multitenancy databases.
-    // `ALTER TABLE … ADD COLUMN … NOT NULL DEFAULT 11155111` backfills every
-    // existing row to Sepolia (the only network these DBs ever held), so live
-    // data stays queryable the moment the column appears. The composite
-    // indexes above already lead with chain_id; CREATE INDEX IF NOT EXISTS is
-    // a no-op when they're present and builds them on first migrated boot.
-    for (const table of ["orders", "matches", "settlements"]) {
-      const cols = this.db.pragma(`table_info(${table})`) as Array<{ name: string }>;
-      if (!cols.some((c) => c.name === "chain_id")) {
-        this.db.exec(`ALTER TABLE ${table} ADD COLUMN chain_id INTEGER NOT NULL DEFAULT ${DEFAULT_CHAIN_ID}`);
-      }
     }
   }
 
