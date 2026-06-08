@@ -234,8 +234,9 @@ export class SharedOrderbookClient {
           const data = JSON.parse(String(event.data));
           if (data.type === "order:new" && data.order) {
             const order = data.order as OrderSummary;
-            // Skip own orders
-            if (!eqAddr(order.relayer, this.wallet.address)) {
+            // Skip own orders and orders on other networks (the WS stream is
+            // cross-chain; the local matcher is single-chain).
+            if (!eqAddr(order.relayer, this.wallet.address) && this.isOnThisChain(order)) {
               // De-dup against the snapshot path: if syncOpenOrders already
               // fired the callback for this id (common on reconnect), don't
               // invoke it again. Downstream matcher guards would catch the
@@ -291,19 +292,32 @@ export class SharedOrderbookClient {
 
   /** Post an order summary to the shared orderbook */
   async postOrder(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
-    // Stamp the relayer's network once so both the server and P2P paths carry
-    // it. An order that already pins a chainId keeps it.
-    const stamped = { ...order, chainId: order.chainId ?? this.chainId };
     if (this.serverOnline) {
-      return this.postOrderToServer(stamped);
+      return this.postOrderToServer(order);
     }
     // P2P fallback: broadcast to known peers
-    return this.postOrderToPeers(stamped);
+    return this.postOrderToPeers(order);
+  }
+
+  /** Stamp the relayer's network onto an outgoing order so every send path —
+   *  postOrder, the P2P fallback, and the self-healing forcePostOrderToServer
+   *  sweep — files it under the right chain. An order that already pins a
+   *  chainId keeps it. */
+  private withChainId<T extends { chainId?: number }>(order: T): T {
+    return { ...order, chainId: order.chainId ?? this.chainId };
+  }
+
+  /** True when an inbound order belongs to this relayer's network. The shared
+   *  orderbook's WS stream + snapshot are cross-chain, so the local matcher
+   *  must drop other networks' orders (a missing chainId is a legacy
+   *  single-network row → treated as the default chain). */
+  private isOnThisChain(order: { chainId?: number }): boolean {
+    return (order.chainId ?? DEFAULT_CHAIN_ID) === this.chainId;
   }
 
   private async postOrderToServer(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     try {
-      const body = JSON.stringify(order);
+      const body = JSON.stringify(this.withChainId(order));
       const headers = await this.authHeaders("POST", "/api/orders", body);
       const res = await fetch(`${this.serverUrl}/api/orders`, {
         method: "POST",
@@ -429,6 +443,7 @@ export class SharedOrderbookClient {
       let added = 0;
       for (const order of data.orders) {
         if (eqAddr(order.relayer, this.wallet.address)) continue;
+        if (!this.isOnThisChain(order)) continue; // snapshot is cross-chain
         if (this.remoteOrders.has(order.id)) continue;
         this.remoteOrders.set(order.id, order);
         this.onOrderCallback?.(order);
@@ -563,8 +578,7 @@ export class SharedOrderbookClient {
     if (this.serverOnline) {
       try {
         const path = pair ? `/api/orders/${pair}` : "/api/orders";
-        const sep = path.includes("?") ? "&" : "?";
-        const res = await fetch(`${this.serverUrl}${path}${sep}chainId=${this.chainId}`);
+        const res = await fetch(`${this.serverUrl}${path}?chainId=${this.chainId}`);
         if (res.ok) {
           const data = await res.json() as { orders: OrderSummary[] };
           for (const order of data.orders) {
@@ -603,7 +617,7 @@ export class SharedOrderbookClient {
   /** P2P: post order directly to all known peers */
   private async postOrderToPeers(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
     const summary: OrderSummary = {
-      ...order,
+      ...this.withChainId(order),
       relayer: this.wallet.address.toLowerCase(),
       relayerUrl: this.relayerUrl,
       createdAt: Math.floor(Date.now() / 1000),

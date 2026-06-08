@@ -39,8 +39,8 @@ export const config = {
   rpcUrl: process.env.RPC_URL || "http://localhost:8545",
   // EVM network this relayer trades on. Stamped onto orders / settlements
   // pushed to the (multi-network) shared orderbook and used to scope reads.
-  // Defaults to Sepolia for the single-network deployment.
-  chainId: Number(process.env.CHAIN_ID) || 11155111,
+  // Defaults to Sepolia; validated (positive integer) like other numeric env.
+  chainId: parseEnvInt("CHAIN_ID", 11155111, 1),
   // [R-4] Comma-separated fallback RPC URLs (optional)
   rpcUrlsFallback: (process.env.RPC_URLS_FALLBACK || "").split(",").map(s => s.trim()).filter(Boolean),
   relayerPrivateKey: loadPrivateKey(),
