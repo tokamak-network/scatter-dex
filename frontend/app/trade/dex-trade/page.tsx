@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import { Shield, Key, Loader2, Check, Plus, Trash2, Clock, Lock, Wallet, Zap, ArrowLeftRight } from "lucide-react";
-import { useWallet } from "../../lib/wallet";
+import { useWallet, useChainGuard } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import { terminateAuthorizeWorker } from "../../lib/zk/authorize-worker-client";
 import { useTerminateWorkerOnUnmount } from "../../lib/zk/useTerminateWorkerOnUnmount";
@@ -66,6 +66,7 @@ function DexTradeLoading() {
 
 function DexTradePageInner() {
   const { account, signer, chainId, connect } = useWallet();
+  const guardChain = useChainGuard();
   const { relayers } = useRelayers();
   useTerminateWorkerOnUnmount(terminateAuthorizeWorker);
   // On-chain whitelist (pool∩settlement) with env list as overlay +
@@ -397,9 +398,13 @@ function DexTradePageInner() {
     const kp = keyPair;
     if (!kp) { setError("Unlock or generate a trading key first"); return; }
 
+    setError(null);
+    // Reads come from the fixed read RPC; block the write if the wallet is on
+    // a different chain so the order can't settle on the wrong network.
+    if (!(await guardChain(setError))) return;
+
     setStep("signing");
     setSigningProgress("Preparing market order...");
-    setError(null);
 
     try {
       const { proofResult, claimData, padded, parsedSell, parsedBuy, expiryTimestamp, nonce, change, newSalt, expectedChangeCommitment } = await buildOrderProof({
@@ -533,7 +538,7 @@ function DexTradePageInner() {
       setSigningProgress("");
       setStep("error");
     }
-  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, changeSalt, dexPrices, zkRelayers, selectedRelayerIdx, chainId, slippageBps, platformFeeBps]);
+  }, [keyPair, sellToken, buyToken, sellAmount, buyAmount, expiry, claims, account, selectedNote, signer, guardChain, changeSalt, dexPrices, zkRelayers, selectedRelayerIdx, chainId, slippageBps, platformFeeBps]);
 
   if (!account) {
     return (

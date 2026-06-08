@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ethers } from "ethers";
 import { Lock, Loader2, AlertCircle, Download, ShieldCheck, Coins } from "lucide-react";
 import { TradeDetail, type TradeData } from "../../components/TradeDetail";
-import { useWallet } from "../../lib/wallet";
+import { useWallet, useChainGuard } from "../../lib/wallet";
 import { getPrivateSettlementAddress, getCommitmentPoolAddress } from "../../lib/config";
 import { getReadProvider, getEarliestBlock, cacheEarliestBlock } from "../../lib/provider";
 import { getTokenList, type TokenInfo } from "../../lib/tokens";
@@ -62,6 +62,7 @@ type TxState = "idle" | "deriving_key" | "approving" | "depositing" | "success" 
 
 export default function PrivateEscrowPage() {
   const { account, signer, chainId, connect } = useWallet();
+  const guardChain = useChainGuard();
   const tokens = getTokenList();
 
   const [notes, setNotes] = useState<StoredNote[]>([]);
@@ -290,6 +291,9 @@ export default function PrivateEscrowPage() {
       return;
     }
     setTxError(null);
+    // Block the write when the wallet is on a different chain than the one we
+    // read from — otherwise the deposit would land on the wrong network.
+    if (!(await guardChain(setTxError))) return;
     setTxHash(null);
 
     try {
@@ -360,8 +364,12 @@ export default function PrivateEscrowPage() {
       ]);
 
       const wethIface = new ethers.Interface(["function deposit() external payable"]);
+      // `erc20` (signer-bound) is reused for the approve write and ABI
+      // encoding below. The allowance check is a read, so route it through
+      // the dedicated read RPC instead of the wallet's (slower) provider.
       const erc20 = new ethers.Contract(selectedToken.address, ERC20_ABI, signer);
-      const allowance: bigint = await erc20.allowance(account, poolAddress);
+      const erc20Read = new ethers.Contract(selectedToken.address, ERC20_ABI, getReadProvider());
+      const allowance: bigint = await erc20Read.allowance(account, poolAddress);
       const needsApprove = allowance < parsed;
 
       // Atomic batch via EIP-5792; falls back to sequential below.
@@ -497,7 +505,7 @@ export default function PrivateEscrowPage() {
       setTxState("error");
       setTxError(friendlyError(e));
     }
-  }, [signer, account, chainId, canAtomicBatch, selectedToken, depositAmount, poolAddress, refreshNotes, keyPair]);
+  }, [signer, account, chainId, guardChain, canAtomicBatch, selectedToken, depositAmount, poolAddress, refreshNotes, keyPair]);
 
   // ─── Hide Note (local-only) ────────────────────────────────────
   // Deletion is intentionally not exposed: a note file is the ONLY

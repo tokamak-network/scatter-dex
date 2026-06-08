@@ -12,7 +12,7 @@ import {
   registerRelayer,
   type RegistrationStatus,
 } from "@zkscatter/sdk/relayer";
-import { useWallet } from "../../lib/wallet";
+import { useWallet, useChainGuard } from "../../lib/wallet";
 import { getRelayerRegistryAddress } from "../../lib/config";
 import { getReadProvider } from "../../lib/provider";
 
@@ -20,6 +20,7 @@ type Phase = "idle" | "checking" | "not-connected" | "not-verified" | "already-r
 
 export default function RelayerRegisterPage() {
   const { account, signer } = useWallet();
+  const guardChain = useChainGuard();
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [isVerified, setIsVerified] = useState(false);
@@ -83,6 +84,10 @@ export default function RelayerRegisterPage() {
       return;
     }
     setErrorMsg("");
+    if (!(await guardChain(setErrorMsg))) {
+      setPhase("error");
+      return;
+    }
     try {
       // ERC20 mode: pre-approve the registry if existing allowance
       // is insufficient. Native mode skips this entirely.

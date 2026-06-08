@@ -9,27 +9,10 @@ import { RPC_URL, EXPECTED_CHAIN_ID, getChainName } from "../lib/config";
 import { shortenAddress } from "../lib/utils";
 
 // Fork-mode flag — dev-fork.sh writes this into .env.local to unlock the
-// "Add Fork Network" button. Production builds never see it.
+// "Add Fork Network" button. Production builds never see it. The button
+// reuses the wallet context's switchNetwork(), which adds the chain on the
+// EIP-1193 4902 ("unknown chain") path and then switches to it.
 const IS_FORK_MODE = process.env.NEXT_PUBLIC_FORK_MODE === "true";
-
-async function addForkNetworkToWallet(): Promise<void> {
-  const eth = (window as unknown as { ethereum?: { request: (a: unknown) => Promise<unknown> } }).ethereum;
-  if (!eth) { alert("No wallet detected."); return; }
-  try {
-    await eth.request({
-      method: "wallet_addEthereumChain",
-      params: [{
-        chainId: "0x" + EXPECTED_CHAIN_ID.toString(16),
-        chainName: `zkScatter Fork (${EXPECTED_CHAIN_ID})`,
-        rpcUrls: [RPC_URL],
-        nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-      }],
-    });
-  } catch (e) {
-    console.error("addForkNetwork failed", e);
-    alert((e as Error).message ?? "Failed to add network");
-  }
-}
 
 interface NavLinkSpec {
   href: string;
@@ -96,7 +79,7 @@ function NetworkBadge({ size }: { size: "sm" | "md" }) {
 
 export default function Header() {
   const pathname = usePathname();
-  const { account, chainId, walletName, connect, disconnect } = useWallet();
+  const { account, chainId, isWrongNetwork, walletName, connect, disconnect, switchNetwork } = useWallet();
   const [menuOpen, setMenuOpen] = useState(false);
 
   // Close the mobile drawer on route change so navigating from the menu
@@ -125,8 +108,6 @@ export default function Header() {
       mq.removeEventListener("change", onChange);
     };
   }, [menuOpen]);
-
-  const isWrongNetwork = account && chainId !== null && chainId !== EXPECTED_CHAIN_ID;
 
   return (
     <>
@@ -162,7 +143,7 @@ export default function Header() {
             </button>
             {IS_FORK_MODE && (
               <button
-                onClick={addForkNetworkToWallet}
+                onClick={() => void switchNetwork()}
                 className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-tertiary/10 border border-tertiary/30 text-tertiary hover:bg-tertiary/20 transition-colors"
                 title="Add the local fork network to MetaMask"
               >
@@ -222,7 +203,7 @@ export default function Header() {
               <NetworkBadge size="md" />
               {IS_FORK_MODE && (
                 <button
-                  onClick={() => { setMenuOpen(false); void addForkNetworkToWallet(); }}
+                  onClick={() => { setMenuOpen(false); void switchNetwork(); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-tertiary/10 border border-tertiary/30 text-tertiary hover:bg-tertiary/20 transition-colors"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -242,6 +223,12 @@ export default function Header() {
             Wrong network: connected to {getChainName(chainId!)} ({chainId}) — please switch to{" "}
             <strong>{getChainName(EXPECTED_CHAIN_ID)} ({EXPECTED_CHAIN_ID})</strong>
           </span>
+          <button
+            onClick={() => void switchNetwork()}
+            className="px-3 py-1 rounded-md text-xs font-semibold bg-error text-background hover:bg-error/90 transition-colors"
+          >
+            Switch Network
+          </button>
         </div>
       )}
     </>

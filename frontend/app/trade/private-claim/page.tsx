@@ -4,7 +4,7 @@ import { useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { ethers } from "ethers";
 import { Gift, Loader2, AlertCircle, Check, Upload, CheckCircle2, Download, Wallet, Radio } from "lucide-react";
-import { useWallet } from "../../lib/wallet";
+import { useWallet, useChainGuard } from "../../lib/wallet";
 import { getTokenList } from "../../lib/tokens";
 import { getPrivateSettlementAddress } from "../../lib/config";
 import { generateClaimProofInWorker, terminateClaimWorker } from "../../lib/zk/claim-worker-client";
@@ -76,6 +76,7 @@ interface ClaimData {
 export default function PrivateClaimPage() {
   const tokens = getTokenList();
   const { signer } = useWallet();
+  const guardChain = useChainGuard();
 
   const [claimJson, setClaimJson] = useState("");
   const [allClaims, setAllClaims] = useState<ClaimData[]>([]);
@@ -278,8 +279,9 @@ export default function PrivateClaimPage() {
 
   const handleClaimViaWallet = useCallback(async () => {
     if (!claimData || !signer) return;
-    setStatus("generating");
     setError(null);
+    if (!(await guardChain(setError))) return;
+    setStatus("generating");
     setTxHashes([]);
     try {
       const p = await buildProof(claimData);
@@ -301,7 +303,7 @@ export default function PrivateClaimPage() {
       setError(friendlyError(e));
       setStatus("error");
     }
-  }, [claimData, signer]);
+  }, [claimData, signer, guardChain]);
 
   const eligibleClaims = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -320,8 +322,9 @@ export default function PrivateClaimPage() {
     // cancel or concurrent settle is still possible, so filter here too.
     const batchable = eligibleClaims.filter((e) => settlementMap[e.i]?.settled === true);
     if (batchable.length === 0) return;
-    setStatus("generating");
     setError(null);
+    if (!(await guardChain(setError))) return;
+    setStatus("generating");
     setTxHashes([]);
     setBatchProgress(null);
 
@@ -375,7 +378,7 @@ export default function PrivateClaimPage() {
       setStatus("error");
       setBatchProgress(null);
     }
-  }, [signer, eligibleClaims, settlementMap]);
+  }, [signer, eligibleClaims, settlementMap, guardChain]);
 
   // Resolve token symbol
   const tokenSymbol = claimData

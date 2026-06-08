@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { ethers } from "ethers";
 import { ClipboardList, Loader2, RefreshCw, Key, Shield, Lock, Check, CheckCircle2, Clock, Download, XCircle, AlertCircle } from "lucide-react";
-import { useWallet } from "../../lib/wallet";
+import { useWallet, useChainGuard } from "../../lib/wallet";
 import { useRelayers } from "../../lib/useRelayers";
 import ExplorerLink from "../../components/ExplorerLink";
 import { extractMessage } from "../../lib/error-messages";
@@ -117,6 +117,7 @@ function resolveToken(address: string, tokens: TokenInfo[]): { symbol: string; d
 
 export default function PrivateHistoryPage() {
   const { account, signer, connect } = useWallet();
+  const guardChain = useChainGuard();
   const { relayers } = useRelayers();
   const tokens = getTokenList();
 
@@ -360,10 +361,13 @@ export default function PrivateHistoryPage() {
 
   const handleCancel = useCallback(async (order: OrderFile) => {
     if (!keyPair || !signer || !account) return;
+    setCancelError(null);
+    // cancelPrivate is an on-chain write; block it when the wallet chain
+    // differs from the read RPC so the cancel can't land on the wrong network.
+    if (!(await guardChain(setCancelError))) return;
     const nonce = order.order.nonce;
     setCancellingNonce(nonce);
     setCancelStep("loading-note");
-    setCancelError(null);
 
     try {
       const allNotes = await loadNotes();
@@ -472,7 +476,7 @@ export default function PrivateHistoryPage() {
       setCancelError(extractMessage(e));
       setCancelStep("error");
     }
-  }, [keyPair, signer, account]);
+  }, [keyPair, signer, account, guardChain]);
 
   if (!account) {
     return (

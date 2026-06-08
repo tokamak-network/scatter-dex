@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { ethers } from "ethers";
 import { Vault, Loader2, ArrowDownToLine } from "lucide-react";
-import { useWallet } from "../lib/wallet";
+import { useWallet, useChainGuard } from "../lib/wallet";
 import type { TokenInfo } from "../lib/tokens";
 import { getFeeVaultAddress } from "../lib/config";
 import { FEE_VAULT_ABI } from "../lib/contracts";
@@ -28,6 +28,7 @@ interface FeeVaultPanelProps {
  */
 export default function FeeVaultPanel({ tokens }: FeeVaultPanelProps) {
   const { account, signer } = useWallet();
+  const guardChain = useChainGuard();
   const feeVaultAddr = getFeeVaultAddress();
 
   const [balances, setBalances] = useState<VaultBalance[]>([]);
@@ -85,9 +86,10 @@ export default function FeeVaultPanel({ tokens }: FeeVaultPanelProps) {
 
   const handleClaim = useCallback(async (token: string) => {
     if (!signer || !feeVaultAddr) return;
-    setClaimingToken(token);
     setClaimTxHash(null);
     setClaimError(null);
+    if (!(await guardChain(setClaimError))) return;
+    setClaimingToken(token);
     try {
       const vault = new ethers.Contract(feeVaultAddr, FEE_VAULT_ABI, signer);
       const tx = await vault.claim(token);
@@ -100,7 +102,7 @@ export default function FeeVaultPanel({ tokens }: FeeVaultPanelProps) {
     } finally {
       setClaimingToken(null);
     }
-  }, [signer, feeVaultAddr, loadBalances]);
+  }, [signer, feeVaultAddr, loadBalances, guardChain]);
 
   if (!feeVaultAddr || !account || balances.length === 0) return null;
 
