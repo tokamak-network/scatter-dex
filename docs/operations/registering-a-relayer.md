@@ -68,7 +68,7 @@ Nothing on chain yet. Admin reviews via their own KYC workflow.
 
 If the Root CA isn't already anchored on chain (see Pre-flight),
 the admin sets up the CA via the zk-X509 system. The CA's
-PROGRAM_V_KEY (`0x006e7699…` style 32-byte hash) is anchored
+PROGRAM_V_KEY (`0x0048b091…` style 32-byte hash) is anchored
 inside the `IdentityRegistry` contract and is readable via
 `effectiveProgramVKey()` (the getter our scripts and operators
 app probe). The CA private key stays on the signing server.
