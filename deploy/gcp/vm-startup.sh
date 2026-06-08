@@ -20,6 +20,13 @@
 
 set -euo pipefail
 
+# COS's metadata-script-runner invokes this without HOME set; under `set -u`
+# the later `${HOME}/.docker` reference (docker-credential-gcr) would abort the
+# whole startup. COS also has a READ-ONLY root fs, so /root/.docker can't be
+# created — point HOME at the writable /var/lib/zkscatter tree instead.
+export HOME=/var/lib/zkscatter
+mkdir -p "${HOME}"
+
 log() { echo "[startup $(date -u +%FT%TZ)] $*"; }
 
 mget() {
@@ -70,17 +77,44 @@ gcp_token() {
 		| python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])'
 }
 
+# Fetch Secret Manager secret $1 (latest version) and write its decoded bytes to
+# stdout. Non-zero exit with no output when the secret/version is absent (under
+# `set -o pipefail` the failed `curl -f` propagates), so callers can treat the
+# secret as optional. Reuses ${token} set by gcp_token below.
+gcp_secret() {
+	curl -s -f -H "Authorization: Bearer ${token}" \
+		"https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/$1/versions/latest:access" 2>/dev/null \
+		| python3 -c 'import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)["payload"]["data"]))'
+}
+
 # Tight umask so the secret + .env files we write below are never
 # briefly readable by other users between create and chmod.
 umask 077
 
-log "fetching secret '${RELAYER_SECRET_NAME}'"
+log "fetching secret '${RELAYER_SECRET_NAME}' (optional — only zk-relayer uses it)"
 token=$(gcp_token)
-curl -s -f -H "Authorization: Bearer ${token}" \
-	"https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/${RELAYER_SECRET_NAME}/versions/latest:access" \
-	| python3 -c 'import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)["payload"]["data"]))' \
-	> /var/lib/zkscatter/secrets/relayer.key
-log "secret written"
+if gcp_secret "${RELAYER_SECRET_NAME}" > /var/lib/zkscatter/secrets/relayer.key 2>/dev/null \
+	&& [[ -s /var/lib/zkscatter/secrets/relayer.key ]]; then
+	log "secret written"
+else
+	# No secret version — expected on the central orderbook box, where
+	# zk-relayer is disabled (run per-operator). Leave an empty placeholder so
+	# the compose `relayer_key` secret file resolves; the profiled-off zk-relayer
+	# never reads it.
+	: > /var/lib/zkscatter/secrets/relayer.key
+	log "no relayer secret — empty placeholder written (zk-relayer disabled)"
+fi
+
+# RPC_URL: prefer Secret Manager (keeps a provider API key, e.g. Alchemy, OUT of
+# VM metadata — which is readable by anyone with compute.instances.get). Falls
+# back to the metadata rpc-url (a keyless publicnode endpoint) when unset.
+RPC_FROM_SECRET=$(gcp_secret rpc-url) || RPC_FROM_SECRET=""
+if [[ -n "${RPC_FROM_SECRET}" ]]; then
+	RPC_URL="${RPC_FROM_SECRET}"
+	log "RPC_URL loaded from Secret Manager (rpc-url)"
+else
+	log "RPC_URL from metadata (no rpc-url secret set)"
+fi
 
 # COS ships docker-credential-gcr but only registers gcr.io by default.
 # Configure the AR host once and let the helper supply fresh tokens
@@ -112,6 +146,17 @@ RELAYER_KEY_FILE=/var/lib/zkscatter/secrets/relayer.key
 DOMAIN=${DOMAIN}
 ACME_EMAIL=${ACME_EMAIL}
 EOF
+
+# COS ships the Docker daemon but NOT the compose v2 plugin. Install it into the
+# writable cli-plugins dir (HOME=/var/lib/zkscatter) so `docker compose` works.
+if ! docker compose version >/dev/null 2>&1; then
+	log "installing docker compose plugin"
+	mkdir -p "${HOME}/.docker/cli-plugins"
+	curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64" \
+		-o "${HOME}/.docker/cli-plugins/docker-compose"
+	chmod +x "${HOME}/.docker/cli-plugins/docker-compose"
+	docker compose version
+fi
 
 files=(-f compose.yml)
 [[ -n "${DOMAIN}" ]] && files+=(-f compose.tls.yml)

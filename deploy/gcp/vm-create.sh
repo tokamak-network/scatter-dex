@@ -53,6 +53,7 @@ gcloud compute instances create "${VM_NAME}" \
 	--service-account="${VM_SA_EMAIL}" \
 	--scopes=cloud-platform \
 	--tags="${VM_TAG}" \
+	${VM_STATIC_IP:+--address="${VM_STATIC_IP}"} \
 	--metadata=^\|^"\
 project-id=${PROJECT_ID}|\
 ar-path=${AR_PATH}|\
