@@ -136,6 +136,7 @@ async function main() {
       relayerWallet: submitter.getWallet(),
       relayerUrl: config.relayerPublicUrl,
       relayerName: config.relayerName,
+      chainId: config.chainId,
     });
 
     authorizeCrossRelayerService = new AuthorizeCrossRelayerMatchService(

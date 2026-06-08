@@ -42,6 +42,9 @@ export type { OrderSummary } from "../types/order.js";
 // shared-OB schema is the source of truth for field shape.
 export interface SettlementPushPayload {
   txHash: string;
+  /** EVM network the settle tx landed on. Optional here; pushSettlement
+   *  stamps the relayer's chainId when the caller omits it. */
+  chainId?: number;
   blockNumber: number;
   blockTime?: number;
   makerRelayer: string;
@@ -66,6 +69,11 @@ export interface SettlementPushPayload {
   type?: "settleAuth" | "scatterDirectAuth";
 }
 
+/** Sepolia — the network this relayer operates on when none is configured.
+ *  Kept in sync with the shared-orderbook backend's DEFAULT_CHAIN_ID for
+ *  backward compatibility with the single-network deployment. */
+const DEFAULT_CHAIN_ID = 11155111;
+
 export interface SharedOrderbookConfig {
   serverUrl: string;          // e.g. "http://localhost:4000"
   relayerWallet: Wallet;
@@ -73,6 +81,10 @@ export interface SharedOrderbookConfig {
   relayerName?: string;
   heartbeatIntervalMs?: number;
   peerSyncIntervalMs?: number;
+  /** EVM network this relayer trades on. The shared orderbook is
+   *  multi-network; orders / settlements this client posts are stamped with
+   *  this chainId and reads are scoped to it. Defaults to Sepolia. */
+  chainId?: number;
 }
 
 export class SharedOrderbookClient {
@@ -80,6 +92,7 @@ export class SharedOrderbookClient {
   private wallet: Wallet;
   private relayerUrl: string;
   private relayerName?: string;
+  private chainId: number;
   private wsReconnectDelay = 1000; // exponential backoff start (ms)
   private static readonly WS_MAX_RECONNECT_DELAY = 60_000;
   private heartbeatIntervalMs: number;
@@ -101,6 +114,7 @@ export class SharedOrderbookClient {
     this.relayerName = cfg.relayerName;
     this.heartbeatIntervalMs = cfg.heartbeatIntervalMs ?? 60_000;
     this.peerSyncIntervalMs = cfg.peerSyncIntervalMs ?? 120_000;
+    this.chainId = cfg.chainId ?? DEFAULT_CHAIN_ID;
   }
 
   /** Register callback for new remote orders (used by local matcher) */
@@ -277,11 +291,14 @@ export class SharedOrderbookClient {
 
   /** Post an order summary to the shared orderbook */
   async postOrder(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
+    // Stamp the relayer's network once so both the server and P2P paths carry
+    // it. An order that already pins a chainId keeps it.
+    const stamped = { ...order, chainId: order.chainId ?? this.chainId };
     if (this.serverOnline) {
-      return this.postOrderToServer(order);
+      return this.postOrderToServer(stamped);
     }
     // P2P fallback: broadcast to known peers
-    return this.postOrderToPeers(order);
+    return this.postOrderToPeers(stamped);
   }
 
   private async postOrderToServer(order: Omit<OrderSummary, "relayer" | "relayerUrl" | "createdAt">): Promise<string | null> {
@@ -326,7 +343,8 @@ export class SharedOrderbookClient {
   async pushSettlement(payload: SettlementPushPayload): Promise<boolean> {
     if (!this.serverOnline) return false;
     try {
-      const body = JSON.stringify(payload);
+      // Stamp the relayer's network so the row is filed under the right chain.
+      const body = JSON.stringify({ ...payload, chainId: payload.chainId ?? this.chainId });
       const headers = await this.authHeaders("POST", "/api/settlements", body);
       const res = await fetch(`${this.serverUrl}/api/settlements`, {
         method: "POST",
@@ -405,7 +423,7 @@ export class SharedOrderbookClient {
    */
   private async syncOpenOrders(): Promise<void> {
     try {
-      const res = await fetch(`${this.serverUrl}/api/orders`);
+      const res = await fetch(`${this.serverUrl}/api/orders?chainId=${this.chainId}`);
       if (!res.ok) return;
       const data = await res.json() as { orders: OrderSummary[] };
       let added = 0;
@@ -472,7 +490,7 @@ export class SharedOrderbookClient {
     for (let page = 0; page < MAX_PAGES; page++) {
       const offset = page * PAGE_SIZE;
       const res = await fetch(
-        `${this.serverUrl}/api/orders?status=all&limit=${PAGE_SIZE}&offset=${offset}`,
+        `${this.serverUrl}/api/orders?status=all&limit=${PAGE_SIZE}&offset=${offset}&chainId=${this.chainId}`,
       );
       if (!res.ok) {
         throw new Error(`shared-OB GET /api/orders returned ${res.status} on page ${page}`);
@@ -523,7 +541,7 @@ export class SharedOrderbookClient {
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error(`fetchSettlementsForAddress: unsupported protocol ${url.protocol}`);
     }
-    const params = new URLSearchParams({ relayer: address });
+    const params = new URLSearchParams({ relayer: address, chainId: String(this.chainId) });
     if (typeof opts.since === "number") params.set("since", String(opts.since));
     if (typeof opts.limit === "number") params.set("limit", String(opts.limit));
     if (typeof opts.offset === "number") params.set("offset", String(opts.offset));
@@ -545,7 +563,8 @@ export class SharedOrderbookClient {
     if (this.serverOnline) {
       try {
         const path = pair ? `/api/orders/${pair}` : "/api/orders";
-        const res = await fetch(`${this.serverUrl}${path}`);
+        const sep = path.includes("?") ? "&" : "?";
+        const res = await fetch(`${this.serverUrl}${path}${sep}chainId=${this.chainId}`);
         if (res.ok) {
           const data = await res.json() as { orders: OrderSummary[] };
           for (const order of data.orders) {
