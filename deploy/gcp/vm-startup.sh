@@ -79,12 +79,13 @@ gcp_token() {
 
 # Fetch Secret Manager secret $1 (latest version) and write its decoded bytes to
 # stdout. Non-zero exit with no output when the secret/version is absent (under
-# `set -o pipefail` the failed `curl -f` propagates), so callers can treat the
-# secret as optional. Reuses ${token} set by gcp_token below.
+# `set -o pipefail` the failed `curl -f` propagates). Both curl and python3
+# stderr are silenced so an intentionally-absent optional secret leaves no
+# JSON-traceback noise in the boot log. Reuses ${token} set by gcp_token below.
 gcp_secret() {
 	curl -s -f -H "Authorization: Bearer ${token}" \
 		"https://secretmanager.googleapis.com/v1/projects/${PROJECT_ID}/secrets/$1/versions/latest:access" 2>/dev/null \
-		| python3 -c 'import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)["payload"]["data"]))'
+		| python3 -c 'import json,sys,base64; sys.stdout.buffer.write(base64.b64decode(json.load(sys.stdin)["payload"]["data"]))' 2>/dev/null
 }
 
 # Tight umask so the secret + .env files we write below are never
@@ -96,7 +97,7 @@ log "fetching secret '${RELAYER_SECRET_NAME}' (optional — only zk-relayer uses
 # whole startup under `set -e` — the secret fetches below then fail gracefully
 # (empty relayer placeholder) and RPC_URL falls back to the metadata endpoint.
 token=$(gcp_token) || token=""
-if gcp_secret "${RELAYER_SECRET_NAME}" > /var/lib/zkscatter/secrets/relayer.key 2>/dev/null \
+if gcp_secret "${RELAYER_SECRET_NAME}" > /var/lib/zkscatter/secrets/relayer.key \
 	&& [[ -s /var/lib/zkscatter/secrets/relayer.key ]]; then
 	log "secret written"
 else
@@ -152,12 +153,27 @@ EOF
 
 # COS ships the Docker daemon but NOT the compose v2 plugin. Install it into the
 # writable cli-plugins dir (HOME=/var/lib/zkscatter) so `docker compose` works.
+# Pin the version + per-arch SHA256 so boot never depends on an unverified
+# remote binary, and pick the binary by `uname -m` (e2-micro is x86_64; aarch64
+# COS images also work).
 if ! docker compose version >/dev/null 2>&1; then
-	log "installing docker compose plugin"
+	compose_version=v2.29.7
+	case "$(uname -m)" in
+		x86_64)  compose_arch=x86_64;  compose_sha=383ce6698cd5d5bbf958d2c8489ed75094e34a77d340404d9f32c4ae9e12baf0 ;;
+		aarch64) compose_arch=aarch64; compose_sha=6e9fbd5daa20dca5d7d89145081ae8155d68ef2928b497d9f85b54fe0f9dbb2c ;;
+		*) log "unsupported arch $(uname -m) — cannot install docker compose plugin"; exit 1 ;;
+	esac
+	log "installing docker compose ${compose_version} (${compose_arch})"
 	mkdir -p "${HOME}/.docker/cli-plugins"
-	curl -fsSL "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-x86_64" \
-		-o "${HOME}/.docker/cli-plugins/docker-compose"
-	chmod +x "${HOME}/.docker/cli-plugins/docker-compose"
+	compose_bin="${HOME}/.docker/cli-plugins/docker-compose"
+	curl -fsSL "https://github.com/docker/compose/releases/download/${compose_version}/docker-compose-linux-${compose_arch}" \
+		-o "${compose_bin}"
+	if ! echo "${compose_sha}  ${compose_bin}" | sha256sum -c - >/dev/null 2>&1; then
+		log "docker compose checksum mismatch — aborting"
+		rm -f "${compose_bin}"
+		exit 1
+	fi
+	chmod +x "${compose_bin}"
 	docker compose version
 fi
 
