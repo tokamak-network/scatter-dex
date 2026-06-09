@@ -370,6 +370,15 @@ function parseBps(input: string): bigint | null {
   return BigInt(n);
 }
 
+/** Parse an hours input (0–maxHours) into whole seconds, or null if invalid. */
+function parseHours(input: string, maxHours: number): bigint | null {
+  const t = input.trim();
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n < 0 || n > maxHours) return null;
+  return BigInt(Math.round(n * 3600));
+}
+
 /** Owner control for the FeeVault timelock DURATION — the delay between
  *  `scheduleFeeChange` and when `applyFeeChange` becomes callable. Input is in
  *  HOURS; the contract stores seconds (capped at MAX_FEE_CHANGE_DELAY = 30 days).
@@ -394,13 +403,7 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
     };
   }, [address, readProvider]);
 
-  const parsed = (() => {
-    const t = hours.trim();
-    if (!t) return null;
-    const n = Number(t);
-    if (!Number.isFinite(n) || n < 0 || n > MAX_HOURS) return null;
-    return BigInt(Math.round(n * 3600));
-  })();
+  const parsed = parseHours(hours, MAX_HOURS);
 
   const submit = useCallback(async () => {
     if (!signer) throw new Error("Wallet not connected");

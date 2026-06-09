@@ -139,6 +139,19 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         feeChangeDelay = DEFAULT_FEE_CHANGE_DELAY;
     }
 
+    /// @notice One-shot upgrade hook called via `ProxyAdmin.upgradeAndCall` when
+    ///         an EXISTING proxy moves to this implementation.
+    /// @dev `feeChangeDelay` is new on this version and reads `0` on a pre-upgrade
+    ///      proxy. A `0` delay would make `scheduleFeeChange` set
+    ///      `pendingFeeEffectiveTime = block.timestamp` (no timelock), removing
+    ///      the front-running protection on relayer claims. Initialize it
+    ///      atomically with the upgrade. `reinitializer(2)` makes it callable once.
+    function reinitializeFeeChangeDelay() external reinitializer(2) {
+        if (feeChangeDelay == 0) {
+            feeChangeDelay = DEFAULT_FEE_CHANGE_DELAY;
+        }
+    }
+
     function renounceOwnership() public pure override(OwnableUpgradeable) {
         revert RenounceOwnershipDisabled();
     }

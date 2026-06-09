@@ -257,4 +257,22 @@ contract FeeVaultTimelockTest is Test {
         vault.applyFeeChange();
         assertEq(vault.platformFeeBps(), 1000);
     }
+
+    // ─── reinitializeFeeChangeDelay (upgrade hook) ──────────────
+
+    /// @dev feeChangeDelay lives at storage slot 9 (forge inspect). Zeroing it
+    ///      simulates a pre-upgrade proxy where the new field reads 0; the
+    ///      reinitializer must restore the default so the timelock isn't lost.
+    function test_reinitialize_restores_zeroed_feeChangeDelay() public {
+        vm.store(address(vault), bytes32(uint256(9)), bytes32(uint256(0)));
+        assertEq(vault.feeChangeDelay(), 0);
+        vault.reinitializeFeeChangeDelay();
+        assertEq(vault.feeChangeDelay(), vault.DEFAULT_FEE_CHANGE_DELAY());
+    }
+
+    function test_reinitialize_only_callable_once() public {
+        vault.reinitializeFeeChangeDelay();
+        vm.expectRevert(); // OZ Initializable: InvalidInitialization()
+        vault.reinitializeFeeChangeDelay();
+    }
 }
