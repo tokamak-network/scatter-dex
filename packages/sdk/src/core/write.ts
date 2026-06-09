@@ -98,9 +98,27 @@ async function estimateGasSafe(
     const est = await provider.estimateGas(tx);
     return (est * 120n) / 100n;
   } catch (err) {
-    if ((err as { code?: string })?.code === "CALL_EXCEPTION") throw err;
-    return fallbackGas;
+    // Fail SAFE: only a clearly *transient* RPC failure (throttle / timeout /
+    // network) degrades to the fallback gas — that throttled-RPC case is the
+    // whole reason runWrite exists. Every other failure (a revert,
+    // insufficient funds, an unpredictable-gas estimate, an unknown error) is
+    // rethrown so the caller sees the real reason and a doomed transaction
+    // never reaches the wallet carrying an arbitrary gas limit.
+    if (isTransientRpcError(err)) return fallbackGas;
+    throw err;
   }
+}
+
+/** Heuristic for transient RPC failures (throttle / timeout / network) worth
+ *  surviving with a fallback gas. Deterministic failures — reverts,
+ *  insufficient funds, bad args, unpredictable-gas — are intentionally NOT
+ *  matched so they propagate to the caller. */
+function isTransientRpcError(err: unknown): boolean {
+  const code = (err as { code?: string | number })?.code;
+  if (code === "TIMEOUT" || code === "SERVER_ERROR" || code === "NETWORK_ERROR") return true;
+  if (code === -32005 || code === 429 || code === 503) return true;
+  const msg = ((err as Error)?.message ?? "").toLowerCase();
+  return /rate.?limit|too many requests|timeout|timed out|temporarily|throttl|503|429/.test(msg);
 }
 
 /** Resolve EIP-1559 fees (falling back to legacy `gasPrice`). Returns an

@@ -58,13 +58,24 @@ function isBatchableView(tx: ethers.TransactionRequest): boolean {
  *  `new Contract(addr, abi, readProvider)` and `contract.foo()`.
  *  Non-view calls, calls with an explicit `from`/`value`/`blockTag`, and
  *  chains without the Multicall3 predeploy all fall back to a plain
- *  per-call `eth_call`, preserving exact `call()` semantics (a reverting
- *  view still throws its real revert reason). */
+ *  per-call `eth_call` (a reverting view still throws its real revert
+ *  reason).
+ *
+ *  Caveat: a batched sub-call executes with `msg.sender = Multicall3`, not
+ *  the zero address an unbatched `from`-less `eth_call` uses. This only
+ *  matters for `msg.sender`-sensitive view functions — pass an explicit
+ *  `from` for those and `isBatchableView` sends them unbatched. */
 export class InjectedMulticallProvider extends ethers.BrowserProvider {
   readonly #mcIface = new ethers.Interface(MULTICALL3_ABI);
   #queue: PendingCall[] = [];
   #timer: ReturnType<typeof setTimeout> | null = null;
   readonly #stallMs: number;
+  // Latched once we learn this chain has no Multicall3 predeploy (e.g. a
+  // local anvil), so we don't pay a doomed aggregate3 attempt on every
+  // flush. Only set on a decode/empty result — NOT on a transient network
+  // error — so one RPC blip can't permanently disable batching for the
+  // session.
+  #multicall3Unsupported = false;
 
   constructor(
     eip1193: ethers.Eip1193Provider,
@@ -114,6 +125,11 @@ export class InjectedMulticallProvider extends ethers.BrowserProvider {
   }
 
   async #flushChunk(chunk: PendingCall[]): Promise<void> {
+    // Skip the aggregate entirely once we know this chain lacks Multicall3.
+    if (this.#multicall3Unsupported) {
+      await Promise.all(chunk.map((c) => this.#passthrough(c)));
+      return;
+    }
     const calls = chunk.map((c) => ({
       target: c.tx.to as string,
       allowFailure: true,
@@ -129,9 +145,14 @@ export class InjectedMulticallProvider extends ethers.BrowserProvider {
         success: boolean;
         returnData: string;
       }>;
-    } catch {
-      // Multicall3 not deployed (local/anvil) or the aggregate itself
-      // failed — degrade to individual reads so nothing breaks.
+    } catch (err) {
+      // A decode/empty failure (`BAD_DATA`) means there's no Multicall3 code
+      // at the address (local/anvil) — latch it off so future flushes skip
+      // straight to passthrough. A transient network error degrades just
+      // this once without latching.
+      if ((err as { code?: string }).code === "BAD_DATA") {
+        this.#multicall3Unsupported = true;
+      }
       await Promise.all(chunk.map((c) => this.#passthrough(c)));
       return;
     }

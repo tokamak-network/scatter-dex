@@ -55,10 +55,10 @@ describe("InjectedMulticallProvider", () => {
     expect(ethCallCount(eth)).toBe(1);
   });
 
-  it("falls back to individual calls when Multicall3 is unavailable", async () => {
+  it("falls back to individual calls when Multicall3 is unavailable, then latches it off", async () => {
     const eth = makeEip1193((tx) => {
       // Simulate a chain without the Multicall3 predeploy: the aggregate
-      // returns empty, forcing per-call fallback.
+      // returns empty (→ BAD_DATA decode), forcing per-call fallback.
       if (tx.to?.toLowerCase() === MULTICALL3_ADDRESS.toLowerCase()) return "0x";
       // Individual reads echo a per-target marker so we can tell them apart.
       if (tx.to === addr("11")) return "0x" + "00".repeat(31) + "01";
@@ -66,16 +66,32 @@ describe("InjectedMulticallProvider", () => {
       throw new Error(`unexpected target ${tx.to}`);
     });
     const provider = new InjectedMulticallProvider(eth, SEPOLIA);
+    const mcCalls = () =>
+      eth.request.mock.calls.filter(
+        (c) =>
+          c[0]?.method === "eth_call" &&
+          c[0]?.params?.[0]?.to?.toLowerCase() === MULTICALL3_ADDRESS.toLowerCase(),
+      ).length;
 
     const [a, b] = await Promise.all([
       provider.call({ to: addr("11"), data: "0xaa" }),
       provider.call({ to: addr("22"), data: "0xbb" }),
     ]);
-
     expect(BigInt(a)).toBe(1n);
     expect(BigInt(b)).toBe(2n);
     // 1 failed aggregate attempt + 2 individual fallbacks.
     expect(ethCallCount(eth)).toBe(3);
+    expect(mcCalls()).toBe(1);
+
+    // A second batch must skip Multicall3 entirely now that it's latched off.
+    const [c, d] = await Promise.all([
+      provider.call({ to: addr("11"), data: "0xaa" }),
+      provider.call({ to: addr("22"), data: "0xbb" }),
+    ]);
+    expect(BigInt(c)).toBe(1n);
+    expect(BigInt(d)).toBe(2n);
+    expect(mcCalls()).toBe(1); // still 1 — no further aggregate attempts
+    expect(ethCallCount(eth)).toBe(5); // 3 + 2 individual, no new aggregate
   });
 
   it("sends a lone read directly, skipping Multicall3 overhead", async () => {

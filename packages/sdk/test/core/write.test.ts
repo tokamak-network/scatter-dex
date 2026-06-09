@@ -52,6 +52,28 @@ describe("buildWriteOverrides", () => {
     ).rejects.toThrow(/not owner/);
   });
 
+  it("rethrows deterministic/unknown estimate failures (revert, insufficient funds, bad gas) instead of degrading", async () => {
+    for (const err of [
+      Object.assign(new Error("execution reverted"), { code: "CALL_EXCEPTION" }),
+      Object.assign(new Error("execution reverted"), { code: -32000 }),
+      Object.assign(new Error("insufficient funds for intrinsic transaction cost"), {}),
+      Object.assign(new Error("cannot estimate gas"), { code: "UNPREDICTABLE_GAS_LIMIT" }),
+    ]) {
+      const est = {
+        estimateGas: vi.fn(async () => {
+          throw err;
+        }),
+        getFeeData: vi.fn(async () => ({})),
+        getTransactionCount: vi.fn(async () => 0),
+      };
+      await expect(
+        buildWriteOverrides(makeContract(), "foo", [1n], {
+          estimateProvider: est as unknown as ethers.Provider,
+        }),
+      ).rejects.toBe(err);
+    }
+  });
+
   it("degrades to the fallback gas on a transient (non-revert) estimate failure", async () => {
     const throttled = Object.assign(new Error("too many requests"), { code: "SERVER_ERROR" });
     const est = {
