@@ -31,7 +31,7 @@ export const RELAYER_REGISTRY_ABI = [
   "event IdentityRegistryUpdated(address oldRegistry, address newRegistry)",
   "event TreasuryUpdated(address oldTreasury, address newTreasury)",
   "event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond)",
-  "event BondTokenUpdated(address oldToken, address newToken)",
+  "event BondTokenUpdated(address indexed oldToken, address indexed newToken)",
   // Emitted by the owner-only `adminRemoveRelayer` — sets the same
   // `exitRequestedAt` cool-down as a self `requestExit`, so the
   // existing exit/executeExit (bond return) path covers it; the event

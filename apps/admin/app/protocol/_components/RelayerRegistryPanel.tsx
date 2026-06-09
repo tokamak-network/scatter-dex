@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Contract, formatUnits, parseUnits, type Provider, type Signer } from "ethers";
 import {
+  eqAddr,
   isConfiguredAddress,
   RELAYER_REGISTRY_ABI,
   runWrite,
@@ -87,9 +88,7 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
     }
     // The whitelist already carries decimals/symbol — reuse it and skip the
     // extra on-chain reads when the bond token is one of those tokens.
-    const known = networkTokens.find(
-      (t) => t.address.toLowerCase() === snap.bondToken!.toLowerCase(),
-    );
+    const known = networkTokens.find((t) => eqAddr(t.address, snap.bondToken!));
     if (known) {
       setBondMeta({ decimals: known.decimals, symbol: known.symbol });
       return;
@@ -318,32 +317,32 @@ function BondTokenEditor({
 }) {
   // Native ETH (address(0)) + each whitelisted ERC20 (drop the synthetic
   // native-ETH alias so ETH appears exactly once, as the address(0) option).
-  const options = useMemo(
-    () => [
+  // If the on-chain bond token isn't whitelisted, surface it as an "Unknown"
+  // option so the controlled <select> always has a row matching the current
+  // value (otherwise it renders blank).
+  const options = useMemo(() => {
+    const base = [
       { value: ZERO_ADDRESS, label: "Native ETH — msg.value", symbol: "ETH" },
       ...tokens
         .filter((t) => !t.isNative)
         .map((t) => ({ value: t.address, label: `${t.symbol} · ${shortAddr(t.address)}`, symbol: t.symbol })),
-    ],
-    [tokens],
-  );
+    ];
+    if (current && isConfiguredAddress(current) && !base.some((o) => eqAddr(o.value, current))) {
+      base.push({ value: current, label: `Unknown · ${shortAddr(current)}`, symbol: "token" });
+    }
+    return base;
+  }, [tokens, current]);
 
   // Resolve the on-chain bond token to its option (value + label) once.
   const currentOption = useMemo(() => {
     if (!current || !isConfiguredAddress(current)) return options[0]!; // native ETH
-    return (
-      options.find((o) => o.value.toLowerCase() === current.toLowerCase()) ?? {
-        value: current,
-        label: shortAddr(current),
-        symbol: "token",
-      }
-    );
+    return options.find((o) => eqAddr(o.value, current)) ?? options[0]!;
   }, [current, options]);
 
   const [selected, setSelected] = useState<string>(currentOption.value);
   useEffect(() => setSelected(currentOption.value), [currentOption.value]);
 
-  const changed = selected.toLowerCase() !== currentOption.value.toLowerCase();
+  const changed = !eqAddr(selected, currentOption.value);
 
   const submit = useCallback(async () => {
     if (!signer) throw new Error("Wallet not connected");
