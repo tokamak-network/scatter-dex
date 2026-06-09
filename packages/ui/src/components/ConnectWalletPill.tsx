@@ -123,6 +123,12 @@ export interface WrongChainBannerViewProps {
    *  wallet error) — the banner handles that, so callers can pass it
    *  straight through. */
   switchChain: () => void | Promise<void>;
+  /** Chain the wallet is currently on. Shown in the banner so the user
+   *  can see *which* wrong network they're on (a frequent source of
+   *  confusion, e.g. a wallet still on a local 31337 dev chain). */
+  currentChainId?: number | null;
+  /** Friendly name for `currentChainId` when known. */
+  currentChainLabel?: string | null;
 }
 
 /** Full-width banner shown directly below the header when the wallet
@@ -133,12 +139,21 @@ export function WrongChainBannerView({
   wrongChain,
   networkLabel,
   switchChain,
+  currentChainId,
+  currentChainLabel,
 }: WrongChainBannerViewProps) {
   if (!wrongChain) return null;
+  // e.g. "Localhost (chain 31337)" when known, else "chain 31337".
+  const on =
+    currentChainId != null
+      ? currentChainLabel
+        ? `${currentChainLabel} (chain ${currentChainId})`
+        : `chain ${currentChainId}`
+      : null;
   return (
     <div className="bg-[var(--color-warning)]/10 px-6 py-2 text-center text-xs">
       <span className="text-[var(--color-warning)]">
-        ⚠ Wrong chain — your wallet isn’t on {networkLabel}.
+        ⚠ Wrong chain — your wallet is on {on ?? "another network"}, not {networkLabel}.
       </span>{" "}
       <button
         type="button"

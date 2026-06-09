@@ -5,23 +5,26 @@ import { WrongChainBannerView } from "@zkscatter/ui";
 import { getNetworkConfig } from "../_lib/network";
 
 export function WrongChainBanner() {
-  const { wrongChain, networkLabel, switchChain } = useConnectWalletPill(getNetworkConfig());
+  const cfg = getNetworkConfig();
+  const { wrongChain, networkLabel, switchChain, currentChainId, currentChainLabel } =
+    useConnectWalletPill(cfg);
   return (
     <WrongChainBannerView
       wrongChain={wrongChain}
       networkLabel={networkLabel}
+      currentChainId={currentChainId}
+      currentChainLabel={currentChainLabel}
       switchChain={() => {
-        console.log("[WrongChainBanner] switchChain clicked");
-        void switchChain()
-          .then(() => console.log("[WrongChainBanner] switchChain resolved"))
-          .catch((err) => {
-            console.warn("[WrongChainBanner] switchChain failed", err);
-            window.alert(
-              `Couldn't switch network — ${
-                err instanceof Error ? err.message : String(err)
-              }. Open MetaMask and add Localhost (chainId 31337, RPC http://localhost:8545) manually.`,
-            );
-          });
+        void switchChain().catch((err) => {
+          // The switch can fail because the chain isn't in the wallet yet or
+          // the user rejected the add-chain prompt — so say "add or select"
+          // and include the chainId, which works across dev/prod networks.
+          window.alert(
+            `Couldn't switch network — ${
+              err instanceof Error ? err.message : String(err)
+            }. Open MetaMask and add or select ${networkLabel} (chain ${cfg.chainId}) manually.`,
+          );
+        });
       }}
     />
   );
