@@ -85,16 +85,18 @@ Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches zk
 Run the frontends **locally** against the shared **Sepolia (chainId 11155111)**
 deployment so the whole team hits the same contracts, relayer, and orderbook.
 Every contract address comes from the committed ledger in
-`contracts/deployments/11155111.json`; you supply only your own read RPC.
+`contracts/deployments/11155111.json` — you configure nothing.
 
-> **Your transactions are signed and sent through MetaMask** — the connected
-> wallet's node drives normal reads and all writes. The `SEPOLIA_RPC_URL` below
-> is a *read* endpoint used only for: (a) showing on-chain data **before** you
-> connect a wallet, (b) falling back when your wallet is on the **wrong network**,
-> and (c) the write **gas pre-flight** (kept off MetaMask's throttled node — see
-> PR #957). A public default (`rpc.sepolia.org`) exists but is rate-limited, so
-> each developer uses their own key. Since it's injected into `NEXT_PUBLIC_*` it
-> is browser-exposed — never share it.
+> **Your transactions are signed and sent through MetaMask.** The apps ship a
+> reliable keyless public-node default (`ethereum-sepolia.publicnode.com`), used
+> only as a *read* endpoint for: (a) showing on-chain data **before** you connect
+> a wallet, (b) falling back when your wallet is on the **wrong network**, and
+> (c) the write **gas pre-flight** (kept off MetaMask's throttled node — see
+> PR #957; the old `rpc.sepolia.org` default now serves a 404 HTML page that
+> ethers can't parse, which is exactly the "could not coalesce error"). So
+> `SEPOLIA_RPC_URL` below is **optional** — set it only to use your own keyed
+> endpoint for extra reliability. It's injected into `NEXT_PUBLIC_*` (browser-
+> exposed), so never share a key.
 
 ```bash
 # 1. Your own Sepolia read RPC (browser-exposed via NEXT_PUBLIC_*, so never shared)

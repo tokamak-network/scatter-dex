@@ -1,4 +1,4 @@
-import { parseTokenList, ZERO_ADDRESS, type NetworkConfig } from "@zkscatter/sdk";
+import { defaultRpcUrl, parseTokenList, ZERO_ADDRESS, type NetworkConfig } from "@zkscatter/sdk";
 
 const ZERO = ZERO_ADDRESS;
 
@@ -10,7 +10,7 @@ function resolveNetwork(): NetworkConfig {
   return {
     chainId: Number(pick(process.env.NEXT_PUBLIC_CHAIN_ID, "11155111")),
     name: pick(process.env.NEXT_PUBLIC_CHAIN_NAME, "Sepolia"),
-    rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, "https://rpc.sepolia.org"),
+    rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, defaultRpcUrl(11155111)),
     explorerBase: pick(process.env.NEXT_PUBLIC_EXPLORER_BASE) || undefined,
     contracts: {
       privateSettlement: pick(process.env.NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS, ZERO),

@@ -74,24 +74,29 @@ APP_DIR="$ROOT_DIR/apps/$APP"
 LEDGER="$ROOT_DIR/contracts/deployments/${CHAIN_ID}.json"
 [ -f "$LEDGER" ] || { echo "ERROR: ledger not found: $LEDGER (is $NETWORK deployed? git pull?)" >&2; exit 1; }
 
-# --- RPC (private, per-developer) ------------------------------------------
+# --- RPC (read endpoint — optional, per-developer) -------------------------
 # hub links to sibling apps only; it needs no chain access.
+#
+# Transactions are signed and sent through the user's MetaMask node — this RPC
+# is a READ endpoint only: pre-connect reads, wrong-network fallback, and the
+# write gas pre-flight (kept off MetaMask's throttled node). All three work on a
+# public node, so the key is OPTIONAL; supplying your own just avoids public
+# rate limits under team load.
+PUBLIC_RPC_DEFAULT="https://ethereum-sepolia.publicnode.com"
 RPC_URL=""
 if [ "$APP" != "hub" ]; then
   RPC_VAR="$(echo "$NETWORK" | tr '[:lower:]' '[:upper:]')_RPC_URL"   # SEPOLIA_RPC_URL
   RPC_URL="${!RPC_VAR:-}"
   if [ -z "$RPC_URL" ]; then
+    RPC_URL="$PUBLIC_RPC_DEFAULT"
     cat >&2 <<EOF
-ERROR: \$$RPC_VAR is not set.
-
-  This is YOUR own $NETWORK RPC endpoint. NEXT_PUBLIC_ vars are exposed in the
-  browser, so do not share a key — use your own (Alchemy/Infura/your node):
-
-    export $RPC_VAR="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
-
-  Then re-run: $0 $APP $NETWORK
+NOTE: \$$RPC_VAR not set — using a public $NETWORK node:
+        $RPC_URL
+  This serves read fallbacks + gas pre-flight only; your transactions still go
+  through MetaMask. Public nodes are rate-limited — for reliable team use export
+  your own key (NEXT_PUBLIC_, so browser-exposed; never share it):
+        export $RPC_VAR="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
 EOF
-    exit 1
   fi
 fi
 

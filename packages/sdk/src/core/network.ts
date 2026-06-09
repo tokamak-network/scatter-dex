@@ -68,6 +68,25 @@ export const KNOWN_EXPLORER_BASES: Record<number, string> = {
   11155111: "https://sepolia.etherscan.io",
 };
 
+/** Reliable, keyless public RPC endpoints for chains zkScatter deploys to.
+ *  Used as the default *read* provider when no `NEXT_PUBLIC_RPC_URL` is set:
+ *  pre-connect reads, wrong-network fallback, and the write gas pre-flight all
+ *  run here, while transactions are still signed and sent through the user's
+ *  wallet. A *dead* default is what we must avoid — the old `rpc.sepolia.org`
+ *  now serves an Apache 404 HTML page, which ethers can't parse into a typed
+ *  error and surfaces as the opaque "could not coalesce error" on every
+ *  estimateGas/read. The publicnode endpoint below answers JSON-RPC (including
+ *  `eth_estimateGas`) and tolerates request bursts without rate-limiting. */
+export const KNOWN_DEFAULT_RPC_URLS: Record<number, string> = {
+  11155111: "https://ethereum-sepolia.publicnode.com",
+};
+
+/** Default read RPC for a chain, or "" when none is known (callers then rely
+ *  on a wallet-injected provider). */
+export function defaultRpcUrl(chainId: number): string {
+  return KNOWN_DEFAULT_RPC_URLS[chainId] ?? "";
+}
+
 export function chainName(chainId: number): string {
   return KNOWN_CHAIN_NAMES[chainId] ?? `Chain ${chainId}`;
 }
