@@ -5,6 +5,7 @@ import { Contract, type Provider, type Signer } from "ethers";
 import { runWrite } from "@zkscatter/sdk";
 import { useMounted, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
+import { useReloadKey } from "../../lib/useReloadKey";
 
 // `setTreasury` and `setAuthorizedDepositor` are owner-only ops that
 // run once at deploy (treasury = multisig recipient; authorized
@@ -389,6 +390,8 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
   const MAX_HOURS = 30 * 24; // MAX_FEE_CHANGE_DELAY
   const [current, setCurrent] = useState<bigint | null>(null);
   const [hours, setHours] = useState("");
+  // reload() re-reads `current` now + after a short delay (absorbs wallet-RPC lag).
+  const [reloadKey, reload] = useReloadKey();
 
   useEffect(() => {
     let cancelled = false;
@@ -401,7 +404,7 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
     return () => {
       cancelled = true;
     };
-  }, [address, readProvider]);
+  }, [address, readProvider, reloadKey]);
 
   const parsed = parseHours(hours, MAX_HOURS);
 
@@ -411,6 +414,12 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
     return invokeWrite(signer, rpcProvider, address, "setFeeChangeDelay", [parsed]);
   }, [signer, rpcProvider, address, parsed, MAX_HOURS]);
 
+  const handleSuccess = useCallback(() => {
+    setHours("");
+    reload();
+    onSuccess();
+  }, [onSuccess, reload]);
+
   return (
     <AdminWriteCard
       title="Set fee-change timelock"
@@ -418,7 +427,7 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
       submitLabel={parsed != null ? `Set to ${formatDelay(parsed)}` : "Set timelock"}
       disabled={parsed == null}
       onSubmit={submit}
-      onSuccess={onSuccess}
+      onSuccess={handleSuccess}
     >
       <div className="text-xs text-[var(--color-text-muted)]">
         Current: <strong>{current != null ? formatDelay(current) : "…"}</strong>
