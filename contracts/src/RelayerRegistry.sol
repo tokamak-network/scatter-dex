@@ -161,6 +161,36 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         exitCooldown = DEFAULT_EXIT_COOLDOWN;
     }
 
+    /// @notice One-shot upgrade hook for the bond-token + exit-cooldown upgrade,
+    ///         called via `ProxyAdmin.upgradeAndCall` when an EXISTING proxy moves
+    ///         to this implementation.
+    /// @dev Two storage fields are new on this version and read `0` on a
+    ///      pre-upgrade proxy; both must be initialized atomically with the
+    ///      upgrade so there is no window of wrong behaviour:
+    ///        - `exitCooldown == 0` would let relayers skip the exit cooldown
+    ///          entirely → set it to `DEFAULT_EXIT_COOLDOWN`.
+    ///        - per-relayer `bondToken == 0` reads as native ETH, but every
+    ///          pre-upgrade bond was in the single deploy-time global token →
+    ///          backfill each existing relayer's recorded token to the current
+    ///          global `bondToken` so `executeExit`/`addBond` use the right asset.
+    ///      `reinitializer(2)` makes this callable exactly once. The backfill
+    ///      loop is bounded by `relayerList.length` (0 on Sepolia today); a
+    ///      registry large enough to risk the block gas limit would need a
+    ///      batched migration instead.
+    function reinitializeV2() external reinitializer(2) {
+        if (exitCooldown == 0) {
+            exitCooldown = DEFAULT_EXIT_COOLDOWN;
+        }
+        address g = address(bondToken);
+        uint256 n = relayerList.length;
+        for (uint256 i; i < n; ++i) {
+            Relayer storage r = relayers[relayerList[i]];
+            if (r.bond != 0 && r.bondToken == address(0)) {
+                r.bondToken = g;
+            }
+        }
+    }
+
     // ─── Registration ────────────────────────────────────────────
 
     /// @param bondAmount In ERC20 mode, the amount to pull via `transferFrom` (caller must `approve` first).

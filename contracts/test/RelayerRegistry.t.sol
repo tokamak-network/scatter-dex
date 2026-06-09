@@ -920,4 +920,39 @@ contract RelayerRegistryBondTokenTest is Test {
         assertEq(address(reg).balance, 0);
         assertEq(tokenB.balanceOf(address(reg)), 0);
     }
+
+    // ─── reinitializeV2 (combined upgrade hook) ──────────────────
+
+    /// @dev exitCooldown lives at storage slot 8 (forge inspect). Zeroing it
+    ///      simulates a pre-upgrade proxy where the new field reads 0; the
+    ///      reinitializer must restore the default so the cooldown can't be
+    ///      bypassed.
+    function test_reinitializeV2_restores_zeroed_exitCooldown() public {
+        vm.store(address(registry), bytes32(uint256(8)), bytes32(uint256(0)));
+        assertEq(registry.exitCooldown(), 0);
+        registry.reinitializeV2();
+        assertEq(registry.exitCooldown(), registry.DEFAULT_EXIT_COOLDOWN());
+    }
+
+    function test_reinitializeV2_only_callable_once() public {
+        registry.reinitializeV2();
+        // OZ Initializable reverts re-run with InvalidInitialization().
+        vm.expectRevert();
+        registry.reinitializeV2();
+    }
+
+    /// @dev On an already-correct registry it's a no-op: a registered relayer's
+    ///      recorded bond token is left intact (not clobbered).
+    function test_reinitializeV2_noop_preserves_recorded_bondToken() public {
+        vm.startPrank(relayer1);
+        tokenA.approve(address(registry), 1 ether);
+        registry.register("u", "n", 30, 1 ether);
+        vm.stopPrank();
+
+        registry.reinitializeV2();
+
+        (,,,,,,, address tok) = registry.relayers(relayer1);
+        assertEq(tok, address(tokenA));
+        assertEq(registry.exitCooldown(), registry.DEFAULT_EXIT_COOLDOWN());
+    }
 }
