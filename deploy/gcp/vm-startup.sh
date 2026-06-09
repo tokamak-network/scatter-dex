@@ -46,8 +46,9 @@ COMMITMENT_POOL_ADDRESS=$(mget commitment-pool-address)
 PRIVATE_SETTLEMENT_ADDRESS=$(mget private-settlement-address)
 CORS_ORIGINS=$(mget cors-origins)
 # SIWE admin allowlist — public wallet addresses, so it lives in metadata
-# alongside the contract addresses (not Secret Manager). Empty → admin
-# /api/admin/* endpoints stay 404.
+# alongside the contract addresses (not Secret Manager). Empty → the SIWE
+# challenge/session routes stay 404 (other admin routes return 503). The app
+# trims/lowercases each entry, so commas-with-spaces are fine.
 ADMIN_ADDRESSES=$(mget admin-addresses)
 DOMAIN=$(mget domain)
 ACME_EMAIL=$(mget acme-email)
