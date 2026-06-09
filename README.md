@@ -80,6 +80,69 @@ For rapid development without zk-X509 (identity verification bypassed):
 
 Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches zk-relayer + frontend. Open http://localhost:3000.
 
+### Run against Sepolia (live testnet)
+
+Run the frontends **locally** against the shared **Sepolia (chainId 11155111)**
+deployment so the whole team hits the same contracts, relayer, and orderbook.
+Every contract address comes from the committed ledger in
+`contracts/deployments/11155111.json` — you configure nothing.
+
+> **Your transactions are signed and sent through MetaMask.** The apps ship a
+> reliable keyless public-node default (`ethereum-sepolia.publicnode.com`), used
+> only as a *read* endpoint for: (a) showing on-chain data **before** you connect
+> a wallet, (b) falling back when your wallet is on the **wrong network**, and
+> (c) the write **gas pre-flight** (kept off MetaMask's throttled node — see
+> PR #957; the old `rpc.sepolia.org` default now serves a 404 HTML page that
+> ethers can't parse, which is exactly the "could not coalesce error"). So
+> `SEPOLIA_RPC_URL` below is **optional** — set it only to use your own keyed
+> endpoint for extra reliability. It's injected into `NEXT_PUBLIC_*` (browser-
+> exposed), so never share a key.
+
+```bash
+# 1. Your own Sepolia read RPC (browser-exposed via NEXT_PUBLIC_*, so never shared)
+export SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
+
+# 2. (optional) point the apps at the live relayer instead of localhost
+export ZK_RELAYER_URL="http://136.115.115.93:3002"   # bot-1 relayer
+
+# 3. Launch any app — generates a gitignored apps/<app>/.env.local and starts dev
+scripts/run-scatter-web.sh <app> sepolia             # app = hub | pay | pro | operators | admin
+```
+
+| app       | dev URL                 | purpose                          |
+|-----------|-------------------------|----------------------------------|
+| pay       | http://localhost:4001   | simple payments UI               |
+| pro       | http://localhost:4003   | pro trading UI                   |
+| operators | http://localhost:4004   | operator / KYC onboarding console |
+| admin     | http://localhost:4005   | protocol + KYC review console    |
+| hub       | http://localhost:4006   | navigation hub (no RPC needed)   |
+
+Live shared infrastructure (single GCP `e2-micro`, all co-located):
+
+| service                     | URL                          |
+|-----------------------------|------------------------------|
+| Shared orderbook            | `http://136.115.115.93:4000` |
+| Relayer **bot-1**           | `http://136.115.115.93:3002` (`/api/info`) |
+
+> These are plain **`http://`** endpoints, so they're reachable from frontends
+> served over `http://localhost` (the dev setup above). A frontend served over
+> `https://` (Vercel, Netlify, an ngrok tunnel) would have the browser block
+> these as mixed content — front it with a TLS reverse proxy (the box already
+> ships a Caddy/Let's Encrypt overlay, see `deploy/runtime`) and use the
+> `https://` host instead.
+
+A wallet on Sepolia with a little test ETH is needed for any on-chain action
+(deposits, registration, admin writes). To also run the **zk-X509** management
+website (separate repo) against Sepolia:
+
+```bash
+export ZK_X509_REPO="$HOME/src/zk-X509"      # if not at ../zk-X509
+scripts/run-zkx509-web.sh sepolia            # → http://localhost:3000
+```
+
+See **[docs/operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md)**
+for the full flow, optional overrides, and the backend/prover topology.
+
 ### Run Tests
 
 ```bash

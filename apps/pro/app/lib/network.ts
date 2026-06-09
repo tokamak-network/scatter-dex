@@ -3,6 +3,7 @@ import {
   LAUNCH_TOKENS,
   ZERO_ADDRESS,
   chainName,
+  defaultRpcUrl,
   type NetworkConfig,
   type TokenInfo,
 } from "@zkscatter/sdk";
@@ -77,7 +78,7 @@ function buildNetworkConfig(): NetworkConfig {
     // chainId=31337 deploy doesn't render "Sepolia" in the header
     // pill. Env can still override for vanity labels.
     name: pick(process.env.NEXT_PUBLIC_NETWORK_NAME, chainName(chainId)),
-    rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, "https://rpc.sepolia.org"),
+    rpcUrl: pick(process.env.NEXT_PUBLIC_RPC_URL, defaultRpcUrl(11155111)),
     // Derive the explorer URL from the SDK's per-chain map so a
     // chainId=31337 deploy doesn't link out to sepolia.etherscan.io.
     // `undefined` is intentional: 31337 (Localhost) has no public
