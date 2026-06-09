@@ -5,7 +5,7 @@ import { getFeeVaultAddress } from "./config";
 import { FEE_VAULT_ABI } from "./contracts";
 import { getTokenList, type TokenInfo } from "./tokens";
 import { extractEthersErrorMessage } from "./utils";
-import { multicall, encodeCall, decodeResult } from "./multicall";
+import { multicall, encodeCall, decodeResult } from "@zkscatter/sdk";
 
 /**
  * Three platform-revenue streams emitted by FeeVault:

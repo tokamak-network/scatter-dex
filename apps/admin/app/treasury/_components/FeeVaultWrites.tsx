@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Contract, type Signer } from "ethers";
+import { Contract, type Provider, type Signer } from "ethers";
+import { runWrite } from "@zkscatter/sdk";
 import { useMounted, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 
@@ -87,7 +88,12 @@ function FeeScheduleEditor({
   pendingEffectiveTime: bigint | null;
   onSuccess: () => void;
 }) {
-  const { signer } = useWallet();
+  // `rpcProvider` (public RPC) runs the gas/fee/nonce preflight, never the
+  // wallet: a throttled wallet RPC is exactly what surfaced as "could not
+  // coalesce error" when ethers ran its own estimate. With overrides
+  // precomputed, the wallet only broadcasts. A genuine revert (e.g. the
+  // connected account isn't the owner) still surfaces its real reason.
+  const { signer, rpcProvider } = useWallet();
   const [bpsInput, setBpsInput] = useState("");
 
   // Prefill the input from the live on-chain value once it arrives.
@@ -109,18 +115,18 @@ function FeeScheduleEditor({
   const schedule = useCallback(async () => {
     if (!signer) throw new Error("Wallet not connected");
     if (bpsValue == null) throw new Error("Invalid bps");
-    return invoke(signer, address, "scheduleFeeChange", bpsValue);
-  }, [signer, bpsValue, address]);
+    return invokeWrite(signer, rpcProvider, address, "scheduleFeeChange", [bpsValue]);
+  }, [signer, rpcProvider, bpsValue, address]);
 
   const apply = useCallback(async () => {
     if (!signer) throw new Error("Wallet not connected");
-    return invokeNullary(signer, address, "applyFeeChange");
-  }, [signer, address]);
+    return invokeWrite(signer, rpcProvider, address, "applyFeeChange");
+  }, [signer, rpcProvider, address]);
 
   const cancel = useCallback(async () => {
     if (!signer) throw new Error("Wallet not connected");
-    return invokeNullary(signer, address, "cancelFeeChange");
-  }, [signer, address]);
+    return invokeWrite(signer, rpcProvider, address, "cancelFeeChange");
+  }, [signer, rpcProvider, address]);
 
   // After apply / cancel succeeds the live `currentFeeBps` will move
   // (apply → pending value; cancel → unchanged), and the operator's
@@ -361,30 +367,17 @@ function parseBps(input: string): bigint | null {
   return BigInt(n);
 }
 
-async function invoke(signer: Signer, address: string, fn: string, arg: bigint) {
+// All FeeVault writes go through `runWrite`, which precomputes gas/fee/nonce
+// on `estimateProvider` (the public RPC) so the wallet only has to broadcast
+// — the fix for the "could not coalesce error" seen when ethers ran its
+// preflight against a throttled wallet RPC.
+async function invokeWrite(
+  signer: Signer,
+  estimateProvider: Provider,
+  address: string,
+  fn: string,
+  args: readonly unknown[] = [],
+) {
   const c = new Contract(address, ABI, signer);
-  const setter = (
-    c as unknown as Record<string, (a: bigint) => Promise<{
-      hash: string;
-      wait(): Promise<{ hash?: string } | null>;
-    }>>
-  )[fn];
-  return (await setter(arg)) as {
-    hash: string;
-    wait(): Promise<{ hash?: string } | null>;
-  };
-}
-
-async function invokeNullary(signer: Signer, address: string, fn: string) {
-  const c = new Contract(address, ABI, signer);
-  const setter = (
-    c as unknown as Record<string, () => Promise<{
-      hash: string;
-      wait(): Promise<{ hash?: string } | null>;
-    }>>
-  )[fn];
-  return (await setter()) as {
-    hash: string;
-    wait(): Promise<{ hash?: string } | null>;
-  };
+  return runWrite(c, fn, args, { estimateProvider });
 }

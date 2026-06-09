@@ -2,6 +2,8 @@ export * from "./network";
 export * from "./contracts";
 export * from "./tokens";
 export * from "./provider";
+export * from "./multicall";
+export * from "./write";
 export * from "./addresses";
 export * from "./whitelist";
 export * from "./pool";
