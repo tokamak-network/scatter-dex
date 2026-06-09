@@ -24,7 +24,7 @@ COPY zk-relayer/package*.json ./
 # the SDK's runtime deps (`@noble/*`, `snarkjs`, `circomlibjs`,
 # `ethers`), and the container fails at first import with
 # MODULE_NOT_FOUND.
-RUN npm ci --install-links --production=false
+RUN npm ci --install-links --include=dev
 COPY zk-relayer/ ./
 
 ENV PORT=3002
