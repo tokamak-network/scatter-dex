@@ -80,6 +80,51 @@ For rapid development without zk-X509 (identity verification bypassed):
 
 Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches zk-relayer + frontend. Open http://localhost:3000.
 
+### Run against Sepolia (live testnet)
+
+Run the frontends **locally** against the shared **Sepolia (chainId 11155111)**
+deployment so the whole team hits the same contracts, relayer, and orderbook.
+You supply only **your own RPC key** — every contract address comes from the
+committed ledger in `contracts/deployments/11155111.json`.
+
+```bash
+# 1. Your own Sepolia RPC key (browser-exposed via NEXT_PUBLIC_*, so never shared)
+export SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
+
+# 2. (optional) point the apps at the live relayer instead of localhost
+export ZK_RELAYER_URL="http://136.115.115.93:3002"   # bot-1 relayer
+
+# 3. Launch any app — generates a gitignored apps/<app>/.env.local and starts dev
+scripts/run-scatter-web.sh <app> sepolia             # app = hub | pay | pro | operators | admin
+```
+
+| app       | dev URL                 | purpose                          |
+|-----------|-------------------------|----------------------------------|
+| pay       | http://localhost:4001   | simple payments UI               |
+| pro       | http://localhost:4003   | pro trading UI                   |
+| operators | http://localhost:4004   | operator / KYC onboarding console |
+| admin     | http://localhost:4005   | protocol + KYC review console    |
+| hub       | http://localhost:4006   | navigation hub (no RPC needed)   |
+
+Live shared infrastructure (single GCP `e2-micro`, all co-located):
+
+| service                     | URL                          |
+|-----------------------------|------------------------------|
+| Shared orderbook            | `http://136.115.115.93:4000` |
+| Relayer **bot-1**           | `http://136.115.115.93:3002` (`/api/info`) |
+
+A wallet on Sepolia with a little test ETH is needed for any on-chain action
+(deposits, registration, admin writes). To also run the **zk-X509** management
+website (separate repo) against Sepolia:
+
+```bash
+export ZK_X509_REPO="$HOME/src/zk-X509"      # if not at ../zk-X509
+scripts/run-zkx509-web.sh sepolia            # → http://localhost:3000
+```
+
+See **[docs/operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md)**
+for the full flow, optional overrides, and the backend/prover topology.
+
 ### Run Tests
 
 ```bash
