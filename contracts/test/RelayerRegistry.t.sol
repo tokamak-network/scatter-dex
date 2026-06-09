@@ -40,7 +40,7 @@ contract RelayerRegistryTest is Test {
         registry.register{value: 0.5 ether}("http://relay1.com", "Relayer-test", 30, 0);
 
         assertTrue(registry.isActiveRelayer(relayer1));
-        (string memory url,, uint256 fee, uint256 bond,, uint256 exitAt, bool active) = registry.relayers(relayer1);
+        (string memory url,, uint256 fee, uint256 bond,, uint256 exitAt, bool active,) = registry.relayers(relayer1);
         assertEq(url, "http://relay1.com");
         assertEq(fee, 30);
         assertEq(bond, 0.5 ether);
@@ -92,7 +92,7 @@ contract RelayerRegistryTest is Test {
         vm.prank(relayer1);
         registry.updateInfo("http://new.com", "Relayer-test", 20);
 
-        (string memory url,, uint256 fee,,,,) = registry.relayers(relayer1);
+        (string memory url,, uint256 fee,,,,,) = registry.relayers(relayer1);
         assertEq(url, "http://new.com");
         assertEq(fee, 20);
     }
@@ -114,7 +114,7 @@ contract RelayerRegistryTest is Test {
         vm.prank(relayer1);
         registry.addBond{value: 0.5 ether}(0);
 
-        (,,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,,) = registry.relayers(relayer1);
         assertEq(bond, 0.6 ether);
     }
 
@@ -183,7 +183,7 @@ contract RelayerRegistryTest is Test {
         // `active` stays true so the bond can be recovered via executeExit.
         assertFalse(registry.isActiveRelayer(relayer1));
         assertEq(registry.getActiveRelayers().length, 0);
-        (,,, uint256 bond,, uint256 exitAt, bool active) = registry.relayers(relayer1);
+        (,,, uint256 bond,, uint256 exitAt, bool active,) = registry.relayers(relayer1);
         assertEq(exitAt, ts);
         assertTrue(active);
         assertEq(bond, 1 ether);
@@ -222,7 +222,7 @@ contract RelayerRegistryTest is Test {
         registry.executeExit();
 
         assertEq(relayer1.balance, balBefore + 1 ether);
-        (,,, uint256 bond,,, bool active) = registry.relayers(relayer1);
+        (,,, uint256 bond,,, bool active,) = registry.relayers(relayer1);
         assertFalse(active);
         assertEq(bond, 0);
     }
@@ -234,12 +234,12 @@ contract RelayerRegistryTest is Test {
         registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         registry.requestExit();
         vm.stopPrank();
-        (,,,,, uint256 exitAtBefore,) = registry.relayers(relayer1);
+        (,,,,, uint256 exitAtBefore,,) = registry.relayers(relayer1);
 
         vm.warp(block.timestamp + 3 days);
         registry.adminRemoveRelayer(relayer1, "late force");
 
-        (,,,,, uint256 exitAtAfter,) = registry.relayers(relayer1);
+        (,,,,, uint256 exitAtAfter,,) = registry.relayers(relayer1);
         assertEq(exitAtAfter, exitAtBefore);
     }
 
@@ -470,7 +470,7 @@ contract RelayerRegistryTest is Test {
         registry.register{value: 0.1 ether}("http://relay1.com", "Relayer-test", 30, 0);
         vm.prank(relayer1);
         registry.updateInfo("http://new.url", "Relayer-test", 500);
-        (,, uint256 fee,,,,) = registry.relayers(relayer1);
+        (,, uint256 fee,,,,,) = registry.relayers(relayer1);
         assertEq(fee, 500);
     }
 
@@ -598,7 +598,7 @@ contract RelayerRegistryERC20Test is Test {
         registry.register("http://relay1.com", "Relayer-test", 30, 0.5 ether);
         vm.stopPrank();
 
-        (,,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,,) = registry.relayers(relayer1);
         assertEq(bond, 0.5 ether);
         assertEq(ton.balanceOf(address(registry)), 0.5 ether);
         assertEq(ton.balanceOf(relayer1), 9.5 ether);
@@ -615,7 +615,7 @@ contract RelayerRegistryERC20Test is Test {
         vm.prank(relayer1);
         registry.register("http://relay1.com", "Relayer-test", 30, 0);
         assertTrue(registry.isActiveRelayer(relayer1));
-        (,,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,,) = registry.relayers(relayer1);
         assertEq(bond, 0);
     }
 
@@ -637,7 +637,7 @@ contract RelayerRegistryERC20Test is Test {
         registry.addBond(0.3 ether);
         vm.stopPrank();
 
-        (,,, uint256 bond,,,) = registry.relayers(relayer1);
+        (,,, uint256 bond,,,,) = registry.relayers(relayer1);
         assertEq(bond, 0.8 ether);
     }
 
@@ -664,8 +664,187 @@ contract RelayerRegistryERC20Test is Test {
 
         assertEq(ton.balanceOf(relayer1), 10 ether);
         assertEq(ton.balanceOf(address(registry)), 0);
-        (,,, uint256 bond,,, bool active) = registry.relayers(relayer1);
+        (,,, uint256 bond,,, bool active,) = registry.relayers(relayer1);
         assertEq(bond, 0);
         assertFalse(active);
+    }
+}
+
+// ─── Configurable bond token (setBondToken + per-relayer recording) ──
+
+contract RelayerRegistryBondTokenTest is Test {
+    RelayerRegistry public registry;
+    MockIdentityRegistry public identityRegistry;
+    MockTON public tokenA;
+    MockTON public tokenB;
+    address treasury = address(0x7777);
+    address relayer1 = address(0xA1);
+    address relayer2 = address(0xA2);
+    address nonOwner = address(0xBEEF);
+
+    event BondTokenUpdated(address indexed oldToken, address indexed newToken);
+
+    function setUp() public {
+        identityRegistry = new MockIdentityRegistry();
+        tokenA = new MockTON();
+        tokenB = new MockTON();
+        // Deploy in ERC20 mode with tokenA as the initial global bond token.
+        registry = ProxyDeployer.deployRelayerRegistry(
+            address(this), address(this), treasury, address(identityRegistry), address(tokenA)
+        );
+        identityRegistry.setVerified(relayer1, true);
+        identityRegistry.setVerified(relayer2, true);
+        tokenA.mint(relayer1, 10 ether);
+        tokenB.mint(relayer2, 10 ether);
+    }
+
+    function test_setBondToken_updates_and_emits() public {
+        vm.expectEmit(true, true, false, true);
+        emit BondTokenUpdated(address(tokenA), address(tokenB));
+        registry.setBondToken(address(tokenB));
+        assertEq(address(registry.bondToken()), address(tokenB));
+    }
+
+    function test_setBondToken_only_owner_reverts() public {
+        vm.prank(nonOwner);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, nonOwner));
+        registry.setBondToken(address(tokenB));
+    }
+
+    function test_setBondToken_non_contract_reverts() public {
+        vm.expectRevert(RelayerRegistry.NotAContract.selector);
+        registry.setBondToken(address(0xDEAD)); // EOA, no code
+    }
+
+    function test_setBondToken_to_native_allowed() public {
+        registry.setBondToken(address(0));
+        assertEq(address(registry.bondToken()), address(0));
+    }
+
+    function test_register_records_global_token() public {
+        vm.startPrank(relayer1);
+        tokenA.approve(address(registry), 1 ether);
+        registry.register("u", "n", 30, 1 ether);
+        vm.stopPrank();
+        (,,, uint256 bond,,, bool active, address tok) = registry.relayers(relayer1);
+        assertEq(bond, 1 ether);
+        assertTrue(active);
+        assertEq(tok, address(tokenA));
+    }
+
+    /// @dev Headline requirement: change the global token between two
+    ///      registrations; each relayer withdraws exactly the token+amount they
+    ///      staked, regardless of the current global token.
+    function test_crossToken_each_relayer_exits_in_their_own_token() public {
+        // relayer1 bonds 1 tokenA
+        vm.startPrank(relayer1);
+        tokenA.approve(address(registry), 1 ether);
+        registry.register("u1", "n1", 30, 1 ether);
+        vm.stopPrank();
+
+        // owner switches the global token to tokenB
+        registry.setBondToken(address(tokenB));
+
+        // relayer2 bonds 2 tokenB
+        vm.startPrank(relayer2);
+        tokenB.approve(address(registry), 2 ether);
+        registry.register("u2", "n2", 30, 2 ether);
+        vm.stopPrank();
+
+        // recorded tokens differ per relayer
+        (,,,,,,, address tok1) = registry.relayers(relayer1);
+        (,,,,,,, address tok2) = registry.relayers(relayer2);
+        assertEq(tok1, address(tokenA));
+        assertEq(tok2, address(tokenB));
+
+        // both exit after cooldown
+        vm.prank(relayer1);
+        registry.requestExit();
+        vm.prank(relayer2);
+        registry.requestExit();
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(relayer1);
+        registry.executeExit();
+        vm.prank(relayer2);
+        registry.executeExit();
+
+        // each got back their own token+amount; registry drained of both
+        assertEq(tokenA.balanceOf(relayer1), 10 ether);
+        assertEq(tokenB.balanceOf(relayer2), 10 ether);
+        assertEq(tokenA.balanceOf(address(registry)), 0);
+        assertEq(tokenB.balanceOf(address(registry)), 0);
+    }
+
+    function test_addBond_uses_recorded_token_after_switch() public {
+        // register in tokenA
+        vm.startPrank(relayer1);
+        tokenA.approve(address(registry), 1 ether);
+        registry.register("u", "n", 30, 1 ether);
+        vm.stopPrank();
+
+        // global switches to tokenB
+        registry.setBondToken(address(tokenB));
+
+        // relayer1 tops up — must use tokenA (their recorded token), not B
+        vm.startPrank(relayer1);
+        tokenA.approve(address(registry), 0.5 ether);
+        registry.addBond(0.5 ether);
+        vm.stopPrank();
+
+        (,,, uint256 bond,,,, address tok) = registry.relayers(relayer1);
+        assertEq(bond, 1.5 ether);
+        assertEq(tok, address(tokenA));
+        assertEq(tokenA.balanceOf(address(registry)), 1.5 ether);
+        assertEq(tokenB.balanceOf(address(registry)), 0);
+    }
+
+    function test_addBond_wrong_mode_after_switch_reverts() public {
+        // register in tokenA (ERC20), then switch the global token to native
+        vm.startPrank(relayer1);
+        tokenA.approve(address(registry), 1 ether);
+        registry.register("u", "n", 30, 1 ether);
+        vm.stopPrank();
+        registry.setBondToken(address(0)); // native global now
+
+        // relayer1's recorded token is still tokenA (ERC20) → native value reverts
+        vm.deal(relayer1, 1 ether);
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.WrongPaymentMode.selector);
+        registry.addBond{value: 0.1 ether}(0);
+    }
+
+    /// @dev native deploy → switch to ERC20: each relayer exits in their own asset.
+    function test_native_then_erc20_switch() public {
+        RelayerRegistry reg = ProxyDeployer.deployRelayerRegistry(
+            address(this), address(this), treasury, address(identityRegistry), address(0)
+        );
+
+        // relayer1 bonds 1 ETH native
+        vm.deal(relayer1, 1 ether);
+        vm.prank(relayer1);
+        reg.register{value: 1 ether}("u1", "n1", 30, 0);
+
+        // switch global to tokenB; relayer2 bonds 2 tokenB
+        reg.setBondToken(address(tokenB));
+        vm.startPrank(relayer2);
+        tokenB.approve(address(reg), 2 ether);
+        reg.register("u2", "n2", 30, 2 ether);
+        vm.stopPrank();
+
+        // both exit
+        vm.prank(relayer1);
+        reg.requestExit();
+        vm.prank(relayer2);
+        reg.requestExit();
+        vm.warp(block.timestamp + 7 days + 1);
+        vm.prank(relayer1);
+        reg.executeExit();
+        vm.prank(relayer2);
+        reg.executeExit();
+
+        assertEq(relayer1.balance, 1 ether); // got native ETH back
+        assertEq(tokenB.balanceOf(relayer2), 10 ether); // got tokenB back
+        assertEq(address(reg).balance, 0);
+        assertEq(tokenB.balanceOf(address(reg)), 0);
     }
 }

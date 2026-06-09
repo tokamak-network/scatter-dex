@@ -14,13 +14,14 @@ import {IKycApproval} from "./interfaces/IKycApproval.sol";
 /// @dev Relayers may optionally stake a bond to register (minBond configurable by owner, default 0).
 ///      Bond is returned after a cooldown on exit.
 ///
-///      Bond token is configurable via `bondToken` (set once in `initialize()`,
-///      never reassigned — was `immutable` before the proxy migration):
-///      - `address(0)` → **native mode** (e.g. TON on Tokamak L2): bond paid via `msg.value`.
-///      - non-zero ERC20 → **token mode** (e.g. TON ERC20 on L1): bond pulled via
-///        `transferFrom`; caller must `approve` first. `msg.value` MUST be 0.
-///      The same codebase deploys to both networks; the init-only write barrier
-///      preserves the original "can't rug existing bonds by switching tokens" property.
+///      The global `bondToken` is the token NEW registrations bond in
+///      (`address(0)` → native `msg.value` mode; non-zero ERC20 → `transferFrom`
+///      after `approve`, `msg.value` MUST be 0). The owner may change it anytime
+///      via `setBondToken`. Each relayer SNAPSHOTS the global token at register
+///      time into `Relayer.bondToken`; their top-up (`addBond`) and withdrawal
+///      (`executeExit`) always use that recorded token, never the live global.
+///      This lets the owner switch the bond token without stranding or rugging
+///      existing bonds — a relayer always gets back exactly what they staked.
 ///
 ///      NOTE (L-3): No bond slashing mechanism — malicious relayers lose only gas on
 ///      failed settle() attempts. Consider adding slashing for repeated violations.
@@ -41,6 +42,13 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         uint256 registeredAt;
         uint256 exitRequestedAt; // 0 = active, >0 = exiting
         bool active;
+        // Token this relayer's `bond` is denominated in — snapshotted from the
+        // global `bondToken` at register time. `address(0)` = native. Top-up
+        // and withdrawal always use THIS, never the (possibly-changed) global,
+        // so a `setBondToken` switch never strands an existing bond.
+        // Appended at the end of the struct → upgrade-safe (the struct is only
+        // a `mapping` value; new field reads 0 for pre-upgrade entries).
+        address bondToken;
     }
 
     uint256 public minBond; // optional — 0 means no bond required
@@ -51,8 +59,10 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      state var because the implementation's constructor never runs through
     ///      the proxy. Value is locked in at `initialize()` and never reassigned.
     IIdentityRegistry public identityRegistry;
-    /// @notice Bond token. `address(0)` means native (msg.value) mode.
-    /// @dev See `identityRegistry` note — was `immutable` before the proxy migration.
+    /// @notice Global bond token NEW registrations stake in. `address(0)` = native
+    ///         (msg.value) mode. Owner-settable via `setBondToken`; each relayer
+    ///         records the value in force at their register time, so changing this
+    ///         only affects future registrations.
     IERC20 public bondToken;
     address public treasury;
 
@@ -77,6 +87,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     event BondAdded(address indexed relayer, uint256 amount);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
+    event BondTokenUpdated(address indexed oldToken, address indexed newToken);
     event IdentityRegistryUpdated(address oldRegistry, address newRegistry);
     event KycApprovalRegistryUpdated(address oldRegistry, address newRegistry);
     /// @param exitAfter Timestamp after which the relayer can `executeExit` to
@@ -99,6 +110,8 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     error RenounceOwnershipDisabled();
     /// @dev ERC20 mode received native value, or native mode received non-zero `bondAmount`.
     error WrongPaymentMode();
+    /// @dev `setBondToken` was given a non-native address with no contract code.
+    error NotAContract();
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
     function renounceOwnership() public pure override(OwnableUpgradeable) {
@@ -151,11 +164,22 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
             revert NotKycApproved();
         }
 
-        uint256 bond = _pullBond(bondAmount);
+        // Snapshot the global token now — the relayer's bond (and its later
+        // top-up / withdrawal) is denominated in whatever token is current at
+        // register time, immune to a later `setBondToken`.
+        IERC20 _bondToken = bondToken;
+        uint256 bond = _pullBond(_bondToken, bondAmount);
         if (bond < minBond) revert InsufficientBond();
 
         relayers[msg.sender] = Relayer({
-            url: url, name: name, fee: fee, bond: bond, registeredAt: block.timestamp, exitRequestedAt: 0, active: true
+            url: url,
+            name: name,
+            fee: fee,
+            bond: bond,
+            registeredAt: block.timestamp,
+            exitRequestedAt: 0,
+            active: true,
+            bondToken: address(_bondToken)
         });
 
         // Only add to list if first-time registration (prevent duplicates on re-register)
@@ -175,7 +199,9 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
 
-        uint256 bond = _pullBond(bondAmount);
+        // Top up in the relayer's RECORDED token, never the live global — so a
+        // top-up after a `setBondToken` switch can't mix two tokens into one bond.
+        uint256 bond = _pullBond(IERC20(r.bondToken), bondAmount);
         if (bond == 0) revert InsufficientBond();
         r.bond += bond;
 
@@ -214,10 +240,11 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         if (block.timestamp < r.exitRequestedAt + EXIT_COOLDOWN) revert CooldownNotPassed();
 
         uint256 bondToReturn = r.bond;
+        address tok = r.bondToken; // capture the recorded token before mutation
         r.active = false;
         r.bond = 0;
 
-        _pushBond(msg.sender, bondToReturn);
+        _pushBond(IERC20(tok), msg.sender, bondToReturn);
 
         emit RelayerExited(msg.sender, bondToReturn);
     }
@@ -234,15 +261,14 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      measuring the balance delta, so the recorded bond must equal what the
     ///      contract actually received. A fee-on-transfer or rebasing `bondToken`
     ///      would break this (recorded > received), letting a relayer withdraw more
-    ///      on exit than was deposited. `bondToken` is therefore expected to be a
-    ///      standard ERC20 (e.g. TON) and is locked once at `initialize`. (Unlike
-    ///      `CommitmentPool.deposit`, which defends against fee-on-transfer via a
-    ///      balance-delta check, the bond path relies on this invariant.)
-    function _pullBond(uint256 bondAmount) internal returns (uint256) {
-        // `bondToken` is a storage var post-upgradeable migration (was `immutable`);
-        // cache to avoid a redundant SLOAD on the ERC20 path.
-        IERC20 _bondToken = bondToken;
-        if (address(_bondToken) == address(0)) {
+    ///      on exit than was deposited. The bond token is therefore expected to be a
+    ///      standard ERC20 (e.g. TON). (Unlike `CommitmentPool.deposit`, which
+    ///      defends against fee-on-transfer via a balance-delta check, the bond path
+    ///      relies on this invariant.)
+    /// @param token The token to pull in — `address(0)` for native. Callers pass the
+    ///        global token on register, or the relayer's recorded token on top-up.
+    function _pullBond(IERC20 token, uint256 bondAmount) internal returns (uint256) {
+        if (address(token) == address(0)) {
             // Native mode
             if (bondAmount != 0) revert WrongPaymentMode();
             return msg.value;
@@ -250,22 +276,23 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         // ERC20 mode
         if (msg.value != 0) revert WrongPaymentMode();
         if (bondAmount != 0) {
-            _bondToken.safeTransferFrom(msg.sender, address(this), bondAmount);
+            token.safeTransferFrom(msg.sender, address(this), bondAmount);
         }
         return bondAmount;
     }
 
-    /// @dev Push bond back to recipient. Skips no-op transfers so a 0-bond exit is gas-efficient.
-    function _pushBond(address to, uint256 amount) internal {
+    /// @dev Push bond back to recipient in their recorded token. Skips no-op
+    ///      transfers so a 0-bond exit is gas-efficient.
+    /// @param token The relayer's recorded bond token — `address(0)` for native.
+    function _pushBond(IERC20 token, address to, uint256 amount) internal {
         if (amount == 0) return;
-        IERC20 _bondToken = bondToken;
-        if (address(_bondToken) == address(0)) {
+        if (address(token) == address(0)) {
             // `to` is always the original bond owner (`msg.sender` in executeExit), not arbitrary.
             // slither-disable-next-line arbitrary-send-eth
             (bool sent,) = to.call{value: amount}("");
             if (!sent) revert BondTransferFailed();
         } else {
-            _bondToken.safeTransfer(to, amount);
+            token.safeTransfer(to, amount);
         }
     }
 
@@ -336,6 +363,23 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     function setMinBond(uint256 _minBond) external onlyOwner {
         emit MinBondUpdated(minBond, _minBond);
         minBond = _minBond;
+    }
+
+    /// @notice Set the global bond token NEW registrations stake in.
+    /// @param _bondToken An ERC20 token address, or `address(0)` for native
+    ///        (msg.value) mode.
+    /// @dev Owner-only. Safe to change at any time: every relayer's bond is
+    ///      denominated in the token recorded at THEIR register time
+    ///      (`Relayer.bondToken`), so a switch only affects future registrations
+    ///      and never strands an existing bond. `address(0)` is allowed (the
+    ///      native feature-flag value); a non-native address must carry code
+    ///      (guards against a fat-fingered EOA that would brick `transferFrom`).
+    ///      The minimum-bond amount (`minBond`) is denominated in the new token's
+    ///      units, so set it with `setMinBond` to match the chosen token's decimals.
+    function setBondToken(address _bondToken) external onlyOwner {
+        if (_bondToken != address(0) && _bondToken.code.length == 0) revert NotAContract();
+        emit BondTokenUpdated(address(bondToken), _bondToken);
+        bondToken = IERC20(_bondToken);
     }
 
     /// @notice Admin-forced removal of a relayer (e.g. revoked KYC approval,
