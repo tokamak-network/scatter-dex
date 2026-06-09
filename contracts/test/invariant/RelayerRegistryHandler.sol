@@ -128,7 +128,7 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
         address a = _actor(seed);
         (,,, uint256 bond,, uint256 exitAt, bool active, address tok) = registry.relayers(a);
         if (!active || exitAt == 0) return;
-        uint256 ready = exitAt + registry.EXIT_COOLDOWN();
+        uint256 ready = exitAt + registry.exitCooldown();
         if (block.timestamp < ready) vm.warp(ready);
         vm.prank(a);
         try registry.executeExit() {
@@ -184,7 +184,7 @@ contract RelayerRegistryHandler is CommonBase, StdCheats, StdUtils {
         address a = _actor(seed);
         (,,,,, uint256 exitAt, bool active,) = registry.relayers(a);
         if (!active || exitAt == 0) return;
-        uint256 ready = exitAt + registry.EXIT_COOLDOWN();
+        uint256 ready = exitAt + registry.exitCooldown();
         if (block.timestamp >= ready) return; // can't test early-exit if already ready
         vm.prank(a);
         vm.expectRevert(RelayerRegistry.CooldownNotPassed.selector);

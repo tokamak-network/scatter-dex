@@ -176,7 +176,7 @@ contract RelayerRegistryTest is Test {
 
         uint256 ts = block.timestamp;
         vm.expectEmit(true, false, false, true);
-        emit RelayerForceRemoved(relayer1, "kyc revoked", ts + registry.EXIT_COOLDOWN());
+        emit RelayerForceRemoved(relayer1, "kyc revoked", ts + registry.exitCooldown());
         registry.adminRemoveRelayer(relayer1, "kyc revoked");
 
         // Hidden from the active set immediately, but still in cooldown limbo:
@@ -530,6 +530,79 @@ contract RelayerRegistryTest is Test {
         vm.expectRevert(RelayerRegistry.BondTransferFailed.selector);
         attacker.attack();
     }
+
+    // ─── Configurable exit cooldown ──────────────────────────────
+
+    event ExitCooldownUpdated(uint256 oldCooldown, uint256 newCooldown);
+
+    function test_exitCooldown_defaults_to_7_days() public view {
+        assertEq(registry.exitCooldown(), 7 days);
+        assertEq(registry.exitCooldown(), registry.DEFAULT_EXIT_COOLDOWN());
+    }
+
+    function test_setExitCooldown_updates_and_emits() public {
+        vm.expectEmit(false, false, false, true);
+        emit ExitCooldownUpdated(7 days, 1 days);
+        registry.setExitCooldown(1 days);
+        assertEq(registry.exitCooldown(), 1 days);
+    }
+
+    function test_setExitCooldown_only_owner_reverts() public {
+        vm.prank(relayer1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
+        registry.setExitCooldown(1 days);
+    }
+
+    function test_setExitCooldown_above_cap_reverts() public {
+        uint256 tooLong = registry.MAX_EXIT_COOLDOWN() + 1;
+        vm.expectRevert(RelayerRegistry.CooldownTooLong.selector);
+        registry.setExitCooldown(tooLong);
+    }
+
+    function test_setExitCooldown_at_cap_allowed() public {
+        registry.setExitCooldown(registry.MAX_EXIT_COOLDOWN());
+        assertEq(registry.exitCooldown(), 30 days);
+    }
+
+    /// @dev A shorter cooldown set mid-exit lets a waiting relayer out sooner.
+    function test_exitCooldown_shorter_applies_to_inflight_exit() public {
+        vm.prank(relayer1);
+        registry.register{value: 1 ether}("u", "n", 30, 0);
+        vm.prank(relayer1);
+        registry.requestExit();
+
+        // Owner shortens cooldown to 1 day; warp just past it.
+        registry.setExitCooldown(1 days);
+        vm.warp(block.timestamp + 1 days + 1);
+
+        vm.prank(relayer1);
+        registry.executeExit(); // would still be locked under the old 7-day value
+        assertEq(relayer1.balance, 10 ether);
+    }
+
+    /// @dev exitCooldown=0 → exit is executable immediately after requesting.
+    function test_exitCooldown_zero_allows_immediate_exit() public {
+        registry.setExitCooldown(0);
+        vm.prank(relayer1);
+        registry.register{value: 1 ether}("u", "n", 30, 0);
+        vm.prank(relayer1);
+        registry.requestExit();
+        vm.prank(relayer1);
+        registry.executeExit();
+        assertEq(relayer1.balance, 10 ether);
+    }
+
+    function test_executeExit_before_cooldown_still_reverts() public {
+        registry.setExitCooldown(3 days);
+        vm.prank(relayer1);
+        registry.register{value: 1 ether}("u", "n", 30, 0);
+        vm.prank(relayer1);
+        registry.requestExit();
+        vm.warp(block.timestamp + 3 days - 1);
+        vm.prank(relayer1);
+        vm.expectRevert(RelayerRegistry.CooldownNotPassed.selector);
+        registry.executeExit();
+    }
 }
 
 /// @dev Malicious contract that attempts to re-register during executeExit callback.
@@ -846,5 +919,40 @@ contract RelayerRegistryBondTokenTest is Test {
         assertEq(tokenB.balanceOf(relayer2), 10 ether); // got tokenB back
         assertEq(address(reg).balance, 0);
         assertEq(tokenB.balanceOf(address(reg)), 0);
+    }
+
+    // ─── reinitializeV2 (combined upgrade hook) ──────────────────
+
+    /// @dev exitCooldown lives at storage slot 8 (forge inspect). Zeroing it
+    ///      simulates a pre-upgrade proxy where the new field reads 0; the
+    ///      reinitializer must restore the default so the cooldown can't be
+    ///      bypassed.
+    function test_reinitializeV2_restores_zeroed_exitCooldown() public {
+        vm.store(address(registry), bytes32(uint256(8)), bytes32(uint256(0)));
+        assertEq(registry.exitCooldown(), 0);
+        registry.reinitializeV2();
+        assertEq(registry.exitCooldown(), registry.DEFAULT_EXIT_COOLDOWN());
+    }
+
+    function test_reinitializeV2_only_callable_once() public {
+        registry.reinitializeV2();
+        // OZ Initializable reverts re-run with InvalidInitialization().
+        vm.expectRevert();
+        registry.reinitializeV2();
+    }
+
+    /// @dev On an already-correct registry it's a no-op: a registered relayer's
+    ///      recorded bond token is left intact (not clobbered).
+    function test_reinitializeV2_noop_preserves_recorded_bondToken() public {
+        vm.startPrank(relayer1);
+        tokenA.approve(address(registry), 1 ether);
+        registry.register("u", "n", 30, 1 ether);
+        vm.stopPrank();
+
+        registry.reinitializeV2();
+
+        (,,,,,,, address tok) = registry.relayers(relayer1);
+        assertEq(tok, address(tokenA));
+        assertEq(registry.exitCooldown(), registry.DEFAULT_EXIT_COOLDOWN());
     }
 }

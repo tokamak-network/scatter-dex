@@ -52,7 +52,11 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     }
 
     uint256 public minBond; // optional — 0 means no bond required
-    uint256 public constant EXIT_COOLDOWN = 7 days;
+    /// @notice Default exit cooldown for fresh deploys / the upgrade reinitializer.
+    uint256 public constant DEFAULT_EXIT_COOLDOWN = 7 days;
+    /// @notice Hard cap on the owner-settable exit cooldown, so a bond can never
+    ///         be trapped indefinitely by an absurd value.
+    uint256 public constant MAX_EXIT_COOLDOWN = 30 days;
     uint256 public constant MAX_FEE = 500; // 5% max relayer fee
 
     /// @dev Was `immutable` in the non-upgradeable predecessor; moved to a regular
@@ -76,8 +80,16 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      upgrade-safe storage layout intact.
     IKycApproval public kycApprovalRegistry;
 
+    /// @notice Owner-settable cooldown (seconds) between `requestExit` and
+    ///         `executeExit`. Was the `EXIT_COOLDOWN` constant; moved to storage
+    ///         so the admin can tune it (capped at `MAX_EXIT_COOLDOWN`). Set to
+    ///         `DEFAULT_EXIT_COOLDOWN` at `initialize` (fresh deploys) and by the
+    ///         upgrade reinitializer (existing proxies). Appended after
+    ///         `kycApprovalRegistry`, consuming one `__gap` slot.
+    uint256 public exitCooldown;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 
     // ─── Events ──────────────────────────────────────────────────
     event RelayerRegistered(address indexed relayer, string url, string name, uint256 fee, uint256 bond);
@@ -88,6 +100,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
     event BondTokenUpdated(address indexed oldToken, address indexed newToken);
+    event ExitCooldownUpdated(uint256 oldCooldown, uint256 newCooldown);
     event IdentityRegistryUpdated(address oldRegistry, address newRegistry);
     event KycApprovalRegistryUpdated(address oldRegistry, address newRegistry);
     /// @param exitAfter Timestamp after which the relayer can `executeExit` to
@@ -112,6 +125,8 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     error WrongPaymentMode();
     /// @dev `setBondToken` was given a non-native address with no contract code.
     error NotAContract();
+    /// @dev `setExitCooldown` was given a value above `MAX_EXIT_COOLDOWN`.
+    error CooldownTooLong();
 
     /// @dev Disable renounceOwnership to prevent accidental lockout of admin functions.
     function renounceOwnership() public pure override(OwnableUpgradeable) {
@@ -143,6 +158,37 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         treasury = _treasury;
         identityRegistry = IIdentityRegistry(_identityRegistry);
         bondToken = IERC20(_bondToken); // address(0) → native mode
+        exitCooldown = DEFAULT_EXIT_COOLDOWN;
+    }
+
+    /// @notice One-shot upgrade hook for the bond-token + exit-cooldown upgrade,
+    ///         called via `ProxyAdmin.upgradeAndCall` when an EXISTING proxy moves
+    ///         to this implementation.
+    /// @dev Two storage fields are new on this version and read `0` on a
+    ///      pre-upgrade proxy; both must be initialized atomically with the
+    ///      upgrade so there is no window of wrong behaviour:
+    ///        - `exitCooldown == 0` would let relayers skip the exit cooldown
+    ///          entirely → set it to `DEFAULT_EXIT_COOLDOWN`.
+    ///        - per-relayer `bondToken == 0` reads as native ETH, but every
+    ///          pre-upgrade bond was in the single deploy-time global token →
+    ///          backfill each existing relayer's recorded token to the current
+    ///          global `bondToken` so `executeExit`/`addBond` use the right asset.
+    ///      `reinitializer(2)` makes this callable exactly once. The backfill
+    ///      loop is bounded by `relayerList.length` (0 on Sepolia today); a
+    ///      registry large enough to risk the block gas limit would need a
+    ///      batched migration instead.
+    function reinitializeV2() external reinitializer(2) {
+        if (exitCooldown == 0) {
+            exitCooldown = DEFAULT_EXIT_COOLDOWN;
+        }
+        address g = address(bondToken);
+        uint256 n = relayerList.length;
+        for (uint256 i; i < n; ++i) {
+            Relayer storage r = relayers[relayerList[i]];
+            if (r.bond != 0 && r.bondToken == address(0)) {
+                r.bondToken = g;
+            }
+        }
     }
 
     // ─── Registration ────────────────────────────────────────────
@@ -230,14 +276,14 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
 
         r.exitRequestedAt = block.timestamp;
 
-        emit ExitRequested(msg.sender, block.timestamp + EXIT_COOLDOWN);
+        emit ExitRequested(msg.sender, block.timestamp + exitCooldown);
     }
 
     function executeExit() external nonReentrant {
         Relayer storage r = relayers[msg.sender];
         if (!r.active) revert NotRegistered();
         if (r.exitRequestedAt == 0) revert ExitNotRequested();
-        if (block.timestamp < r.exitRequestedAt + EXIT_COOLDOWN) revert CooldownNotPassed();
+        if (block.timestamp < r.exitRequestedAt + exitCooldown) revert CooldownNotPassed();
 
         uint256 bondToReturn = r.bond;
         address tok = r.bondToken; // capture the recorded token before mutation
@@ -365,6 +411,19 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         minBond = _minBond;
     }
 
+    /// @notice Set the cooldown (seconds) a relayer waits between `requestExit`
+    ///         and `executeExit`.
+    /// @dev Owner-only, capped at `MAX_EXIT_COOLDOWN` so a bond can't be trapped
+    ///      forever. Computed live at `executeExit`, so a change also moves the
+    ///      deadline for relayers already mid-exit (a shorter cooldown lets them
+    ///      out sooner; a longer one — bounded by the cap — holds them a bit
+    ///      more). `0` is allowed (immediate exit).
+    function setExitCooldown(uint256 _exitCooldown) external onlyOwner {
+        if (_exitCooldown > MAX_EXIT_COOLDOWN) revert CooldownTooLong();
+        emit ExitCooldownUpdated(exitCooldown, _exitCooldown);
+        exitCooldown = _exitCooldown;
+    }
+
     /// @notice Set the global bond token NEW registrations stake in.
     /// @param _bondToken An ERC20 token address, or `address(0)` for native
     ///        (msg.value) mode.
@@ -404,7 +463,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         if (r.exitRequestedAt == 0) {
             r.exitRequestedAt = block.timestamp;
         }
-        emit RelayerForceRemoved(relayer, reason, r.exitRequestedAt + EXIT_COOLDOWN);
+        emit RelayerForceRemoved(relayer, reason, r.exitRequestedAt + exitCooldown);
     }
 
     /// @notice Swap the IdentityRegistry the registry checks for relayer verification.
