@@ -17,6 +17,16 @@ services:
       - PORT=4000
       - DB_PATH=${SHARED_ORDERBOOK_DB_PATH:-/data/shared-orderbook.db}
       - CORS_ORIGINS=${CORS_ORIGINS}
+      # SIWE admin allowlist (comma-separated wallet addresses). Enables the
+      # wallet-signature login the admin app's KYC review uses. Empty → the
+      # SIWE challenge/session routes stay unmounted (404) and the other
+      # admin-gated routes return 503, so the KYC surface is unusable until
+      # set. Public addresses; the VM startup injects the value from instance
+      # metadata, never from git.
+      - ADMIN_ADDRESSES=${ADMIN_ADDRESSES:-}
+      # Optional static bearer for CI / verify-stats (legacy path). Empty when
+      # only SIWE is used. Injected from Secret Manager by the VM startup.
+      - ADMIN_TOKEN=${ADMIN_TOKEN:-}
     volumes:
       - orderbook-data:/data
     ports:
