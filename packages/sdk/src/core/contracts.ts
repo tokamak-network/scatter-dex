@@ -15,6 +15,9 @@ export const RELAYER_REGISTRY_ABI = [
   "function minBond() external view returns (uint256)",
   "function identityRegistry() external view returns (address)",
   "function bondToken() external view returns (address)",
+  "function exitCooldown() external view returns (uint256)",
+  "function DEFAULT_EXIT_COOLDOWN() external view returns (uint256)",
+  "function MAX_EXIT_COOLDOWN() external view returns (uint256)",
   // Owner-only management — exposed read-side here for admin UIs;
   // mutating calls require the connected wallet to match `owner()`.
   "function owner() external view returns (address)",
@@ -25,6 +28,8 @@ export const RELAYER_REGISTRY_ABI = [
   // native ETH). Each relayer records the token in force at THEIR register time,
   // so changing this never strands an existing bond.
   "function setBondToken(address _bondToken) external",
+  // Owner tunes the exit cooldown (seconds), capped at MAX_EXIT_COOLDOWN.
+  "function setExitCooldown(uint256 _exitCooldown) external",
   "function setIdentityRegistry(address _identityRegistry) external",
   "function transferOwnership(address newOwner) external",
   "function acceptOwnership() external",
@@ -32,6 +37,7 @@ export const RELAYER_REGISTRY_ABI = [
   "event TreasuryUpdated(address oldTreasury, address newTreasury)",
   "event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond)",
   "event BondTokenUpdated(address indexed oldToken, address indexed newToken)",
+  "event ExitCooldownUpdated(uint256 oldCooldown, uint256 newCooldown)",
   // Emitted by the owner-only `adminRemoveRelayer` — sets the same
   // `exitRequestedAt` cool-down as a self `requestExit`, so the
   // existing exit/executeExit (bond return) path covers it; the event
@@ -54,6 +60,7 @@ export const RELAYER_REGISTRY_ABI = [
   "error NotVerified()",
   "error WrongPaymentMode()",
   "error NotAContract()",
+  "error CooldownTooLong()",
 ] as const;
 
 export const IDENTITY_GATE_ABI = [

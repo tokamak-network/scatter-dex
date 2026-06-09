@@ -31,6 +31,7 @@ interface Snapshot {
   bondToken: string | null;
   owner: string | null;
   relayerCount: bigint | null;
+  exitCooldown: bigint | null;
 }
 
 const EMPTY: Snapshot = {
@@ -40,6 +41,7 @@ const EMPTY: Snapshot = {
   bondToken: null,
   owner: null,
   relayerCount: null,
+  exitCooldown: null,
 };
 
 export function RelayerRegistryPanel({ address }: { address: string }) {
@@ -63,15 +65,17 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
       c.bondToken() as Promise<string>,
       c.owner() as Promise<string>,
       c.getRelayerCount() as Promise<bigint>,
+      c.exitCooldown() as Promise<bigint>,
     ]).then((rs) => {
       if (cancelled) return;
-      const [minBond, treasury, identityRegistry, bondToken, owner, relayerCount] = rs;
+      const [minBond, treasury, identityRegistry, bondToken, owner, relayerCount, exitCooldown] = rs;
       setSnap({
         minBond: minBond.status === "fulfilled" ? minBond.value : null,
         treasury: treasury.status === "fulfilled" ? treasury.value : null,
         identityRegistry: identityRegistry.status === "fulfilled" ? identityRegistry.value : null,
         bondToken: bondToken.status === "fulfilled" ? bondToken.value : null,
         owner: owner.status === "fulfilled" ? owner.value : null,
+        exitCooldown: exitCooldown.status === "fulfilled" ? exitCooldown.value : null,
         relayerCount: relayerCount.status === "fulfilled" ? relayerCount.value : null,
       });
     });
@@ -163,6 +167,12 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           sub="Total registered operators"
           compact
         />
+        <Stat
+          label="Exit cooldown"
+          value={snap.exitCooldown != null ? formatDuration(snap.exitCooldown) : "…"}
+          sub="Wait between requestExit and executeExit"
+          compact
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -179,6 +189,13 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           current={snap.minBond}
           decimals={bondMeta.decimals}
           symbol={bondMeta.symbol}
+          onSuccess={reload}
+          signer={signer}
+          rpcProvider={rpcProvider}
+        />
+        <ExitCooldownEditor
+          address={address}
+          current={snap.exitCooldown}
           onSuccess={reload}
           signer={signer}
           rpcProvider={rpcProvider}
@@ -386,6 +403,92 @@ function BondTokenEditor({
       <p className="text-[11px] text-[var(--color-text-subtle)]">
         Existing relayers keep the token they bonded in; only new registrations use
         this. After changing, re-set the minimum bond in its own units.
+      </p>
+    </AdminWriteCard>
+  );
+}
+
+/** Format a duration in seconds as a compact "Nd Nh Nm Ns" string. */
+function formatDuration(seconds: bigint): string {
+  if (seconds === 0n) return "0 (immediate)";
+  const parts: string[] = [];
+  const units: [bigint, string][] = [
+    [86400n, "d"],
+    [3600n, "h"],
+    [60n, "m"],
+    [1n, "s"],
+  ];
+  let rem = seconds;
+  for (const [size, suffix] of units) {
+    const n = rem / size;
+    if (n > 0n) parts.push(`${n}${suffix}`);
+    rem %= size;
+  }
+  return parts.join(" ");
+}
+
+/** Set the exit cooldown (the wait between requestExit and executeExit). The
+ *  input is in HOURS for ergonomics; the contract stores seconds (capped at
+ *  MAX_EXIT_COOLDOWN = 30 days). */
+function ExitCooldownEditor({
+  address,
+  current,
+  onSuccess,
+  signer,
+  rpcProvider,
+}: {
+  address: string;
+  current: bigint | null;
+  onSuccess: () => void;
+  signer: Signer | null;
+  rpcProvider: Provider;
+}) {
+  const MAX_HOURS = 30 * 24; // MAX_EXIT_COOLDOWN
+  const [hours, setHours] = useState("");
+
+  const parsed = (() => {
+    const t = hours.trim();
+    if (!t) return null;
+    const n = Number(t);
+    if (!Number.isFinite(n) || n < 0 || n > MAX_HOURS) return null;
+    // Whole seconds; reject fractional seconds from odd hour inputs.
+    const secs = Math.round(n * 3600);
+    return BigInt(secs);
+  })();
+
+  const submit = useCallback(async () => {
+    if (!signer) throw new Error("Wallet not connected");
+    if (parsed == null) throw new Error(`Enter hours between 0 and ${MAX_HOURS}`);
+    const c = new Contract(address, ABI, signer);
+    return runWrite(c, "setExitCooldown", [parsed], { estimateProvider: rpcProvider });
+  }, [address, parsed, signer, rpcProvider, MAX_HOURS]);
+
+  return (
+    <AdminWriteCard
+      title="Set exit cooldown"
+      description="RelayerRegistry.setExitCooldown(seconds) — the wait between requestExit and executeExit. Max 30 days."
+      submitLabel={parsed != null ? `Set to ${formatDuration(parsed)}` : "Set exit cooldown"}
+      disabled={parsed == null}
+      onSubmit={submit}
+      onSuccess={onSuccess}
+    >
+      <div className="text-xs text-[var(--color-text-muted)]">
+        Current: <strong>{current != null ? formatDuration(current) : "…"}</strong>
+      </div>
+      <label className="block text-xs">
+        <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
+          New cooldown (hours, 0–{MAX_HOURS})
+        </span>
+        <input
+          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          placeholder="168"
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+        />
+      </label>
+      <p className="text-[11px] text-[var(--color-text-subtle)]">
+        Applied live: shortening lets relayers already mid-exit out sooner. 0 =
+        immediate exit. Default is 168h (7 days).
       </p>
     </AdminWriteCard>
   );
