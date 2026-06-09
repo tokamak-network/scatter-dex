@@ -228,7 +228,163 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           </div>
         </div>
       </div>
+
+      <RelayersTable
+        address={address}
+        readProvider={readProvider}
+        tokens={networkTokens}
+        reloadKey={reloadKey}
+        exitCooldown={snap.exitCooldown}
+      />
     </section>
+  );
+}
+
+interface RelayerRow {
+  addr: string;
+  name: string;
+  url: string;
+  feeBps: number;
+  bond: bigint;
+  bondToken: string;
+  exitRequestedAt: number;
+  active: boolean;
+}
+
+/** Read-only list of registered relayers with their bond (token + amount),
+ *  fee, and exit status. Iterates `relayerList` so it surfaces both active and
+ *  exiting relayers (a relayer stays `active` until `executeExit`). Each bond is
+ *  shown in the token THAT relayer recorded at register time (per-relayer
+ *  `bondToken`), formatted via the whitelist's decimals/symbol. */
+function RelayersTable({
+  address,
+  readProvider,
+  tokens,
+  reloadKey,
+  exitCooldown,
+}: {
+  address: string;
+  readProvider: Provider;
+  tokens: TokenInfo[];
+  reloadKey: number;
+  exitCooldown: bigint | null;
+}) {
+  const [rows, setRows] = useState<RelayerRow[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const c = new Contract(address, ABI, readProvider);
+    (async () => {
+      try {
+        const count = Number((await c.getRelayerCount()) as bigint);
+        const addrs = await Promise.all(
+          Array.from({ length: count }, (_, i) => c.relayerList(i) as Promise<string>),
+        );
+        const all = await Promise.all(
+          addrs.map(async (a): Promise<RelayerRow> => {
+            const r = await c.relayers(a);
+            return {
+              addr: a,
+              name: r.name ?? "",
+              url: r.url ?? "",
+              feeBps: Number(r.fee),
+              bond: r.bond as bigint,
+              bondToken: r.bondToken as string,
+              exitRequestedAt: Number(r.exitRequestedAt),
+              active: r.active as boolean,
+            };
+          }),
+        );
+        if (!cancelled) {
+          // Hide fully-exited entries (active=false); keep active + exiting.
+          setRows(all.filter((r) => r.active));
+          setError(false);
+        }
+      } catch {
+        if (!cancelled) setError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, readProvider, reloadKey]);
+
+  // token address → { symbol, decimals } from the whitelist (native = ETH/18).
+  const tokenMeta = (tok: string): { symbol: string; decimals: number } => {
+    if (!tok || !isConfiguredAddress(tok)) return { symbol: "ETH", decimals: 18 };
+    const t = tokens.find((x) => eqAddr(x.address, tok));
+    return t ? { symbol: t.symbol, decimals: t.decimals } : { symbol: "?", decimals: 18 };
+  };
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
+      <div className="border-b border-[var(--color-border)] bg-[var(--color-bg)] px-5 py-3">
+        <div className="font-medium">Registered relayers</div>
+        <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
+          Active and exiting operators with their bond, fee, and status. Bond is shown
+          in the token each relayer staked.
+        </div>
+      </div>
+      {error ? (
+        <div className="px-5 py-4 text-sm text-[var(--color-danger)]">
+          ⚠ Failed to read the relayer list from the chain.
+        </div>
+      ) : rows == null ? (
+        <div className="px-5 py-4 text-sm text-[var(--color-text-muted)]">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="px-5 py-4 text-sm text-[var(--color-text-muted)]">
+          No relayers registered yet.
+        </div>
+      ) : (
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
+            <tr>
+              <th className="px-5 py-2 text-left">Relayer</th>
+              <th className="px-5 py-2 text-right">Bond</th>
+              <th className="px-5 py-2 text-right">Fee</th>
+              <th className="px-5 py-2 text-right">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const m = tokenMeta(r.bondToken);
+              const exiting = r.exitRequestedAt > 0;
+              const readyAt = exitCooldown != null ? r.exitRequestedAt + Number(exitCooldown) : null;
+              return (
+                <tr key={r.addr} className="border-t border-[var(--color-border)]">
+                  <td className="px-5 py-3">
+                    <div className="font-medium">{r.name || shortAddr(r.addr)}</div>
+                    <div className="font-mono text-[10px] text-[var(--color-text-subtle)]">
+                      {shortAddr(r.addr)}
+                      {r.url ? ` · ${r.url}` : ""}
+                    </div>
+                  </td>
+                  <td className="px-5 py-3 text-right font-mono">
+                    {formatUnits(r.bond, m.decimals)} {m.symbol}
+                  </td>
+                  <td className="px-5 py-3 text-right font-mono">
+                    {(r.feeBps / 100).toFixed(2)}%
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    {exiting ? (
+                      <span className="text-[var(--color-warning)]">
+                        Exiting
+                        {readyAt
+                          ? ` · ready ${new Date(readyAt * 1000).toISOString().slice(0, 16).replace("T", " ")}`
+                          : ""}
+                      </span>
+                    ) : (
+                      <span className="text-[var(--color-success)]">Active</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 
@@ -435,18 +591,26 @@ function ExitCooldownEditor({
       </div>
       <label className="block text-xs">
         <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
-          New cooldown (hours, 0–{MAX_HOURS})
+          New cooldown — in HOURS (max {MAX_HOURS}h = 30d)
         </span>
-        <input
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
-          placeholder="168"
-          value={hours}
-          onChange={(e) => setHours(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={MAX_HOURS}
+            className="w-32 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+            placeholder="168"
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+          />
+          <span className="font-mono text-[var(--color-text-muted)]">
+            hours = {parsed != null ? formatDuration(parsed) : "—"}
+          </span>
+        </div>
       </label>
       <p className="text-[11px] text-[var(--color-text-subtle)]">
-        Applied live: shortening lets relayers already mid-exit out sooner. 0 =
-        immediate exit. Default is 168h (7 days).
+        Enter HOURS (e.g. 168 = 7 days, 24 = 1 day, 0 = immediate exit). Applied
+        live: shortening lets relayers already mid-exit out sooner. Default 168h (7d).
       </p>
     </AdminWriteCard>
   );
