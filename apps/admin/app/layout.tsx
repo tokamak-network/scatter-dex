@@ -6,6 +6,7 @@ import { OperatorCaNav } from "./components/OperatorCaNav";
 import { AdminBadge } from "./components/AdminBadge";
 import { Brand } from "./components/Brand";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
+import { WrongChainBanner } from "./components/WrongChainBanner";
 import { DEMO_NETWORK } from "./lib/network";
 import "./globals.css";
 
@@ -51,6 +52,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </span>
             }
           />
+          <WrongChainBanner />
           <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
           <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
             Scatter Admin · Powered by zkScatter · Tokamak Network

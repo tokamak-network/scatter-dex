@@ -118,13 +118,17 @@ function ConnectedPill({
 export interface WrongChainBannerViewProps {
   wrongChain: boolean;
   networkLabel: string;
-  switchChain: () => void;
+  /** Move the wallet to the app's chain. May be async (the SDK's
+   *  `switchChain` returns a Promise that rejects on user-cancel /
+   *  wallet error) — the banner handles that, so callers can pass it
+   *  straight through. */
+  switchChain: () => void | Promise<void>;
 }
 
 /** Full-width banner shown directly below the header when the wallet
- *  is connected to the wrong chain. Apps wire `switchChain` to the
- *  same `connect` action that re-prompts the wallet for a chain
- *  switch. */
+ *  is connected to the wrong chain. The button calls `switchChain`
+ *  (e.g. `useConnectWalletPill().switchChain`, which runs
+ *  `wallet_switchEthereumChain` with an add-chain fallback). */
 export function WrongChainBannerView({
   wrongChain,
   networkLabel,
@@ -138,7 +142,13 @@ export function WrongChainBannerView({
       </span>{" "}
       <button
         type="button"
-        onClick={switchChain}
+        onClick={() => {
+          // `switchChain` may return a Promise that rejects (user cancels
+          // the MetaMask prompt, wallet error). Swallow it here so the
+          // click never surfaces as an unhandled promise rejection;
+          // the banner simply stays up for a retry.
+          void Promise.resolve(switchChain()).catch(() => {});
+        }}
         className="font-medium text-[var(--color-warning)] underline underline-offset-2 hover:no-underline"
       >
         Switch to {networkLabel}
