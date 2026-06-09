@@ -13,21 +13,23 @@ import {RelayerRegistryHandler} from "./RelayerRegistryHandler.sol";
 /// @notice Invariant suite for RelayerRegistry (ERC20 bond mode).
 contract RelayerRegistryInvariantTest is StdInvariant, Test {
     RelayerRegistry internal registry;
-    InvariantToken internal bondToken;
+    InvariantToken internal bondToken; // token A
+    InvariantToken internal bondTokenB; // token B — handler can switch the global to this
     MockIdentityRegistry internal identity;
     RelayerRegistryHandler internal handler;
     address internal constant TREASURY = address(0xBEEF);
 
     function setUp() public {
         bondToken = new InvariantToken();
+        bondTokenB = new InvariantToken();
         identity = new MockIdentityRegistry();
         registry = ProxyDeployer.deployRelayerRegistry(
             address(this), address(this), TREASURY, address(identity), address(bondToken)
         );
-        handler = new RelayerRegistryHandler(registry, bondToken, identity, address(this));
+        handler = new RelayerRegistryHandler(registry, bondToken, bondTokenB, identity, address(this));
 
         targetContract(address(handler));
-        bytes4[] memory sels = new bytes4[](9);
+        bytes4[] memory sels = new bytes4[](10);
         sels[0] = RelayerRegistryHandler.register.selector;
         sels[1] = RelayerRegistryHandler.addBond.selector;
         sels[2] = RelayerRegistryHandler.updateInfo.selector;
@@ -37,19 +39,29 @@ contract RelayerRegistryInvariantTest is StdInvariant, Test {
         sels[6] = RelayerRegistryHandler.adversarialDoubleRegister.selector;
         sels[7] = RelayerRegistryHandler.adversarialEarlyExit.selector;
         sels[8] = RelayerRegistryHandler.adversarialUnauthorizedSetMinBond.selector;
+        sels[9] = RelayerRegistryHandler.setBondTokenAction.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: sels}));
     }
 
-    /// @dev Bond token balance held by the registry must cover the sum of active bonds.
+    /// @dev Per-token collateralization: each relayer's bond is denominated in
+    ///      the token recorded at register time, so the registry's balance of
+    ///      EACH token must cover the active-bond sum for that token — even as
+    ///      the global bond token is switched mid-run.
     function invariant_bondsCovered() public view {
-        uint256 sum;
+        uint256 sumA;
+        uint256 sumB;
         uint256 n = handler.actorCount();
         for (uint256 i; i < n; ++i) {
-            (,,, uint256 bond,,, bool active) = registry.relayers(handler.actorAt(i));
-            if (active) sum += bond;
+            (,,, uint256 bond,,, bool active, address tok) = registry.relayers(handler.actorAt(i));
+            if (!active) continue;
+            if (tok == address(bondTokenB)) sumB += bond;
+            else sumA += bond;
         }
-        assertEq(sum, handler.ghostActiveBondSum(), "ghost vs on-chain active bond sum");
-        assertGe(bondToken.balanceOf(address(registry)), sum, "registry undercollateralized");
+        assertEq(sumA + sumB, handler.ghostActiveBondSum(), "ghost vs on-chain active bond sum");
+        assertEq(sumA, handler.ghostByToken(address(bondToken)), "tokenA ghost mismatch");
+        assertEq(sumB, handler.ghostByToken(address(bondTokenB)), "tokenB ghost mismatch");
+        assertGe(bondToken.balanceOf(address(registry)), sumA, "registry undercollateralized (tokenA)");
+        assertGe(bondTokenB.balanceOf(address(registry)), sumB, "registry undercollateralized (tokenB)");
     }
 
     /// @dev Active relayers must respect MAX_FEE and have non-zero registration timestamp.
@@ -60,7 +72,7 @@ contract RelayerRegistryInvariantTest is StdInvariant, Test {
         uint256 n = handler.actorCount();
         for (uint256 i; i < n; ++i) {
             address a = handler.actorAt(i);
-            (,, uint256 fee, uint256 bond, uint256 registeredAt,, bool active) = registry.relayers(a);
+            (,, uint256 fee, uint256 bond, uint256 registeredAt,, bool active,) = registry.relayers(a);
             if (active) {
                 assertLe(fee, cap, "fee exceeds cap");
                 assertGt(registeredAt, 0, "active without registeredAt");
@@ -86,5 +98,6 @@ contract RelayerRegistryInvariantTest is StdInvariant, Test {
         assertGt(handler.adversarialDoubleRegisterAttempts(), 0, "double-register never attempted");
         assertGt(handler.adversarialEarlyExitAttempts(), 0, "early-exit never attempted");
         assertGt(handler.adversarialUnauthorizedSetMinBondAttempts(), 0, "unauthorized setMinBond never attempted");
+        assertGt(handler.setBondTokenAttempts(), 0, "setBondToken never exercised");
     }
 }

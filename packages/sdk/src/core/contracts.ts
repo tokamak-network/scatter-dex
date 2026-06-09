@@ -10,7 +10,7 @@ export const RELAYER_REGISTRY_ABI = [
   "function getActiveRelayers() external view returns (address[])",
   "function getRelayerCount() external view returns (uint256)",
   "function relayerList(uint256) external view returns (address)",
-  "function relayers(address) external view returns (string url, string name, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active)",
+  "function relayers(address) external view returns (string url, string name, uint256 fee, uint256 bond, uint256 registeredAt, uint256 exitRequestedAt, bool active, address bondToken)",
   "function treasury() external view returns (address)",
   "function minBond() external view returns (uint256)",
   "function identityRegistry() external view returns (address)",
@@ -21,12 +21,17 @@ export const RELAYER_REGISTRY_ABI = [
   "function pendingOwner() external view returns (address)",
   "function setTreasury(address _treasury) external",
   "function setMinBond(uint256 _minBond) external",
+  // Owner sets the global bond token NEW registrations stake in (address(0) =
+  // native ETH). Each relayer records the token in force at THEIR register time,
+  // so changing this never strands an existing bond.
+  "function setBondToken(address _bondToken) external",
   "function setIdentityRegistry(address _identityRegistry) external",
   "function transferOwnership(address newOwner) external",
   "function acceptOwnership() external",
   "event IdentityRegistryUpdated(address oldRegistry, address newRegistry)",
   "event TreasuryUpdated(address oldTreasury, address newTreasury)",
   "event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond)",
+  "event BondTokenUpdated(address indexed oldToken, address indexed newToken)",
   // Emitted by the owner-only `adminRemoveRelayer` — sets the same
   // `exitRequestedAt` cool-down as a self `requestExit`, so the
   // existing exit/executeExit (bond return) path covers it; the event
@@ -48,6 +53,7 @@ export const RELAYER_REGISTRY_ABI = [
   "error FeeTooHigh()",
   "error NotVerified()",
   "error WrongPaymentMode()",
+  "error NotAContract()",
 ] as const;
 
 export const IDENTITY_GATE_ABI = [
