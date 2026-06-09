@@ -342,6 +342,18 @@ function SubmissionPanel({
   const [country, setCountry] = useState("KR");
   const [validityDays, setValidityDays] = useState("365");
 
+  // Switching to a different submission must NOT carry over the manual-approval
+  // tick or any typed cert subject — otherwise an admin could approve wallet B
+  // with wallet A's leaked override/details. Reset to defaults on every id
+  // change; the prefill effect below then repopulates from the new proof (if any).
+  useEffect(() => {
+    setManualApproval(false);
+    setCn("");
+    setOrg("");
+    setCountry("KR");
+    setValidityDays("365");
+  }, [id]);
+
   // Prefill from the proved subject when it loads/changes (keyed on the values,
   // so toggling the name-confirm checkbox doesn't clobber admin edits).
   useEffect(() => {
@@ -441,8 +453,12 @@ function SubmissionPanel({
     // two cross-checks. Manual path: no proof on record (the relayer CA didn't
     // use delegated proving), so the owner instead vouches for the identity from
     // the reviewed documents — gated behind the explicit override + a confirm.
-    if (!manualApproval) {
-      if (!crossCheck?.hasProof) { setErr("No zk-X509 proof on record for this wallet — tick “Approve from documents” to review manually."); return; }
+    // Manual review only applies when there's truly NO proof on record — a valid
+    // proof must always go through its cross-checks (the override can't bypass it).
+    const hasProof = !!crossCheck?.hasProof;
+    const allowManual = !hasProof && manualApproval;
+    if (!allowManual) {
+      if (!hasProof) { setErr("No zk-X509 proof on record for this wallet — tick “Approve from documents” to review manually."); return; }
       if (crossCheck.walletMatch !== true) { setErr("Proof wallet doesn't match this submission — do not approve."); return; }
       if (!crossCheck.nameConfirmed) { setErr("Confirm the certificate name matches the ID/video first."); return; }
     }
@@ -451,7 +467,7 @@ function SubmissionPanel({
     const days = Number(validityDays);
     if (!Number.isInteger(days) || days < 1 || days > 3650) { setErr("Validity must be 1–3650 days."); return; }
     if (
-      manualApproval &&
+      allowManual &&
       !window.confirm(
         `Manual approval — no zk-X509 proof on record.\n\n` +
           `Confirm you reviewed the liveness video and ID document, and that this ` +
@@ -542,8 +558,11 @@ function SubmissionPanel({
   // The automated cross-check is "usable" only when a proof loaded, its wallet
   // matches, and the admin confirmed the name. Otherwise we surface the manual
   // override so a missing/unfetchable proof doesn't permanently block approval.
-  const proofUsable =
-    !!crossCheck?.hasProof && crossCheck.walletMatch === true && crossCheck.nameConfirmed;
+  const hasProof = !!crossCheck?.hasProof;
+  const proofUsable = hasProof && crossCheck.walletMatch === true && crossCheck.nameConfirmed;
+  // Manual override is offered only when no proof exists at all — never to bypass
+  // a loaded-but-unconfirmed proof (mirrors the guard in onApprove).
+  const allowManual = !hasProof && manualApproval;
   return (
     <div className="space-y-4 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-4">
       <div className="grid gap-4 md:grid-cols-2">
@@ -608,7 +627,7 @@ function SubmissionPanel({
             Writes <code className="font-mono">IssuanceApprovalRegistry.approve(wallet, CN, O, C, …)</code>{" "}
             on-chain (owner-only).
           </p>
-          {!proofUsable && (
+          {!hasProof && (
             <label className="flex items-start gap-2 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs">
               <input
                 type="checkbox"
@@ -650,13 +669,13 @@ function SubmissionPanel({
         </button>
         <button
           type="button"
-          disabled={busy || !canTransition(status, "approved") || (!proofUsable && !manualApproval)}
+          disabled={busy || !canTransition(status, "approved") || (!proofUsable && !allowManual)}
           title={
-            proofUsable || manualApproval
+            proofUsable || allowManual
               ? undefined
-              : !crossCheck?.hasProof
+              : !hasProof
                 ? "No zk-X509 proof on record — tick “Approve from documents” to review manually"
-                : crossCheck.walletMatch !== true
+                : crossCheck?.walletMatch !== true
                   ? "Proof wallet must match this submission"
                   : "Confirm the certificate name matches the ID/video first"
           }
