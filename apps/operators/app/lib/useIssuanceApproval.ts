@@ -34,11 +34,11 @@ export interface IssuanceApprovalState {
   message?: string;
 }
 
-// ABI shared with the admin console (`/admin/issuance`) — see
-// `ISSUANCE_APPROVAL_REGISTRY_ABI` in @zkscatter/sdk. The hook only
-// calls `approvals(address)` but importing the full fragment keeps
-// the struct shape in one place; the contract instance below ignores
-// the write fragments we don't use.
+// Shared `ISSUANCE_APPROVAL_REGISTRY_ABI` from @zkscatter/sdk (the admin
+// approve/revoke console now lives in apps/admin). This operator-side hook
+// only calls `approvals(address)` to read its own status, but importing the
+// full fragment keeps the struct shape in one place; the contract instance
+// below ignores the write fragments we don't use.
 
 interface RawApproval {
   commonName: string;

@@ -2,11 +2,10 @@
  *  pages surface a mix of on-chain and (for now) mock-tagged data
  *  while the indexer is wired up; the badge keeps it unambiguous
  *  which is which without burying the disclaimer in copy. The
- *  `loading` variant tags a section that is mid-fetch — pages like
- *  /admin/identity flip it to `live` once the indexer settles, so
- *  the operator can tell "data not arrived yet" apart from
- *  "intentionally stubbed." Hint text is optional and renders
- *  inline after the badge. */
+ *  `loading` variant tags a section that is mid-fetch — a page flips
+ *  it to `live` once the indexer settles, so the operator can tell
+ *  "data not arrived yet" apart from "intentionally stubbed." Hint
+ *  text is optional and renders inline after the badge. */
 export type SectionHeaderBadge = "live" | "mock" | "loading";
 
 export function SectionHeader({
