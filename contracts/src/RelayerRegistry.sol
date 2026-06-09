@@ -407,6 +407,22 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     /// @notice Set minimum bond required for relayer registration.
     /// @dev Set to 0 to make bond optional (align with patent: "optionally stake").
     function setMinBond(uint256 _minBond) external onlyOwner {
+        _setMinBond(_minBond);
+    }
+
+    /// @notice Set the bond TOKEN and minimum AMOUNT together, in one transaction.
+    /// @param _bondToken An ERC20 token address, or `address(0)` for native mode.
+    /// @param _minBond Minimum bond in the new token's units.
+    /// @dev Owner-only. Use this when changing the token so the amount is always
+    ///      re-denominated atomically with it — avoiding a window where `minBond`
+    ///      is stuck in the previous token's decimals. Same effect as calling
+    ///      `setBondToken` then `setMinBond`, but in a single tx.
+    function setBond(address _bondToken, uint256 _minBond) external onlyOwner {
+        _setBondToken(_bondToken);
+        _setMinBond(_minBond);
+    }
+
+    function _setMinBond(uint256 _minBond) internal {
         emit MinBondUpdated(minBond, _minBond);
         minBond = _minBond;
     }
@@ -434,8 +450,13 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      native feature-flag value); a non-native address must carry code
     ///      (guards against a fat-fingered EOA that would brick `transferFrom`).
     ///      The minimum-bond amount (`minBond`) is denominated in the new token's
-    ///      units, so set it with `setMinBond` to match the chosen token's decimals.
+    ///      units; use `setBond` to change the token and amount atomically, or
+    ///      follow with `setMinBond` to match the chosen token's decimals.
     function setBondToken(address _bondToken) external onlyOwner {
+        _setBondToken(_bondToken);
+    }
+
+    function _setBondToken(address _bondToken) internal {
         if (_bondToken != address(0) && _bondToken.code.length == 0) revert NotAContract();
         emit BondTokenUpdated(address(bondToken), _bondToken);
         bondToken = IERC20(_bondToken);

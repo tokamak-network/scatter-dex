@@ -119,4 +119,25 @@ contract SepoliaUpgradeForkTest is Test {
         vm.expectRevert();
         vault.reinitializeFeeChangeDelay();
     }
+
+    /// @dev The follow-up setBond upgrade is function-only (no new storage), so
+    ///      it's a plain re-point with empty init data. Rehearse it on the
+    ///      already-upgraded live proxy: state preserved, and setBond sets token
+    ///      + amount atomically.
+    function test_fork_relayerRegistry_setBond_upgrade_plain() public {
+        if (!active) return;
+        RelayerRegistry reg = RelayerRegistry(payable(RELAYER_REGISTRY));
+        ProxyAdmin admin = _proxyAdmin(RELAYER_REGISTRY);
+        address ownerBefore = reg.owner();
+
+        RelayerRegistry newImpl = new RelayerRegistry();
+        vm.prank(admin.owner());
+        admin.upgradeAndCall(ITransparentUpgradeableProxy(RELAYER_REGISTRY), address(newImpl), "");
+
+        // setBond updates token + amount together.
+        vm.prank(ownerBefore);
+        reg.setBond(address(0), 5 ether); // native, 5 ETH min
+        assertEq(address(reg.bondToken()), address(0));
+        assertEq(reg.minBond(), 5 ether);
+    }
 }

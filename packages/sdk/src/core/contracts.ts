@@ -28,6 +28,9 @@ export const RELAYER_REGISTRY_ABI = [
   // native ETH). Each relayer records the token in force at THEIR register time,
   // so changing this never strands an existing bond.
   "function setBondToken(address _bondToken) external",
+  // Set the bond token + minimum amount atomically in one tx (re-denominates
+  // the amount together with the token).
+  "function setBond(address _bondToken, uint256 _minBond) external",
   // Owner tunes the exit cooldown (seconds), capped at MAX_EXIT_COOLDOWN.
   "function setExitCooldown(uint256 _exitCooldown) external",
   "function setIdentityRegistry(address _identityRegistry) external",
