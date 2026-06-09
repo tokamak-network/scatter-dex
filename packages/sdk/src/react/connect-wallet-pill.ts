@@ -13,6 +13,13 @@ export interface ConnectWalletPillState {
   connectError: string | null;
   networkLabel: string;
   wrongChain: boolean;
+  /** The chain the wallet is actually on right now (null when
+   *  disconnected). Surfaced so a wrong-chain banner can tell the user
+   *  *which* network they're on, not just which one they should be on. */
+  currentChainId: number | null;
+  /** Friendly name for `currentChainId` when known (e.g. "Localhost",
+   *  "Ethereum"); null for unknown chains so the UI shows the raw id. */
+  currentChainLabel: string | null;
   /** Ask the wallet to switch to `network.chainId`. Falls back to
    *  `wallet_addEthereumChain` when the wallet doesn't have the
    *  network configured (EIP-1193 error code 4902). Resolves on
@@ -106,6 +113,8 @@ export function useConnectWalletPill(network: NetworkConfig): ConnectWalletPillS
     connectError,
     networkLabel: network.name ?? chainName(network.chainId),
     wrongChain: chainId !== null && chainId !== network.chainId,
+    currentChainId: chainId,
+    currentChainLabel: chainId !== null ? (KNOWN_CHAIN_NAMES[chainId] ?? null) : null,
     switchChain,
   };
 }

@@ -11,12 +11,15 @@ export function WrongChainBanner() {
   // `wallet_addEthereumChain` for unknown chains (e.g. Localhost
   // 31337 which MetaMask doesn't ship). Wiring `connect` here was
   // why the banner button silently no-op'd.
-  const { wrongChain, networkLabel, switchChain } = useConnectWalletPill(network);
+  const { wrongChain, networkLabel, switchChain, currentChainId, currentChainLabel } =
+    useConnectWalletPill(network);
   return (
     <WrongChainBannerView
       wrongChain={wrongChain}
       networkLabel={networkLabel}
       switchChain={switchChain}
+      currentChainId={currentChainId}
+      currentChainLabel={currentChainLabel}
     />
   );
 }

@@ -11,12 +11,15 @@ import { DEMO_NETWORK } from "../lib/network";
  *  read via the public-RPC fallback but every write would target the wrong
  *  chain — so we guide the switch instead. */
 export function WrongChainBanner() {
-  const { wrongChain, networkLabel, switchChain } = useConnectWalletPill(DEMO_NETWORK);
+  const { wrongChain, networkLabel, switchChain, currentChainId, currentChainLabel } =
+    useConnectWalletPill(DEMO_NETWORK);
   return (
     <WrongChainBannerView
       wrongChain={wrongChain}
       networkLabel={networkLabel}
       switchChain={switchChain}
+      currentChainId={currentChainId}
+      currentChainLabel={currentChainLabel}
     />
   );
 }
