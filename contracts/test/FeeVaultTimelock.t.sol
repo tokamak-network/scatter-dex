@@ -40,14 +40,14 @@ contract FeeVaultTimelockTest is Test {
         vault.scheduleFeeChange(1000);
 
         assertEq(vault.pendingFeeBps(), 1000);
-        assertEq(vault.pendingFeeEffectiveTime(), block.timestamp + vault.FEE_CHANGE_DELAY());
+        assertEq(vault.pendingFeeEffectiveTime(), block.timestamp + vault.feeChangeDelay());
         // Current fee unchanged
         assertEq(vault.platformFeeBps(), 500);
     }
 
     function test_scheduleFeeChange_emits_event() public {
         vm.expectEmit(true, true, true, true);
-        emit FeeVault.FeeChangeScheduled(500, 1000, block.timestamp + vault.FEE_CHANGE_DELAY());
+        emit FeeVault.FeeChangeScheduled(500, 1000, block.timestamp + vault.feeChangeDelay());
         vault.scheduleFeeChange(1000);
     }
 
@@ -66,7 +66,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_applyFeeChange_after_delay() public {
         vault.scheduleFeeChange(1000);
-        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vm.warp(block.timestamp + vault.feeChangeDelay());
         vault.applyFeeChange();
 
         assertEq(vault.platformFeeBps(), 1000);
@@ -76,7 +76,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_applyFeeChange_reverts_before_delay() public {
         vault.scheduleFeeChange(1000);
-        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY() - 1); // 1 second early
+        vm.warp(block.timestamp + vault.feeChangeDelay() - 1); // 1 second early
 
         vm.expectRevert(FeeVault.FeeChangeNotReady.selector);
         vault.applyFeeChange();
@@ -89,7 +89,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_applyFeeChange_emits_event() public {
         vault.scheduleFeeChange(1000);
-        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vm.warp(block.timestamp + vault.feeChangeDelay());
 
         vm.expectEmit(true, true, true, true);
         emit FeeVault.PlatformFeeUpdated(500, 1000);
@@ -143,7 +143,7 @@ contract FeeVaultTimelockTest is Test {
 
         // Owner schedules and applies fee increase
         vault.scheduleFeeChange(2000); // 20%
-        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vm.warp(block.timestamp + vault.feeChangeDelay());
         vault.applyFeeChange();
 
         // Fund and deposit new fees after the fee change
@@ -162,7 +162,7 @@ contract FeeVaultTimelockTest is Test {
 
     function test_scheduleFeeChange_to_zero() public {
         vault.scheduleFeeChange(0);
-        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vm.warp(block.timestamp + vault.feeChangeDelay());
         vault.applyFeeChange();
 
         assertEq(vault.platformFeeBps(), 0);
@@ -182,8 +182,79 @@ contract FeeVaultTimelockTest is Test {
 
         assertEq(vault.pendingFeeBps(), 2000);
 
-        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vm.warp(block.timestamp + vault.feeChangeDelay());
         vault.applyFeeChange();
         assertEq(vault.platformFeeBps(), 2000);
+    }
+
+    // ─── Configurable fee-change delay ──────────────────────────
+
+    event FeeChangeDelayUpdated(uint256 oldDelay, uint256 newDelay);
+
+    function test_feeChangeDelay_defaults_to_1_day() public view {
+        assertEq(vault.feeChangeDelay(), 1 days);
+        assertEq(vault.feeChangeDelay(), vault.DEFAULT_FEE_CHANGE_DELAY());
+    }
+
+    function test_setFeeChangeDelay_updates_and_emits() public {
+        vm.expectEmit(false, false, false, true);
+        emit FeeChangeDelayUpdated(1 days, 3 days);
+        vault.setFeeChangeDelay(3 days);
+        assertEq(vault.feeChangeDelay(), 3 days);
+    }
+
+    function test_setFeeChangeDelay_only_owner_reverts() public {
+        vm.prank(relayer);
+        vm.expectRevert();
+        vault.setFeeChangeDelay(3 days);
+    }
+
+    function test_setFeeChangeDelay_above_cap_reverts() public {
+        uint256 tooLong = vault.MAX_FEE_CHANGE_DELAY() + 1;
+        vm.expectRevert(FeeVault.DelayTooLong.selector);
+        vault.setFeeChangeDelay(tooLong);
+    }
+
+    function test_setFeeChangeDelay_at_cap_allowed() public {
+        vault.setFeeChangeDelay(vault.MAX_FEE_CHANGE_DELAY());
+        assertEq(vault.feeChangeDelay(), 30 days);
+    }
+
+    /// @dev A new delay applies to the NEXT schedule; the timelock window moves.
+    function test_setFeeChangeDelay_applies_to_next_schedule() public {
+        vault.setFeeChangeDelay(2 days);
+        uint256 t0 = block.timestamp;
+        vault.scheduleFeeChange(1000);
+        assertEq(vault.pendingFeeEffectiveTime(), t0 + 2 days);
+
+        // Not ready after the old 1-day window…
+        vm.warp(t0 + 1 days);
+        vm.expectRevert(FeeVault.FeeChangeNotReady.selector);
+        vault.applyFeeChange();
+
+        // …ready after the new 2-day window.
+        vm.warp(t0 + 2 days);
+        vault.applyFeeChange();
+        assertEq(vault.platformFeeBps(), 1000);
+    }
+
+    /// @dev delay=0 → a scheduled change is applyable in the same block.
+    function test_setFeeChangeDelay_zero_allows_immediate_apply() public {
+        vault.setFeeChangeDelay(0);
+        vault.scheduleFeeChange(1000);
+        assertEq(vault.pendingFeeEffectiveTime(), block.timestamp);
+        vault.applyFeeChange();
+        assertEq(vault.platformFeeBps(), 1000);
+    }
+
+    /// @dev Changing the delay does NOT move an ALREADY-pending change's deadline.
+    function test_setFeeChangeDelay_does_not_move_existing_pending() public {
+        uint256 t0 = block.timestamp;
+        vault.scheduleFeeChange(1000); // locks effectiveTime = t0 + 1 day
+        vault.setFeeChangeDelay(10 days); // must NOT affect the pending one
+        assertEq(vault.pendingFeeEffectiveTime(), t0 + 1 days);
+        vm.warp(t0 + 1 days);
+        vault.applyFeeChange();
+        assertEq(vault.platformFeeBps(), 1000);
     }
 }

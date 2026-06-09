@@ -138,7 +138,7 @@ contract FeeVaultWethUnwrapTest is Test {
         // with platformFee == 0.
         vm.prank(owner);
         vault.scheduleFeeChange(0);
-        vm.warp(block.timestamp + vault.FEE_CHANGE_DELAY());
+        vm.warp(block.timestamp + vault.feeChangeDelay());
         vm.prank(owner);
         vault.applyFeeChange();
         assertEq(vault.platformFeeBps(), 0, "fee set to 0");

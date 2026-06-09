@@ -39,8 +39,10 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     uint256 public platformFeeBps;
     uint256 public constant MAX_PLATFORM_FEE = 5000; // 50%
 
-    /// @notice Timelock delay for fee changes (prevents front-running relayer claims).
-    uint256 public constant FEE_CHANGE_DELAY = 1 days;
+    /// @notice Default timelock delay for fee changes (fresh deploys / upgrade reinit).
+    uint256 public constant DEFAULT_FEE_CHANGE_DELAY = 1 days;
+    /// @notice Hard cap on the owner-settable fee-change delay.
+    uint256 public constant MAX_FEE_CHANGE_DELAY = 30 days;
 
     /// @notice Pending fee change (timelock).
     uint256 public pendingFeeBps;
@@ -60,11 +62,20 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     ///         use this as a kill-switch if the WETH contract misbehaves).
     address public weth;
 
+    /// @notice Owner-settable timelock delay (seconds) for platform fee changes.
+    ///         Was the `FEE_CHANGE_DELAY` constant; moved to storage so the admin
+    ///         can tune it (capped at `MAX_FEE_CHANGE_DELAY`). Set to
+    ///         `DEFAULT_FEE_CHANGE_DELAY` at `initialize` (fresh deploys) and by
+    ///         the upgrade reinitializer (existing proxies). Consumes one __gap
+    ///         slot (49 → 48).
+    uint256 public feeChangeDelay;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
     ///      Reduced from 50 → 49 when `weth` was added in the auto-unwrap
-    ///      upgrade. Subsequent upgrades MUST keep adding from the top of
-    ///      __gap (slot index 0) to preserve the layout of existing proxies.
-    uint256[49] private __gap;
+    ///      upgrade, 49 → 48 when `feeChangeDelay` was added. Subsequent upgrades
+    ///      MUST keep adding from the top of __gap (slot index 0) to preserve the
+    ///      layout of existing proxies.
+    uint256[48] private __gap;
 
     // ─── Events ─────────────────────────────────────────────────
     event FeeDeposited(address indexed relayer, address indexed token, uint256 amount);
@@ -79,6 +90,7 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     event PlatformRevenueWithdrawn(address indexed token, uint256 amount, address indexed to);
     event FeeChangeScheduled(uint256 currentBps, uint256 newBps, uint256 effectiveTime);
     event FeeChangeCancelled(uint256 cancelledBps);
+    event FeeChangeDelayUpdated(uint256 oldDelay, uint256 newDelay);
     event PlatformFeeUpdated(uint256 oldBps, uint256 newBps);
     event TreasuryUpdated(address oldTreasury, address newTreasury);
     event DepositorUpdated(address indexed depositor, bool authorized);
@@ -108,6 +120,8 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
     error WrongClaimToken();
     /// @notice `setWeth` invoked with a non-zero address that has no code.
     error NotAContract();
+    /// @notice `setFeeChangeDelay` was given a value above `MAX_FEE_CHANGE_DELAY`.
+    error DelayTooLong();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -122,6 +136,7 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         __ReentrancyGuard_init();
         treasury = _treasury;
         platformFeeBps = _platformFeeBps;
+        feeChangeDelay = DEFAULT_FEE_CHANGE_DELAY;
     }
 
     function renounceOwnership() public pure override(OwnableUpgradeable) {
@@ -323,14 +338,25 @@ contract FeeVault is Initializable, Ownable2StepUpgradeable, ReentrancyGuardUpgr
         emit WethUpdated(prev, _weth);
     }
 
-    /// @notice Schedule a platform fee change. Takes effect after FEE_CHANGE_DELAY.
+    /// @notice Schedule a platform fee change. Takes effect after `feeChangeDelay`.
     ///         Relayers can observe the pending change on-chain and claim at the
     ///         current rate before the new fee activates.
     function scheduleFeeChange(uint256 _bps) external onlyOwner {
         if (_bps > MAX_PLATFORM_FEE) revert FeeTooHigh();
         pendingFeeBps = _bps;
-        pendingFeeEffectiveTime = block.timestamp + FEE_CHANGE_DELAY;
+        pendingFeeEffectiveTime = block.timestamp + feeChangeDelay;
         emit FeeChangeScheduled(platformFeeBps, _bps, pendingFeeEffectiveTime);
+    }
+
+    /// @notice Set the timelock delay applied to future `scheduleFeeChange` calls.
+    /// @param _delay New delay in seconds. Capped at `MAX_FEE_CHANGE_DELAY`; `0`
+    ///        is allowed (fee changes apply immediately on `applyFeeChange`).
+    /// @dev Owner-only. Affects only changes scheduled AFTER this call — a
+    ///      change already pending keeps its locked-in `pendingFeeEffectiveTime`.
+    function setFeeChangeDelay(uint256 _delay) external onlyOwner {
+        if (_delay > MAX_FEE_CHANGE_DELAY) revert DelayTooLong();
+        emit FeeChangeDelayUpdated(feeChangeDelay, _delay);
+        feeChangeDelay = _delay;
     }
 
     /// @notice Apply the pending fee change after the timelock has elapsed.

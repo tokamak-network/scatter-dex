@@ -19,9 +19,12 @@ const ABI = [
   "function platformFeeBps() external view returns (uint256)",
   "function pendingFeeBps() external view returns (uint256)",
   "function pendingFeeEffectiveTime() external view returns (uint256)",
+  "function feeChangeDelay() external view returns (uint256)",
+  "function MAX_FEE_CHANGE_DELAY() external view returns (uint256)",
   "function scheduleFeeChange(uint256 _bps) external",
   "function applyFeeChange() external",
   "function cancelFeeChange() external",
+  "function setFeeChangeDelay(uint256 _delay) external",
 ];
 
 // Matches `FeeVault.MAX_PLATFORM_FEE` constant in contracts/src/FeeVault.sol.
@@ -55,19 +58,19 @@ export function FeeVaultWrites({
   pendingEffectiveTime,
   onReload,
 }: Props) {
-  // Single child — the page-level grid in treasury/page.tsx now
-  // does the side-by-side layout against PlatformRevenue, so the
-  // 2-col wrapper here is no longer load-bearing.
   return (
-    <FeeScheduleEditor
-      address={feeVaultAddress}
-      hasPendingChange={hasPendingChange}
-      pendingReady={pendingReady}
-      currentFeeBps={currentFeeBps}
-      pendingFeeBps={pendingFeeBps}
-      pendingEffectiveTime={pendingEffectiveTime}
-      onSuccess={onReload}
-    />
+    <div className="space-y-4">
+      <FeeScheduleEditor
+        address={feeVaultAddress}
+        hasPendingChange={hasPendingChange}
+        pendingReady={pendingReady}
+        currentFeeBps={currentFeeBps}
+        pendingFeeBps={pendingFeeBps}
+        pendingEffectiveTime={pendingEffectiveTime}
+        onSuccess={onReload}
+      />
+      <FeeChangeDelayEditor address={feeVaultAddress} onSuccess={onReload} />
+    </div>
   );
 }
 
@@ -365,6 +368,94 @@ function parseBps(input: string): bigint | null {
   const n = Number(input);
   if (!Number.isInteger(n) || n < 0 || n > MAX_PLATFORM_FEE_BPS) return null;
   return BigInt(n);
+}
+
+/** Owner control for the FeeVault timelock DURATION — the delay between
+ *  `scheduleFeeChange` and when `applyFeeChange` becomes callable. Input is in
+ *  HOURS; the contract stores seconds (capped at MAX_FEE_CHANGE_DELAY = 30 days).
+ *  Affects only changes scheduled AFTER the update; an already-pending change
+ *  keeps its locked-in effective time. */
+function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSuccess: () => void }) {
+  const { signer, readProvider, rpcProvider } = useWallet();
+  const MAX_HOURS = 30 * 24; // MAX_FEE_CHANGE_DELAY
+  const [current, setCurrent] = useState<bigint | null>(null);
+  const [hours, setHours] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const c = new Contract(address, ABI, readProvider);
+    void (c.feeChangeDelay() as Promise<bigint>)
+      .then((d) => {
+        if (!cancelled) setCurrent(d);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [address, readProvider]);
+
+  const parsed = (() => {
+    const t = hours.trim();
+    if (!t) return null;
+    const n = Number(t);
+    if (!Number.isFinite(n) || n < 0 || n > MAX_HOURS) return null;
+    return BigInt(Math.round(n * 3600));
+  })();
+
+  const submit = useCallback(async () => {
+    if (!signer) throw new Error("Wallet not connected");
+    if (parsed == null) throw new Error(`Enter hours between 0 and ${MAX_HOURS}`);
+    return invokeWrite(signer, rpcProvider, address, "setFeeChangeDelay", [parsed]);
+  }, [signer, rpcProvider, address, parsed, MAX_HOURS]);
+
+  return (
+    <AdminWriteCard
+      title="Set fee-change timelock"
+      description="FeeVault.setFeeChangeDelay(seconds) — the wait between scheduling a platform-fee change and applying it. Max 30 days."
+      submitLabel={parsed != null ? `Set to ${formatDelay(parsed)}` : "Set timelock"}
+      disabled={parsed == null}
+      onSubmit={submit}
+      onSuccess={onSuccess}
+    >
+      <div className="text-xs text-[var(--color-text-muted)]">
+        Current: <strong>{current != null ? formatDelay(current) : "…"}</strong>
+      </div>
+      <label className="block text-xs">
+        <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
+          New timelock (hours, 0–{MAX_HOURS})
+        </span>
+        <input
+          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          placeholder="24"
+          value={hours}
+          onChange={(e) => setHours(e.target.value)}
+        />
+      </label>
+      <p className="text-[11px] text-[var(--color-text-muted)]">
+        Applies to changes scheduled after this; an already-pending change keeps
+        its effective time. 0 = no timelock. Default is 24h.
+      </p>
+    </AdminWriteCard>
+  );
+}
+
+/** Seconds → compact "Nd Nh Nm Ns" (0 → "0 (none)"). */
+function formatDelay(seconds: bigint): string {
+  if (seconds === 0n) return "0 (none)";
+  const parts: string[] = [];
+  const units: [bigint, string][] = [
+    [86400n, "d"],
+    [3600n, "h"],
+    [60n, "m"],
+    [1n, "s"],
+  ];
+  let rem = seconds;
+  for (const [size, suffix] of units) {
+    const n = rem / size;
+    if (n > 0n) parts.push(`${n}${suffix}`);
+    rem %= size;
+  }
+  return parts.join(" ");
 }
 
 // All FeeVault writes go through `runWrite`, which precomputes gas/fee/nonce
