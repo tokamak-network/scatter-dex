@@ -425,18 +425,27 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
       </div>
       <label className="block text-xs">
         <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
-          New timelock (hours, 0–{MAX_HOURS})
+          New timelock — in HOURS (max {MAX_HOURS}h = 30d)
         </span>
-        <input
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
-          placeholder="24"
-          value={hours}
-          onChange={(e) => setHours(e.target.value)}
-        />
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={MAX_HOURS}
+            className="w-32 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+            placeholder="24"
+            value={hours}
+            onChange={(e) => setHours(e.target.value)}
+          />
+          <span className="font-mono text-[var(--color-text-muted)]">
+            hours = {parsed != null ? formatDelay(parsed) : "—"}
+          </span>
+        </div>
       </label>
       <p className="text-[11px] text-[var(--color-text-muted)]">
-        Applies to changes scheduled after this; an already-pending change keeps
-        its effective time. 0 = no timelock. Default is 24h.
+        Enter HOURS (e.g. 24 = 1 day, 0 = no timelock). Applies to changes
+        scheduled after this; an already-pending change keeps its effective time.
+        Default 24h.
       </p>
     </AdminWriteCard>
   );
