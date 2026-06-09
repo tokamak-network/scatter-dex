@@ -19,11 +19,16 @@ export async function queryFilterChunked(
   chunkSize: number,
 ): Promise<(ethers.Log | ethers.EventLog)[]> {
   if (fromBlock > toBlock) return [];
-  const size = Math.max(1, Math.floor(chunkSize));
+  // Guard against NaN/non-finite/<1 (e.g. a misconfigured INDEX_BLOCK_RANGE):
+  // a NaN size would make `start` NaN and silently skip the whole scan.
+  const size = Number.isFinite(chunkSize) && chunkSize >= 1 ? Math.floor(chunkSize) : 1;
   const out: (ethers.Log | ethers.EventLog)[] = [];
   for (let start = fromBlock; start <= toBlock; start += size) {
     const end = Math.min(start + size - 1, toBlock);
-    out.push(...(await contract.queryFilter(filter, start, end)));
+    const logs = await contract.queryFilter(filter, start, end);
+    // Append with a loop, not `push(...logs)` — a wide backfill window can
+    // return enough logs to blow the call-stack arg limit on the spread.
+    for (const logEntry of logs) out.push(logEntry);
   }
   return out;
 }
