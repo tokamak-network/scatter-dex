@@ -124,6 +124,13 @@ Live shared infrastructure (single GCP `e2-micro`, all co-located):
 | Shared orderbook            | `http://136.115.115.93:4000` |
 | Relayer **bot-1**           | `http://136.115.115.93:3002` (`/api/info`) |
 
+> These are plain **`http://`** endpoints, so they're reachable from frontends
+> served over `http://localhost` (the dev setup above). A frontend served over
+> `https://` (Vercel, Netlify, an ngrok tunnel) would have the browser block
+> these as mixed content — front it with a TLS reverse proxy (the box already
+> ships a Caddy/Let's Encrypt overlay, see `deploy/runtime`) and use the
+> `https://` host instead.
+
 A wallet on Sepolia with a little test ETH is needed for any on-chain action
 (deposits, registration, admin writes). To also run the **zk-X509** management
 website (separate repo) against Sepolia:
