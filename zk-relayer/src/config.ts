@@ -90,6 +90,13 @@ export const config = {
   // only safe when deposits-per-12-blocks << ROOT_HISTORY_SIZE.
   indexConfirmations: parseEnvInt("INDEX_CONFIRMATIONS", 0, 0),
 
+  // Max blocks per `eth_getLogs` window when (re)scanning event history.
+  // A restart re-scans from the deploy/INDEX_FROM_BLOCK in chunks of this
+  // size; without chunking a single wide `queryFilter` exceeds the provider's
+  // range cap (publicnode 50 000, Alchemy free 10) and crash-loops. Default
+  // 10 000 is safe on publicnode; drop to 10 on Alchemy free.
+  indexBlockRange: parseEnvInt("INDEX_BLOCK_RANGE", 10000, 1),
+
   // [R-1] Gas guard: max gas price in gwei.
   maxGasPriceGwei: parseEnvInt("MAX_GAS_PRICE_GWEI", 100, 1),
 
