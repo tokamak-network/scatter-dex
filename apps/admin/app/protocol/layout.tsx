@@ -13,6 +13,7 @@ import type { ReactNode } from "react";
  *  child pages. */
 const TABS: { href: string; label: string }[] = [
   { href: "/protocol/relayer-registry", label: "RelayerRegistry" },
+  { href: "/protocol/relayers", label: "Relayers" },
   { href: "/protocol/tokens", label: "Tokens" },
   { href: "/protocol/commitment-pool", label: "CommitmentPool" },
   { href: "/protocol/settlement", label: "PrivateSettlement" },
