@@ -7,10 +7,17 @@ import {ITransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transp
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 
-/// @notice Upgrade the RelayerRegistry proxy to a new implementation that adds
-///         the configurable bond token (owner `setBondToken` + per-relayer
-///         `Relayer.bondToken` recording). Storage layout is append-only (a new
-///         member on the `Relayer` struct, which is only a mapping value).
+/// @notice Upgrade the RelayerRegistry proxy to the combined admin-config impl:
+///         configurable bond token (`setBondToken` + per-relayer
+///         `Relayer.bondToken`) and configurable exit cooldown (`setExitCooldown`
+///         + storage `exitCooldown`). Storage layout is append-only.
+///
+///  The upgrade is performed via `upgradeAndCall(..., reinitializeV2())` so the
+///  two new storage fields are initialized ATOMICALLY with the implementation
+///  swap — there's no block where `exitCooldown` reads 0 (which would let
+///  relayers skip the cooldown) or an existing relayer's `bondToken` reads 0
+///  (which would mis-handle their bond as native). `reinitializeV2` is guarded by
+///  OZ `reinitializer(2)`, so it runs exactly once.
 ///
 ///  Signing: `DEPLOYER_KEY` — must be the ProxyAdmin owner (`UPGRADE_OWNER`,
 ///  the same 0xc1eba383… deploy key, kept in gitignored contracts/.env).
@@ -18,13 +25,6 @@ import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 ///  Run:
 ///    forge script script/UpgradeRelayerRegistry.s.sol:UpgradeRelayerRegistry \
 ///      --rpc-url sepolia --broadcast
-///
-///  No reinitializer is shipped: `getRelayerCount()` is 0 on Sepolia (verified),
-///  so the new per-relayer `bondToken` field simply starts recording from the
-///  first registration. The run reverts if that precondition no longer holds —
-///  a non-empty registry would need a backfill reinitializer first (existing
-///  bonds were in the single deploy-time token, which the new field would
-///  otherwise read as `address(0)`=native).
 contract UpgradeRelayerRegistry is Script {
     /// @dev Sepolia RelayerRegistry proxy (contracts/deployments/11155111.json).
     ///      Override with the RELAYER_REGISTRY_PROXY env var for other chains.
@@ -37,14 +37,14 @@ contract UpgradeRelayerRegistry is Script {
         // ERC1967 admin slot (mirrors test/upgrade/UpgradeHelper.sol).
         ProxyAdmin admin = ProxyAdmin(address(uint160(uint256(vm.load(proxy, ERC1967Utils.ADMIN_SLOT)))));
 
-        // Migration guard — see the no-reinitializer note above.
-        uint256 count = RelayerRegistry(payable(proxy)).getRelayerCount();
-        require(count == 0, "relayers exist: add a bondToken backfill reinitializer before upgrading");
-
         uint256 key = vm.envUint("DEPLOYER_KEY");
         vm.startBroadcast(key);
         RelayerRegistry newImpl = new RelayerRegistry();
-        admin.upgradeAndCall(ITransparentUpgradeableProxy(proxy), address(newImpl), "");
+        admin.upgradeAndCall(
+            ITransparentUpgradeableProxy(proxy),
+            address(newImpl),
+            abi.encodeCall(RelayerRegistry.reinitializeV2, ())
+        );
         vm.stopBroadcast();
 
         console.log("RelayerRegistry proxy:    ", proxy);
