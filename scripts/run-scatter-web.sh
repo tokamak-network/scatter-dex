@@ -43,7 +43,9 @@ for a in "$@"; do
   case "$a" in
     --no-start) NO_START=1 ;;
     -h|--help)
-      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+      # Print the contiguous comment header (skip the shebang, stop at the
+      # first non-comment line) so help stays usage-only as the header grows.
+      awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
       exit 0 ;;
     -*) echo "ERROR: unknown flag: $a" >&2; exit 1 ;;
     *)

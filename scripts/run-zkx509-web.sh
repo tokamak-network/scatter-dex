@@ -48,7 +48,9 @@ for a in "$@"; do
     --no-start) NO_START=1 ;;
     --with-local-backend) WITH_LOCAL_BACKEND=1 ;;
     -h|--help)
-      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+      # Print the contiguous comment header (skip the shebang, stop at the
+      # first non-comment line) so help stays usage-only as the header grows.
+      awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0"
       exit 0 ;;
     -*) echo "ERROR: unknown flag: $a" >&2; exit 1 ;;
     *)
@@ -137,9 +139,14 @@ if mode == "zkx509":
     users = (L.get("registries") or {}).get("users") or {}
     registry = users.get("address")
     src = zkx509_ledger
-else:  # scatter-dex fallback
-    factory = load(factory_ledger).get("registryFactory")
-    registry = load(users_ledger).get("identityRegistry")
+else:  # scatter-dex fallback (two separate files)
+    F = load(factory_ledger)
+    U = load(users_ledger)
+    for path, d in ((factory_ledger, F), (users_ledger, U)):
+        if d.get("chainId") is not None and str(d.get("chainId")) != str(chain_id):
+            raise SystemExit(f"ERROR: {path} chainId={d.get('chainId')} != expected {chain_id}")
+    factory = F.get("registryFactory")
+    registry = U.get("identityRegistry")
     src = f"{factory_ledger} + {users_ledger}"
 
 if not factory:
@@ -190,11 +197,22 @@ if [ "$NO_START" = 1 ]; then
   exit 0
 fi
 
+LOCAL_BACKEND=0
 if [ "$WITH_LOCAL_BACKEND" = 1 ] && [ -d "$ZK_X509_REPO/backend" ]; then
   echo "Starting local zk-X509 backend (cd backend && npm run dev) in background…"
   ( cd "$ZK_X509_REPO/backend" && npm run dev ) &
+  BACKEND_PID=$!
+  LOCAL_BACKEND=1
+  # Reap the background backend when the frontend exits so it doesn't leak and
+  # keep port 4000 held on the next run.
+  trap 'kill "$BACKEND_PID" 2>/dev/null || true' EXIT INT TERM
 fi
 
 echo "Starting zk-X509 frontend (cd frontend && npm run dev)…"
 cd "$ZK_X509_REPO/frontend"
-exec npm run dev
+if [ "$LOCAL_BACKEND" = 1 ]; then
+  # Don't exec — the shell must survive to run the cleanup trap above.
+  npm run dev
+else
+  exec npm run dev
+fi

@@ -40,7 +40,6 @@ This reads `contracts/deployments/11155111.json`, generates
 | app       | dev URL                 |
 |-----------|-------------------------|
 | pay       | http://localhost:4001   |
-| drop      | http://localhost:4002   |
 | pro       | http://localhost:4003   |
 | operators | http://localhost:4004   |
 | admin     | http://localhost:4005   |
@@ -92,11 +91,12 @@ It reads the zk-X509 repo's own ledger
 `frontend/.env.local`, and starts the frontend on http://localhost:3000.
 
 On the dashboard you should see the two registries created through our
-RegistryFactory (Users + Relayers). Their addresses are in the zk-X509 ledger —
-`registries.users.address` / `registries.relayers.address` in
-`deployments/11155111.json` (or scatter-dex's
-`contracts/deployments/zk-x509-{users,relayers}-11155111.json`); the script
-echoes the ones it injected.
+RegistryFactory (Users + Relayers). Their addresses live in the zk-X509 repo
+ledger `deployments/11155111.json` as `registries.users.address` /
+`registries.relayers.address`. (The scatter-dex fallback stores them in two
+separate files — `contracts/deployments/zk-x509-users-11155111.json` and
+`…-relayers-11155111.json` — each under an `identityRegistry` key.) The script
+echoes the addresses it injected.
 
 Flags:
 
