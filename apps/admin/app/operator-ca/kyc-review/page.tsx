@@ -328,6 +328,12 @@ function SubmissionPanel({
   // cert subject (written on-chain at approval — the admin no longer types it)
   // plus the two gates (wallet match + admin name confirmation).
   const [crossCheck, setCrossCheck] = useState<CrossCheckState | null>(null);
+  // Manual-review override. When the relayer CA didn't use delegated proving,
+  // the prover stores no compliance record, so the zk-X509 cross-check above
+  // can never load and its gates can never be satisfied. This lets the owner
+  // approve by reviewing the liveness video + ID document directly and typing
+  // the cert subject — an explicit, deliberate override of the automated check.
+  const [manualApproval, setManualApproval] = useState(false);
   // Cert subject written on-chain at approval. Editable, but PREFILLED from the
   // proved zk-X509 subject so the admin records the proved identity by default
   // (and can adjust if needed). The two cross-checks still gate Approve.
@@ -335,6 +341,18 @@ function SubmissionPanel({
   const [org, setOrg] = useState("");
   const [country, setCountry] = useState("KR");
   const [validityDays, setValidityDays] = useState("365");
+
+  // Switching to a different submission must NOT carry over the manual-approval
+  // tick or any typed cert subject — otherwise an admin could approve wallet B
+  // with wallet A's leaked override/details. Reset to defaults on every id
+  // change; the prefill effect below then repopulates from the new proof (if any).
+  useEffect(() => {
+    setManualApproval(false);
+    setCn("");
+    setOrg("");
+    setCountry("KR");
+    setValidityDays("365");
+  }, [id]);
 
   // Prefill from the proved subject when it loads/changes (keyed on the values,
   // so toggling the name-confirm checkbox doesn't clobber admin edits).
@@ -431,15 +449,35 @@ function SubmissionPanel({
       return;
     }
     if (!signer) { setErr("Connect the admin (owner) wallet to approve on-chain."); return; }
-    // Write the PROVED cert subject (from zk-X509), not an admin-typed one —
-    // the two cross-checks below must hold first.
-    if (!crossCheck?.hasProof) { setErr("No zk-X509 proof on record for this wallet — cannot approve."); return; }
-    if (crossCheck.walletMatch !== true) { setErr("Proof wallet doesn't match this submission — do not approve."); return; }
-    if (!crossCheck.nameConfirmed) { setErr("Confirm the certificate name matches the ID/video first."); return; }
+    // Automated path: write the PROVED cert subject (from zk-X509), gated on the
+    // two cross-checks. Manual path: no proof on record (the relayer CA didn't
+    // use delegated proving), so the owner instead vouches for the identity from
+    // the reviewed documents — gated behind the explicit override + a confirm.
+    // Manual review only applies when there's truly NO proof on record — a valid
+    // proof must always go through its cross-checks (the override can't bypass it).
+    const hasProof = !!crossCheck?.hasProof;
+    const allowManual = !hasProof && manualApproval;
+    if (!allowManual) {
+      if (!hasProof) { setErr("No zk-X509 proof on record for this wallet — tick “Approve from documents” to review manually."); return; }
+      if (crossCheck.walletMatch !== true) { setErr("Proof wallet doesn't match this submission — do not approve."); return; }
+      if (!crossCheck.nameConfirmed) { setErr("Confirm the certificate name matches the ID/video first."); return; }
+    }
     if (!cn.trim() || !org.trim()) { setErr("Common name and organization are required."); return; }
     if (country.trim().length !== 2) { setErr("Country must be a 2-letter ISO-3166 code."); return; }
     const days = Number(validityDays);
     if (!Number.isInteger(days) || days < 1 || days > 3650) { setErr("Validity must be 1–3650 days."); return; }
+    if (
+      allowManual &&
+      !window.confirm(
+        `Manual approval — no zk-X509 proof on record.\n\n` +
+          `Confirm you reviewed the liveness video and ID document, and that this ` +
+          `certificate subject matches the operator's identity:\n\n` +
+          `CN=${cn.trim()}, O=${org.trim()}, C=${country.trim().toUpperCase()}\n\n` +
+          `This writes the identity on-chain (owner-only).`,
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       const reg = new Contract(ISSUANCE_REGISTRY, APPROVE_ABI, signer);
@@ -468,7 +506,7 @@ function SubmissionPanel({
     } finally {
       setBusy(false);
     }
-  }, [detail, signer, crossCheck, cn, org, country, validityDays, id, notes, onChanged, authedFetch]);
+  }, [detail, signer, crossCheck, manualApproval, cn, org, country, validityDays, id, notes, onChanged, authedFetch]);
 
   /** Revoke = invalidate an already-approved identity on-chain
    *  (IssuanceApprovalRegistry.revoke, owner-only) + record it. The
@@ -517,6 +555,14 @@ function SubmissionPanel({
   }
 
   const status = detail.status;
+  // The automated cross-check is "usable" only when a proof loaded, its wallet
+  // matches, and the admin confirmed the name. Otherwise we surface the manual
+  // override so a missing/unfetchable proof doesn't permanently block approval.
+  const hasProof = !!crossCheck?.hasProof;
+  const proofUsable = hasProof && crossCheck.walletMatch === true && crossCheck.nameConfirmed;
+  // Manual override is offered only when no proof exists at all — never to bypass
+  // a loaded-but-unconfirmed proof (mirrors the guard in onApprove).
+  const allowManual = !hasProof && manualApproval;
   return (
     <div className="space-y-4 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-4">
       <div className="grid gap-4 md:grid-cols-2">
@@ -581,6 +627,23 @@ function SubmissionPanel({
             Writes <code className="font-mono">IssuanceApprovalRegistry.approve(wallet, CN, O, C, …)</code>{" "}
             on-chain (owner-only).
           </p>
+          {!hasProof && (
+            <label className="flex items-start gap-2 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-2 text-xs">
+              <input
+                type="checkbox"
+                checked={manualApproval}
+                onChange={(e) => setManualApproval(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-medium">Approve from documents (manual review).</span> No
+                zk-X509 proof is on record for this wallet (the relayer CA didn&apos;t use delegated
+                proving). Tick this only after verifying the operator&apos;s identity against the
+                liveness video and ID document above — the certificate subject you typed is written
+                on-chain as the proved identity.
+              </span>
+            </label>
+          )}
           {!signer && (
             <button
               type="button"
@@ -606,21 +669,15 @@ function SubmissionPanel({
         </button>
         <button
           type="button"
-          disabled={
-            busy ||
-            !canTransition(status, "approved") ||
-            !crossCheck?.hasProof ||
-            crossCheck.walletMatch !== true ||
-            !crossCheck.nameConfirmed
-          }
+          disabled={busy || !canTransition(status, "approved") || (!proofUsable && !allowManual)}
           title={
-            !crossCheck?.hasProof
-              ? "No zk-X509 proof on record yet"
-              : crossCheck.walletMatch !== true
-                ? "Proof wallet must match this submission"
-                : !crossCheck.nameConfirmed
-                  ? "Confirm the certificate name matches the ID/video first"
-                  : undefined
+            proofUsable || allowManual
+              ? undefined
+              : !hasProof
+                ? "No zk-X509 proof on record — tick “Approve from documents” to review manually"
+                : crossCheck?.walletMatch !== true
+                  ? "Proof wallet must match this submission"
+                  : "Confirm the certificate name matches the ID/video first"
           }
           onClick={() => void onApprove()}
           className="rounded-md bg-[var(--color-success)] px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
