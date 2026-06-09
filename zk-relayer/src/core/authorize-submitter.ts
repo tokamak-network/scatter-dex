@@ -9,6 +9,7 @@
 import { ethers } from "ethers";
 import { AUTHORIZE_PROOF_TUPLE } from "@zkscatter/sdk";
 import { config } from "../config.js";
+import { queryFilterChunked } from "./chunked-query.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
 import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
@@ -249,7 +250,15 @@ export class AuthorizeSubmitter {
       return;
     }
     const filter = this.settlement.filters.PrivateCancel();
-    const logs = await this.settlement.queryFilter(filter, startBlock, tip);
+    // Chunked so a restart's backfill from `fromBlock` never exceeds the RPC's
+    // getLogs range cap (same crash-loop guard as the commitment indexer).
+    const logs = await queryFilterChunked(
+      this.settlement,
+      filter,
+      startBlock,
+      tip,
+      config.indexBlockRange,
+    );
     if (this.lastCancelBlock < 0 || logs.length > 0) {
       log.info("PrivateCancel scan", { fromBlock: startBlock, toBlock: tip, count: logs.length });
     }

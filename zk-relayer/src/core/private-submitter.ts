@@ -16,6 +16,7 @@ import {
   type ClaimLeafData,
 } from "./zk-prover.js";
 import type { PrivateOrderDB } from "./db.js";
+import { queryFilterChunked } from "./chunked-query.js";
 import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
 import { FEE_BPS_DENOMINATOR } from "./fees.js";
@@ -185,7 +186,15 @@ export class PrivateSubmitter {
       return;
     }
     this.warnedIndexStall = false;
-    const events = await this.pool.queryFilter(filter, fromBlock, toBlock);
+    // Chunked so a restart that re-scans from INDEX_FROM_BLOCK never issues a
+    // single full-history queryFilter that exceeds the RPC's getLogs cap.
+    const events = await queryFilterChunked(
+      this.pool,
+      filter,
+      fromBlock,
+      toBlock,
+      config.indexBlockRange,
+    );
     for (const event of events) {
       const parsed = this.pool.interface.parseLog({
         topics: event.topics as string[],
