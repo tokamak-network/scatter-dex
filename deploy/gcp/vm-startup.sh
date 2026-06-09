@@ -45,6 +45,10 @@ RPC_URL=$(mget rpc-url)
 COMMITMENT_POOL_ADDRESS=$(mget commitment-pool-address)
 PRIVATE_SETTLEMENT_ADDRESS=$(mget private-settlement-address)
 CORS_ORIGINS=$(mget cors-origins)
+# SIWE admin allowlist — public wallet addresses, so it lives in metadata
+# alongside the contract addresses (not Secret Manager). Empty → admin
+# /api/admin/* endpoints stay 404.
+ADMIN_ADDRESSES=$(mget admin-addresses)
 DOMAIN=$(mget domain)
 ACME_EMAIL=$(mget acme-email)
 RELAYER_SECRET_NAME=$(mget relayer-secret-name relayer-private-key)
@@ -120,6 +124,14 @@ else
 	log "RPC_URL from metadata (no rpc-url secret set)"
 fi
 
+# ADMIN_TOKEN: a static admin bearer (legacy / CI / verify-stats path). It's a
+# credential, so it comes from Secret Manager only — never metadata. Absent →
+# empty, leaving SIWE (ADMIN_ADDRESSES) as the only admin auth.
+ADMIN_TOKEN=$(gcp_secret admin-token) || ADMIN_TOKEN=""
+if [[ -n "${ADMIN_TOKEN}" ]]; then
+	log "ADMIN_TOKEN loaded from Secret Manager (admin-token)"
+fi
+
 # COS ships docker-credential-gcr but only registers gcr.io by default.
 # Configure the AR host once and let the helper supply fresh tokens
 # on each pull — no need for an extra `docker login`.
@@ -145,6 +157,8 @@ RPC_URL=${RPC_URL}
 COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
 PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
 CORS_ORIGINS=${CORS_ORIGINS}
+ADMIN_ADDRESSES=${ADMIN_ADDRESSES}
+ADMIN_TOKEN=${ADMIN_TOKEN}
 CIRCUITS_BUILD_DIR=/var/lib/zkscatter/circuits/build
 RELAYER_KEY_FILE=/var/lib/zkscatter/secrets/relayer.key
 DOMAIN=${DOMAIN}
