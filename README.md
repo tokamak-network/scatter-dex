@@ -84,11 +84,20 @@ Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches zk
 
 Run the frontends **locally** against the shared **Sepolia (chainId 11155111)**
 deployment so the whole team hits the same contracts, relayer, and orderbook.
-You supply only **your own RPC key** — every contract address comes from the
-committed ledger in `contracts/deployments/11155111.json`.
+Every contract address comes from the committed ledger in
+`contracts/deployments/11155111.json`; you supply only your own read RPC.
+
+> **Your transactions are signed and sent through MetaMask** — the connected
+> wallet's node drives normal reads and all writes. The `SEPOLIA_RPC_URL` below
+> is a *read* endpoint used only for: (a) showing on-chain data **before** you
+> connect a wallet, (b) falling back when your wallet is on the **wrong network**,
+> and (c) the write **gas pre-flight** (kept off MetaMask's throttled node — see
+> PR #957). A public default (`rpc.sepolia.org`) exists but is rate-limited, so
+> each developer uses their own key. Since it's injected into `NEXT_PUBLIC_*` it
+> is browser-exposed — never share it.
 
 ```bash
-# 1. Your own Sepolia RPC key (browser-exposed via NEXT_PUBLIC_*, so never shared)
+# 1. Your own Sepolia read RPC (browser-exposed via NEXT_PUBLIC_*, so never shared)
 export SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
 
 # 2. (optional) point the apps at the live relayer instead of localhost
