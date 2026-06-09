@@ -106,9 +106,11 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
   // existing `reloadKey` bump is reused so the per-row event +
   // platformRevenue refetch happens automatically.
   useEffect(() => {
-    const id = setInterval(() => reload(), 15_000);
+    // Background poll — single fetch per tick; the lag-absorbing retry is only
+    // for user-initiated writes, not periodic refresh.
+    const id = setInterval(() => reload({ retry: false }), 15_000);
     return () => clearInterval(id);
-  }, []);
+  }, [reload]);
 
   useEffect(() => {
     let cancelled = false;

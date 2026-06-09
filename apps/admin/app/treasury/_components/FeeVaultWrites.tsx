@@ -5,6 +5,7 @@ import { Contract, type Provider, type Signer } from "ethers";
 import { runWrite } from "@zkscatter/sdk";
 import { useMounted, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
+import { useReloadKey } from "../../lib/useReloadKey";
 
 // `setTreasury` and `setAuthorizedDepositor` are owner-only ops that
 // run once at deploy (treasury = multisig recipient; authorized
@@ -389,8 +390,8 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
   const MAX_HOURS = 30 * 24; // MAX_FEE_CHANGE_DELAY
   const [current, setCurrent] = useState<bigint | null>(null);
   const [hours, setHours] = useState("");
-  // Bumped on a successful write so the `current` read re-fires immediately.
-  const [reloadKey, setReloadKey] = useState(0);
+  // reload() re-reads `current` now + after a short delay (absorbs wallet-RPC lag).
+  const [reloadKey, reload] = useReloadKey();
 
   useEffect(() => {
     let cancelled = false;
@@ -413,14 +414,11 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
     return invokeWrite(signer, rpcProvider, address, "setFeeChangeDelay", [parsed]);
   }, [signer, rpcProvider, address, parsed, MAX_HOURS]);
 
-  // After a confirmed write, clear the input and re-read — once now and once
-  // shortly after, so a one-block wallet-RPC lag still lands the fresh value.
   const handleSuccess = useCallback(() => {
     setHours("");
-    setReloadKey((k) => k + 1);
-    setTimeout(() => setReloadKey((k) => k + 1), 1500);
+    reload();
     onSuccess();
-  }, [onSuccess]);
+  }, [onSuccess, reload]);
 
   return (
     <AdminWriteCard
