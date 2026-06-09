@@ -8,6 +8,7 @@ import { SectionHeader } from "../components/SectionHeader";
 import { Stat } from "../components/Stat";
 import { explainError, prettyAmount } from "../lib/format";
 import { DEMO_NETWORK } from "../lib/network";
+import { useReloadKey } from "../lib/useReloadKey";
 import { FeeVaultWrites } from "./_components/FeeVaultWrites";
 import { TreasuryWrites } from "./_components/TreasuryWrites";
 
@@ -94,7 +95,9 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
   // sourced on-chain with NEXT_PUBLIC_TOKENS as fallback.
   const { tokens: networkTokens } = useNetworkTokens(DEMO_NETWORK);
   const [snap, setSnap] = useState<FeeVaultSnapshot>(EMPTY_SNAPSHOT);
-  const [reloadKey, setReloadKey] = useState(0);
+  // reload() re-reads now + after a short delay so a card reflects a confirmed
+  // write immediately (absorbs a one-block wallet-RPC lag).
+  const [reloadKey, reload] = useReloadKey();
 
   // Auto-poll every 15s so a new relayer claim shows up without the
   // operator having to hit refresh manually. 15s is a compromise
@@ -103,7 +106,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
   // existing `reloadKey` bump is reused so the per-row event +
   // platformRevenue refetch happens automatically.
   useEffect(() => {
-    const id = setInterval(() => setReloadKey((k) => k + 1), 15_000);
+    const id = setInterval(() => reload(), 15_000);
     return () => clearInterval(id);
   }, []);
 
@@ -220,7 +223,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
             treasuryAddress={snap.treasury}
             rows={tokenRows}
             reloadKey={reloadKey}
-            onWithdrawn={() => setReloadKey((k) => k + 1)}
+            onWithdrawn={() => reload()}
           />
         </section>
 
@@ -233,7 +236,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
           <TreasuryWrites
             treasuryAddress={snap.treasury}
             reloadKey={reloadKey}
-            onReload={() => setReloadKey((k) => k + 1)}
+            onReload={() => reload()}
           />
         </section>
 
@@ -254,7 +257,7 @@ function FeeVaultPanels({ feeVaultAddress }: { feeVaultAddress: string }) {
             currentFeeBps={snap.platformFeeBps}
             pendingFeeBps={snap.pendingFeeBps}
             pendingEffectiveTime={snap.pendingFeeEffectiveTime}
-            onReload={() => setReloadKey((k) => k + 1)}
+            onReload={() => reload()}
           />
         </section>
       </div>

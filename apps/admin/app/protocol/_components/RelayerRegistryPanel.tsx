@@ -15,6 +15,7 @@ import { shortAddr, useNetworkTokens, useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { Stat } from "../../components/Stat";
 import { DEMO_NETWORK } from "../../lib/network";
+import { useReloadKey } from "../../lib/useReloadKey";
 
 // Single source of truth for the RelayerRegistry shape — no local subset.
 const ABI = RELAYER_REGISTRY_ABI;
@@ -53,7 +54,9 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
     decimals: 18,
     symbol: "ETH",
   });
-  const [reloadKey, setReloadKey] = useState(0);
+  // reload() re-reads now + after a short delay so a card's value updates the
+  // instant a write confirms (absorbs a one-block wallet-RPC lag).
+  const [reloadKey, reload] = useReloadKey();
 
   useEffect(() => {
     let cancelled = false;
@@ -114,8 +117,6 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
     };
   }, [snap.bondToken, readProvider, networkTokens]);
 
-  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
-
   return (
     <section className="space-y-4">
       <div className="grid grid-cols-3 gap-4">
@@ -168,9 +169,9 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
           compact
         />
         <Stat
-          label="Exit cooldown"
+          label="Exit cooldown (bond unlock)"
           value={snap.exitCooldown != null ? formatDuration(snap.exitCooldown) : "…"}
-          sub="Wait between requestExit and executeExit"
+          sub="After a relayer requests exit, how long until they can withdraw their bond"
           compact
         />
       </div>
@@ -385,7 +386,8 @@ function formatDuration(seconds: bigint): string {
   return parts.join(" ");
 }
 
-/** Set the exit cooldown (the wait between requestExit and executeExit). The
+/** Set the exit cooldown — after a relayer calls requestExit, how long they must
+ *  wait before executeExit returns their bond. The
  *  input is in HOURS for ergonomics; the contract stores seconds (capped at
  *  MAX_EXIT_COOLDOWN = 30 days). */
 function ExitCooldownEditor({
@@ -423,8 +425,8 @@ function ExitCooldownEditor({
 
   return (
     <AdminWriteCard
-      title="Set exit cooldown"
-      description="RelayerRegistry.setExitCooldown(seconds) — the wait between requestExit and executeExit. Max 30 days."
+      title="Set exit cooldown (relayer bond unlock)"
+      description="RelayerRegistry.setExitCooldown(seconds) — after a relayer requests to exit, how long they must wait before they can withdraw (reclaim) their bond. Max 30 days."
       submitLabel={parsed != null ? `Set to ${formatDuration(parsed)}` : "Set exit cooldown"}
       disabled={parsed == null}
       onSubmit={submit}
@@ -453,8 +455,10 @@ function ExitCooldownEditor({
         </div>
       </label>
       <p className="text-[11px] text-[var(--color-text-subtle)]">
-        Enter HOURS (e.g. 168 = 7 days, 24 = 1 day, 0 = immediate exit). Applied
-        live: shortening lets relayers already mid-exit out sooner. Default 168h (7d).
+        The wait between a relayer&apos;s exit request and being able to reclaim their
+        bond. Enter HOURS (168 = 7 days, 24 = 1 day, 0 = withdraw immediately).
+        Applied live: shortening lets relayers already mid-exit reclaim sooner.
+        Default 168h (7d).
       </p>
     </AdminWriteCard>
   );

@@ -389,6 +389,8 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
   const MAX_HOURS = 30 * 24; // MAX_FEE_CHANGE_DELAY
   const [current, setCurrent] = useState<bigint | null>(null);
   const [hours, setHours] = useState("");
+  // Bumped on a successful write so the `current` read re-fires immediately.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -401,7 +403,7 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
     return () => {
       cancelled = true;
     };
-  }, [address, readProvider]);
+  }, [address, readProvider, reloadKey]);
 
   const parsed = parseHours(hours, MAX_HOURS);
 
@@ -411,6 +413,15 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
     return invokeWrite(signer, rpcProvider, address, "setFeeChangeDelay", [parsed]);
   }, [signer, rpcProvider, address, parsed, MAX_HOURS]);
 
+  // After a confirmed write, clear the input and re-read — once now and once
+  // shortly after, so a one-block wallet-RPC lag still lands the fresh value.
+  const handleSuccess = useCallback(() => {
+    setHours("");
+    setReloadKey((k) => k + 1);
+    setTimeout(() => setReloadKey((k) => k + 1), 1500);
+    onSuccess();
+  }, [onSuccess]);
+
   return (
     <AdminWriteCard
       title="Set fee-change timelock"
@@ -418,7 +429,7 @@ function FeeChangeDelayEditor({ address, onSuccess }: { address: string; onSucce
       submitLabel={parsed != null ? `Set to ${formatDelay(parsed)}` : "Set timelock"}
       disabled={parsed == null}
       onSubmit={submit}
-      onSuccess={onSuccess}
+      onSuccess={handleSuccess}
     >
       <div className="text-xs text-[var(--color-text-muted)]">
         Current: <strong>{current != null ? formatDelay(current) : "…"}</strong>
