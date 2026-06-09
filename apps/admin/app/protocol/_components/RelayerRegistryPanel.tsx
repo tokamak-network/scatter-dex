@@ -176,19 +176,11 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <BondTokenEditor
+        <BondEditor
           address={address}
-          current={snap.bondToken}
+          currentToken={snap.bondToken}
+          currentMinBond={snap.minBond}
           tokens={networkTokens}
-          onSuccess={reload}
-          signer={signer}
-          rpcProvider={rpcProvider}
-        />
-        <MinBondEditor
-          address={address}
-          current={snap.minBond}
-          decimals={bondMeta.decimals}
-          symbol={bondMeta.symbol}
           onSuccess={reload}
           signer={signer}
           rpcProvider={rpcProvider}
@@ -240,153 +232,108 @@ export function RelayerRegistryPanel({ address }: { address: string }) {
   );
 }
 
-function MinBondEditor({
+/** Set the GLOBAL bond token AND minimum amount in ONE transaction
+ *  (`setBond(token, minBond)`). Combining them avoids the foot-gun of changing
+ *  the token while the amount stays denominated in the previous token's
+ *  decimals — the amount field always re-denominates to the selected token.
+ *  Existing relayers keep the token recorded at their register time, so a switch
+ *  never strands a bond. Native ETH is `address(0)`. */
+function BondEditor({
   address,
-  current,
-  decimals,
-  symbol,
-  onSuccess,
-  signer,
-  rpcProvider,
-}: {
-  address: string;
-  current: bigint | null;
-  decimals: number;
-  symbol: string;
-  onSuccess: () => void;
-  signer: Signer | null;
-  rpcProvider: Provider;
-}) {
-  const [input, setInput] = useState("");
-
-  const submit = useCallback(async () => {
-    if (!signer) throw new Error("Wallet not connected");
-    let amount: bigint;
-    try {
-      amount = parseUnits(input.trim(), decimals);
-    } catch {
-      throw new Error(`Invalid amount — must be a decimal number with up to ${decimals} places`);
-    }
-    if (amount < 0n) throw new Error("Bond must be non-negative");
-    const c = new Contract(address, ABI, signer);
-    return runWrite(c, "setMinBond", [amount], { estimateProvider: rpcProvider });
-  }, [input, decimals, address, signer, rpcProvider]);
-
-  const validNumber = (() => {
-    if (!input.trim()) return false;
-    try {
-      parseUnits(input.trim(), decimals);
-      return true;
-    } catch {
-      return false;
-    }
-  })();
-
-  return (
-    <AdminWriteCard
-      title="Set minimum bond"
-      description={`RelayerRegistry.setMinBond(uint256) — denominated in ${symbol}.`}
-      submitLabel={`Set to ${input || "—"} ${symbol}`}
-      disabled={!validNumber}
-      onSubmit={submit}
-      onSuccess={onSuccess}
-    >
-      <div className="text-xs text-[var(--color-text-muted)]">
-        Current:{" "}
-        <strong>
-          {current != null ? `${formatUnits(current, decimals)} ${symbol}` : "…"}
-        </strong>
-      </div>
-      <label className="block text-xs">
-        <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
-          New bond ({symbol})
-        </span>
-        <input
-          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
-          placeholder="0.0"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-        />
-      </label>
-    </AdminWriteCard>
-  );
-}
-
-/** Set the GLOBAL bond token NEW registrations stake in — a whitelisted ERC20
- *  or native ETH (`address(0)`). Existing relayers keep the token recorded at
- *  their register time, so a switch never strands a bond. The minimum-bond
- *  amount is denominated in the chosen token's units; after changing the token,
- *  re-set the amount in the "Set minimum bond" card with the right decimals. */
-function BondTokenEditor({
-  address,
-  current,
+  currentToken,
+  currentMinBond,
   tokens,
   onSuccess,
   signer,
   rpcProvider,
 }: {
   address: string;
-  current: string | null;
+  currentToken: string | null;
+  currentMinBond: bigint | null;
   tokens: TokenInfo[];
   onSuccess: () => void;
   signer: Signer | null;
   rpcProvider: Provider;
 }) {
-  // Native ETH (address(0)) + each whitelisted ERC20 (drop the synthetic
-  // native-ETH alias so ETH appears exactly once, as the address(0) option).
-  // If the on-chain bond token isn't whitelisted, surface it as an "Unknown"
-  // option so the controlled <select> always has a row matching the current
-  // value (otherwise it renders blank).
+  // Native ETH (address(0)) + each whitelisted ERC20. If the on-chain bond
+  // token isn't whitelisted, surface it as an "Unknown" option so the controlled
+  // <select> always has a row matching the current value.
   const options = useMemo(() => {
     const base = [
-      { value: ZERO_ADDRESS, label: "Native ETH — msg.value", symbol: "ETH" },
+      { value: ZERO_ADDRESS, label: "Native ETH — msg.value", symbol: "ETH", decimals: 18 },
       ...tokens
         .filter((t) => !t.isNative)
-        .map((t) => ({ value: t.address, label: `${t.symbol} · ${shortAddr(t.address)}`, symbol: t.symbol })),
+        .map((t) => ({
+          value: t.address,
+          label: `${t.symbol} · ${shortAddr(t.address)}`,
+          symbol: t.symbol,
+          decimals: t.decimals,
+        })),
     ];
-    if (current && isConfiguredAddress(current) && !base.some((o) => eqAddr(o.value, current))) {
-      base.push({ value: current, label: `Unknown · ${shortAddr(current)}`, symbol: "token" });
+    if (currentToken && isConfiguredAddress(currentToken) && !base.some((o) => eqAddr(o.value, currentToken))) {
+      base.push({ value: currentToken, label: `Unknown · ${shortAddr(currentToken)}`, symbol: "token", decimals: 18 });
     }
     return base;
-  }, [tokens, current]);
+  }, [tokens, currentToken]);
 
-  // Resolve the on-chain bond token to its option (value + label) once.
   const currentOption = useMemo(() => {
-    if (!current || !isConfiguredAddress(current)) return options[0]!; // native ETH
-    return options.find((o) => eqAddr(o.value, current)) ?? options[0]!;
-  }, [current, options]);
+    if (!currentToken || !isConfiguredAddress(currentToken)) return options[0]!; // native ETH
+    return options.find((o) => eqAddr(o.value, currentToken)) ?? options[0]!;
+  }, [currentToken, options]);
 
   const [selected, setSelected] = useState<string>(currentOption.value);
   useEffect(() => setSelected(currentOption.value), [currentOption.value]);
 
-  const changed = !eqAddr(selected, currentOption.value);
-
-  const submit = useCallback(async () => {
-    if (!signer) throw new Error("Wallet not connected");
-    const c = new Contract(address, ABI, signer);
-    return runWrite(c, "setBondToken", [selected], { estimateProvider: rpcProvider });
-  }, [address, selected, signer, rpcProvider]);
-
-  const selLabel = useMemo(
-    () => options.find((o) => o.value === selected)?.symbol ?? "token",
+  const selectedOption = useMemo(
+    () => options.find((o) => o.value === selected) ?? options[0]!,
     [options, selected],
   );
 
+  // Amount is denominated in the SELECTED token's decimals.
+  const [amount, setAmount] = useState("");
+  const parsedAmount = (() => {
+    if (!amount.trim()) return null;
+    try {
+      const v = parseUnits(amount.trim(), selectedOption.decimals);
+      return v >= 0n ? v : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const tokenChanged = !eqAddr(selected, currentOption.value);
+  // Valid to submit when the amount parses AND either the token or amount differs.
+  const amountChanged = parsedAmount != null && parsedAmount !== currentMinBond;
+  const canSubmit = parsedAmount != null && (tokenChanged || amountChanged);
+
+  const submit = useCallback(async () => {
+    if (!signer) throw new Error("Wallet not connected");
+    if (parsedAmount == null) throw new Error("Enter a valid bond amount");
+    const c = new Contract(address, ABI, signer);
+    return runWrite(c, "setBond", [selected, parsedAmount], { estimateProvider: rpcProvider });
+  }, [address, selected, parsedAmount, signer, rpcProvider]);
+
   return (
     <AdminWriteCard
-      title="Set bond token"
-      description="RelayerRegistry.setBondToken(address) — the token new relayers bond in. Whitelisted ERC20 or native ETH."
-      submitLabel={`Set bond token to ${selLabel}`}
-      disabled={!changed}
+      title="Set bond (token + amount)"
+      description="RelayerRegistry.setBond(token, minBond) — sets the bond token and minimum amount together, in one transaction."
+      submitLabel={`Set ${amount || "—"} ${selectedOption.symbol}`}
+      disabled={!canSubmit}
       onSubmit={submit}
       onSuccess={onSuccess}
     >
       <div className="text-xs text-[var(--color-text-muted)]">
-        Current: <strong>{currentOption.label}</strong>
+        Current:{" "}
+        <strong>
+          {currentMinBond != null
+            ? `${formatUnits(currentMinBond, currentOption.decimals)} ${currentOption.symbol}`
+            : "…"}
+        </strong>{" "}
+        <span className="text-[var(--color-text-subtle)]">({currentOption.label})</span>
       </div>
       <label className="block text-xs">
         <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
-          New bond token
+          Bond token
         </span>
         <select
           className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
@@ -400,9 +347,20 @@ function BondTokenEditor({
           ))}
         </select>
       </label>
+      <label className="block text-xs">
+        <span className="mb-1 block uppercase tracking-wide text-[var(--color-text-subtle)]">
+          Minimum bond ({selectedOption.symbol})
+        </span>
+        <input
+          className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm"
+          placeholder="0.0"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+      </label>
       <p className="text-[11px] text-[var(--color-text-subtle)]">
-        Existing relayers keep the token they bonded in; only new registrations use
-        this. After changing, re-set the minimum bond in its own units.
+        Token + amount are set atomically. Existing relayers keep the token they
+        bonded in; only new registrations use this. 0 makes the bond optional.
       </p>
     </AdminWriteCard>
   );

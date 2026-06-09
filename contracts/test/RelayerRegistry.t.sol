@@ -794,6 +794,43 @@ contract RelayerRegistryBondTokenTest is Test {
         assertEq(address(registry.bondToken()), address(0));
     }
 
+    // ─── setBond (atomic token + amount) ─────────────────────────
+    // (BondTokenUpdated is already declared at the top of this contract.)
+
+    event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond);
+
+    function test_setBond_updates_token_and_amount_atomically() public {
+        // tokenB has 18 decimals here; set token + a 2000-token min in one tx.
+        registry.setBond(address(tokenB), 2000 ether);
+        assertEq(address(registry.bondToken()), address(tokenB));
+        assertEq(registry.minBond(), 2000 ether);
+    }
+
+    function test_setBond_emits_both_events() public {
+        vm.expectEmit(true, true, false, true);
+        emit BondTokenUpdated(address(tokenA), address(tokenB));
+        vm.expectEmit(false, false, false, true);
+        emit MinBondUpdated(0, 500 ether);
+        registry.setBond(address(tokenB), 500 ether);
+    }
+
+    function test_setBond_only_owner_reverts() public {
+        vm.prank(relayer1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
+        registry.setBond(address(tokenB), 1 ether);
+    }
+
+    function test_setBond_non_contract_token_reverts() public {
+        vm.expectRevert(RelayerRegistry.NotAContract.selector);
+        registry.setBond(address(0xDEAD), 1 ether);
+    }
+
+    function test_setBond_to_native_allowed() public {
+        registry.setBond(address(0), 1 ether);
+        assertEq(address(registry.bondToken()), address(0));
+        assertEq(registry.minBond(), 1 ether);
+    }
+
     function test_register_records_global_token() public {
         vm.startPrank(relayer1);
         tokenA.approve(address(registry), 1 ether);
