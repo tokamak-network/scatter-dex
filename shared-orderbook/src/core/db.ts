@@ -22,6 +22,7 @@ import type {
   KycListFilter,
 } from "../types/kyc.js";
 import type { AuditEntry, AuditEntryInsert, AuditListFilter } from "../types/audit.js";
+import type { CommitmentLeaf } from "../types/commitment.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -52,6 +53,11 @@ export class OrderbookDB {
   private stmtListKycAll!: Database.Statement;
   private stmtListKycByStatus!: Database.Statement;
   private stmtInsertAudit!: Database.Statement;
+  private stmtUpsertCommitment!: Database.Statement;
+  private stmtListCommitments!: Database.Statement;
+  private stmtMaxCommitmentLeaf!: Database.Statement;
+  private stmtGetCommitmentCursor!: Database.Statement;
+  private stmtSetCommitmentCursor!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -213,6 +219,28 @@ export class OrderbookDB {
       -- standalone ts index — nothing sorts or filters on ts alone.
       CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action, id);
       CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id, id);
+
+      -- Commitment-tree leaves, indexed from CommitmentInserted events by the
+      -- standalone commitment indexer (src/commitment-indexer.ts) and served by
+      -- GET /api/commitments so clients hydrate the Merkle tree without each
+      -- scanning eth_getLogs. PK (chain_id, leaf_index) is the natural
+      -- monotonic key and gives idempotent upserts — a re-scanned window
+      -- overwrites identical rows. No secondary index: the PK already serves
+      -- WHERE chain_id=? AND leaf_index>=? ORDER BY leaf_index.
+      CREATE TABLE IF NOT EXISTS commitments (
+        chain_id     INTEGER NOT NULL,
+        leaf_index   INTEGER NOT NULL,
+        commitment   TEXT NOT NULL,
+        block_number INTEGER NOT NULL,
+        PRIMARY KEY (chain_id, leaf_index)
+      );
+
+      -- One row per chain: how far the indexer has scanned. Lets a restart
+      -- resume from the cursor instead of re-backfilling from the deploy block.
+      CREATE TABLE IF NOT EXISTS commitment_cursor (
+        chain_id        INTEGER PRIMARY KEY,
+        last_scan_block INTEGER NOT NULL
+      );
     `);
 
     // Lightweight ALTER for pre-byApp databases — adds the `type`
@@ -382,6 +410,78 @@ export class OrderbookDB {
       INSERT INTO audit_log (ts, actor, action, target_type, target_id, detail)
       VALUES (?, ?, ?, ?, ?, ?)
     `);
+
+    // Idempotent upsert keyed on (chain_id, leaf_index): a re-scanned window
+    // overwrites identical rows instead of duplicating.
+    this.stmtUpsertCommitment = this.db.prepare(`
+      INSERT INTO commitments (chain_id, leaf_index, commitment, block_number)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(chain_id, leaf_index) DO UPDATE SET
+        commitment   = excluded.commitment,
+        block_number = excluded.block_number
+    `);
+    this.stmtListCommitments = this.db.prepare(`
+      SELECT leaf_index, commitment, block_number
+      FROM commitments
+      WHERE chain_id = ? AND leaf_index >= ?
+      ORDER BY leaf_index ASC
+      LIMIT ?
+    `);
+    this.stmtMaxCommitmentLeaf = this.db.prepare(
+      `SELECT MAX(leaf_index) AS maxLeaf FROM commitments WHERE chain_id = ?`,
+    );
+    this.stmtGetCommitmentCursor = this.db.prepare(
+      `SELECT last_scan_block FROM commitment_cursor WHERE chain_id = ?`,
+    );
+    this.stmtSetCommitmentCursor = this.db.prepare(`
+      INSERT INTO commitment_cursor (chain_id, last_scan_block)
+      VALUES (?, ?)
+      ON CONFLICT(chain_id) DO UPDATE SET last_scan_block = excluded.last_scan_block
+    `);
+  }
+
+  // ── Commitment-tree leaves (indexer write path + API read path) ──────────
+
+  /** Idempotently store a batch of leaves in one transaction. Re-indexing a
+   *  window overwrites identical rows (PK = chain_id, leaf_index). */
+  upsertCommitments(chainId: number, rows: CommitmentLeaf[]): void {
+    const txn = this.db.transaction((items: CommitmentLeaf[]) => {
+      for (const r of items) {
+        this.stmtUpsertCommitment.run(chainId, r.leafIndex, r.commitment, r.blockNumber);
+      }
+    });
+    txn(rows);
+  }
+
+  /** Leaves for a chain from `fromLeaf` (inclusive), ascending by leafIndex,
+   *  capped at `limit`. Clients page by advancing `fromLeaf`. */
+  listCommitments(chainId: number, fromLeaf: number, limit: number): CommitmentLeaf[] {
+    const rows = this.stmtListCommitments.all(chainId, fromLeaf, limit) as Array<
+      Record<string, unknown>
+    >;
+    return rows.map((r) => ({
+      leafIndex: r.leaf_index as number,
+      commitment: r.commitment as string,
+      blockNumber: r.block_number as number,
+    }));
+  }
+
+  /** Number of leaves known for a chain (max leafIndex + 1, or 0 when empty). */
+  commitmentCount(chainId: number): number {
+    const row = this.stmtMaxCommitmentLeaf.get(chainId) as { maxLeaf: number | null };
+    return row.maxLeaf === null ? 0 : row.maxLeaf + 1;
+  }
+
+  /** Last block the indexer scanned for a chain, or null if never. */
+  getCommitmentCursor(chainId: number): number | null {
+    const row = this.stmtGetCommitmentCursor.get(chainId) as
+      | { last_scan_block: number }
+      | undefined;
+    return row ? row.last_scan_block : null;
+  }
+
+  setCommitmentCursor(chainId: number, lastScanBlock: number): void {
+    this.stmtSetCommitmentCursor.run(chainId, lastScanBlock);
   }
 
   insertOrder(o: OrderSummary): void {
