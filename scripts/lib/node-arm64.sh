@@ -29,16 +29,19 @@ setup_node_run() {
   # developer's chosen version), then the usual Homebrew/system locations —
   # these may be shadowed on PATH by an x64-only nvm Node, so check explicitly.
   local arm64_node="" dir cand npm_cli _oifs="$IFS"
+  # `file -L` dereferences symlinks — Homebrew installs node as a symlink, so
+  # plain `file` would describe the link, not the Mach-O target, and miss arm64.
+  # `${dir:-.}` treats an empty PATH entry as the cwd rather than `/node`.
   IFS=:
   for dir in $PATH; do
-    cand="$dir/node"; [ -x "$cand" ] || continue
-    if file "$cand" 2>/dev/null | grep -q arm64; then arm64_node="$cand"; break; fi
+    cand="${dir:-.}/node"; [ -x "$cand" ] || continue
+    if file -L "$cand" 2>/dev/null | grep -q arm64; then arm64_node="$cand"; break; fi
   done
   IFS="$_oifs"
   if [ -z "$arm64_node" ]; then
     for cand in /opt/homebrew/bin/node /usr/local/bin/node; do
       [ -x "$cand" ] || continue
-      if file "$cand" 2>/dev/null | grep -q arm64; then arm64_node="$cand"; break; fi
+      if file -L "$cand" 2>/dev/null | grep -q arm64; then arm64_node="$cand"; break; fi
     done
   fi
   if [ -z "$arm64_node" ]; then
@@ -50,7 +53,7 @@ setup_node_run() {
   # npm-cli.js lives at <node-prefix>/lib/node_modules/npm/bin/npm-cli.js for
   # every standard install (system, Homebrew, nvm). Running it via the arm64
   # Node keeps full `npm` semantics while forcing native arm64.
-  npm_cli="$(cd "$(dirname "$arm64_node")/.." 2>/dev/null && pwd)/lib/node_modules/npm/bin/npm-cli.js"
+  npm_cli="$(dirname "$(dirname "$arm64_node")")/lib/node_modules/npm/bin/npm-cli.js"
   if [ -f "$npm_cli" ]; then
     NODE_RUN=(arch -arm64 "$arm64_node" "$npm_cli")
   else
