@@ -21,7 +21,8 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { BUILD_DIR, projectRoot } from "./lib/zk.mjs";
 
-const SNARKJS = resolve(projectRoot, "circuits/node_modules/.bin/snarkjs");
+// Run the CLI script via `node` (not the .bin shim) so it works on Windows too.
+const SNARKJS = resolve(projectRoot, "circuits/node_modules/snarkjs/cli.js");
 const chain = (() => { const i = process.argv.indexOf("--chain"); return i > -1 ? process.argv[i + 1] : "11155111"; })();
 const RPC = process.env.ZK_PAIRING_RPC || process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia.publicnode.com";
 const ledger = JSON.parse(readFileSync(resolve(projectRoot, `contracts/deployments/${chain}.json`), "utf8"));
@@ -46,6 +47,7 @@ async function getCode(addr) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ id: 1, jsonrpc: "2.0", method: "eth_getCode", params: [addr, "latest"] }),
   });
+  if (!res.ok) throw new Error(`eth_getCode HTTP ${res.status} ${res.statusText} for ${addr}`);
   const j = await res.json();
   if (!j.result) throw new Error(`eth_getCode failed for ${addr}: ${JSON.stringify(j.error || j)}`);
   return j.result.toLowerCase();
@@ -60,7 +62,7 @@ function loadVkey(base) {
   const dir = mkdtempSync(resolve(tmpdir(), "zkpair-"));
   try {
     const out = resolve(dir, "vk.json");
-    execFileSync(SNARKJS, ["zkey", "export", "verificationkey", zkey, out], { stdio: "ignore" });
+    execFileSync("node", [SNARKJS, "zkey", "export", "verificationkey", zkey, out], { stdio: "ignore" });
     return JSON.parse(readFileSync(out, "utf8"));
   } finally {
     rmSync(dir, { recursive: true, force: true });

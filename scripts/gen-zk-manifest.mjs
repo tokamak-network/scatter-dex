@@ -11,7 +11,7 @@
 //   node scripts/gen-zk-manifest.mjs            # write circuits/zk-manifest.json
 //   node scripts/gen-zk-manifest.mjs --check    # verify manifest matches build, exit 1 on drift
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { BUCKET, BUILD_DIR, MANIFEST_PATH, buildSources, sha256File } from "./lib/zk.mjs";
 
@@ -21,7 +21,7 @@ function build() {
   for (const [name, rel] of Object.entries(buildSources())) {
     const p = resolve(BUILD_DIR, rel);
     if (!existsSync(p)) { missing.push(rel); continue; }
-    artifacts[name] = { sha256: sha256File(p), bytes: readFileSync(p).length, src: rel };
+    artifacts[name] = { sha256: sha256File(p), bytes: statSync(p).size, src: rel };
   }
   if (missing.length) {
     console.error(`[gen-zk-manifest] missing in circuits/build (build circuits first):\n  ${missing.join("\n  ")}`);
