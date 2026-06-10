@@ -34,6 +34,10 @@ export interface SubmitClaimResult {
   txHash: string;
   /** Which path the submit took — useful for telemetry / UX copy. */
   via: "gasless" | "self-pay";
+  /** The relayer request timed out / errored, but the claim nullifier is
+   *  already spent on-chain — the claim landed anyway. `txHash` is empty
+   *  (the relayer never returned it). */
+  alreadyClaimed?: boolean;
 }
 
 /** Shared claim submit pipeline: probe the on-chain claims group,
@@ -117,9 +121,25 @@ export async function submitClaim(opts: SubmitClaimOpts): Promise<SubmitClaimRes
       recipient: pkg.recipient,
       releaseTime: pkg.releaseTime,
     };
-    const client = new RelayerClient(pkg.relayerUrl);
-    const resp = await client.submitClaim(body);
-    return { txHash: resp.txHash, via: "gasless" };
+    // The relayer waits for the on-chain receipt before replying, which on
+    // Sepolia (~12s+ blocks, plus retries) routinely outlasts the client's
+    // default 5s window — give the gasless claim a real budget.
+    const client = new RelayerClient(pkg.relayerUrl, { timeoutMs: 90_000 });
+    try {
+      const resp = await client.submitClaim(body);
+      return { txHash: resp.txHash, via: "gasless" };
+    } catch (e) {
+      // Even on timeout / error the relayer may have landed the claim. Claims
+      // are nullifier-guarded, so re-check it on-chain: if the nullifier is
+      // already spent the claim succeeded — report success instead of a
+      // false-negative failure (a retry would only revert on the spent
+      // nullifier, leaving the user stuck on a claim that actually went through).
+      const claimed = await (settlement.claimNullifiers(body.claimNullifier) as Promise<boolean>).catch(
+        () => false,
+      );
+      if (claimed) return { txHash: "", via: "gasless", alreadyClaimed: true };
+      throw e;
+    }
   }
 
   if (!signer) throw new Error("Wallet disconnected mid-flow.");
