@@ -252,7 +252,12 @@ export function CommitmentTreeProvider({
       //      the caller falls back / retries instead of trusting a short tree.
       const [known, onchainCount] = await Promise.all([
         isKnownPoolRoot(readProvider, poolAddress, t.root),
-        getPoolNextIndex(readProvider, poolAddress),
+        // Best-effort: a transient nextIndex() failure (rate limit / timeout)
+        // must not reject hydration when isKnownRoot would otherwise pass.
+        // Falling back to 0 simply skips the completeness gate for this
+        // attempt — isKnownRoot still guards correctness, and a later
+        // refresh re-checks completeness once the RPC recovers.
+        getPoolNextIndex(readProvider, poolAddress).catch(() => 0),
       ]);
       if (cancelled) return null;
       return known && t.nextIndex >= onchainCount ? { tree: t, index: idx } : null;
