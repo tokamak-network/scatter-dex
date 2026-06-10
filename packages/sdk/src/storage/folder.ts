@@ -61,6 +61,11 @@ function openHandleDB(): Promise<IDBDatabase | null> {
       const invalidate = () => { _dbPromise = null; };
       db.addEventListener("close", invalidate);
       db.onversionchange = () => { db.close(); invalidate(); };
+    } else {
+      // A failed/blocked open resolves to null — don't cache that, or every
+      // later call returns the same null and we degrade to in-memory for the
+      // whole session even after the transient cause clears.
+      _dbPromise = null;
     }
     return db;
   });
@@ -90,6 +95,29 @@ async function withHandleStore(run: (store: IDBObjectStore) => void): Promise<vo
   }
 }
 
+/** Readonly twin of {@link withHandleStore}. Reads hit the same
+ *  closing-connection race, and — left unhandled — would also leave the cache
+ *  pointing at the dead connection, so every later read keeps failing until a
+ *  write happens to clear it. `run` resolves with the request result; the
+ *  transaction stays open until that promise settles. */
+async function withReadOnlyStore<T>(run: (store: IDBObjectStore) => Promise<T>, fallback: T): Promise<T> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const db = await openHandleDB();
+    if (!db) return fallback;
+    try {
+      const tx = db.transaction("handles", "readonly");
+      return await run(tx.objectStore("handles"));
+    } catch (e) {
+      if (attempt === 0 && (e as DOMException)?.name === "InvalidStateError") {
+        _dbPromise = null; // closing connection — drop it and re-open
+        continue;
+      }
+      throw e;
+    }
+  }
+  return fallback;
+}
+
 function txDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
@@ -99,52 +127,55 @@ function txDone(tx: IDBTransaction): Promise<void> {
 }
 
 async function readAllHandles(): Promise<HandleRecord[]> {
-  const db = await openHandleDB();
-  if (!db) return [];
-  const tx = db.transaction("handles", "readonly");
-  const req = tx.objectStore("handles").getAll();
-  return await new Promise<HandleRecord[]>((resolve, reject) => {
-    req.onsuccess = () => {
-      const all = (req.result ?? []) as Array<HandleRecord | CurrentPointer>;
-      resolve(
-        all.filter((r): r is HandleRecord =>
-          r.id !== CURRENT_POINTER_KEY &&
-          r.id !== LEGACY_HANDLE_KEY &&
-          "handle" in r,
-        ),
-      );
-    };
-    req.onerror = () => reject(req.error);
-  });
+  return withReadOnlyStore(
+    (store) =>
+      new Promise<HandleRecord[]>((resolve, reject) => {
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const all = (req.result ?? []) as Array<HandleRecord | CurrentPointer>;
+          resolve(
+            all.filter((r): r is HandleRecord =>
+              r.id !== CURRENT_POINTER_KEY &&
+              r.id !== LEGACY_HANDLE_KEY &&
+              "handle" in r,
+            ),
+          );
+        };
+        req.onerror = () => reject(req.error);
+      }),
+    [],
+  );
 }
 
 async function readPointer(): Promise<string | null> {
-  const db = await openHandleDB();
-  if (!db) return null;
-  const tx = db.transaction("handles", "readonly");
-  const req = tx.objectStore("handles").get(CURRENT_POINTER_KEY);
-  return await new Promise<string | null>((resolve, reject) => {
-    req.onsuccess = () => {
-      const rec = req.result as CurrentPointer | undefined;
-      resolve(rec?.currentId ?? null);
-    };
-    req.onerror = () => reject(req.error);
-  });
+  return withReadOnlyStore(
+    (store) =>
+      new Promise<string | null>((resolve, reject) => {
+        const req = store.get(CURRENT_POINTER_KEY);
+        req.onsuccess = () => {
+          const rec = req.result as CurrentPointer | undefined;
+          resolve(rec?.currentId ?? null);
+        };
+        req.onerror = () => reject(req.error);
+      }),
+    null,
+  );
 }
 
 async function readRecord(id: string): Promise<HandleRecord | null> {
   if (id === CURRENT_POINTER_KEY) return null;
-  const db = await openHandleDB();
-  if (!db) return null;
-  const tx = db.transaction("handles", "readonly");
-  const req = tx.objectStore("handles").get(id);
-  return await new Promise<HandleRecord | null>((resolve, reject) => {
-    req.onsuccess = () => {
-      const rec = req.result as HandleRecord | undefined;
-      resolve(rec && "handle" in rec ? rec : null);
-    };
-    req.onerror = () => reject(req.error);
-  });
+  return withReadOnlyStore(
+    (store) =>
+      new Promise<HandleRecord | null>((resolve, reject) => {
+        const req = store.get(id);
+        req.onsuccess = () => {
+          const rec = req.result as HandleRecord | undefined;
+          resolve(rec && "handle" in rec ? rec : null);
+        };
+        req.onerror = () => reject(req.error);
+      }),
+    null,
+  );
 }
 
 async function writeRecord(record: HandleRecord): Promise<void> {
@@ -172,18 +203,17 @@ function mintFolderId(): string {
  *  set, promote the legacy handle into a fresh workspace id and point
  *  `_current` at it. Subsequent reads use the multi-handle path. */
 async function migrateLegacyHandle(): Promise<HandleRecord | null> {
-  const db = await openHandleDB();
-  if (!db) return null;
-  const tx = db.transaction("handles", "readonly");
-  const req = tx.objectStore("handles").get(LEGACY_HANDLE_KEY);
-  const legacy = await new Promise<{ id: string; handle: FileSystemDirectoryHandle } | null>(
-    (resolve, reject) => {
-      req.onsuccess = () => {
-        const rec = req.result as { id: string; handle?: FileSystemDirectoryHandle } | undefined;
-        resolve(rec && rec.handle ? { id: rec.id, handle: rec.handle } : null);
-      };
-      req.onerror = () => reject(req.error);
-    },
+  const legacy = await withReadOnlyStore<{ id: string; handle: FileSystemDirectoryHandle } | null>(
+    (store) =>
+      new Promise((resolve, reject) => {
+        const req = store.get(LEGACY_HANDLE_KEY);
+        req.onsuccess = () => {
+          const rec = req.result as { id: string; handle?: FileSystemDirectoryHandle } | undefined;
+          resolve(rec && rec.handle ? { id: rec.id, handle: rec.handle } : null);
+        };
+        req.onerror = () => reject(req.error);
+      }),
+    null,
   );
   if (!legacy) return null;
   const promoted: HandleRecord = {
