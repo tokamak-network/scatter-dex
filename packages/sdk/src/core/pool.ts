@@ -91,6 +91,33 @@ export async function loadCommitmentInsertedHistory(
   return rows;
 }
 
+/** True iff `root` is in the pool's on-chain root **history ring buffer**.
+ *  This is exactly the check `PrivateSettlement` runs against a proof's
+ *  root at settle time, so a locally-hydrated tree whose root passes here
+ *  is guaranteed to yield proofs the chain will accept — and one that fails
+ *  was built from an incomplete, inconsistent, or tampered leaf set. The
+ *  ring tolerates being a few inserts behind head (default
+ *  `ROOT_HISTORY_SIZE = 30`), so a slightly-stale client still matches a
+ *  recent historical root. */
+export async function isKnownPoolRoot(
+  provider: ethers.Provider,
+  poolAddress: string,
+  root: bigint,
+): Promise<boolean> {
+  const contract = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
+  return contract.isKnownRoot(root) as Promise<boolean>;
+}
+
+/** On-chain leaf count — `CommitmentPool.nextIndex()`. The index the next
+ *  inserted commitment will occupy, i.e. the current number of leaves. */
+export async function getPoolNextIndex(
+  provider: ethers.Provider,
+  poolAddress: string,
+): Promise<number> {
+  const contract = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
+  return Number(await contract.nextIndex());
+}
+
 /** Subscribe to live `CommitmentInserted` events. Returns an
  *  unsubscribe function — callers should detach in their effect
  *  cleanup. The callback receives the same `{ commitment, leafIndex }`

@@ -1,8 +1,31 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { ethers } from "ethers";
-import { loadCommitmentInsertedHistory } from "../../src/core/pool";
+import {
+  getPoolNextIndex,
+  isKnownPoolRoot,
+  loadCommitmentInsertedHistory,
+} from "../../src/core/pool";
+import { COMMITMENT_POOL_IFACE } from "../../src/core/contracts";
 
 const POOL_ADDR = "0x" + "44".repeat(20);
+
+/** Minimal read-only provider: decodes the call selector and returns the
+ *  ABI-encoded result for that function, exercising the real ethers
+ *  encode/decode path without a live node. */
+function readProvider(results: Record<string, unknown[]>): ethers.Provider {
+  return {
+    call: async (tx: { data?: string }) => {
+      const data = tx.data ?? "0x";
+      for (const name of Object.keys(results)) {
+        const fn = COMMITMENT_POOL_IFACE.getFunction(name)!;
+        if (data.startsWith(fn.selector)) {
+          return COMMITMENT_POOL_IFACE.encodeFunctionResult(fn, results[name]);
+        }
+      }
+      throw new Error(`unexpected call: ${data.slice(0, 10)}`);
+    },
+  } as unknown as ethers.Provider;
+}
 
 /** Spy on Contract.queryFilter so we can assert the [from,to] windows
  *  without a live provider. Each window returns one synthetic event
@@ -86,5 +109,23 @@ describe("loadCommitmentInsertedHistory", () => {
       chunkSize: 50_000,
     });
     expect(rows.map((r) => r.leafIndex)).toEqual([0, 50_000, 100_000]);
+  });
+});
+
+describe("on-chain tree verification helpers", () => {
+  it("isKnownPoolRoot returns the contract's bool (root accepted)", async () => {
+    expect(
+      await isKnownPoolRoot(readProvider({ isKnownRoot: [true] }), POOL_ADDR, 123n),
+    ).toBe(true);
+  });
+
+  it("isKnownPoolRoot surfaces a rejected root (incomplete/tampered set)", async () => {
+    expect(
+      await isKnownPoolRoot(readProvider({ isKnownRoot: [false] }), POOL_ADDR, 999n),
+    ).toBe(false);
+  });
+
+  it("getPoolNextIndex returns the leaf count as a number", async () => {
+    expect(await getPoolNextIndex(readProvider({ nextIndex: [42] }), POOL_ADDR)).toBe(42);
   });
 });
