@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useEdDSAKey, useWallet, shortAddr } from "@zkscatter/sdk/react";
+import {
+  useCuratedNetworkTokens,
+  useEdDSAKey,
+  useWallet,
+  shortAddr,
+} from "@zkscatter/sdk/react";
 import { useVault, type VaultNote } from "../lib/vault";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { PreSignPreview } from "./PreSignPreview";
@@ -47,6 +52,13 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
   // the same chain. Hard-coding DEMO_NETWORK risked proving against
   // one pool's tree and submitting to a different deployment.
   const { network: cfg } = useActiveNetwork();
+  // WETH address from the on-chain whitelist — the native entry resolves
+  // to the on-chain WETH slot (or the env WETH as fallback), so a
+  // deployment that registered WETH on-chain works without
+  // NEXT_PUBLIC_*_WETH set. Drives ETH-note detection + the unwrap path.
+  const { tokens: liveTokens } = useCuratedNetworkTokens(cfg);
+  const wethAddress =
+    liveTokens.find((t) => t.isNative)?.address ?? cfg.contracts.weth;
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [noteId, setNoteId] = useState<string | null>(initialNote?.id ?? null);
@@ -129,8 +141,8 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
   // diverge.
   const isEthNote =
     !!note &&
-    !!cfg.contracts.weth &&
-    note.note.token === BigInt(cfg.contracts.weth);
+    !!wethAddress &&
+    note.note.token === BigInt(wethAddress);
 
   const submit = useCallback(async () => {
     if (!note) {
@@ -231,7 +243,7 @@ export function WithdrawModal({ open, onClose, initialNote }: Props) {
         commitmentPoolAddress: cfg.contracts.commitmentPool,
         tree,
         eddsaPrivateKey: eddsaKey.privateKey,
-        wethAddress: cfg.contracts.weth,
+        wethAddress,
         signal: ctrl.signal,
         onPhase: phaseSetter,
       });

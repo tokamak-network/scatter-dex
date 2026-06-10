@@ -2,11 +2,10 @@
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import {
-  useWallet,
-  useWhitelistedTokens,
+  useCuratedNetworkTokens,
   type TokenListSource,
 } from "@zkscatter/sdk/react";
-import { eqAddr, isConfiguredAddress, type TokenInfo } from "@zkscatter/sdk";
+import { isConfiguredAddress, type TokenInfo } from "@zkscatter/sdk";
 import { DEMO_NETWORK } from "./network";
 
 export interface UseProTokensResult {
@@ -32,47 +31,10 @@ export interface UseProTokensResult {
  *  {@link TokensProvider}; components read the shared value via
  *  {@link useProTokens}. */
 function useProTokensValue(): UseProTokensResult {
-  const { readProvider } = useWallet();
-  const weth = DEMO_NETWORK.contracts.weth;
-
-  // ERC-20 view of the curated list (native ETH → WETH) used as the
-  // on-chain overlay (symbol/decimals by address) and fallback. Keeping
-  // ETH out of the overlay avoids mislabelling the on-chain WETH (they
-  // share an address) as "ETH".
-  const overlay = useMemo<TokenInfo[]>(
-    () =>
-      DEMO_NETWORK.tokens.map((t) =>
-        t.isNative ? { ...t, symbol: "WETH", isNative: false } : t,
-      ),
-    [],
-  );
-
-  const { tokens: onchain, loading, source } = useWhitelistedTokens({
-    provider: readProvider,
-    poolAddress: DEMO_NETWORK.contracts.commitmentPool,
-    settlementAddress: DEMO_NETWORK.contracts.privateSettlement,
-    fallback: overlay,
-  });
-
-  // Overlay on-chain address + decimals onto the curated list. Native
-  // ETH takes the WETH entry (matched by address since on-chain it's
-  // "WETH"); the rest match by symbol. Display metadata (name, markets,
-  // order) is preserved via the `...t` spread. Tokens absent from the
-  // whitelist keep their curated (possibly zero) address and render as
-  // "not deployed" at the call sites.
-  const tokens = useMemo<TokenInfo[]>(() => {
-    const bySymbol = new Map(onchain.map((t) => [t.symbol.toUpperCase(), t]));
-    const wethEntry = onchain.find((t) => eqAddr(t.address, weth));
-    return DEMO_NETWORK.tokens.map((t) => {
-      if (t.isNative) {
-        return wethEntry
-          ? { ...t, address: wethEntry.address, decimals: wethEntry.decimals }
-          : t;
-      }
-      const m = bySymbol.get(t.symbol.toUpperCase());
-      return m ? { ...t, address: m.address, decimals: m.decimals } : t;
-    });
-  }, [onchain, weth]);
+  // Addresses + decimals from the on-chain Pool∩Settlement whitelist,
+  // overlaid onto the curated `DEMO_NETWORK.tokens` (display metadata,
+  // order, native-ness preserved). Shared with the Pay wallet.
+  const { tokens, loading, source } = useCuratedNetworkTokens(DEMO_NETWORK);
 
   const depositable = useMemo<TokenInfo[]>(() => {
     const eth = tokens.find((t) => t.isNative && isConfiguredAddress(t.address));

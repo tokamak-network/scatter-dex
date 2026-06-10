@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button, useToast } from "@zkscatter/ui";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useCuratedNetworkTokens, useWallet } from "@zkscatter/sdk/react";
 import {
   addClaimInboxEntry,
   markClaimInboxEntryClaimed,
@@ -50,6 +50,9 @@ export function OrderDetailPanel({
   closeLabel = "+ New order",
 }: Props) {
   const { network } = useActiveNetwork();
+  // Token symbol + decimals from the on-chain whitelist (env addresses
+  // may be unset; the amount formatters below match tokens by address).
+  const { tokens: liveTokens } = useCuratedNetworkTokens(network);
   const { notes } = useVault();
   // Hide ZK-internal fields (nonce, secrets, raw IDs, claims root,
   // change commitment hex) behind an explicit toggle. The default
@@ -95,7 +98,7 @@ export function OrderDetailPanel({
         fundingNote={
           order.noteId ? notes.find((n) => n.id === order.noteId) ?? null : null
         }
-        tokens={network.tokens}
+        tokens={liveTokens}
       />
 
       <RelayerAndExpiryStrip order={order} showTechnical={showTechnical} />
@@ -129,7 +132,7 @@ export function OrderDetailPanel({
         <RecipientsTable
           claims={order.claims}
           order={order}
-          tokens={network.tokens}
+          tokens={liveTokens}
           showTechnical={showTechnical}
         />
       ) : (
@@ -151,7 +154,7 @@ export function OrderDetailPanel({
           debugging, hex-level audit, and copy-pasting exact
           values into external tooling. */}
       {showTechnical && (
-        <RawFieldsSection order={order} tokens={network.tokens} notes={notes} />
+        <RawFieldsSection order={order} tokens={liveTokens} notes={notes} />
       )}
 
       {(onCancel || onClaim) && (
@@ -920,6 +923,9 @@ function ShareActions({
   enabled: boolean;
 }) {
   const { network } = useActiveNetwork();
+  // On-chain whitelist tokens for claim-amount labels (decimals are
+  // resolved by address; env addresses may be unset).
+  const { tokens: liveTokens } = useCuratedNetworkTokens(network);
   const { account, readProvider, signer } = useWallet();
   const toast = useToast();
   const [busy, setBusy] = useState<null | "copy" | "email" | "save" | "claim">(null);
@@ -990,7 +996,7 @@ function ShareActions({
       target,
       chainId: network.chainId,
       settlementAddress: settlement,
-      tokens: network.tokens,
+      tokens: liveTokens,
       senderLabel: account ?? undefined,
       relayerUrl: order.relayer?.url,
     });
@@ -1041,7 +1047,7 @@ function ShareActions({
       const releaseUnix = Number(target.releaseTime);
       const nowUnix = Math.floor(Date.now() / 1000);
       const isLocked = !isClaimed && nowUnix < releaseUnix;
-      const amountLabel = formatClaimAmount(target.amount, target.token, network.tokens);
+      const amountLabel = formatClaimAmount(target.amount, target.token, liveTokens);
       let statusLine: string;
       if (isClaimed) {
         statusLine = `This payment of ${amountLabel} has already been claimed.`;

@@ -10,6 +10,7 @@ import { claimProver } from "../lib/claimProver";
 import { abortableSleep, isAbortError } from "../lib/abort";
 import { formatClaimAmount } from "../lib/format";
 import { useActiveNetwork } from "../lib/activeNetwork";
+import { useCuratedNetworkTokens } from "@zkscatter/sdk/react";
 
 type Phase =
   | { kind: "idle" }
@@ -41,6 +42,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
   const { markLeafClaimed } = useOrders();
   const { network } = useActiveNetwork();
+  const { tokens: liveTokens } = useCuratedNetworkTokens(network);
   const toast = useToast();
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   // Mirror the persisted `claimedLeafIndexes` into local state so the
@@ -203,7 +205,7 @@ export function ClaimModal({ open, onClose, order }: ClaimModalProps) {
                     {c.recipient.slice(0, 6)}…{c.recipient.slice(-4)}
                   </span>
                   <span className="font-medium">
-                    {formatClaimAmount(c.amount, c.token, network.tokens)}
+                    {formatClaimAmount(c.amount, c.token, liveTokens)}
                   </span>
                   <span className="w-24 text-right">
                     {done ? (

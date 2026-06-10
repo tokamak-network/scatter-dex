@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { shortAddr } from "@zkscatter/sdk/react";
+import { shortAddr, useCuratedNetworkTokens } from "@zkscatter/sdk/react";
+import type { TokenInfo } from "@zkscatter/sdk";
 import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
 import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
@@ -109,16 +110,16 @@ function weiToDisplay(wei: bigint, decimals: number): string {
   return `${whole.toLocaleString("en-US")}.${fracStr}`;
 }
 
-function tokenDecimals(symbol: string): number {
-  return DEMO_NETWORK.tokens.find((t) => t.symbol === symbol)?.decimals ?? 18;
+function tokenDecimals(symbol: string, tokens: TokenInfo[]): number {
+  return tokens.find((t) => t.symbol === symbol)?.decimals ?? 18;
 }
 
-function sellDisplay(o: OrderRecord): string {
+function sellDisplay(o: OrderRecord, tokens: TokenInfo[]): string {
   // Prefer the on-chain truth — the signed wei was persisted at
   // submit time (PR #840). Falls back to the legacy size×price
   // derivation for orders persisted before the field existed.
   if (o.signedSellWei !== undefined) {
-    return weiToDisplay(o.signedSellWei, tokenDecimals(sellSymbol(o)));
+    return weiToDisplay(o.signedSellWei, tokenDecimals(sellSymbol(o), tokens));
   }
   // Sell-side: size is in base, so sell amount = size in base units.
   // Buy-side: size is in base (what the user buys), so sell amount =
@@ -126,15 +127,19 @@ function sellDisplay(o: OrderRecord): string {
   return o.side === "sell" ? o.size : mulDisplay(o.size, o.price);
 }
 
-function buyDisplay(o: OrderRecord): string {
+function buyDisplay(o: OrderRecord, tokens: TokenInfo[]): string {
   if (o.signedBuyWei !== undefined) {
-    return weiToDisplay(o.signedBuyWei, tokenDecimals(buySymbol(o)));
+    return weiToDisplay(o.signedBuyWei, tokenDecimals(buySymbol(o), tokens));
   }
   return o.side === "sell" ? mulDisplay(o.size, o.price) : o.size;
 }
 
 export default function Orders() {
   const { orders } = useOrders();
+  // Token decimals from the on-chain whitelist (DEMO_NETWORK.tokens is
+  // the curated fallback), so order amounts format with the deployed
+  // token's real decimals.
+  const { tokens } = useCuratedNetworkTokens(DEMO_NETWORK);
   // Re-evaluate the Expired bucket every minute so an expiry
   // crossing while the tab sits open shifts the order into the
   // Expired filter without a refresh.
@@ -254,11 +259,11 @@ export default function Orders() {
                 <td className="px-5 py-3 font-mono text-xs">{o.label}</td>
                 <td className="px-5 py-3">{o.side === "sell" ? "Sell" : "Buy"}</td>
                 <td className="px-5 py-3 text-right font-mono">
-                  <span className="font-semibold">{sellDisplay(o)}</span>{" "}
+                  <span className="font-semibold">{sellDisplay(o, tokens)}</span>{" "}
                   <span className="text-[var(--color-text-muted)]">{sellSymbol(o)}</span>
                 </td>
                 <td className="px-5 py-3 text-right font-mono">
-                  <span className="font-semibold">{buyDisplay(o)}</span>{" "}
+                  <span className="font-semibold">{buyDisplay(o, tokens)}</span>{" "}
                   <span className="text-[var(--color-text-muted)]">{buySymbol(o)}</span>
                 </td>
                 <td className="px-5 py-3">

@@ -264,7 +264,13 @@ export async function submitRealSettle(
 ): Promise<SubmittedSettle> {
   const { pollIntervalMs = 1500, timeoutMs = 120_000, signal } = options;
   const body = buildAuthorizeOrderBody(prep);
-  const client = new RelayerClient(relayerUrl);
+  // The relayer's `submitAuthorizeOrder` dispatches the settle tx and
+  // waits for its receipt before replying, which on Sepolia (~12s+
+  // blocks, plus retries) routinely outlasts the client's default 5s
+  // fetch window — that abort surfaces as "signal timed out" even
+  // though the settle is in flight. Give each request a real budget;
+  // the bounded poll loop below still governs total wait time.
+  const client = new RelayerClient(relayerUrl, { timeoutMs: 90_000 });
   const initial = await client.submitAuthorizeOrder(body, signal);
   if (initial.status === "failed") {
     throw new Error(initial.error ?? "Relayer rejected the authorize order");

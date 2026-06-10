@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ethers } from "ethers";
 import { EmptyState } from "@zkscatter/ui";
-import { shortAddr } from "@zkscatter/sdk/react";
+import { curatedErc20View, tokenMap } from "@zkscatter/sdk";
+import { shortAddr, useCuratedNetworkTokens } from "@zkscatter/sdk/react";
 import { formatExpiry } from "@zkscatter/sdk/util";
 import {
   SharedOrderbookClient,
@@ -46,6 +47,10 @@ const STATUS_BUCKETS: Array<{ id: StatusBucket; label: string }> = [
  *  the top-nav Orders dropdown. */
 export default function SharedOrderbookPage() {
   const { network } = useActiveNetwork();
+  // Token symbol + decimals from the on-chain whitelist (env addresses
+  // may be unset, which would make the address-keyed lookup below miss
+  // and mis-decimal the amounts).
+  const { tokens: onchainTokens } = useCuratedNetworkTokens(network);
   const url = network.sharedOrderbookUrl;
   const configured = !!url;
 
@@ -70,11 +75,14 @@ export default function SharedOrderbookPage() {
     };
   }, []);
 
-  const tokenByAddr = useMemo(() => {
-    const map: Record<string, { symbol: string; decimals: number }> = {};
-    for (const t of network.tokens) map[t.address.toLowerCase()] = t;
-    return map;
-  }, [network.tokens]);
+  // Build the address→token map from an ERC-20 view: `curatedErc20View`
+  // relabels the native ETH entry to non-native WETH (same address) so
+  // `tokenMap` (which skips native aliases) still maps the WETH address —
+  // orders are denominated in WETH, so resolveToken() must find it.
+  const tokenByAddr = useMemo(
+    () => tokenMap(curatedErc20View(onchainTokens)),
+    [onchainTokens],
+  );
 
   const resolveToken = (addr: string) => tokenByAddr[addr.toLowerCase()];
 

@@ -1,3 +1,5 @@
+import { isConfiguredAddress } from "./addresses";
+
 /** A token an app can offer in pickers, balances, orders. */
 export interface TokenInfo {
   /** On-chain ERC-20 address. For native ETH this is the WETH slot. */
@@ -53,6 +55,52 @@ export function withNativeEthAlias(tokens: TokenInfo[], wethAddress: string): To
     isNative: true,
   };
   return [...tokens.slice(0, idx), ethEntry, ...tokens.slice(idx)];
+}
+
+/** ERC-20 view of a curated token list: relabel the synthetic native
+ *  "ETH" entry to "WETH" (its on-chain identity, sharing the address)
+ *  and drop the native flag. Used as the on-chain whitelist's overlay +
+ *  fallback so the WETH row isn't mislabelled "ETH". Pure. */
+export function curatedErc20View(tokens: TokenInfo[]): TokenInfo[] {
+  return tokens.map((t) =>
+    t.isNative ? { ...t, symbol: "WETH", isNative: false } : t,
+  );
+}
+
+/** Overlay on-chain whitelist addresses + decimals onto a curated token
+ *  list, preserving the curated order + display metadata (name, markets,
+ *  native-ness). The native "ETH" entry resolves via the WETH address
+ *  (on-chain it is "WETH", sharing the address); when the whitelist has
+ *  no WETH entry the native address falls back to `wethAddress` (the env
+ *  WETH slot), so a caller can always read the resolved native entry's
+ *  `.address` as a usable ERC-20 address without re-deriving the
+ *  fallback itself. Other tokens match by symbol; tokens absent from
+ *  `onchain` keep their curated entry (possibly a zero address → render
+ *  as "not configured").
+ *
+ *  The single source of truth for "curated metadata + on-chain
+ *  addr/decimals", shared by the React hook (`useCuratedNetworkTokens`)
+ *  and the lib-side resolver (`resolveCuratedTokensCached`). Pure. */
+export function overlayOnchainTokens(
+  curated: TokenInfo[],
+  onchain: TokenInfo[],
+  wethAddress: string,
+): TokenInfo[] {
+  const bySymbol = new Map(onchain.map((t) => [t.symbol.toUpperCase(), t]));
+  const wethEntry = onchain.find((t) => eqAddr(t.address, wethAddress));
+  return curated.map((t) => {
+    if (t.isNative) {
+      // Match the on-chain WETH by address first; if `wethAddress` is
+      // unconfigured, fall back to the whitelist's "WETH" symbol so a
+      // deployment without an env WETH slot still resolves native ETH.
+      // Last resort: the env address itself (when it is configured).
+      const weth = wethEntry ?? bySymbol.get("WETH");
+      if (weth) return { ...t, address: weth.address, decimals: weth.decimals };
+      return isConfiguredAddress(wethAddress) ? { ...t, address: wethAddress } : t;
+    }
+    const m = bySymbol.get(t.symbol.toUpperCase());
+    return m ? { ...t, address: m.address, decimals: m.decimals } : t;
+  });
 }
 
 /** Lowercased-address comparison. Returns false when either side is

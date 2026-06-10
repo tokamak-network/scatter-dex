@@ -9,7 +9,12 @@ import {
   LAUNCH_TOKENS,
   type TokenInfo,
 } from "@zkscatter/sdk";
-import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
+import {
+  shortAddr,
+  useCuratedNetworkTokens,
+  useMounted,
+  useWallet,
+} from "@zkscatter/sdk/react";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { SendModal } from "./_SendModal";
@@ -21,18 +26,23 @@ export default function WalletPage() {
   const { network: cfg } = useActiveNetwork();
   const { account, signer, readProvider } = useWallet();
   const mounted = useMounted();
+  // Token addresses + decimals from the on-chain Pool∩Settlement
+  // whitelist (registered via setTokenWhitelist), not NEXT_PUBLIC_* env,
+  // so a token the operator whitelisted shows its real balance even
+  // without an env address. `cfg.tokens` is the pre-load fallback.
+  const { tokens: curatedTokens } = useCuratedNetworkTokens(cfg);
   // Synthesize a WETH row alongside native ETH so the wallet shows
   // both balances. Same on-chain address as ETH; the row reads via
   // `balanceOf` (isNative=false). Matches the dual entry exposed in
   // the deposit modal so wallet ↔ deposit numbers stay consistent.
   const tokensWithWeth = useMemo(() => {
-    const eth = cfg.tokens.find((t) => t.isNative && t.address && t.address !== ZERO);
-    if (!eth) return cfg.tokens;
+    const eth = curatedTokens.find((t) => t.isNative && t.address && t.address !== ZERO);
+    if (!eth) return curatedTokens;
     return [
-      ...cfg.tokens,
+      ...curatedTokens,
       { ...eth, symbol: "WETH", name: "Wrapped Ether", isNative: false },
     ];
-  }, [cfg.tokens]);
+  }, [curatedTokens]);
   const [rows, setRows] = useState<BalanceRow[]>(() => initialRows(tokensWithWeth));
   const [sendingFor, setSendingFor] = useState<BalanceRow | null>(null);
   const [tick, setTick] = useState(0);
