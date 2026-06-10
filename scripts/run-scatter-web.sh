@@ -191,6 +191,7 @@ else:
         f"NEXT_PUBLIC_CHAIN_NAME={network.capitalize()}",
         f"NEXT_PUBLIC_RPC_URL={rpc}",
         f"NEXT_PUBLIC_COMMITMENT_POOL_ADDRESS={addr('commitmentPool')}",
+        f"NEXT_PUBLIC_DEPLOY_BLOCK={L.get('deployBlock', 0)}",
         f"NEXT_PUBLIC_PRIVATE_SETTLEMENT_ADDRESS={addr('privateSettlement')}",
         f"NEXT_PUBLIC_IDENTITY_GATE_ADDRESS={addr('identityGate')}",
         f"NEXT_PUBLIC_RELAYER_REGISTRY_ADDRESS={addr('relayerRegistry')}",

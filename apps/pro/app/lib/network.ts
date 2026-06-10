@@ -106,6 +106,9 @@ function buildNetworkConfig(): NetworkConfig {
       weth: wethAddress,
     },
     tokens,
+    // Pool deploy block — the commitment tree's getLogs fallback scans from
+    // here, not genesis (which would trip public nodes' eth_getLogs range cap).
+    deployBlock: Number(pick(process.env.NEXT_PUBLIC_DEPLOY_BLOCK, "0")),
     sharedOrderbookUrl:
       pick(process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL) || undefined,
     relayer: process.env.NEXT_PUBLIC_ZK_RELAYER_URL

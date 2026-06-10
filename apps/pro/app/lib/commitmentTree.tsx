@@ -14,6 +14,7 @@ export function CommitmentTreeProvider({ children }: { children: React.ReactNode
   return (
     <SdkCommitmentTreeProvider
       poolAddress={network.contracts.commitmentPool}
+      fromBlock={network.deployBlock}
       serverUrl={network.sharedOrderbookUrl}
     >
       {children}
