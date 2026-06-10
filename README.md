@@ -67,7 +67,20 @@ The "build them together" rule above is for **local anvil only**. On a **deploye
 
 The **canonical** set is pinned by the committed `circuits/zk-manifest.json` (sha256 per artifact), verified to pair with all Sepolia verifiers. The bytes themselves are **not** in git — `circuits/build` is generated/gitignored — because zkeys are large (~256 MB) and non-reproducible. They are distributed as fixed bytes via a public GCS bucket (`gs://zkscatter-zk-artifacts`, content-addressed by sha256). Frontends serve the prover assets from `apps/<app>/public/zk/` (gitignored; the browser fetches `/zk/<circuit>.{wasm,zkey}` at runtime); a fetch step (`predev`/`prebuild`/CI, `scripts/fetch-zk-assets.mjs`) downloads + checksum-verifies the manifest-pinned bytes into `public/zk`, so these always match the on-chain verifiers.
 
-**Troubleshooting `InvalidProof()` (`execution reverted (unknown custom error) data=0x09bde339`):** the served zkey does not pair with the on-chain verifier. Either the frontend serves a stale zkey (re-fetch the canonical asset) **or** the on-chain verifier is stale (redeploy it from the canonical zkey and re-point via the admin **Verifier rotation** page, `/protocol/settlement`). Confirm pairing by exporting the zkey's verification key (`snarkjs zkey export verificationkey`) and checking its `alpha`/`IC` G1 constants appear in the verifier's on-chain bytecode (`cast code <verifier>`).
+**Troubleshooting `InvalidProof()` (`execution reverted (unknown custom error) data=0x09bde339`):** the served zkey does not pair with the on-chain verifier. Either the frontend serves a stale zkey (re-fetch the canonical asset) **or** the on-chain verifier is stale (redeploy it from the canonical zkey and re-point via the admin **Verifier rotation** page, `/protocol/settlement`). Confirm pairing with `node scripts/check-zk-pairing.mjs` (exports the zkey's vkey and checks its `alpha`/`IC` G1 constants appear in the verifier's on-chain bytecode via `eth_getCode`).
+
+**Rotating circuits (rebuild + verifier redeploy).** When a circuit's zkey is regenerated and its on-chain verifier redeployed, refresh the distribution so everyone gets the new bytes:
+
+```bash
+# 1. with the new circuits/build/ in place, upload + repin (needs gcloud auth):
+scripts/upload-zk-artifacts.sh            # uploads new sha256 objects, regenerates the manifest
+# 2. commit the new pins so consumers fetch the new bytes:
+git add circuits/zk-manifest.json && git commit -m "chore(zk): repin <circuit> after rotation"
+# 3. sanity-check the canonical set pairs with the deployed verifiers:
+node scripts/check-zk-pairing.mjs         # all N verifiers pair ✓
+```
+
+Objects are content-addressed (`gs://zkscatter-zk-artifacts/zk/<sha256>`), so a rotation only *adds* objects — old builds stay reachable and nothing is overwritten.
 
 ### Full Local Dev (with zk-X509)
 
