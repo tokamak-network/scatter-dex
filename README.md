@@ -91,7 +91,7 @@ with a little test ETH.**
 **1. Scatter frontends** — launch any app:
 
 ```bash
-scripts/run-scatter-web.sh <app> sepolia   # app = hub | pay | pro | operators | admin
+./scripts/run-scatter-web.sh <app> sepolia   # app = hub | pay | pro | operators | admin
 ```
 
 | app       | dev URL                 | purpose                           |
@@ -107,7 +107,7 @@ scripts/run-scatter-web.sh <app> sepolia   # app = hub | pay | pro | operators |
 ```bash
 git clone https://github.com/tokamak-network/zk-X509.git "$HOME/src/zk-X509"
 export ZK_X509_REPO="$HOME/src/zk-X509"     # default: ../zk-X509
-scripts/run-zkx509-web.sh sepolia           # → http://localhost:3000
+./scripts/run-zkx509-web.sh sepolia         # → http://localhost:3000
 ```
 
 No RPC key is needed for either: the scripts ship a keyless public-node default

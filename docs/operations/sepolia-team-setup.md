@@ -34,7 +34,7 @@ scripts wire everything else from the committed address ledgers.
 ## Run a scatter frontend
 
 ```bash
-scripts/run-scatter-web.sh <app> sepolia
+./scripts/run-scatter-web.sh <app> sepolia
 #   app = hub | pay | pro | operators | admin
 ```
 
@@ -52,9 +52,9 @@ This reads `contracts/deployments/11155111.json`, generates
 Examples:
 
 ```bash
-scripts/run-scatter-web.sh hub sepolia        # navigation hub (no RPC needed)
-scripts/run-scatter-web.sh pro sepolia        # pro trading UI
-scripts/run-scatter-web.sh operators sepolia  # operator / KYC console
+./scripts/run-scatter-web.sh hub sepolia        # navigation hub (no RPC needed)
+./scripts/run-scatter-web.sh pro sepolia        # pro trading UI
+./scripts/run-scatter-web.sh operators sepolia  # operator / KYC console
 ```
 
 Flags:
@@ -118,7 +118,7 @@ launcher at your checkout (`ZK_X509_REPO`, default `../zk-X509`):
 ```bash
 git clone https://github.com/tokamak-network/zk-X509.git "$HOME/src/zk-X509"
 export ZK_X509_REPO="$HOME/src/zk-X509"      # if not at ../zk-X509
-scripts/run-zkx509-web.sh sepolia
+./scripts/run-zkx509-web.sh sepolia
 ```
 
 It reads the zk-X509 repo's own ledger
@@ -173,8 +173,8 @@ To see the addresses a run would inject without starting anything, use
 `--no-start` (the script echoes what it wrote):
 
 ```bash
-scripts/run-scatter-web.sh admin sepolia --no-start && cat apps/admin/.env.local
-scripts/run-zkx509-web.sh sepolia --no-start
+./scripts/run-scatter-web.sh admin sepolia --no-start && cat apps/admin/.env.local
+./scripts/run-zkx509-web.sh sepolia --no-start
 ```
 
 ## After a redeploy
