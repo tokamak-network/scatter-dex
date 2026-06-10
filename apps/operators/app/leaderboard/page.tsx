@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type MouseEvent, type KeyboardEvent } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type MouseEvent, type KeyboardEvent } from "react";
 import { ethers } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
-import { LiveFreshness, shortAddr, useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
+import { LiveFreshness, shortAddr, useTimedRefresh, useWallet, useWhitelistedTokens } from "@zkscatter/sdk/react";
 import {
   loadRelayersWithApiInfo,
   loadRelayersWithSharedOrderbookStats,
@@ -18,6 +18,15 @@ import { SectionHeader } from "../components/SectionHeader";
 import { DEMO_NETWORK } from "../lib/network";
 import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
 import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+
+/** Token symbol+decimals resolver. The per-token breakdown reads symbols and
+ *  decimals from the **on-chain token whitelist** (#928/#929) — the env
+ *  `NEXT_PUBLIC_TOKENS` registry is only a fallback for the initial render or
+ *  when no provider is available. Provided at the page level via
+ *  `useWhitelistedTokens`; defaults to the env registry so unwrapped renders
+ *  still work. */
+type TokenResolver = (addr: string | null | undefined) => { symbol: string; decimals: number };
+const TokenResolveContext = createContext<TokenResolver>(tokenInfo);
 
 /** Local USD price oracle — hardcoded for the dev environment so
  *  cross-token Volume/Revenue can collapse to a single comparable
@@ -296,7 +305,24 @@ export default function LeaderboardPage() {
   const me = accountLc ? ranked.find((r) => r.address.toLowerCase() === accountLc) : undefined;
   const medianFeeBps = ranked.length > 0 ? medianBps(ranked.map((r) => r.fee)) : null;
 
+  // Token symbols + decimals from the on-chain whitelist (#928/#929); the env
+  // registry is only the pre-load fallback. Powers the per-token breakdown so
+  // amounts render as "0.3 WETH" instead of the raw address + wei.
+  const { tokens: whitelistTokens } = useWhitelistedTokens({
+    provider: readProvider,
+    poolAddress: DEMO_NETWORK.contracts.commitmentPool,
+    settlementAddress: DEMO_NETWORK.contracts.privateSettlement,
+    fallback: [],
+  });
+  const resolveToken = useMemo<TokenResolver>(() => {
+    const byAddr = new Map(
+      whitelistTokens.map((t) => [t.address.toLowerCase(), { symbol: t.symbol, decimals: t.decimals }]),
+    );
+    return (addr) => (addr ? byAddr.get(addr.toLowerCase()) ?? tokenInfo(addr) : tokenInfo(addr));
+  }, [whitelistTokens]);
+
   return (
+    <TokenResolveContext.Provider value={resolveToken}>
     <div className="space-y-10">
       <header className="flex items-end justify-between">
         <div>
@@ -386,6 +412,7 @@ export default function LeaderboardPage() {
         </p>
       </section>
     </div>
+    </TokenResolveContext.Provider>
   );
 }
 
@@ -1071,6 +1098,8 @@ function normAddr(s: unknown): string | null {
  *  another). Splitting them disconnects the columns visually so the
  *  operator can't read causation that isn't there. */
 function RelayerDetailRow({ row }: { row: RankedRelayer }) {
+  // Symbols + decimals from the on-chain whitelist (env registry fallback).
+  const resolveTok = useContext(TokenResolveContext);
   const volumes = row.stats?.settledVolume ?? [];
   const fees = row.stats?.feeTotals ?? [];
   // Sort by USD desc instead of raw wei — 1 WETH and 1 USDC have very
@@ -1081,8 +1110,8 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
     rows: T[],
   ): T[] => {
     return [...rows].sort((a, b) => {
-      const ai = tokenInfo((a.token ?? a.sellToken) ?? "");
-      const bi = tokenInfo((b.token ?? b.sellToken) ?? "");
+      const ai = resolveTok((a.token ?? a.sellToken) ?? "");
+      const bi = resolveTok((b.token ?? b.sellToken) ?? "");
       const av = tokenUsd((a.totalWei ?? a.totalVolume) ?? "0", ai.decimals, ai.symbol) ?? 0;
       const bv = tokenUsd((b.totalWei ?? b.totalVolume) ?? "0", bi.decimals, bi.symbol) ?? 0;
       return bv - av;
@@ -1131,7 +1160,7 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
             title="Volume by token"
             subtitle="Sell-leg flow this relayer brought into settlement"
             rows={volRows.map((v) => {
-              const info = tokenInfo(v.sellToken);
+              const info = resolveTok(v.sellToken);
               const usd = tokenUsd(v.totalVolume, info.decimals, info.symbol);
               return {
                 tokenAddr: v.sellToken,
@@ -1149,7 +1178,7 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
             title="Fee by token"
             subtitle="Fees earned (accrues in the buy-leg token of each settle)"
             rows={feeRows.map((f) => {
-              const info = tokenInfo(f.token);
+              const info = resolveTok(f.token);
               const usd = tokenUsd(f.totalWei, info.decimals, info.symbol);
               return {
                 tokenAddr: f.token,
