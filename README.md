@@ -65,9 +65,26 @@ Set `SKIP_CIRCUIT_BUILD=1` on the deploy script when you know nothing changed si
 
 The "build them together" rule above is for **local anvil only**. On a **deployed** network the Groth16 verifiers are already on-chain, each locked to one specific zkey build. **Never `npm run build` the circuits to "refresh" Sepolia assets** — a rebuild draws a fresh phase-2 beacon, producing a zkey that no longer pairs with the deployed verifier, so every proof reverts with `InvalidProof()` (custom-error selector `0x09bde339`).
 
-The **canonical** set is pinned by the committed `circuits/zk-manifest.json` (sha256 per artifact), verified to pair with all Sepolia verifiers. The bytes themselves are **not** in git — `circuits/build` is generated/gitignored — because zkeys are large (~256 MB) and non-reproducible. They are distributed as fixed bytes via a public GCS bucket (`gs://zkscatter-zk-artifacts`, content-addressed by sha256). Frontends serve the prover assets from `apps/<app>/public/zk/` (gitignored; the browser fetches `/zk/<circuit>.{wasm,zkey}` at runtime); a fetch step (`predev`/`prebuild`/CI, `scripts/fetch-zk-assets.mjs`) downloads + checksum-verifies the manifest-pinned bytes into `public/zk`, so these always match the on-chain verifiers.
+The **canonical** set is pinned by the committed `circuits/zk-manifest.json` (sha256 per artifact), verified to pair with all Sepolia verifiers. The bytes themselves are **not** in git — `circuits/build` is generated/gitignored — because zkeys are large (~256 MB) and non-reproducible. They are distributed as fixed bytes via a public GCS bucket (`gs://zkscatter-zk-artifacts`, content-addressed by sha256). Frontends serve the prover assets from `apps/<app>/public/zk/` (gitignored; the browser fetches `/zk/<circuit>.wasm` + `/zk/<circuit>_final.zkey` at runtime); a fetch step (`predev`/`prebuild`/CI, `scripts/fetch-zk-assets.mjs`) downloads + checksum-verifies the manifest-pinned bytes into `public/zk`, so these always match the on-chain verifiers.
 
-**Troubleshooting `InvalidProof()` (`execution reverted (unknown custom error) data=0x09bde339`):** the served zkey does not pair with the on-chain verifier. Either the frontend serves a stale zkey (re-fetch the canonical asset) **or** the on-chain verifier is stale (redeploy it from the canonical zkey and re-point via the admin **Verifier rotation** page, `/protocol/settlement`). Confirm pairing by exporting the zkey's verification key (`snarkjs zkey export verificationkey`) and checking its `alpha`/`IC` G1 constants appear in the verifier's on-chain bytecode (`cast code <verifier>`).
+**Troubleshooting `InvalidProof()` (`execution reverted (unknown custom error) data=0x09bde339`):** the served zkey does not pair with the on-chain verifier. Either the frontend serves a stale zkey (re-fetch the canonical asset) **or** the on-chain verifier is stale (redeploy it from the canonical zkey and re-point via the admin **Verifier rotation** page, `/protocol/settlement`). Confirm pairing with `node scripts/check-zk-pairing.mjs` (exports the zkey's vkey and checks its `alpha`/`IC` G1 constants appear in the verifier's on-chain bytecode via `eth_getCode`).
+
+**Rotating circuits (rebuild + verifier redeploy).** When a circuit's zkey is regenerated and its on-chain verifier redeployed, refresh the distribution so everyone gets the new bytes:
+
+```bash
+# 1. redeploy each rotated circuit's verifier, re-point it (admin Verifier
+#    rotation page or setXVerifier), and record the new address in the ledger:
+#      contracts/deployments/<chainId>.json
+# 2. with the new circuits/build/ in place, upload + repin (needs gcloud auth):
+scripts/upload-zk-artifacts.sh            # uploads new sha256 objects, regenerates the manifest
+# 3. commit the new pins AND the updated ledger so consumers + the guard agree:
+git add circuits/zk-manifest.json contracts/deployments/<chainId>.json
+git commit -m "chore(zk): rotate <circuit> — repin + re-pointed verifier"
+# 4. sanity-check the canonical set pairs with the (now updated) deployed verifiers:
+node scripts/check-zk-pairing.mjs         # all N verifiers pair ✓
+```
+
+The ledger update in step 1/3 is essential: `check-zk-pairing.mjs` reads verifier addresses from `contracts/deployments/<chainId>.json`, so a stale ledger makes the guard check the wrong (old) verifier. Objects are content-addressed (`gs://zkscatter-zk-artifacts/zk/<sha256>`), so a rotation only *adds* objects — old builds stay reachable and nothing is overwritten.
 
 ### Full Local Dev (with zk-X509)
 
