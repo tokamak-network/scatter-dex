@@ -1,0 +1,95 @@
+{
+  "bucket": "zkscatter-zk-artifacts",
+  "artifacts": {
+    "authorize.wasm": {
+      "sha256": "ade7eeaa61c90fcd3930861920a8c386f5493b1bd863d5b015ac4c5f676ed491",
+      "bytes": 5421178,
+      "src": "authorize_js/authorize.wasm"
+    },
+    "authorize_final.zkey": {
+      "sha256": "5cd97336d789745a005c4a3766745f87a9354e90a11965ed8a7707ba19f164f4",
+      "bytes": 18955554,
+      "src": "authorize_final.zkey"
+    },
+    "authorize_64.wasm": {
+      "sha256": "b3e687c2bf448102097ec4315e5938e960b3aba452c91529b70ae848b79d39c8",
+      "bytes": 5556036,
+      "src": "authorize_64_js/authorize_64.wasm"
+    },
+    "authorize_64_final.zkey": {
+      "sha256": "3912fdd076894cc3fad9dc98c62bd6297d303d7d405e85558ddf5910c8c134b9",
+      "bytes": 50710370,
+      "src": "authorize_64_final.zkey"
+    },
+    "authorize_128.wasm": {
+      "sha256": "00b051d6d53e09bf844a82f64c0382a5093906a5af9e5c91e4877b0b322e41a2",
+      "bytes": 5735752,
+      "src": "authorize_128_js/authorize_128.wasm"
+    },
+    "authorize_128_final.zkey": {
+      "sha256": "2f92ebe8fbe6c8cd6307febe1e56f3b02ef9067caf639ead9445fb01469c754b",
+      "bytes": 94453770,
+      "src": "authorize_128_final.zkey"
+    },
+    "claim.wasm": {
+      "sha256": "0135027a2bfa91780d7bf3ebff9f42b5dc3398eb9683b905c232331027bdcba8",
+      "bytes": 2860469,
+      "src": "claim_js/claim.wasm"
+    },
+    "claim_final.zkey": {
+      "sha256": "22e9d37795f641d95d7a8ff50c4cf03d7c5c6b336bdcaf900b4707c91e3ddf30",
+      "bytes": 1180158,
+      "src": "claim_final.zkey"
+    },
+    "claim_64.wasm": {
+      "sha256": "eb4ecb139c7ce2ea9d2ab84cc498ff14d8c00db0123ed157ea97a37d675b6b45",
+      "bytes": 2864254,
+      "src": "claim_64_js/claim_64.wasm"
+    },
+    "claim_64_final.zkey": {
+      "sha256": "46556fe1420aae38f0168786089371da6fb1f599989919ff0e4ebce297bfb35a",
+      "bytes": 1421414,
+      "src": "claim_64_final.zkey"
+    },
+    "claim_128.wasm": {
+      "sha256": "e211be8667007009081a948dfbc6d9eb63e2268a538f14422fffb16383014251",
+      "bytes": 2866107,
+      "src": "claim_128_js/claim_128.wasm"
+    },
+    "claim_128_final.zkey": {
+      "sha256": "3fbb8eb3e7b122caa96007bb4aee23edd3da7f999b5ef9c054a3a35d424013a3",
+      "bytes": 1673114,
+      "src": "claim_128_final.zkey"
+    },
+    "deposit.wasm": {
+      "sha256": "785854fdca3fd099c360b4081ec8ab16b0ef8c0b57e40e50b64cbae3c82ab2e8",
+      "bytes": 2455609,
+      "src": "deposit_js/deposit.wasm"
+    },
+    "deposit_final.zkey": {
+      "sha256": "f1f21c643cfe427f985af3a27baf9ccdf6c3fac41bd3d3c1d7e5791af067c6e1",
+      "bytes": 564454,
+      "src": "deposit_final.zkey"
+    },
+    "withdraw.wasm": {
+      "sha256": "6371e3c68167eac8e7b2657559429c331cda4a10f522cdf96f4ed73a5b34a196",
+      "bytes": 4369409,
+      "src": "withdraw_js/withdraw.wasm"
+    },
+    "withdraw_final.zkey": {
+      "sha256": "898314809777066240e4527fb28291629a8a7f1bf53f741d492602316e9093e4",
+      "bytes": 7224174,
+      "src": "withdraw_final.zkey"
+    },
+    "cancel.wasm": {
+      "sha256": "e245ae85414eecf19d72cd0a83f1cd11c2d12439e65f91e6adeba4eeea2b4e20",
+      "bytes": 4146762,
+      "src": "cancel_js/cancel.wasm"
+    },
+    "cancel_final.zkey": {
+      "sha256": "29f3691c2d09f57e5b336aaa82423e68df257bf00fda7abb718951b43f405b63",
+      "bytes": 7195466,
+      "src": "cancel_final.zkey"
+    }
+  }
+}
