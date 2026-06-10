@@ -135,11 +135,17 @@ export interface CommitmentTreeProviderProps {
    *  rebuilds the tree whenever this changes — apps that switch
    *  networks supply the active address through their network hook. */
   poolAddress: string;
+  /** Pool deploy block — hydration scans `CommitmentInserted` from
+   *  here, not genesis. Omitting it scans from block 0, which is
+   *  wasteful and trips public nodes' `eth_getLogs` range cap once
+   *  the chain is far past the deploy block. */
+  fromBlock?: number;
   children: React.ReactNode;
 }
 
 export function CommitmentTreeProvider({
   poolAddress,
+  fromBlock,
   children,
 }: CommitmentTreeProviderProps) {
   const { readProvider } = useWallet();
@@ -189,7 +195,9 @@ export function CommitmentTreeProvider({
 
     chain = chain.then(async () => {
       try {
-        const past = await loadCommitmentInsertedHistory(readProvider, poolAddress);
+        const past = await loadCommitmentInsertedHistory(readProvider, poolAddress, {
+          fromBlock,
+        });
         if (cancelled) return;
         for (const row of past) {
           if (cancelled) return;
@@ -245,7 +253,7 @@ export function CommitmentTreeProvider({
       cancelled = true;
       unsubscribe();
     };
-  }, [poolAddress, readProvider, refreshNonce]);
+  }, [poolAddress, fromBlock, readProvider, refreshNonce]);
 
   const refresh = useCallback(() => {
     setRefreshNonce((n) => n + 1);
