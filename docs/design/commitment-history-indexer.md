@@ -171,8 +171,9 @@ GET /api/commitments?chainId=<id>&fromLeaf=<n>&limit=<n>
   }
 ```
 
-- `chainId` required (consistent with `/api/orders?chainId=`). Validate it
-  parses to a **non-negative integer**; reject `NaN`/negative with 400.
+- `chainId` parsed via the shared `parseChainIdQuery` (same as `/api/orders`):
+  a present-but-invalid value 400s; absent defaults to `DEFAULT_CHAIN_ID`
+  (Sepolia), matching the rest of the API.
 - `fromLeaf` (default 0) enables **incremental** fetch: a client that already
   has leaves 0..k requests `fromLeaf=k+1`. Same non-negative-integer validation.
 - `limit` (default e.g. 5000) is **hard-capped** server-side (e.g. 10 000) so a
@@ -258,9 +259,11 @@ getLogs path already uses**, and no on-chain-private data is served.
    check to today's `getLogs` path (ships independently of the server, closes the
    pre-existing trust gap, and is the safety net the rest of the rollout leans
    on). Also set `busy_timeout` in `db.ts`.
-1. **Server, dark:** DB tables + indexer process + `GET /api/commitments`,
-   deployed and backfilling. No client change yet; verify the endpoint returns
-   leaves matching an on-chain scan.
+1. **Server, dark — DONE:** `commitments` + `commitment_cursor` tables, the
+   standalone indexer (`src/commitment-indexer.ts`, `npm run
+   index:commitments[:watch]`), and `GET /api/commitments` (public read). No
+   client change yet; deploy + backfill, then verify the endpoint matches an
+   on-chain scan.
 2. **SDK opt-in:** add `serverUrl`; default it **off** so behaviour is identical
    until explicitly wired. Server path gated behind the same `isKnownRoot` check.
 3. **Apps:** pay first (`serverUrl = SCATTER_ORDERBOOK_URL`), watch it hydrate

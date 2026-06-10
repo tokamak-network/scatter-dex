@@ -11,6 +11,7 @@ import { createRelayerRoutes } from "./routes/relayers.js";
 import { createStatsRoutes } from "./routes/stats.js";
 import { createPeerRoutes } from "./routes/peer.js";
 import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/settlements.js";
+import { createCommitmentRoutes } from "./routes/commitments.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createKycRoutes } from "./routes/kyc.js";
 import { VerifyMonitor } from "./core/verify-runtime.js";
@@ -87,6 +88,9 @@ async function main() {
   // Per-relayer + network read views from the settlements indexer. Mounted
   // at root so the URLs read naturally (/api/relayers/:addr/stats etc).
   app.use("/api", createSettlementStatsRoutes(db, readLimiter));
+  // Commitment-tree leaves (public read). Written by the standalone
+  // commitment indexer (`src/commitment-indexer.ts`); this server only reads.
+  app.use("/api/commitments", createCommitmentRoutes(db, readLimiter));
 
   // Admin auth — a single SIWE handle + a shared gate accepting a SIWE
   // session token or the static ADMIN_TOKEN. Both /api/admin and the KYC

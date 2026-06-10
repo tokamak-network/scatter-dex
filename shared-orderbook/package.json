@@ -10,6 +10,9 @@
     "verify": "node dist/verify.js",
     "verify:dev": "tsx src/verify.ts",
     "verify:watch": "node dist/verify.js --watch",
+    "index:commitments": "node dist/commitment-indexer.js",
+    "index:commitments:dev": "tsx src/commitment-indexer.ts",
+    "index:commitments:watch": "node dist/commitment-indexer.js --watch",
     "test": "vitest run",
     "test:watch": "vitest"
   },
