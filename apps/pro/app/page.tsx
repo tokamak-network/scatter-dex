@@ -151,11 +151,8 @@ export default function Landing() {
       {/* Pricing */}
       <section>
         <h2 className="mb-2 text-center text-2xl font-semibold">Pricing</h2>
-        <p className="mx-auto mb-3 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
+        <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
           Pay per trade. Volume earns a rate cut.
-        </p>
-        <p className="mx-auto mb-10 inline-block max-w-2xl rounded-full bg-[var(--color-primary-soft)] px-3 py-1 text-center text-xs font-medium text-[var(--color-primary)]">
-          🎉 Launch event: zero trading fees on every order until Dec 31, 2026.
         </p>
         <div className="grid grid-cols-3 gap-4">
           <PriceCard plan="Standard" price="0.02%" sub="Per trade · relayer fee included" features={["Private limit orders", "Gasless claim", "Mobile Quick Sign"]} />

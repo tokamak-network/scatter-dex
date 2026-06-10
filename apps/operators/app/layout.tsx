@@ -44,11 +44,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                   <OperatorWalletDropdown />
                 </div>
               }
-              topRibbon={
-                <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-                  Relayer preview — Sepolia testnet. Pages with mock data are tagged inline.
-                </div>
-              }
               navLinks={
                 <>
                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>

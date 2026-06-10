@@ -68,11 +68,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                                   <ConnectWalletPill />
                                 </div>
                               }
-                              topRibbon={
-                                <div className="bg-[var(--color-primary)] py-2 text-center text-xs font-medium text-white">
-                                  🎉 Launch event — zero trading fees on every order until Dec 31, 2026.
-                                </div>
-                              }
                               navLinks={
                                 <>
                                   <Link href="/" className="hover:text-[var(--color-text)]">Home</Link>
