@@ -23,10 +23,27 @@ const DEFAULT_CHUNK_SIZE = 50_000;
  *  range never trips that cap regardless of how far the chain has
  *  advanced. `toBlock` defaults to the current head. */
 export interface CommitmentInsertedHistoryOptions {
-  fromBlock?: number;
-  toBlock?: number;
+  /** Block tag (number, decimal/hex string, or bigint). Env-derived
+   *  values like `NEXT_PUBLIC_PAY_DEPLOY_BLOCK` arrive as strings, so a
+   *  number-only type would silently drop them — accept all three. */
+  fromBlock?: string | number | bigint;
+  toBlock?: string | number | bigint;
   /** Max blocks per `eth_getLogs` window (default 50 000). */
   chunkSize?: number;
+}
+
+/** Coerce a block tag (number, decimal/hex string, or bigint) to a finite
+ *  block number, or `fallback` when absent/unparseable. `Number` handles
+ *  "11008264", "0x123", and bigints; a number-only `isFinite` guard would
+ *  reject the string forms env vars produce and quietly fall back to the
+ *  default — reintroducing the genesis scan this option exists to avoid. */
+function toBlockNumber(
+  tag: string | number | bigint | undefined,
+  fallback: number,
+): number {
+  if (tag === undefined || tag === "") return fallback;
+  const n = Number(tag);
+  return Number.isFinite(n) ? Math.floor(n) : fallback;
 }
 
 /** Read `CommitmentInserted` events the contract has emitted,
@@ -48,10 +65,12 @@ export async function loadCommitmentInsertedHistory(
   const contract = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
   const filter = contract.filters.CommitmentInserted();
 
-  const fromBlock = Number.isFinite(options?.fromBlock) ? Number(options!.fromBlock) : 0;
-  const toBlock = Number.isFinite(options?.toBlock)
-    ? Number(options!.toBlock)
-    : await provider.getBlockNumber();
+  const fromBlock = toBlockNumber(options?.fromBlock, 0);
+  // Only hit the RPC for the head when toBlock is absent/unparseable.
+  const toBlock =
+    options?.toBlock === undefined || options.toBlock === "" || !Number.isFinite(Number(options.toBlock))
+      ? await provider.getBlockNumber()
+      : Math.floor(Number(options.toBlock));
   const chunkSize =
     options?.chunkSize && options.chunkSize >= 1
       ? Math.floor(options.chunkSize)

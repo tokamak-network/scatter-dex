@@ -53,6 +53,25 @@ describe("loadCommitmentInsertedHistory", () => {
     expect(windows[0][0]).toBe(11_008_264);
   });
 
+  it("accepts string / bigint block tags (env vars arrive as strings)", async () => {
+    const { windows } = stubQueryFilter();
+    // "11008264" must NOT silently fall back to 0 (would re-scan genesis).
+    await loadCommitmentInsertedHistory(makeProvider(0), POOL_ADDR, {
+      fromBlock: "11008264",
+      toBlock: 11_026_479n,
+    });
+    expect(windows).toEqual([[11_008_264, 11_026_479]]);
+  });
+
+  it("hex-string block tags parse too", async () => {
+    const { windows } = stubQueryFilter();
+    await loadCommitmentInsertedHistory(makeProvider(0), POOL_ADDR, {
+      fromBlock: "0x64", // 100
+      toBlock: "0x64",
+    });
+    expect(windows).toEqual([[100, 100]]);
+  });
+
   it("defaults toBlock to the chain head", async () => {
     const { windows } = stubQueryFilter();
     await loadCommitmentInsertedHistory(makeProvider(42), POOL_ADDR, { fromBlock: 0 });
