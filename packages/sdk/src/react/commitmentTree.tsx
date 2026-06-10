@@ -12,6 +12,7 @@ import {
 import { useWallet } from "./wallet";
 import { ZERO_ADDRESS } from "../core/addresses";
 import {
+  isKnownPoolRoot,
   loadCommitmentInsertedHistory,
   subscribeCommitmentInserted,
 } from "../core/pool";
@@ -136,10 +137,11 @@ export interface CommitmentTreeProviderProps {
    *  networks supply the active address through their network hook. */
   poolAddress: string;
   /** Pool deploy block — hydration scans `CommitmentInserted` from
-   *  here, not genesis. Omitting it scans from block 0, which is
-   *  wasteful and trips public nodes' `eth_getLogs` range cap once
-   *  the chain is far past the deploy block. Accepts a number, a
-   *  decimal/hex string (env vars arrive as strings), or a bigint. */
+   *  here, not genesis. Omitting it scans from block 0: the loader still
+   *  chunks the range so it won't exceed the per-request block-range cap,
+   *  but it's wasteful and can hit rate/log limits on a long chain.
+   *  Accepts a number, a decimal/hex string (env vars arrive as strings),
+   *  or a bigint. */
   fromBlock?: string | number | bigint;
   children: React.ReactNode;
 }
@@ -215,6 +217,22 @@ export function CommitmentTreeProvider({
           index.set(row.commitment.toString(), idx);
         }
         if (cancelled) return;
+        // Verify the hydrated tree against the chain before trusting it
+        // for proofs. `isKnownRoot` is the SAME check settlement runs
+        // on-chain, so a passing root guarantees acceptable proofs; a
+        // failing one means the leaf set was incomplete/inconsistent
+        // (a dropped log that kept leafIndex contiguous, or — once a
+        // server feeds leaves — a tampered set) and we must NOT mark
+        // ready. Covers the empty-tree case too: if the RPC returned no
+        // logs but the pool is non-empty, the empty root has rolled out
+        // of the ring buffer and fails here.
+        const known = await isKnownPoolRoot(readProvider, poolAddress, tree.root);
+        if (cancelled) return;
+        if (!known) {
+          throw new Error(
+            "[commitmentTree] hydrated root not recognised on-chain — incomplete or inconsistent commitment set; refusing to mark ready. Refresh to retry.",
+          );
+        }
         setLeafCount(tree.nextIndex);
         setReady(true);
       } catch (err) {

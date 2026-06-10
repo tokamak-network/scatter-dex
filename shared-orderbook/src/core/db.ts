@@ -56,6 +56,11 @@ export class OrderbookDB {
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
     this.db.pragma("journal_mode = WAL");
+    // Multiple processes share this file (API reads; the settlement
+    // verifier and — once added — the commitment indexer write). WAL
+    // allows one writer at a time; without a busy timeout a colliding
+    // write throws SQLITE_BUSY immediately. Wait up to 5s for the lock.
+    this.db.pragma("busy_timeout = 5000");
     this.db.pragma("foreign_keys = ON");
     this.createTables();
     this.prepareStatements();

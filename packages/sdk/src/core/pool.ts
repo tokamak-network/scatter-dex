@@ -43,7 +43,9 @@ function toBlockNumber(
 ): number {
   if (tag === undefined || tag === "") return fallback;
   const n = Number(tag);
-  return Number.isFinite(n) ? Math.floor(n) : fallback;
+  // Clamp to >= 0 — a negative tag (e.g. "-1") would be forwarded to
+  // queryFilter and throw; block numbers are non-negative.
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback;
 }
 
 /** Read `CommitmentInserted` events the contract has emitted,
@@ -70,9 +72,12 @@ export async function loadCommitmentInsertedHistory(
   const toBlock =
     options?.toBlock === undefined || options.toBlock === "" || !Number.isFinite(Number(options.toBlock))
       ? await provider.getBlockNumber()
-      : Math.floor(Number(options.toBlock));
+      : Math.max(0, Math.floor(Number(options.toBlock)));
+  // `Number.isFinite` guard: `Infinity` would pass a bare `>= 1` test and
+  // collapse the scan to a single full-range query — the exact range-cap
+  // failure chunking exists to avoid.
   const chunkSize =
-    options?.chunkSize && options.chunkSize >= 1
+    options?.chunkSize && Number.isFinite(options.chunkSize) && options.chunkSize >= 1
       ? Math.floor(options.chunkSize)
       : DEFAULT_CHUNK_SIZE;
 
@@ -89,6 +94,33 @@ export async function loadCommitmentInsertedHistory(
   }
   rows.sort((a, b) => a.leafIndex - b.leafIndex);
   return rows;
+}
+
+/** True iff `root` is in the pool's on-chain root **history ring buffer**.
+ *  This is exactly the check `PrivateSettlement` runs against a proof's
+ *  root at settle time, so a locally-hydrated tree whose root passes here
+ *  is guaranteed to yield proofs the chain will accept — and one that fails
+ *  was built from an incomplete, inconsistent, or tampered leaf set. The
+ *  ring tolerates being a few inserts behind head (default
+ *  `ROOT_HISTORY_SIZE = 30`), so a slightly-stale client still matches a
+ *  recent historical root. */
+export async function isKnownPoolRoot(
+  provider: ethers.Provider,
+  poolAddress: string,
+  root: bigint,
+): Promise<boolean> {
+  const contract = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
+  return contract.isKnownRoot(root) as Promise<boolean>;
+}
+
+/** On-chain leaf count — `CommitmentPool.nextIndex()`. The index the next
+ *  inserted commitment will occupy, i.e. the current number of leaves. */
+export async function getPoolNextIndex(
+  provider: ethers.Provider,
+  poolAddress: string,
+): Promise<number> {
+  const contract = new ethers.Contract(poolAddress, COMMITMENT_POOL_ABI, provider);
+  return Number(await contract.nextIndex());
 }
 
 /** Subscribe to live `CommitmentInserted` events. Returns an
