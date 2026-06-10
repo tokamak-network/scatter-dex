@@ -95,6 +95,27 @@ describe("loadCommitmentInsertedHistory", () => {
     expect(windows).toEqual([[100, 100]]);
   });
 
+  it("falls back to the default window for a non-finite chunkSize", async () => {
+    const { windows } = stubQueryFilter();
+    // Infinity must NOT collapse the scan to one full-range query.
+    await loadCommitmentInsertedHistory(makeProvider(0), POOL_ADDR, {
+      fromBlock: 0,
+      toBlock: 120_100,
+      chunkSize: Infinity,
+    });
+    expect(windows.length).toBe(3); // chunked at the 50 000 default
+    expect(windows[0]).toEqual([0, 49_999]);
+  });
+
+  it("clamps a negative block tag to 0 (never forwards a negative to queryFilter)", async () => {
+    const { windows } = stubQueryFilter();
+    await loadCommitmentInsertedHistory(makeProvider(0), POOL_ADDR, {
+      fromBlock: "-1",
+      toBlock: 10,
+    });
+    expect(windows).toEqual([[0, 10]]);
+  });
+
   it("defaults toBlock to the chain head", async () => {
     const { windows } = stubQueryFilter();
     await loadCommitmentInsertedHistory(makeProvider(42), POOL_ADDR, { fromBlock: 0 });

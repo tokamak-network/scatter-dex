@@ -137,10 +137,11 @@ export interface CommitmentTreeProviderProps {
    *  networks supply the active address through their network hook. */
   poolAddress: string;
   /** Pool deploy block — hydration scans `CommitmentInserted` from
-   *  here, not genesis. Omitting it scans from block 0, which is
-   *  wasteful and trips public nodes' `eth_getLogs` range cap once
-   *  the chain is far past the deploy block. Accepts a number, a
-   *  decimal/hex string (env vars arrive as strings), or a bigint. */
+   *  here, not genesis. Omitting it scans from block 0: the loader still
+   *  chunks the range so it won't exceed the per-request block-range cap,
+   *  but it's wasteful and can hit rate/log limits on a long chain.
+   *  Accepts a number, a decimal/hex string (env vars arrive as strings),
+   *  or a bigint. */
   fromBlock?: string | number | bigint;
   children: React.ReactNode;
 }
