@@ -55,6 +55,7 @@ function tokenUsd(wei: string, decimals: number, symbol: string): number | null 
 }
 function sumUsd(
   rows: Array<{ token?: string; sellToken?: string; totalWei?: string; totalVolume?: string }>,
+  resolver: TokenResolver = tokenInfo,
 ): { total: number; missing: number } {
   let total = 0;
   let missing = 0;
@@ -62,7 +63,7 @@ function sumUsd(
     const tokAddr = r.token ?? r.sellToken;
     const wei = r.totalWei ?? r.totalVolume;
     if (!tokAddr || !wei) continue;
-    const info = tokenInfo(tokAddr);
+    const info = resolver(tokAddr);
     const usd = tokenUsd(wei, info.decimals, info.symbol);
     if (usd === null) {
       missing += 1;
@@ -186,9 +187,10 @@ const RANK_CRITERIA: RankCriterion[] = [
 // undefined as worse than any defined value via compareNullable).
 function usdTotal(
   rows: Array<{ token?: string; sellToken?: string; totalWei?: string; totalVolume?: string }> | undefined,
+  resolver: TokenResolver = tokenInfo,
 ): number | undefined {
   if (!rows || rows.length === 0) return undefined;
-  return sumUsd(rows).total;
+  return sumUsd(rows, resolver).total;
 }
 
 function criterionById(id: RankCriterionId): RankCriterion {
@@ -297,17 +299,12 @@ export default function LeaderboardPage() {
   const [segment, setSegment] = useState<Segment>("all");
   const criterion = criterionById(criterionId);
   const accountLc = account?.toLowerCase() ?? null;
-  const ranked = useMemo(
-    () => rankRelayers(applySegment(state.rows, segment), criterion),
-    [state.rows, segment, criterion],
-  );
-  const placeholder = leaderboardPlaceholder(state, registryDeployed);
-  const me = accountLc ? ranked.find((r) => r.address.toLowerCase() === accountLc) : undefined;
-  const medianFeeBps = ranked.length > 0 ? medianBps(ranked.map((r) => r.fee)) : null;
 
   // Token symbols + decimals from the on-chain whitelist (#928/#929); the env
-  // registry is only the pre-load fallback. Powers the per-token breakdown so
-  // amounts render as "0.3 WETH" instead of the raw address + wei.
+  // registry is only the pre-load fallback. Powers every USD figure (ranking,
+  // Volume/Fee cells, network totals, the share bar) and the per-token
+  // breakdown, so on-chain tokens resolve to their real symbol + decimals
+  // instead of address + raw wei (which read as $0/unpriced).
   const { tokens: whitelistTokens } = useWhitelistedTokens({
     provider: readProvider,
     poolAddress: DEMO_NETWORK.contracts.commitmentPool,
@@ -320,6 +317,14 @@ export default function LeaderboardPage() {
     );
     return (addr) => (addr ? byAddr.get(addr.toLowerCase()) ?? tokenInfo(addr) : tokenInfo(addr));
   }, [whitelistTokens]);
+
+  const ranked = useMemo(
+    () => rankRelayers(applySegment(state.rows, segment), criterion, resolveToken),
+    [state.rows, segment, criterion, resolveToken],
+  );
+  const placeholder = leaderboardPlaceholder(state, registryDeployed);
+  const me = accountLc ? ranked.find((r) => r.address.toLowerCase() === accountLc) : undefined;
+  const medianFeeBps = ranked.length > 0 ? medianBps(ranked.map((r) => r.fee)) : null;
 
   return (
     <TokenResolveContext.Provider value={resolveToken}>
@@ -536,6 +541,7 @@ interface RankedRelayer extends RelayerInfo {
 function rankRelayers(
   rows: RelayerInfo[],
   criterion: RankCriterion,
+  resolver: TokenResolver = tokenInfo,
 ): RankedRelayer[] {
   // Decorate-sort-undecorate: project the per-row metadata + the
   // USD sort keys ONCE before the sort, so the comparator never
@@ -544,8 +550,8 @@ function rankRelayers(
     ...r,
     rank: 0,
     displayName: relayerDisplayName(r),
-    volumeUsd: usdTotal(r.stats?.settledVolume),
-    revenueUsd: usdTotal(r.stats?.feeTotals),
+    volumeUsd: usdTotal(r.stats?.settledVolume, resolver),
+    revenueUsd: usdTotal(r.stats?.feeTotals, resolver),
   }));
   projected.sort(criterion.compare);
   return projected.map((r, i) => ({ ...r, rank: i + 1 }));
@@ -863,6 +869,7 @@ function RelayerRow({
  *  cell stays one number. Peers without a `settledVolume` field
  *  (older builds / pre-migration rows) render the offline `—`. */
 function VolumeCell({ row, segment }: { row: RankedRelayer; segment: Segment }) {
+  const resolveTok = useContext(TokenResolveContext);
   const volumes = row.stats?.settledVolume ?? [];
   const status = relayerStatsCellStatus(row, volumes.length > 0 ? 1 : undefined);
   if (volumes.length === 0) {
@@ -873,7 +880,7 @@ function VolumeCell({ row, segment }: { row: RankedRelayer; segment: Segment }) 
       </td>
     );
   }
-  const { total, missing } = sumUsd(volumes);
+  const { total, missing } = sumUsd(volumes, resolveTok);
   const tokenCount = volumes.length;
   // Mix bar — visible only in the aggregate "All" view, when the
   // relayer's build supplies a `byApp` split. In Pay/Pro views the
@@ -904,10 +911,11 @@ function PayProMixBar({
   byApp: { pay: RelayerStatsByApp; pro: RelayerStatsByApp };
   metric: "volume" | "fee";
 }) {
+  const resolveTok = useContext(TokenResolveContext);
   const pickRows = (sub: RelayerStatsByApp) =>
     metric === "volume" ? sub.settledVolume ?? [] : sub.feeTotals ?? [];
-  const payUsd = sumUsd(pickRows(byApp.pay)).total;
-  const proUsd = sumUsd(pickRows(byApp.pro)).total;
+  const payUsd = sumUsd(pickRows(byApp.pay), resolveTok).total;
+  const proUsd = sumUsd(pickRows(byApp.pro), resolveTok).total;
   const total = payUsd + proUsd;
   if (total <= 0) return null;
   const payPct = Math.round((payUsd / total) * 100);
@@ -974,11 +982,12 @@ function NetworkTotalsStrip({
   ranked: RankedRelayer[];
   segment: Segment;
 }) {
+  const resolveTok = useContext(TokenResolveContext);
   const vols = ranked.flatMap((r) => r.stats?.settledVolume ?? []);
   const fees = ranked.flatMap((r) => r.stats?.feeTotals ?? []);
   if (vols.length === 0 && fees.length === 0) return null;
-  const vol = sumUsd(vols);
-  const fee = sumUsd(fees);
+  const vol = sumUsd(vols, resolveTok);
+  const fee = sumUsd(fees, resolveTok);
   const totalSettled = ranked.reduce(
     (n, r) => n + (r.stats?.settledOrders ?? 0),
     0,
@@ -1043,6 +1052,7 @@ function safeBigInt(s: string): bigint {
  *  "what did it earn" columns line up token-by-token. Falls back to
  *  the same offline `—` shape when the peer doesn't expose feeTotals. */
 function RevenueCell({ row, segment }: { row: RankedRelayer; segment: Segment }) {
+  const resolveTok = useContext(TokenResolveContext);
   const totals = row.stats?.feeTotals ?? [];
   const status = relayerStatsCellStatus(row, totals.length > 0 ? 1 : undefined);
   if (totals.length === 0) {
@@ -1053,7 +1063,7 @@ function RevenueCell({ row, segment }: { row: RankedRelayer; segment: Segment })
       </td>
     );
   }
-  const { total, missing } = sumUsd(totals);
+  const { total, missing } = sumUsd(totals, resolveTok);
   const tokenCount = totals.length;
   const byApp = row.stats?.byApp;
   const showMix = segment === "all" && !!byApp;
@@ -1119,8 +1129,8 @@ function RelayerDetailRow({ row }: { row: RankedRelayer }) {
   };
   const volRows = rankByUsd(volumes);
   const feeRows = rankByUsd(fees);
-  const volTotal = sumUsd(volumes).total;
-  const feeTotal = sumUsd(fees).total;
+  const volTotal = sumUsd(volumes, resolveTok).total;
+  const feeTotal = sumUsd(fees, resolveTok).total;
   // Match the colored left-border accent to the rank-badge palette
   // (gold #1 / silver #2 / bronze #3 / neutral 4+) so the eye can
   // trace any open drawer straight back to its parent row at a
