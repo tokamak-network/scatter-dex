@@ -427,8 +427,14 @@ function NewPayout() {
   // wait would otherwise orphan escrowed money from the recipient list
   // it was deposited for. That save is tied to an explicit, high-stakes
   // action on an already-named run, so it reintroduces neither problem.
+  // Re-entry guard: the button and the deposit kickoff can both fire a
+  // save; serialise them so two concurrent writes to the same draft can't
+  // race (last-write-wins on the same label is otherwise benign, but the
+  // lock keeps `lastSavedLabelRef` / the URL replace deterministic).
+  const saveInFlightRef = useRef(false);
   const saveDraftNow = useCallback(async (): Promise<string | null> => {
-    if (!account || !label.trim()) return null;
+    if (!account || !label.trim() || saveInFlightRef.current) return null;
+    saveInFlightRef.current = true;
     setDraftSaveError(null);
     try {
       const saved = await saveWizardDraft(account, lastSavedLabelRef.current, {
@@ -449,6 +455,8 @@ function NewPayout() {
       console.error("[Pay] saveWizardDraft failed", err);
       setDraftSaveError(err instanceof Error ? err.message : String(err));
       return null;
+    } finally {
+      saveInFlightRef.current = false;
     }
   }, [account, label, step, categoryId, token, csv, reason, claimFrom, maxFeeBps, router]);
 

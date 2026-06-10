@@ -4,6 +4,7 @@ import { ethers } from "ethers";
 import {
   COMMITMENT_POOL_IFACE,
   ERC20_IFACE,
+  isConfiguredAddress,
   LAUNCH_TOKENS,
   overlayOnchainTokens,
 } from "@zkscatter/sdk";
@@ -190,7 +191,7 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   // address (whitelist, or the env slot as fallback), so `.address` is
   // the usable ERC-20 slot for both native and non-native tokens.
   const erc20Address = tokenInfo.address;
-  if (!erc20Address || erc20Address === ethers.ZeroAddress) {
+  if (!isConfiguredAddress(erc20Address)) {
     throw new Error(
       tokenInfo.isNative
         ? "WETH address not configured — set NEXT_PUBLIC_PAY_WETH to deposit ETH."

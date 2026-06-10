@@ -6,6 +6,7 @@ import { ethers } from "ethers";
 import {
   ERC20_ABI,
   formatTokenLabel,
+  isConfiguredAddress,
   LAUNCH_TOKENS,
   type TokenInfo,
 } from "@zkscatter/sdk";
@@ -36,7 +37,7 @@ export default function WalletPage() {
   // `balanceOf` (isNative=false). Matches the dual entry exposed in
   // the deposit modal so wallet ↔ deposit numbers stay consistent.
   const tokensWithWeth = useMemo(() => {
-    const eth = curatedTokens.find((t) => t.isNative && t.address && t.address !== ZERO);
+    const eth = curatedTokens.find((t) => t.isNative && isConfiguredAddress(t.address));
     if (!eth) return curatedTokens;
     return [
       ...curatedTokens,
@@ -67,7 +68,7 @@ export default function WalletPage() {
               const raw = await provider.getBalance(account);
               return { token, address: ZERO, raw, loading: false, error: null };
             }
-            if (!token.address || token.address === ZERO) {
+            if (!isConfiguredAddress(token.address)) {
               return {
                 token,
                 address: ZERO,
