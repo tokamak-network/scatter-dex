@@ -96,6 +96,61 @@ export async function loadCommitmentInsertedHistory(
   return rows;
 }
 
+/** Page size when fetching leaves from the orderbook indexer. Must stay <=
+ *  the server's MAX_LIMIT; a short page signals the last page. */
+const SERVER_PAGE_SIZE = 5_000;
+
+export interface FetchCommitmentLeavesOptions {
+  /** Injectable for tests; defaults to the global `fetch`. */
+  fetchImpl?: typeof fetch;
+  /** Override the page size (defaults to {@link SERVER_PAGE_SIZE}). */
+  pageSize?: number;
+}
+
+/** Fetch the full commitment history for `chainId` from a shared-orderbook
+ *  indexer (`GET /api/commitments`), paging by `fromLeaf` until a short page.
+ *  Returns rows in `loadCommitmentInsertedHistory`'s shape so callers can treat
+ *  the two sources identically. Throws on any non-2xx, network error, or
+ *  malformed payload — the caller falls back to `getLogs` and re-verifies the
+ *  root, so a bad/incomplete server response is never silently trusted. */
+export async function fetchCommitmentLeaves(
+  serverUrl: string,
+  chainId: number | bigint,
+  options?: FetchCommitmentLeavesOptions,
+): Promise<CommitmentInsertedRow[]> {
+  const doFetch = options?.fetchImpl ?? fetch;
+  const pageSize = options?.pageSize ?? SERVER_PAGE_SIZE;
+  const base = serverUrl.replace(/\/$/, "");
+
+  const rows: CommitmentInsertedRow[] = [];
+  let fromLeaf = 0;
+  for (;;) {
+    const url = `${base}/api/commitments?chainId=${chainId}&fromLeaf=${fromLeaf}&limit=${pageSize}`;
+    const res = await doFetch(url);
+    if (!res.ok) throw new Error(`commitments endpoint returned ${res.status}`);
+    const body = (await res.json()) as { commitments?: unknown };
+    const page = body.commitments;
+    if (!Array.isArray(page)) throw new Error("commitments endpoint: malformed payload");
+    for (const c of page as Array<{ commitment: string; leafIndex: number }>) {
+      rows.push({ commitment: BigInt(c.commitment), leafIndex: Number(c.leafIndex) });
+    }
+    if (page.length < pageSize) break;
+    // Resume after the last leaf we received (dense, ascending by leafIndex).
+    const next = rows[rows.length - 1].leafIndex + 1;
+    // Strict-progress guard: the server is untrusted, so a full page whose
+    // `fromLeaf` doesn't advance (static/looping/`fromLeaf`-ignoring server)
+    // would loop forever. Require monotonic progress; otherwise bail and let
+    // the caller fall back to getLogs.
+    if (next <= fromLeaf) {
+      throw new Error(
+        `commitments endpoint: leafIndex did not advance past ${fromLeaf} (non-progressing server)`,
+      );
+    }
+    fromLeaf = next;
+  }
+  return rows;
+}
+
 /** True iff `root` is in the pool's on-chain root **history ring buffer**.
  *  This is exactly the check `PrivateSettlement` runs against a proof's
  *  root at settle time, so a locally-hydrated tree whose root passes here

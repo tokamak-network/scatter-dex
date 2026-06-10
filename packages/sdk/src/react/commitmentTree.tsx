@@ -12,9 +12,11 @@ import {
 import { useWallet } from "./wallet";
 import { ZERO_ADDRESS } from "../core/addresses";
 import {
+  fetchCommitmentLeaves,
   isKnownPoolRoot,
   loadCommitmentInsertedHistory,
   subscribeCommitmentInserted,
+  type CommitmentInsertedRow,
 } from "../core/pool";
 import {
   COMMIT_TREE_DEPTH,
@@ -143,12 +145,18 @@ export interface CommitmentTreeProviderProps {
    *  Accepts a number, a decimal/hex string (env vars arrive as strings),
    *  or a bigint. */
   fromBlock?: string | number | bigint;
+  /** Optional shared-orderbook base URL. When set, hydration fetches leaves
+   *  from `GET /api/commitments` first (fast, no client log scan) and falls
+   *  back to `getLogs` if the server is unreachable OR its leaves fail the
+   *  on-chain root check. Omit to use `getLogs` only. */
+  serverUrl?: string;
   children: React.ReactNode;
 }
 
 export function CommitmentTreeProvider({
   poolAddress,
   fromBlock,
+  serverUrl,
   children,
 }: CommitmentTreeProviderProps) {
   const { readProvider } = useWallet();
@@ -176,8 +184,14 @@ export function CommitmentTreeProvider({
     // cannot accidentally write into the new effect's tree. Refs are
     // updated to point at this iteration's instances; the cancelled
     // flag below also gates resumed callbacks from publishing.
-    const tree = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
-    const index = new Map<string, number>();
+    //
+    // `let`, not `const`: a verified hydration may REPLACE these with a
+    // freshly-built tree (e.g. server leaves failed the root check, so we
+    // rebuilt from getLogs). The live-event handler below reads `tree`/
+    // `index` at call time, and the `chain` serialisation guarantees the
+    // hydrate step (incl. any swap) completes before any live handler runs.
+    let tree = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
+    let index = new Map<string, number>();
     treeRef.current = tree;
     indexRef.current = index;
     setLeafCount(0);
@@ -196,43 +210,84 @@ export function CommitmentTreeProvider({
     // in the same tick — can't corrupt `filledSubtrees`.
     let chain: Promise<void> = Promise.resolve();
 
+    // Build a FRESH tree from a row loader, replay leaves (asserting
+    // leafIndex contiguity), and verify the root on-chain. Returns the
+    // populated {tree,index} when `isKnownRoot` passes, or null when it
+    // doesn't (so the caller can fall back to another source). Throws on a
+    // load/replay failure. `isKnownRoot` is the SAME check settlement runs
+    // on-chain, so a passing root guarantees acceptable proofs; a failing
+    // one means the leaf set was incomplete/inconsistent (a dropped log
+    // that kept leafIndex contiguous, or a tampered/truncated server set).
+    // Covers the empty-tree case too: if no leaves came back but the pool
+    // is non-empty, the empty root has rolled out of the ring and fails.
+    const buildVerified = async (
+      loadRows: () => Promise<CommitmentInsertedRow[]>,
+    ): Promise<{ tree: IncrementalMerkleTree; index: Map<string, number> } | null> => {
+      const t = new IncrementalMerkleTree(COMMIT_TREE_DEPTH);
+      const idx = new Map<string, number>();
+      const rows = await loadRows();
+      if (cancelled) return null;
+      for (const row of rows) {
+        if (cancelled) return null;
+        const i = await t.insert(row.commitment);
+        if (i !== row.leafIndex) {
+          throw new Error(
+            `[commitmentTree] hydrate mismatch at idx ${row.leafIndex}: insert returned ${i}. Source returned an incomplete/out-of-order leaf set.`,
+          );
+        }
+        idx.set(row.commitment.toString(), i);
+      }
+      if (cancelled) return null;
+      const known = await isKnownPoolRoot(readProvider, poolAddress, t.root);
+      if (cancelled) return null;
+      return known ? { tree: t, index: idx } : null;
+    };
+
     chain = chain.then(async () => {
       try {
-        const past = await loadCommitmentInsertedHistory(readProvider, poolAddress, {
-          fromBlock,
-        });
-        if (cancelled) return;
-        for (const row of past) {
-          if (cancelled) return;
-          const idx = await tree.insert(row.commitment);
-          // A divergence means the RPC dropped a log or returned
-          // out of order — building proofs against a corrupted tree
-          // would silently fail at settle time, so refuse to mark
-          // `ready` and surface the discrepancy.
-          if (idx !== row.leafIndex) {
-            throw new Error(
-              `[commitmentTree] hydrate mismatch at idx ${row.leafIndex}: insert returned ${idx}. RPC may have returned an incomplete log set; refresh to retry.`,
+        const fromGetLogs = () =>
+          loadCommitmentInsertedHistory(readProvider, poolAddress, { fromBlock });
+
+        let built: { tree: IncrementalMerkleTree; index: Map<string, number> } | null = null;
+
+        // Server first (if configured). Any failure — unreachable, bad
+        // payload, replay mismatch, or a root the chain doesn't know —
+        // falls through to getLogs, which is authoritative. A blank/whitespace
+        // serverUrl is treated as "off"; a malformed non-empty one fails the
+        // fetch and falls back rather than breaking hydration.
+        const server = serverUrl?.trim();
+        if (server) {
+          try {
+            const chainId = (await readProvider.getNetwork()).chainId;
+            if (cancelled) return;
+            built = await buildVerified(() => fetchCommitmentLeaves(server, chainId));
+            if (!built) {
+              console.warn(
+                "[commitmentTree] server leaves failed the on-chain root check; falling back to getLogs.",
+              );
+            }
+          } catch (serverErr) {
+            console.warn(
+              "[commitmentTree] server hydrate failed; falling back to getLogs:",
+              serverErr,
             );
           }
-          index.set(row.commitment.toString(), idx);
         }
+
+        if (!built) built = await buildVerified(fromGetLogs);
         if (cancelled) return;
-        // Verify the hydrated tree against the chain before trusting it
-        // for proofs. `isKnownRoot` is the SAME check settlement runs
-        // on-chain, so a passing root guarantees acceptable proofs; a
-        // failing one means the leaf set was incomplete/inconsistent
-        // (a dropped log that kept leafIndex contiguous, or — once a
-        // server feeds leaves — a tampered set) and we must NOT mark
-        // ready. Covers the empty-tree case too: if the RPC returned no
-        // logs but the pool is non-empty, the empty root has rolled out
-        // of the ring buffer and fails here.
-        const known = await isKnownPoolRoot(readProvider, poolAddress, tree.root);
-        if (cancelled) return;
-        if (!known) {
+        if (!built) {
           throw new Error(
             "[commitmentTree] hydrated root not recognised on-chain — incomplete or inconsistent commitment set; refusing to mark ready. Refresh to retry.",
           );
         }
+
+        // Publish the verified tree. Reassign the `let` bindings so the live
+        // handler appends to the same instance the refs now point at.
+        tree = built.tree;
+        index = built.index;
+        treeRef.current = tree;
+        indexRef.current = index;
         setLeafCount(tree.nextIndex);
         setReady(true);
       } catch (err) {
@@ -272,7 +327,7 @@ export function CommitmentTreeProvider({
       cancelled = true;
       unsubscribe();
     };
-  }, [poolAddress, fromBlock, readProvider, refreshNonce]);
+  }, [poolAddress, fromBlock, serverUrl, readProvider, refreshNonce]);
 
   const refresh = useCallback(() => {
     setRefreshNonce((n) => n + 1);

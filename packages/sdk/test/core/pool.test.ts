@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { ethers } from "ethers";
 import {
+  fetchCommitmentLeaves,
   getPoolNextIndex,
   isKnownPoolRoot,
   loadCommitmentInsertedHistory,
@@ -130,6 +131,74 @@ describe("loadCommitmentInsertedHistory", () => {
       chunkSize: 50_000,
     });
     expect(rows.map((r) => r.leafIndex)).toEqual([0, 50_000, 100_000]);
+  });
+});
+
+describe("fetchCommitmentLeaves (orderbook indexer source)", () => {
+  /** Fake fetch serving `total` leaves in `limit`-sized pages, recording the
+   *  URLs requested so we can assert paging. */
+  function pagedFetch(total: number) {
+    const urls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      urls.push(url);
+      const u = new URL(url);
+      const fromLeaf = Number(u.searchParams.get("fromLeaf"));
+      const limit = Number(u.searchParams.get("limit"));
+      const slice = [];
+      for (let i = fromLeaf; i < Math.min(fromLeaf + limit, total); i++) {
+        slice.push({ leafIndex: i, commitment: "0x" + (i + 1).toString(16), blockNumber: 1000 + i });
+      }
+      return { ok: true, status: 200, json: async () => ({ commitments: slice }) };
+    }) as unknown as typeof fetch;
+    return { fetchImpl, urls };
+  }
+
+  it("pages by fromLeaf until a short page and returns all leaves in order", async () => {
+    const { fetchImpl, urls } = pagedFetch(12);
+    const rows = await fetchCommitmentLeaves("http://ob", 11155111, { fetchImpl, pageSize: 5 });
+    expect(rows.map((r) => r.leafIndex)).toEqual([0,1,2,3,4,5,6,7,8,9,10,11]);
+    expect(rows[0].commitment).toBe(1n); // BigInt-parsed
+    // pages: fromLeaf 0, 5, 10 → 3 requests (last page short, stops)
+    expect(urls.length).toBe(3);
+    expect(urls[1]).toContain("fromLeaf=5");
+    expect(urls[2]).toContain("fromLeaf=10");
+  });
+
+  it("stops after one page when the first page is short", async () => {
+    const { fetchImpl, urls } = pagedFetch(3);
+    const rows = await fetchCommitmentLeaves("http://ob/", 1, { fetchImpl, pageSize: 5 });
+    expect(rows).toHaveLength(3);
+    expect(urls).toHaveLength(1);
+  });
+
+  it("throws on a non-2xx response (caller falls back to getLogs)", async () => {
+    const fetchImpl = (async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
+    await expect(fetchCommitmentLeaves("http://ob", 1, { fetchImpl })).rejects.toThrow(/503/);
+  });
+
+  it("throws on a malformed payload", async () => {
+    const fetchImpl = (async () => ({ ok: true, status: 200, json: async () => ({ nope: 1 }) })) as unknown as typeof fetch;
+    await expect(fetchCommitmentLeaves("http://ob", 1, { fetchImpl })).rejects.toThrow(/malformed/);
+  });
+
+  it("bails on a non-progressing server (full page that ignores fromLeaf)", async () => {
+    // Always returns the SAME full page regardless of fromLeaf — would loop
+    // forever without the strict-progress guard.
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          commitments: [0, 1, 2].map((i) => ({ leafIndex: i, commitment: "0x1", blockNumber: 1 })),
+        }),
+      };
+    }) as unknown as typeof fetch;
+    await expect(
+      fetchCommitmentLeaves("http://ob", 1, { fetchImpl, pageSize: 3 }),
+    ).rejects.toThrow(/non-progressing/);
+    expect(calls).toBeLessThan(5); // bailed quickly, no infinite loop
   });
 });
 
