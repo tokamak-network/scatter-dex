@@ -252,14 +252,15 @@ export function CommitmentTreeProvider({
 
         // Server first (if configured). Any failure — unreachable, bad
         // payload, replay mismatch, or a root the chain doesn't know —
-        // falls through to getLogs, which is authoritative.
-        if (serverUrl) {
+        // falls through to getLogs, which is authoritative. A blank/whitespace
+        // serverUrl is treated as "off"; a malformed non-empty one fails the
+        // fetch and falls back rather than breaking hydration.
+        const server = serverUrl?.trim();
+        if (server) {
           try {
             const chainId = (await readProvider.getNetwork()).chainId;
             if (cancelled) return;
-            built = await buildVerified(() =>
-              fetchCommitmentLeaves(serverUrl, chainId),
-            );
+            built = await buildVerified(() => fetchCommitmentLeaves(server, chainId));
             if (!built) {
               console.warn(
                 "[commitmentTree] server leaves failed the on-chain root check; falling back to getLogs.",

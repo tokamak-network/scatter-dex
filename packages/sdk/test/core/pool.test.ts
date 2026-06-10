@@ -180,6 +180,26 @@ describe("fetchCommitmentLeaves (orderbook indexer source)", () => {
     const fetchImpl = (async () => ({ ok: true, status: 200, json: async () => ({ nope: 1 }) })) as unknown as typeof fetch;
     await expect(fetchCommitmentLeaves("http://ob", 1, { fetchImpl })).rejects.toThrow(/malformed/);
   });
+
+  it("bails on a non-progressing server (full page that ignores fromLeaf)", async () => {
+    // Always returns the SAME full page regardless of fromLeaf — would loop
+    // forever without the strict-progress guard.
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          commitments: [0, 1, 2].map((i) => ({ leafIndex: i, commitment: "0x1", blockNumber: 1 })),
+        }),
+      };
+    }) as unknown as typeof fetch;
+    await expect(
+      fetchCommitmentLeaves("http://ob", 1, { fetchImpl, pageSize: 3 }),
+    ).rejects.toThrow(/non-progressing/);
+    expect(calls).toBeLessThan(5); // bailed quickly, no infinite loop
+  });
 });
 
 describe("on-chain tree verification helpers", () => {

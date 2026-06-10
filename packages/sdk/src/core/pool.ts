@@ -136,7 +136,17 @@ export async function fetchCommitmentLeaves(
     }
     if (page.length < pageSize) break;
     // Resume after the last leaf we received (dense, ascending by leafIndex).
-    fromLeaf = rows[rows.length - 1].leafIndex + 1;
+    const next = rows[rows.length - 1].leafIndex + 1;
+    // Strict-progress guard: the server is untrusted, so a full page whose
+    // `fromLeaf` doesn't advance (static/looping/`fromLeaf`-ignoring server)
+    // would loop forever. Require monotonic progress; otherwise bail and let
+    // the caller fall back to getLogs.
+    if (next <= fromLeaf) {
+      throw new Error(
+        `commitments endpoint: leafIndex did not advance past ${fromLeaf} (non-progressing server)`,
+      );
+    }
+    fromLeaf = next;
   }
   return rows;
 }
