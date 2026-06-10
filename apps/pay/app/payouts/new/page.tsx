@@ -432,6 +432,16 @@ function NewPayout() {
   // race (last-write-wins on the same label is otherwise benign, but the
   // lock keeps `lastSavedLabelRef` / the URL replace deterministic).
   const saveInFlightRef = useRef(false);
+  // Guards the post-await side effects below: a draft save can outlive the
+  // page (the user navigates away mid-save), and a late `router.replace`
+  // would yank them back to /payouts/new.
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
   const saveDraftNow = useCallback(async (): Promise<string | null> => {
     if (!account || !label.trim() || saveInFlightRef.current) return null;
     saveInFlightRef.current = true;
@@ -447,13 +457,18 @@ function NewPayout() {
         claimFrom,
         maxFeeBps,
       });
-      setDraftSavedAt(saved.savedAt);
       lastSavedLabelRef.current = saved.label;
-      router.replace(`/payouts/new?label=${encodeURIComponent(saved.label)}`);
+      // Skip state + navigation if the user left mid-save.
+      if (isMountedRef.current) {
+        setDraftSavedAt(saved.savedAt);
+        router.replace(`/payouts/new?label=${encodeURIComponent(saved.label)}`);
+      }
       return saved.label;
     } catch (err) {
       console.error("[Pay] saveWizardDraft failed", err);
-      setDraftSaveError(err instanceof Error ? err.message : String(err));
+      if (isMountedRef.current) {
+        setDraftSaveError(err instanceof Error ? err.message : String(err));
+      }
       return null;
     } finally {
       saveInFlightRef.current = false;

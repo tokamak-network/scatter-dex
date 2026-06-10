@@ -111,8 +111,8 @@ function weiToDisplay(wei: bigint, decimals: number): string {
 }
 
 function tokenDecimals(symbol: string, tokens: TokenInfo[]): number {
-  const target = symbol.toUpperCase();
-  return tokens.find((t) => t.symbol.toUpperCase() === target)?.decimals ?? 18;
+  const target = symbol?.toUpperCase();
+  return tokens.find((t) => t.symbol?.toUpperCase() === target)?.decimals ?? 18;
 }
 
 function sellDisplay(o: OrderRecord, tokens: TokenInfo[]): string {
