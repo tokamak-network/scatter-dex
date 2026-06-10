@@ -9,7 +9,12 @@ import {
   LAUNCH_TOKENS,
   type TokenInfo,
 } from "@zkscatter/sdk";
-import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
+import {
+  shortAddr,
+  useCuratedNetworkTokens,
+  useMounted,
+  useWallet,
+} from "@zkscatter/sdk/react";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { getNetworkConfig } from "../_lib/network";
 import { SendModal } from "./_SendModal";
@@ -24,6 +29,12 @@ export default function WalletPage() {
   const cfg = useMemo(() => getNetworkConfig(), []);
   const { account, signer, readProvider } = useWallet();
   const mounted = useMounted();
+  // Token addresses + decimals come from the on-chain Pool∩Settlement
+  // whitelist (a team deployment registers them via `setTokenWhitelist`),
+  // not from `NEXT_PUBLIC_*` env — so a token the operator whitelisted
+  // (e.g. TON) shows its real balance even when no env address was set.
+  // The curated `cfg.tokens` is the pre-load fallback.
+  const { tokens } = useCuratedNetworkTokens(cfg);
   const [rows, setRows] = useState<BalanceRow[]>(() => initialRows(cfg.tokens));
   const [sendingFor, setSendingFor] = useState<BalanceRow | null>(null);
   const [tick, setTick] = useState(0);
@@ -42,7 +53,7 @@ export default function WalletPage() {
     let cancelled = false;
     void (async () => {
       const next = await Promise.all(
-        cfg.tokens.map(async (token): Promise<BalanceRow> => {
+        tokens.map(async (token): Promise<BalanceRow> => {
           try {
             if (token.isNative) {
               const raw = await provider.getBalance(account);
@@ -76,7 +87,7 @@ export default function WalletPage() {
     return () => {
       cancelled = true;
     };
-  }, [mounted, account, cfg.rpcUrl, cfg.tokens, tick]);
+  }, [mounted, account, cfg.rpcUrl, tokens, tick]);
 
   if (!account) {
     return (

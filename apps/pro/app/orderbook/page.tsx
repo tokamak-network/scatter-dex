@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ethers } from "ethers";
 import { EmptyState } from "@zkscatter/ui";
-import { shortAddr } from "@zkscatter/sdk/react";
+import { tokenMap } from "@zkscatter/sdk";
+import { shortAddr, useCuratedNetworkTokens } from "@zkscatter/sdk/react";
 import { formatExpiry } from "@zkscatter/sdk/util";
 import {
   SharedOrderbookClient,
@@ -46,6 +47,10 @@ const STATUS_BUCKETS: Array<{ id: StatusBucket; label: string }> = [
  *  the top-nav Orders dropdown. */
 export default function SharedOrderbookPage() {
   const { network } = useActiveNetwork();
+  // Token symbol + decimals from the on-chain whitelist (env addresses
+  // may be unset, which would make the address-keyed lookup below miss
+  // and mis-decimal the amounts).
+  const { tokens: onchainTokens } = useCuratedNetworkTokens(network);
   const url = network.sharedOrderbookUrl;
   const configured = !!url;
 
@@ -70,11 +75,10 @@ export default function SharedOrderbookPage() {
     };
   }, []);
 
-  const tokenByAddr = useMemo(() => {
-    const map: Record<string, { symbol: string; decimals: number }> = {};
-    for (const t of network.tokens) map[t.address.toLowerCase()] = t;
-    return map;
-  }, [network.tokens]);
+  // `tokenMap` keys by lowercased address and skips the native alias, so
+  // an address lookup lands on the ERC-20 (WETH) entry — exactly what the
+  // orderbook rows want.
+  const tokenByAddr = useMemo(() => tokenMap(onchainTokens), [onchainTokens]);
 
   const resolveToken = (addr: string) => tokenByAddr[addr.toLowerCase()];
 

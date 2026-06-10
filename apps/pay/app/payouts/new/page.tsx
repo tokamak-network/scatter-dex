@@ -60,7 +60,11 @@ const UPLOAD_STATUS_STYLES: Record<"ok" | "warn" | "error", string> = {
 // the roadmap signal in user-facing validation messages without hard-
 // coding "64 / 128" copy that drifts as tiers ship.
 const PLANNED_TIER_CAPS = TIERS.filter((t) => !ACTIVE_TIERS.includes(t)).map((t) => t.cap);
-import { useWallet, type VaultNote } from "@zkscatter/sdk/react";
+import {
+  useCuratedNetworkTokens,
+  useWallet,
+  type VaultNote,
+} from "@zkscatter/sdk/react";
 import {
   loadRun,
   saveRun,
@@ -412,11 +416,41 @@ function NewPayout() {
     });
   }, [folder.ready, resume.kind, draftLabelParam, account]);
 
-  // Draft save is now explicit — only the "Save draft" button writes
-  // to storage. Auto-save was creating ghost drafts the operator never
-  // intended (every wizard mount produced a "(untitled)" entry), and
-  // surprised users by silently mirroring URL state. Removed in favor
-  // of the explicit button which both saves and syncs `?label=`.
+  // Draft save is explicit — the "Save draft" button writes to storage.
+  // Blanket auto-save was removed because it created ghost drafts the
+  // operator never intended (every wizard mount produced a "(untitled)"
+  // entry) and surprised users by silently mirroring URL state.
+  //
+  // The one exception is the deposit kickoff (see `onDeposit` below):
+  // once the operator commits real funds to escrow, the run config must
+  // survive the long on-chain confirm — a crash / closed tab during the
+  // wait would otherwise orphan escrowed money from the recipient list
+  // it was deposited for. That save is tied to an explicit, high-stakes
+  // action on an already-named run, so it reintroduces neither problem.
+  const saveDraftNow = useCallback(async (): Promise<string | null> => {
+    if (!account || !label.trim()) return null;
+    setDraftSaveError(null);
+    try {
+      const saved = await saveWizardDraft(account, lastSavedLabelRef.current, {
+        step,
+        templateId: categoryId,
+        label,
+        token,
+        csv,
+        reason,
+        claimFrom,
+        maxFeeBps,
+      });
+      setDraftSavedAt(saved.savedAt);
+      lastSavedLabelRef.current = saved.label;
+      router.replace(`/payouts/new?label=${encodeURIComponent(saved.label)}`);
+      return saved.label;
+    } catch (err) {
+      console.error("[Pay] saveWizardDraft failed", err);
+      setDraftSaveError(err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }, [account, label, step, categoryId, token, csv, reason, claimFrom, maxFeeBps, router]);
 
   const addressBookHint = !folder.ready
     ? "Pick a notes folder to load your address book."
@@ -918,19 +952,23 @@ function NewPayout() {
   // address for the native-ETH lookup below and `cfg.chainId` for
   // the chain-pill display elsewhere.
   const networkCfg = useMemo(() => getNetworkConfig(), []);
-  // Resolve the token via `networkCfg.tokens` (which overlays the
-  // env-driven on-chain addresses) so non-native lookups land on
-  // the deployed contract, not LAUNCH_TOKENS' ZERO sentinel.
+  // Resolve the token's address + decimals from the on-chain
+  // Pool∩Settlement whitelist (a team deployment registers tokens via
+  // setTokenWhitelist) rather than NEXT_PUBLIC_* env, so a token without
+  // an env address (e.g. TON) still resolves. `networkCfg.tokens` is the
+  // curated metadata + pre-load fallback.
+  const { tokens: curatedTokens } = useCuratedNetworkTokens(networkCfg);
   const tokenInfo =
-    networkCfg.tokens.find((t) => t.symbol === token) ?? LAUNCH_TOKENS[token];
+    curatedTokens.find((t) => t.symbol === token) ?? LAUNCH_TOKENS[token];
   // For native ETH the vault stores notes against WETH (the deposit
   // wraps ETH → WETH before escrow), so the wizard's lookup key has
   // to match. Without this the Funds step's `summarizeBalance`
   // misses a freshly-deposited ETH note and shows 0 even after
   // a successful deposit.
-  const tokenAddress = (
-    tokenInfo?.isNative ? networkCfg.contracts.weth : tokenInfo?.address
-  )?.toLowerCase();
+  // `useCuratedNetworkTokens` already resolved native ETH to the WETH
+  // address (whitelist, or the env slot as fallback), so `.address` is
+  // usable for both native and non-native tokens.
+  const tokenAddress = tokenInfo?.address?.toLowerCase();
   const decimals = tokenInfo?.decimals ?? 18;
 
   const { availableRaw, pendingRaw } = useMemo(
@@ -1680,6 +1718,11 @@ function NewPayout() {
               const ctrl = new AbortController();
               depositAbortRef.current = ctrl;
               setDepositPhase({ kind: "preparing" });
+              // Persist the run before the long on-chain confirm so the
+              // escrowed funds stay tied to their recipient list even if
+              // the tab is closed / crashes mid-wait. Best-effort —
+              // never block or fail the deposit on a draft-save error.
+              void saveDraftNow();
               realDeposit({
                 tokenSymbol: token,
                 amountRaw: shortfallRaw,
@@ -2009,36 +2052,11 @@ function NewPayout() {
                         : "Save now and sync the URL so refresh resumes this draft"
                     }
                     onClick={() => {
-                      if (!account || !label.trim()) return;
-                      setDraftSaveError(null);
-                      saveWizardDraft(account, lastSavedLabelRef.current, {
-                        step,
-                        templateId: categoryId,
-                        label,
-                        token,
-                        csv,
-                        reason,
-                        claimFrom,
-                        maxFeeBps,
-                      })
-                        .then((saved) => {
-                          setDraftSavedAt(saved.savedAt);
-                          lastSavedLabelRef.current = saved.label;
-                          router.replace(
-                            `/payouts/new?label=${encodeURIComponent(saved.label)}`,
-                          );
-                          setDraftJustSaved(true);
-                          window.setTimeout(
-                            () => setDraftJustSaved(false),
-                            1500,
-                          );
-                        })
-                        .catch((err: unknown) => {
-                          console.error("[Pay] saveWizardDraft failed", err);
-                          setDraftSaveError(
-                            err instanceof Error ? err.message : String(err),
-                          );
-                        });
+                      void saveDraftNow().then((saved) => {
+                        if (!saved) return;
+                        setDraftJustSaved(true);
+                        window.setTimeout(() => setDraftJustSaved(false), 1500);
+                      });
                     }}
                     className={`rounded-md border px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${
                       draftJustSaved

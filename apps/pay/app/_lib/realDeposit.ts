@@ -1,7 +1,13 @@
 "use client";
 
 import { ethers } from "ethers";
-import { COMMITMENT_POOL_IFACE, ERC20_IFACE, LAUNCH_TOKENS } from "@zkscatter/sdk";
+import {
+  COMMITMENT_POOL_IFACE,
+  ERC20_IFACE,
+  LAUNCH_TOKENS,
+  overlayOnchainTokens,
+} from "@zkscatter/sdk";
+import { resolveCuratedTokensCached } from "@zkscatter/sdk/react";
 import { generateNote, type CommitmentNote } from "@zkscatter/sdk/zk";
 import { callDeposit, ensureAllowance } from "@zkscatter/sdk/contracts";
 import {
@@ -145,20 +151,45 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   if (!isNetworkConfigured(cfg)) {
     throw new Error("Network not configured — set the Pay contract envs to enable deposits.");
   }
-  // Pull the token from `cfg.tokens` rather than `LAUNCH_TOKENS`
-  // directly — `getNetworkConfig` overlays the env-driven contract
-  // addresses, so this resolves to the on-chain token deployed on
-  // the active chain (LAUNCH_TOKENS' `address` is a ZERO sentinel).
-  const tokenInfo =
-    cfg.tokens.find((t) => t.symbol === tokenSymbol) ?? LAUNCH_TOKENS[tokenSymbol];
-  if (!tokenInfo) {
-    throw new Error(`Token ${tokenSymbol} is not in LAUNCH_TOKENS — wire it before depositing.`);
-  }
   if (!account) throw new Error("Connect a wallet before depositing.");
   if (!signer) throw new Error("Wallet signer not available.");
   if (amountRaw <= 0n) throw new Error("Deposit amount must be positive.");
 
-  const erc20Address = tokenInfo.isNative ? cfg.contracts.weth : tokenInfo.address;
+  // Warm the prover in parallel with the token read — the deposit zkey
+  // is ~7 MB and its fetch dwarfs the whitelist round-trip; neither
+  // depends on the other, so start the WASM/zkey load before awaiting
+  // the on-chain read instead of serializing them.
+  const proverReady = depositProver.ready();
+
+  // Resolve the token's address + decimals from the live Pool∩Settlement
+  // whitelist (a team deployment registers tokens via setTokenWhitelist),
+  // not NEXT_PUBLIC_* env — so a token without an env address (e.g. TON)
+  // still deposits. `cfg.tokens` is the curated metadata + fallback; the
+  // read is cached so it shares any whitelist-backed picker's fetch. On a
+  // failed/absent read we still overlay the env WETH so native ETH keeps
+  // a usable address.
+  const walletProvider = signer.provider;
+  const envFallback = () =>
+    overlayOnchainTokens(cfg.tokens, [], cfg.contracts.weth);
+  const curated = walletProvider
+    ? await resolveCuratedTokensCached(
+        walletProvider,
+        cfg.contracts.commitmentPool,
+        cfg.contracts.privateSettlement,
+        cfg.tokens,
+        cfg.contracts.weth,
+      ).catch(envFallback)
+    : envFallback();
+  const tokenInfo =
+    curated.find((t) => t.symbol === tokenSymbol) ?? LAUNCH_TOKENS[tokenSymbol];
+  if (!tokenInfo) {
+    throw new Error(`Token ${tokenSymbol} is not in LAUNCH_TOKENS — wire it before depositing.`);
+  }
+
+  // `overlayOnchainTokens` already resolved native ETH to the WETH
+  // address (whitelist, or the env slot as fallback), so `.address` is
+  // the usable ERC-20 slot for both native and non-native tokens.
+  const erc20Address = tokenInfo.address;
   if (!erc20Address || erc20Address === ethers.ZeroAddress) {
     throw new Error(
       tokenInfo.isNative
@@ -171,13 +202,12 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   const kp = await eddsa.derive();
   checkAbort();
 
-  // Build the note + warm the prover in parallel — the deposit zkey
-  // is ~7 MB; on a cold cache its fetch dwarfs the synchronous note
-  // construction. Microtask-defer `generateNote` so `prover.ready()`
-  // gets a turn first.
+  // Build the note + join the already-warming prover (kicked off above,
+  // overlapping the zkey fetch with the token read). Microtask-defer
+  // `generateNote` so the prover work keeps its turn.
   const [note] = await Promise.all([
     Promise.resolve().then(() => generateNote(erc20Address, amountRaw, kp.publicKey)),
-    depositProver.ready(),
+    proverReady,
   ]);
   checkAbort();
 
@@ -195,10 +225,9 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   // Probe atomic-batch capability. ethers v6 BrowserProvider exposes
   // `send` directly; non-browser signers (custom JsonRpc) won't match
   // the type and we fall through to sequential.
-  const provider = signer.provider;
   const browserProvider =
-    provider && "send" in provider
-      ? (provider as ethers.BrowserProvider)
+    walletProvider && "send" in walletProvider
+      ? (walletProvider as ethers.BrowserProvider)
       : null;
   let canBatch = false;
   if (browserProvider) {

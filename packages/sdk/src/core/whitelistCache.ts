@@ -20,7 +20,11 @@ import {
   fetchWhitelistedTokens,
   type FetchWhitelistedTokensOptions,
 } from "./whitelist";
-import type { TokenInfo } from "./tokens";
+import {
+  curatedErc20View,
+  overlayOnchainTokens,
+  type TokenInfo,
+} from "./tokens";
 
 /** Default freshness window. A minute is plenty to collapse the burst of
  *  reads from one screen while still picking up an admin whitelist change
@@ -197,4 +201,31 @@ export function invalidateWhitelistCache(
   memory.clear();
   inflight.clear();
   clearSession();
+}
+
+/** Lib-side (non-hook) equivalent of `useCuratedNetworkTokens`: the
+ *  curated token list with addresses + decimals overlaid from the
+ *  on-chain Pool∩Settlement whitelist. For async money flows
+ *  (deposit / settle / withdraw) that can't call the React hook but
+ *  still must resolve a token's real on-chain address/decimals instead
+ *  of the env sentinel.
+ *
+ *  Shares the session whitelist cache, so calling it from a flow that
+ *  also rendered a hook-backed picker costs no extra RPC. The native
+ *  "ETH" entry resolves via `wethAddress`; others match by symbol. */
+export async function resolveCuratedTokensCached(
+  provider: ethers.Provider,
+  poolAddress: string,
+  settlementAddress: string,
+  curated: TokenInfo[],
+  wethAddress: string,
+  options: CachedWhitelistOptions = {},
+): Promise<TokenInfo[]> {
+  const onchain = await fetchWhitelistedTokensCached(
+    provider,
+    poolAddress,
+    settlementAddress,
+    { overlay: curatedErc20View(curated), ...options },
+  );
+  return overlayOnchainTokens(curated, onchain, wethAddress);
 }

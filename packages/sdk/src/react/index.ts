@@ -14,4 +14,5 @@ export * from "./useTimedRefresh";
 export * from "../core/whitelistCache";
 export * from "./useWhitelistedTokens";
 export * from "./useNetworkTokens";
+export * from "./useCuratedNetworkTokens";
 export * from "./LiveFreshness";
