@@ -52,6 +52,12 @@ COMMITMENT_POOL_ADDRESS=$(mget commitment-pool-address)
 # metadata key from the ledger's "deployBlock".
 COMMITMENT_DEPLOY_BLOCK=$(mget commitment-deploy-block 0)
 PRIVATE_SETTLEMENT_ADDRESS=$(mget private-settlement-address)
+# RelayerRegistry contract — enables the relayer's wallet/SIWE admin auth
+# (connecting wallet must be isActiveRelayer()). Public address, so metadata.
+# Empty → relayer admin SIWE stays off.
+# Strip any stray whitespace/newline (e.g. from a copy-pasted metadata value) —
+# the relayer doesn't trim the address before parsing it.
+RELAYER_REGISTRY_ADDRESS=$(mget relayer-registry-address | tr -d '[:space:]')
 CORS_ORIGINS=$(mget cors-origins)
 # SIWE admin allowlist — public wallet addresses, so it lives in metadata
 # alongside the contract addresses (not Secret Manager). Empty → the SIWE
@@ -137,6 +143,12 @@ fi
 # credential, so it comes from Secret Manager only — never metadata. Absent →
 # empty, leaving SIWE (ADMIN_ADDRESSES) as the only admin auth.
 ADMIN_TOKEN=$(gcp_secret admin-token) || ADMIN_TOKEN=""
+# Relayer admin API key (static-key fallback for the relayer's admin routes).
+# A credential, so Secret Manager only — never metadata. Absent → that path
+# stays off; SIWE (RELAYER_REGISTRY_ADDRESS) can still enable admin auth.
+# Strip CR/LF — Secret Manager values are often created with a trailing newline
+# (e.g. `echo` without -n), which would corrupt the key. Keep any other bytes.
+ADMIN_API_KEY=$(gcp_secret relayer-admin-api-key | tr -d '\r\n') || ADMIN_API_KEY=""
 if [[ -n "${ADMIN_TOKEN}" ]]; then
 	log "ADMIN_TOKEN loaded from Secret Manager (admin-token)"
 fi
@@ -167,6 +179,8 @@ CHAIN_ID=${CHAIN_ID}
 COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
 COMMITMENT_DEPLOY_BLOCK=${COMMITMENT_DEPLOY_BLOCK}
 PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
+RELAYER_REGISTRY_ADDRESS=${RELAYER_REGISTRY_ADDRESS}
+ADMIN_API_KEY=${ADMIN_API_KEY}
 CORS_ORIGINS=${CORS_ORIGINS}
 ADMIN_ADDRESSES=${ADMIN_ADDRESSES}
 ADMIN_TOKEN=${ADMIN_TOKEN}
