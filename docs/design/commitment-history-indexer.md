@@ -264,8 +264,12 @@ getLogs path already uses**, and no on-chain-private data is served.
    index:commitments[:watch]`), and `GET /api/commitments` (public read). No
    client change yet; deploy + backfill, then verify the endpoint matches an
    on-chain scan.
-2. **SDK opt-in:** add `serverUrl`; default it **off** so behaviour is identical
-   until explicitly wired. Server path gated behind the same `isKnownRoot` check.
+2. **SDK opt-in — DONE:** `fetchCommitmentLeaves` (paged `GET /api/commitments`)
+   + a `serverUrl` prop on `CommitmentTreeProvider`. Default **off** → identical
+   behaviour until wired. When set, hydration tries the server, builds a tree,
+   and **falls back to `getLogs` if the server is unreachable OR its leaves fail
+   the `isKnownRoot` check** — so a bad/incomplete server response is never
+   trusted.
 3. **Apps:** pay first (`serverUrl = SCATTER_ORDERBOOK_URL`), watch it hydrate
    from the server with the chunked `getLogs` fallback intact; then pro.
 4. The shipped client chunking remains the permanent fallback for anyone not
