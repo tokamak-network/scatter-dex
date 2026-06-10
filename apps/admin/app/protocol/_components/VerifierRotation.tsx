@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Contract, type Signer } from "ethers";
 import { ZERO_ADDRESS, eqAddr } from "@zkscatter/sdk";
-import { shortAddr, useWallet } from "@zkscatter/sdk/react";
+import { useWallet } from "@zkscatter/sdk/react";
 import { AdminWriteCard } from "../../components/AdminWriteCard";
 import { isValidEvmAddress } from "../../lib/x509";
 
@@ -136,11 +136,13 @@ function TierVerifierCard({ address, kind }: TierVerifierProps) {
         </label>
         <span className="text-[var(--color-text-muted)]">
           Current:{" "}
-          <strong className="font-mono">
+          {/* Full address (not shortened) so the on-chain verifier can be
+              verified by eye against the expected deployment. */}
+          <strong className="select-all break-all font-mono">
             {current
               ? eqAddr(current, ZERO_ADDRESS)
                 ? "0x0 (unset)"
-                : shortAddr(current)
+                : current
               : "…"}
           </strong>
         </span>
@@ -208,11 +210,12 @@ function CancelVerifierCard({ address }: { address: string }) {
     >
       <div className="text-xs text-[var(--color-text-muted)]">
         Current:{" "}
-        <strong className="font-mono">
+        {/* Full address (not shortened) for eyeball verification. */}
+        <strong className="select-all break-all font-mono">
           {current
             ? eqAddr(current, ZERO_ADDRESS)
               ? "0x0 (unset — cancel disabled)"
-              : shortAddr(current)
+              : current
             : "…"}
         </strong>
       </div>
