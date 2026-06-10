@@ -43,17 +43,31 @@ single-chain `RPC_URL` / `PRIVATE_SETTLEMENT_ADDRESS` / `CHAIN_ID` fallback),
 and a relayer pins its network with `CHAIN_ID`. A missing chainId defaults to
 Sepolia (`11155111`), so the live single-network deployment is unaffected.
 
-**Redeploy / restart** (central box) — push updated metadata, then re-run the
-startup script (idempotent; the DB migration is safe to re-run):
+**Redeploy / restart** (central box). After building+pushing the image
+(`deploy/ci/build-and-push.sh`), roll it out with `deploy/ci/deploy.sh` — it sets
+`image-tag`, **re-syncs the compose files + `startup-script` metadata from the
+repo**, then re-runs the startup script (idempotent; the DB migration is safe to
+re-run):
 
 ```bash
-gcloud compute instances add-metadata zkscatter-node --zone us-central1-a \
-  --metadata-from-file startup-script=deploy/gcp/vm-startup.sh
-gcloud compute ssh zkscatter-node --zone us-central1-a \
-  --command 'sudo google_metadata_script_runner startup'
-# Verified on the deployed COS image (google-guest-agent 20250701). On a newer
-# guest agent the equivalent is: ... --script-type startup
+deploy/ci/build-and-push.sh shared-orderbook   # only when code/image changed
+deploy/ci/deploy.sh                            # image-tag + compose + startup-script + restart
 ```
+
+> ⚠️ **Stale-metadata trap.** The compose files and `vm-startup.sh` live in
+> instance *metadata*, not the image. A new image that adds a sidecar service
+> (e.g. `commitment-indexer`) or a new env var (e.g. `COMMITMENT_DEPLOY_BLOCK`)
+> does **nothing** until that metadata is re-pushed. `deploy.sh` now does this;
+> if you ever push metadata by hand, push all three together:
+>
+> ```bash
+> gcloud compute instances add-metadata zkscatter-node --zone us-central1-a \
+>   --metadata-from-file startup-script=deploy/gcp/vm-startup.sh,\
+> compose-yml=deploy/runtime/compose.yml,compose-tls-yml=deploy/runtime/compose.tls.yml
+> ```
+>
+> COS note: verified on the deployed image (google-guest-agent 20250701); on a
+> newer guest agent the run-startup equivalent is `... --script-type startup`.
 
 > COS note: `/var` (incl. `HOME=/var/lib/zkscatter`) is mounted **noexec**, so
 > the docker-compose plugin is staged under `/var/lib/docker/cli-plugins`
@@ -68,6 +82,7 @@ gcloud compute ssh zkscatter-node --zone us-central1-a \
 | 30 GB pd-standard disk | free 30 GB | **$0** |
 | **Static external IPv4** (in-use) | charged since 2024 (~$0.005/hr) | **~$3.65** |
 | Secret Manager / Artifact Registry / Logging / egress | free tier | **$0** |
+| GCS `zkscatter-zk-artifacts` (zkey/wasm distribution, ~210 MB) | standard, content-addressed | **~$0.01** + build-time egress (<$1) |
 | Firebase Functions + Firestore + Hosting (zk-X509 CMS) | Blaze, ~free at this volume | **~$0** |
 | Frontends | run locally | **$0** |
 | **Total** | | **~$3.65 / mo** |
@@ -265,6 +280,33 @@ multi-network:
 | `COMMITMENT_CHAINS` | — | JSON array `[{"chainId":…,"rpcUrl":…,"commitmentPoolAddress":…,"deployBlock":…}]`. One indexer loop per chain. |
 | `RPC_URL` / `COMMITMENT_POOL_ADDRESS` / `COMMITMENT_DEPLOY_BLOCK` / `CHAIN_ID` | — / — / `0` / `11155111` | Single-chain fallback when `COMMITMENT_CHAINS` is unset. Set the deploy block from the ledger so it doesn't scan from genesis. |
 | `COMMITMENT_POLL_INTERVAL_SEC` / `COMMITMENT_BLOCK_SAFETY_MARGIN` / `COMMITMENT_INDEX_BLOCK_RANGE` | `30` / `6` / `50000` | Pass cadence, reorg margin, and `eth_getLogs` window. |
+
+On the live box these come from instance metadata (`vm-startup.sh` maps
+`commitment-pool-address` → `COMMITMENT_POOL_ADDRESS`, `commitment-deploy-block`
+→ `COMMITMENT_DEPLOY_BLOCK`, etc.). **Enable / point the indexer:**
+
+```bash
+# 1. deploy block = the pool's deployBlock from contracts/deployments/<chainId>.json
+gcloud compute instances add-metadata zkscatter-node --zone us-central1-a \
+  --metadata commitment-deploy-block=11008264,commitment-pool-address=0xa711…2150
+# 2. roll out (deploy.sh re-syncs compose so the commitment-indexer container exists)
+deploy/ci/deploy.sh
+# 3. verify
+curl 'http://136.115.115.93:4000/api/commitments?chainId=11155111'   # -> {"total":N,…}
+```
+
+> ⚠️ **RPC range requirement.** The indexer's first pass does a single
+> `eth_getLogs` over `[deployBlock, latest]` (tens of thousands of blocks).
+> The box's `rpc-url` secret **must** allow at least `COMMITMENT_INDEX_BLOCK_RANGE`
+> (50 000) blocks per call. A **free-tier RPC with a tiny cap fails** (e.g.
+> Alchemy free = 10-block `eth_getLogs` → `Under the Free tier plan…`). Use a
+> keyless `publicnode` endpoint (50 000 cap, the stack default) or a paid key:
+>
+> ```bash
+> printf 'https://ethereum-sepolia.publicnode.com' \
+>   | gcloud secrets versions add rpc-url --data-file=- --project zkscatter
+> deploy/ci/deploy.sh   # picks up the new secret version
+> ```
 
 ### Relayer
 
