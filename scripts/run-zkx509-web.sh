@@ -39,6 +39,12 @@
 #   ZKX509_BACKEND_URL   central metadata/CMS backend URL  (default: placeholder)
 set -euo pipefail
 
+# Pin Node to native arm64 on Apple Silicon so Next/Turbopack loads the arm64
+# @next/swc (the x64 one panics under Rosetta with a BMI2 error). See the helper
+# for the full rationale. Sets the NODE_RUN array used for npm below.
+source "$(dirname "$0")/lib/node-arm64.sh"
+setup_node_run
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # --- args ------------------------------------------------------------------
@@ -201,20 +207,28 @@ fi
 
 LOCAL_BACKEND=0
 if [ "$WITH_LOCAL_BACKEND" = 1 ] && [ -d "$ZK_X509_REPO/backend" ]; then
-  echo "Starting local zk-X509 backend (cd backend && npm run dev) in background…"
-  ( cd "$ZK_X509_REPO/backend" && npm run dev ) &
-  BACKEND_PID=$!
-  LOCAL_BACKEND=1
-  # Reap the background backend when the frontend exits so it doesn't leak and
-  # keep port 4000 held on the next run.
-  trap 'kill "$BACKEND_PID" 2>/dev/null || true' EXIT INT TERM
+  # Reuse an already-running backend on :4000 instead of starting a duplicate
+  # (avoids "port in use" and leaves the existing process untouched).
+  if lsof -nP -iTCP:4000 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Local zk-X509 backend already running on :4000 — reusing it."
+  else
+    echo "Starting local zk-X509 backend (cd backend && npm run dev) in background…"
+    ( cd "$ZK_X509_REPO/backend" && "${NODE_RUN[@]}" run dev ) &
+    BACKEND_PID=$!
+    LOCAL_BACKEND=1
+    # Reap the background backend when the frontend exits so it doesn't leak and
+    # keep port 4000 held on the next run. (Only when WE started it.)
+    trap 'kill "$BACKEND_PID" 2>/dev/null || true' EXIT INT TERM
+  fi
 fi
+
+install_if_needed "$ZK_X509_REPO/frontend"
 
 echo "Starting zk-X509 frontend (cd frontend && npm run dev)…"
 cd "$ZK_X509_REPO/frontend"
 if [ "$LOCAL_BACKEND" = 1 ]; then
   # Don't exec — the shell must survive to run the cleanup trap above.
-  npm run dev
+  "${NODE_RUN[@]}" run dev
 else
-  exec npm run dev
+  exec "${NODE_RUN[@]}" run dev
 fi
