@@ -1,10 +1,12 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import http from "http";
 import express from "express";
 import fs from "fs";
 import { OrderbookDB } from "../src/core/db.js";
 import { createCommitmentRoutes } from "../src/routes/commitments.js";
+import { Interface, id } from "ethers";
 import {
+  COMMITMENT_INSERTED_ABI,
   runCommitmentIndexPass,
   type CommitmentFetcher,
 } from "../src/core/commitment-indexer.js";
@@ -31,11 +33,12 @@ describe("commitments DB layer", () => {
     cleanDbFiles();
     db = new OrderbookDB(TEST_DB);
   });
+  afterEach(() => db.close());
 
   it("upserts idempotently on (chainId, leafIndex)", () => {
     db.upsertCommitments(CHAIN, [leaf(0), leaf(1), leaf(2)]);
     db.upsertCommitments(CHAIN, [leaf(1), leaf(2)]); // re-scan overlap
-    expect(db.commitmentCount(CHAIN)).toBe(3); // no duplicates
+    expect(db.commitmentNextIndex(CHAIN)).toBe(3); // no duplicates
   });
 
   it("lists from fromLeaf ascending, capped by limit", () => {
@@ -49,8 +52,8 @@ describe("commitments DB layer", () => {
   it("scopes rows by chainId", () => {
     db.upsertCommitments(CHAIN, [leaf(0), leaf(1)]);
     db.upsertCommitments(999, [leaf(0)]);
-    expect(db.commitmentCount(CHAIN)).toBe(2);
-    expect(db.commitmentCount(999)).toBe(1);
+    expect(db.commitmentNextIndex(CHAIN)).toBe(2);
+    expect(db.commitmentNextIndex(999)).toBe(1);
   });
 
   it("tracks the scan cursor per chain", () => {
@@ -64,12 +67,23 @@ describe("commitments DB layer", () => {
   afterAll(cleanDbFiles);
 });
 
+describe("indexer event ABI", () => {
+  it("matches the on-chain CommitmentInserted topic0 (3 args incl. timestamp)", () => {
+    // A 2-arg fragment (dropping `timestamp`) hashes to a different topic0,
+    // so queryFilter would match no logs and the indexer would silently
+    // index nothing. Guard the exact signature.
+    const topic = new Interface(COMMITMENT_INSERTED_ABI).getEvent("CommitmentInserted")!.topicHash;
+    expect(topic).toBe(id("CommitmentInserted(uint256,uint32,uint256)"));
+  });
+});
+
 describe("runCommitmentIndexPass", () => {
   let db: OrderbookDB;
   beforeEach(() => {
     cleanDbFiles();
     db = new OrderbookDB(TEST_DB);
   });
+  afterEach(() => db.close());
 
   /** Fetcher that records its windows and returns one leaf per window,
    *  leafIndex derived from the window start so order is observable. */
@@ -99,7 +113,7 @@ describe("runCommitmentIndexPass", () => {
     ]);
     expect(stats.indexed).toBe(3);
     expect(db.getCommitmentCursor(CHAIN)).toBe(100_100); // last window end
-    expect(db.commitmentCount(CHAIN)).toBe(3);
+    expect(db.commitmentNextIndex(CHAIN)).toBe(3);
   });
 
   it("resumes from cursor+1 on the next pass (no re-backfill)", async () => {

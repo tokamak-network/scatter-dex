@@ -57,7 +57,10 @@ function envInt(key: string, fallback: number): number {
   const raw = process.env[key];
   if (!raw) return fallback;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0) {
+  // These are all block numbers / counts / seconds — require a non-negative
+  // integer so a stray "1.5" or "0x10" fails loudly instead of silently
+  // truncating mid-scan.
+  if (!Number.isInteger(n) || n < 0) {
     console.error(`[commitment-indexer] invalid numeric env: ${key}=${raw}`);
     process.exit(2);
   }
@@ -134,6 +137,10 @@ async function main(): Promise<void> {
   const db = new OrderbookDB(dbPath);
 
   if (!watch) {
+    // One-shot — useful for cron. Track failures so the process exits
+    // non-zero if any chain's pass errored (the pass catches + returns the
+    // error rather than throwing), instead of a misleading exit 0.
+    let failed = false;
     for (const c of chains) {
       const provider = new JsonRpcProvider(c.rpcUrl);
       const fetcher = makeCommitmentFetcher({
@@ -150,12 +157,14 @@ async function main(): Promise<void> {
         toBlock,
         chunkSize,
       });
+      if (s.error) failed = true;
       console.log(
         `[commitment-indexer] one-shot chain=${c.chainId}: indexed=${s.indexed} ` +
           `range=[${s.fromBlock},${s.toBlock}]${s.error ? ` error=${s.error}` : ""}`,
       );
     }
     db.close();
+    if (failed) process.exit(1);
     return;
   }
 

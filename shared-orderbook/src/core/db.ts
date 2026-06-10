@@ -466,8 +466,11 @@ export class OrderbookDB {
     }));
   }
 
-  /** Number of leaves known for a chain (max leafIndex + 1, or 0 when empty). */
-  commitmentCount(chainId: number): number {
+  /** Next leaf index for a chain = MAX(leaf_index) + 1, or 0 when empty. For
+   *  the dense, monotonically-inserted commitment tree this equals the leaf
+   *  count; named for the MAX+1 semantics so it stays correct if a backfill is
+   *  ever partial (a row gap wouldn't be miscounted as a smaller total). */
+  commitmentNextIndex(chainId: number): number {
     const row = this.stmtMaxCommitmentLeaf.get(chainId) as { maxLeaf: number | null };
     return row.maxLeaf === null ? 0 : row.maxLeaf + 1;
   }

@@ -28,7 +28,9 @@ export function createCommitmentRoutes(db: OrderbookDB, readLimiter: RequestHand
     }
 
     const fromLeaf = Number(req.query.fromLeaf ?? 0);
-    if (!Number.isInteger(fromLeaf) || fromLeaf < 0) {
+    // isSafeInteger (not isInteger): a value past 2^53 still passes isInteger
+    // but loses precision, producing a wrong DB query / paging offset.
+    if (!Number.isSafeInteger(fromLeaf) || fromLeaf < 0) {
       res.status(400).json({ error: "fromLeaf must be a non-negative integer" });
       return;
     }
@@ -36,7 +38,9 @@ export function createCommitmentRoutes(db: OrderbookDB, readLimiter: RequestHand
     const limit = clampLimit(req.query.limit, MAX_LIMIT, DEFAULT_LIMIT);
 
     const commitments = db.listCommitments(chainId, fromLeaf, limit);
-    const total = db.commitmentCount(chainId);
+    // `total` = on-chain leaf count (next leaf index) the client paginates
+    // toward; for the dense tree this is MAX(leafIndex)+1.
+    const total = db.commitmentNextIndex(chainId);
     res.json({ chainId, fromLeaf, total, commitments });
   });
 

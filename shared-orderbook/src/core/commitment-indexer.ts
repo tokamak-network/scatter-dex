@@ -10,7 +10,7 @@
  * cursor. Errors inside a pass are logged but never stop the loop — a transient
  * RPC outage must not kill the indexer.
  */
-import { Contract, JsonRpcProvider, type AbstractProvider } from "ethers";
+import { Contract, JsonRpcProvider, toBeHex, type AbstractProvider } from "ethers";
 import type { OrderbookDB } from "./db.js";
 import type { CommitmentLeaf } from "../types/commitment.js";
 
@@ -19,9 +19,11 @@ import type { CommitmentLeaf } from "../types/commitment.js";
 export const DEFAULT_INDEX_CHUNK_SIZE = 50_000;
 
 /** Hand-written fragment (the indexer stays self-contained — no artifact dep,
- *  same approach as `PRIVATE_SETTLED_AUTH_ABI`). */
-const COMMITMENT_INSERTED_ABI = [
-  "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex)",
+ *  same approach as `PRIVATE_SETTLED_AUTH_ABI`). MUST match the on-chain
+ *  signature exactly — the trailing `timestamp` is part of the event, so a
+ *  2-arg fragment would hash to a different topic0 and match no logs. */
+export const COMMITMENT_INSERTED_ABI = [
+  "event CommitmentInserted(uint256 indexed commitment, uint32 leafIndex, uint256 timestamp)",
 ];
 
 /** Fetch the leaves emitted in the inclusive block window `[fromBlock, toBlock]`. */
@@ -50,8 +52,10 @@ export function makeCommitmentFetcher(opts: MakeFetcherOpts): CommitmentFetcher 
       const args = (log as unknown as { args: Record<string, unknown> }).args;
       return {
         leafIndex: Number(args.leafIndex),
-        // 0x-hex of the uint256, lowercased — canonical, JSON-safe.
-        commitment: "0x" + BigInt(args.commitment as bigint | string).toString(16),
+        // Canonical fixed-width 32-byte hex — `toString(16)` would drop
+        // leading zeros, so the same uint256 could serialize two ways and
+        // break dedup/equality for persisted + served values.
+        commitment: toBeHex(BigInt(args.commitment as bigint | string), 32),
         blockNumber: log.blockNumber,
       };
     });
