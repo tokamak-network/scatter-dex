@@ -273,8 +273,10 @@ getLogs path already uses**, and no on-chain-private data is served.
    and **falls back to `getLogs` if the server is unreachable OR its leaves fail
    the `isKnownRoot` check** — so a bad/incomplete server response is never
    trusted.
-3. **Apps:** pay first (`serverUrl = SCATTER_ORDERBOOK_URL`), watch it hydrate
-   from the server with the chunked `getLogs` fallback intact; then pro.
+3. **Apps — DONE:** pay + pro pass `serverUrl = NEXT_PUBLIC_SHARED_ORDERBOOK_URL`
+   into `CommitmentTreeProvider`. Safe to ship ahead of the box deploy: until the
+   indexer is live the server 404s and hydration falls back to `getLogs`; it
+   lights up automatically once the box runs the indexer (#983).
 4. The shipped client chunking remains the permanent fallback for anyone not
    pointed at an orderbook (wallet-only, no infra).
 

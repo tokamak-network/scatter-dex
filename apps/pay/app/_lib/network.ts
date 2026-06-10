@@ -59,6 +59,9 @@ export function getNetworkConfig(): NetworkConfig {
       ? { url: process.env.NEXT_PUBLIC_PAY_RELAYER_URL }
       : undefined,
     deployBlock: Number(pick(process.env.NEXT_PUBLIC_PAY_DEPLOY_BLOCK, "0")),
+    // Shared orderbook base URL — when set, the commitment tree hydrates from
+    // its /api/commitments indexer first, falling back to getLogs.
+    sharedOrderbookUrl: pick(process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL) || undefined,
   };
 }
 
