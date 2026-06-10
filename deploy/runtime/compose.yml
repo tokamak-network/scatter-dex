@@ -125,7 +125,11 @@ services:
       - relayer_key
     volumes:
       - zk-relayer-data:/data
-      - ${CIRCUITS_BUILD_DIR:-/opt/zkscatter/circuits/build}:/app/circuits/build:ro
+      # The relayer resolves claim vkeys at `<pkg-root>/../../circuits/build`,
+      # which inside the image (`/app`) is `/circuits/build` — mount there, not
+      # `/app/circuits/build`, or gasless claims fail with
+      # `ENOENT: …/circuits/build/claim_vkey.json`.
+      - ${CIRCUITS_BUILD_DIR:-/opt/zkscatter/circuits/build}:/circuits/build:ro
     ports:
       - "${ZK_RELAYER_PORT:-3002}:3002"
     healthcheck:
