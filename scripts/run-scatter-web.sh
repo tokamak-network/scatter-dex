@@ -33,6 +33,12 @@
 # zk-X509 core (circuits/contracts/lib) is never touched — this is config only.
 set -euo pipefail
 
+# Pin Node to native arm64 on Apple Silicon so Next/Turbopack loads the arm64
+# @next/swc (the x64 one panics under Rosetta with a BMI2 error). See the helper
+# for the full rationale. Sets the NODE_RUN array used for npm below.
+source "$(dirname "$0")/lib/node-arm64.sh"
+setup_node_run
+
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # --- args ------------------------------------------------------------------
@@ -223,6 +229,11 @@ if [ "$NO_START" = 1 ]; then
   exit 0
 fi
 
+# Each app is a standalone npm project (there is no root workspace), so a fresh
+# clone has no node_modules. Install on first run so "clone → run script" just
+# works — no manual npm install and no `next build` (dev compiles on the fly).
+install_if_needed "$APP_DIR"
+
 echo "Starting '$APP' dev server (cd apps/$APP && npm run dev)…"
 cd "$APP_DIR"
-exec npm run dev
+exec "${NODE_RUN[@]}" run dev
