@@ -57,6 +57,12 @@ describe("overlayOnchainTokens", () => {
     expect(out[2]).toEqual(curated[2]); // TON untouched → still ZERO
   });
 
+  it("resolves native ETH via the on-chain WETH symbol when the env WETH is unconfigured", () => {
+    // wethAddress empty/zero, but the whitelist carries a "WETH" entry.
+    const out = overlayOnchainTokens(curated, onchain, ZERO);
+    expect(out[0]).toMatchObject({ symbol: "ETH", isNative: true, address: WETH, decimals: 18 });
+  });
+
   it("falls native ETH back to the env WETH address when none is whitelisted", () => {
     const out = overlayOnchainTokens(curated, [onchain[1]!, onchain[2]!], WETH); // no WETH on-chain
     // wethAddress is configured → native takes it so callers read a usable address.

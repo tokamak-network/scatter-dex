@@ -90,9 +90,12 @@ export function overlayOnchainTokens(
   const wethEntry = onchain.find((t) => eqAddr(t.address, wethAddress));
   return curated.map((t) => {
     if (t.isNative) {
-      if (wethEntry) {
-        return { ...t, address: wethEntry.address, decimals: wethEntry.decimals };
-      }
+      // Match the on-chain WETH by address first; if `wethAddress` is
+      // unconfigured, fall back to the whitelist's "WETH" symbol so a
+      // deployment without an env WETH slot still resolves native ETH.
+      // Last resort: the env address itself (when it is configured).
+      const weth = wethEntry ?? bySymbol.get("WETH");
+      if (weth) return { ...t, address: weth.address, decimals: weth.decimals };
       return isConfiguredAddress(wethAddress) ? { ...t, address: wethAddress } : t;
     }
     const m = bySymbol.get(t.symbol.toUpperCase());

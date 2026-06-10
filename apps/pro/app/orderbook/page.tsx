@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ethers } from "ethers";
 import { EmptyState } from "@zkscatter/ui";
-import { tokenMap } from "@zkscatter/sdk";
+import { curatedErc20View, tokenMap } from "@zkscatter/sdk";
 import { shortAddr, useCuratedNetworkTokens } from "@zkscatter/sdk/react";
 import { formatExpiry } from "@zkscatter/sdk/util";
 import {
@@ -75,10 +75,14 @@ export default function SharedOrderbookPage() {
     };
   }, []);
 
-  // `tokenMap` keys by lowercased address and skips the native alias, so
-  // an address lookup lands on the ERC-20 (WETH) entry — exactly what the
-  // orderbook rows want.
-  const tokenByAddr = useMemo(() => tokenMap(onchainTokens), [onchainTokens]);
+  // Build the address→token map from an ERC-20 view: `curatedErc20View`
+  // relabels the native ETH entry to non-native WETH (same address) so
+  // `tokenMap` (which skips native aliases) still maps the WETH address —
+  // orders are denominated in WETH, so resolveToken() must find it.
+  const tokenByAddr = useMemo(
+    () => tokenMap(curatedErc20View(onchainTokens)),
+    [onchainTokens],
+  );
 
   const resolveToken = (addr: string) => tokenByAddr[addr.toLowerCase()];
 
