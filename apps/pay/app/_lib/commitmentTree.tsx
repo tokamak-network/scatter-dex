@@ -11,12 +11,16 @@ import { getNetworkConfig } from "./network";
 // Pay is single-network — addresses are inlined at build time.
 // Resolve once at module mount and feed the SDK provider.
 export function CommitmentTreeProvider({ children }: { children: React.ReactNode }) {
-  const { poolAddress, fromBlock } = useMemo(() => {
+  const { poolAddress, fromBlock, serverUrl } = useMemo(() => {
     const cfg = getNetworkConfig();
-    return { poolAddress: cfg.contracts.commitmentPool, fromBlock: cfg.deployBlock };
+    return {
+      poolAddress: cfg.contracts.commitmentPool,
+      fromBlock: cfg.deployBlock,
+      serverUrl: cfg.sharedOrderbookUrl,
+    };
   }, []);
   return (
-    <SdkCommitmentTreeProvider poolAddress={poolAddress} fromBlock={fromBlock}>
+    <SdkCommitmentTreeProvider poolAddress={poolAddress} fromBlock={fromBlock} serverUrl={serverUrl}>
       {children}
     </SdkCommitmentTreeProvider>
   );

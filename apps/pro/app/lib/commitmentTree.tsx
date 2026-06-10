@@ -12,7 +12,10 @@ import { useActiveNetwork } from "./activeNetwork";
 export function CommitmentTreeProvider({ children }: { children: React.ReactNode }) {
   const { network } = useActiveNetwork();
   return (
-    <SdkCommitmentTreeProvider poolAddress={network.contracts.commitmentPool}>
+    <SdkCommitmentTreeProvider
+      poolAddress={network.contracts.commitmentPool}
+      serverUrl={network.sharedOrderbookUrl}
+    >
       {children}
     </SdkCommitmentTreeProvider>
   );
