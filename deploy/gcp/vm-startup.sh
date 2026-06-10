@@ -42,7 +42,15 @@ PROJECT_ID=$(mget project-id)
 AR_PATH=$(mget ar-path)
 IMAGE_TAG=$(mget image-tag latest)
 RPC_URL=$(mget rpc-url)
+# Single-chain fallback chainId for the verifier + indexer. Defaults to Sepolia;
+# set the `chain-id` metadata key for another network. (Multi-network is
+# configured via the CHAINS / COMMITMENT_CHAINS JSON env, not this.)
+CHAIN_ID=$(mget chain-id 11155111)
 COMMITMENT_POOL_ADDRESS=$(mget commitment-pool-address)
+# Pool deploy block for the commitment indexer (so it doesn't scan from
+# genesis). Defaults to 0 if unset — set the `commitment-deploy-block`
+# metadata key from the ledger's "deployBlock".
+COMMITMENT_DEPLOY_BLOCK=$(mget commitment-deploy-block 0)
 PRIVATE_SETTLEMENT_ADDRESS=$(mget private-settlement-address)
 CORS_ORIGINS=$(mget cors-origins)
 # SIWE admin allowlist — public wallet addresses, so it lives in metadata
@@ -155,7 +163,9 @@ IMAGE_TAG=${IMAGE_TAG}
 SHARED_ORDERBOOK_PORT=4000
 ZK_RELAYER_PORT=3002
 RPC_URL=${RPC_URL}
+CHAIN_ID=${CHAIN_ID}
 COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
+COMMITMENT_DEPLOY_BLOCK=${COMMITMENT_DEPLOY_BLOCK}
 PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
 CORS_ORIGINS=${CORS_ORIGINS}
 ADMIN_ADDRESSES=${ADMIN_ADDRESSES}
