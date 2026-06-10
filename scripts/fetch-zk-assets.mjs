@@ -14,7 +14,7 @@
 // Exits non-zero if any required artifact can't be obtained or fails its hash.
 
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { BUILD_DIR, CIRCUITS, gcsObjectUrl, loadManifest, projectRoot, sha256File } from "./lib/zk.mjs";
 
@@ -46,6 +46,7 @@ async function download(url, dst, expected) {
   if (got !== expected) throw new Error(`sha256 mismatch from ${url}: got ${got}, want ${expected}`);
   const tmp = `${dst}.tmp`;
   writeFileSync(tmp, buf);
+  if (existsSync(dst)) unlinkSync(dst); // renameSync over an existing file fails on Windows
   renameSync(tmp, dst);
 }
 
@@ -62,7 +63,7 @@ async function ensure(name) {
     return "copied from circuits/build";
   }
 
-  await download(gcsObjectUrl(meta.sha256), dst, meta.sha256);
+  await download(gcsObjectUrl(meta.sha256, manifest.bucket), dst, meta.sha256);
   return "downloaded from GCS";
 }
 

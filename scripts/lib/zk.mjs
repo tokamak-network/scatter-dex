@@ -21,9 +21,10 @@ export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), ".."
 export const BUILD_DIR = resolve(projectRoot, "circuits/build");
 export const MANIFEST_PATH = resolve(projectRoot, "circuits/zk-manifest.json");
 
-// Public object URL for a content-addressed artifact.
-export const gcsObjectUrl = (sha256) =>
-  `https://storage.googleapis.com/${BUCKET}/zk/${sha256}`;
+// Public object URL for a content-addressed artifact. Pass the manifest's
+// bucket so the download follows the committed pinset (BUCKET is only a default).
+export const gcsObjectUrl = (sha256, bucket = BUCKET) =>
+  `https://storage.googleapis.com/${bucket}/zk/${sha256}`;
 
 export const sha256File = (path) =>
   createHash("sha256").update(readFileSync(path)).digest("hex");

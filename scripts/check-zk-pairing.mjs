@@ -23,7 +23,13 @@ import { BUILD_DIR, projectRoot } from "./lib/zk.mjs";
 
 // Run the CLI script via `node` (not the .bin shim) so it works on Windows too.
 const SNARKJS = resolve(projectRoot, "circuits/node_modules/snarkjs/cli.js");
-const chain = (() => { const i = process.argv.indexOf("--chain"); return i > -1 ? process.argv[i + 1] : "11155111"; })();
+const chain = (() => {
+  const i = process.argv.indexOf("--chain");
+  if (i === -1) return "11155111";
+  const v = process.argv[i + 1];
+  if (!v || v.startsWith("-")) { console.error("[check-zk-pairing] --chain requires a chain id, e.g. --chain 11155111"); process.exit(2); }
+  return v;
+})();
 const RPC = process.env.ZK_PAIRING_RPC || process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia.publicnode.com";
 const ledger = JSON.parse(readFileSync(resolve(projectRoot, `contracts/deployments/${chain}.json`), "utf8"));
 
@@ -78,7 +84,11 @@ function g1Constants(vk) {
 let fail = 0, checked = 0;
 for (const [key, base, opts] of MAP) {
   const addr = ledger[key];
-  if (!addr || /^0x0+$/.test(addr)) { if (!opts?.optional) console.warn(`[check-zk-pairing] no ledger address for ${key} — skipped`); continue; }
+  if (!addr || /^0x0+$/.test(addr)) {
+    if (opts?.optional) continue;
+    console.error(`✗ ${key.padEnd(20)} missing/zero ledger address — cannot verify a required verifier`);
+    fail++; continue;
+  }
   const vk = loadVkey(base);
   if (!vk) { console.warn(`[check-zk-pairing] ${base} vkey/zkey not in circuits/build — skipped`); continue; }
   let code;
@@ -95,5 +105,9 @@ for (const [key, base, opts] of MAP) {
 if (fail) {
   console.error(`\n[check-zk-pairing] ${fail} mismatch(es). A served zkey does NOT pair with its on-chain verifier — proofs will revert InvalidProof(). Re-fetch the canonical zkey, or redeploy+re-point the verifier. See README "Deployed networks".`);
   process.exit(1);
+}
+if (checked === 0) {
+  console.error(`\n[check-zk-pairing] verified nothing — no zkeys found in circuits/build. Build circuits (or fetch them) before running this guard.`);
+  process.exit(2);
 }
 console.log(`\n[check-zk-pairing] all ${checked} verifiers pair with circuits/build ✓`);
