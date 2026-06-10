@@ -63,7 +63,8 @@ deploy/ci/deploy.sh                            # image-tag + compose + startup-s
 > ```bash
 > gcloud compute instances add-metadata zkscatter-node --zone us-central1-a \
 >   --metadata-from-file startup-script=deploy/gcp/vm-startup.sh,\
-> compose-yml=deploy/runtime/compose.yml,compose-tls-yml=deploy/runtime/compose.tls.yml
+> compose-yml=deploy/runtime/compose.yml,compose-tls-yml=deploy/runtime/compose.tls.yml,\
+> caddyfile=deploy/runtime/Caddyfile
 > ```
 >
 > COS note: verified on the deployed image (google-guest-agent 20250701); on a
@@ -288,17 +289,17 @@ On the live box these come from instance metadata (`vm-startup.sh` maps
 ```bash
 # 1. deploy block = the pool's deployBlock from contracts/deployments/<chainId>.json
 gcloud compute instances add-metadata zkscatter-node --zone us-central1-a \
-  --metadata commitment-deploy-block=11008264,commitment-pool-address=0xa711…2150
+  --metadata commitment-deploy-block=11008264,commitment-pool-address=0xa7110147DB71b1A3d836C9bEb9ec963627382150
 # 2. roll out (deploy.sh re-syncs compose so the commitment-indexer container exists)
 deploy/ci/deploy.sh
 # 3. verify
 curl 'http://136.115.115.93:4000/api/commitments?chainId=11155111'   # -> {"total":N,…}
 ```
 
-> ⚠️ **RPC range requirement.** The indexer's first pass does a single
-> `eth_getLogs` over `[deployBlock, latest]` (tens of thousands of blocks).
-> The box's `rpc-url` secret **must** allow at least `COMMITMENT_INDEX_BLOCK_RANGE`
-> (50 000) blocks per call. A **free-tier RPC with a tiny cap fails** (e.g.
+> ⚠️ **RPC range requirement.** The indexer walks `[deployBlock, latest]` in
+> `COMMITMENT_INDEX_BLOCK_RANGE`-block windows, one `eth_getLogs` per window, so
+> the box's `rpc-url` secret **must** allow at least that window
+> (`50 000` by default) blocks per call. A **free-tier RPC with a tiny cap fails** (e.g.
 > Alchemy free = 10-block `eth_getLogs` → `Under the Free tier plan…`). Use a
 > keyless `publicnode` endpoint (50 000 cap, the stack default) or a paid key:
 >

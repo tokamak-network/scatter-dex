@@ -29,13 +29,14 @@ gcloud compute instances add-metadata "${VM_NAME}" \
 # Keep the box's compose + startup-script in lock-step with the image. These
 # are the same metadata keys vm-create.sh seeds; re-pushing them on every
 # deploy means "new image that needs a new service/env" just works.
-echo "▶  syncing runtime config metadata (compose + startup-script) on ${VM_NAME}"
+echo "▶  syncing runtime config metadata (compose + startup-script + Caddyfile) on ${VM_NAME}"
 gcloud compute instances add-metadata "${VM_NAME}" \
 	--zone="${ZONE}" \
 	--metadata-from-file=\
 startup-script=./vm-startup.sh,\
 compose-yml=../runtime/compose.yml,\
-compose-tls-yml=../runtime/compose.tls.yml
+compose-tls-yml=../runtime/compose.tls.yml,\
+caddyfile=../runtime/Caddyfile
 
 echo "▶  re-running startup script on ${VM_NAME}"
 # `set -o pipefail` on the remote side so a startup-script failure is
