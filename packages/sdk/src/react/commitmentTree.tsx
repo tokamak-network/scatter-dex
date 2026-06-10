@@ -13,6 +13,7 @@ import { useWallet } from "./wallet";
 import { ZERO_ADDRESS } from "../core/addresses";
 import {
   fetchCommitmentLeaves,
+  getPoolNextIndex,
   isKnownPoolRoot,
   loadCommitmentInsertedHistory,
   subscribeCommitmentInserted,
@@ -238,9 +239,28 @@ export function CommitmentTreeProvider({
         idx.set(row.commitment.toString(), i);
       }
       if (cancelled) return null;
-      const known = await isKnownPoolRoot(readProvider, poolAddress, t.root);
+      // Two gates, both against the chain:
+      //   1. isKnownRoot — the computed root is one the contract recognises.
+      //   2. completeness — the tree is not SHORTER than the on-chain leaf
+      //      count. A load-balanced RPC (e.g. publicnode) can answer getLogs
+      //      from a replica that's a block behind, returning a leaf set
+      //      missing the newest commitment. Its root is the *previous* root,
+      //      which `isKnownRoot` still accepts (it's in the ring buffer), so
+      //      the stale tree would be published and the newest note could not
+      //      be spent ("Confirming deposit…" hangs / CommitmentProofUnavailable).
+      //      Requiring `t.nextIndex >= nextIndex()` rejects the lagging set so
+      //      the caller falls back / retries instead of trusting a short tree.
+      const [known, onchainCount] = await Promise.all([
+        isKnownPoolRoot(readProvider, poolAddress, t.root),
+        // Best-effort: a transient nextIndex() failure (rate limit / timeout)
+        // must not reject hydration when isKnownRoot would otherwise pass.
+        // Falling back to 0 simply skips the completeness gate for this
+        // attempt — isKnownRoot still guards correctness, and a later
+        // refresh re-checks completeness once the RPC recovers.
+        getPoolNextIndex(readProvider, poolAddress).catch(() => 0),
+      ]);
       if (cancelled) return null;
-      return known ? { tree: t, index: idx } : null;
+      return known && t.nextIndex >= onchainCount ? { tree: t, index: idx } : null;
     };
 
     chain = chain.then(async () => {
