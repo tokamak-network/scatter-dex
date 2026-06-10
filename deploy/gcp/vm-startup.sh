@@ -67,6 +67,13 @@ ADMIN_ADDRESSES=$(mget admin-addresses)
 DOMAIN=$(mget domain)
 ACME_EMAIL=$(mget acme-email)
 RELAYER_SECRET_NAME=$(mget relayer-secret-name relayer-private-key)
+# zk-relayer identity/config — only consumed when a relayer secret is present
+# (i.e. this box also runs a relayer via the `relayer` Compose profile). Strip
+# whitespace/newlines (a copy-pasted metadata value with a trailing newline
+# would otherwise corrupt the .env format below).
+RELAYER_NAME=$(mget relayer-name | tr -d '\r\n')
+RELAYER_PUBLIC_URL=$(mget relayer-public-url | tr -d '[:space:]')
+FEE_VAULT_ADDRESS=$(mget fee-vault-address | tr -d '[:space:]')
 
 IMAGE_SO="${AR_PATH}/shared-orderbook"
 IMAGE_ZK="${AR_PATH}/zk-relayer"
@@ -118,13 +125,22 @@ log "fetching secret '${RELAYER_SECRET_NAME}' (optional — only zk-relayer uses
 token=$(gcp_token) || token=""
 if gcp_secret "${RELAYER_SECRET_NAME}" > /var/lib/zkscatter/secrets/relayer.key \
 	&& [[ -s /var/lib/zkscatter/secrets/relayer.key ]]; then
-	log "secret written"
+	if [[ -n "${FEE_VAULT_ADDRESS}" ]]; then
+		log "secret written — enabling the relayer Compose profile"
+		RELAYER_ENABLED=1
+	else
+		# zk-relayer requires fee-vault-address; enabling the profile without it
+		# would crash-loop the container. Keep it off and say why.
+		RELAYER_ENABLED=0
+		log "relayer secret present but fee-vault-address metadata is missing — keeping zk-relayer disabled"
+	fi
 else
-	# No secret version — expected on the central orderbook box, where
+	# No secret version — the default for a pure orderbook box, where
 	# zk-relayer is disabled (run per-operator). Leave an empty placeholder so
 	# the compose `relayer_key` secret file resolves; the profiled-off zk-relayer
 	# never reads it.
 	: > /var/lib/zkscatter/secrets/relayer.key
+	RELAYER_ENABLED=0
 	log "no relayer secret — empty placeholder written (zk-relayer disabled)"
 fi
 
@@ -186,6 +202,10 @@ ADMIN_ADDRESSES=${ADMIN_ADDRESSES}
 ADMIN_TOKEN=${ADMIN_TOKEN}
 CIRCUITS_BUILD_DIR=/var/lib/zkscatter/circuits/build
 RELAYER_KEY_FILE=/var/lib/zkscatter/secrets/relayer.key
+RELAYER_NAME=${RELAYER_NAME}
+RELAYER_PUBLIC_URL=${RELAYER_PUBLIC_URL}
+FEE_VAULT_ADDRESS=${FEE_VAULT_ADDRESS}
+INDEX_FROM_BLOCK=${COMMITMENT_DEPLOY_BLOCK}
 DOMAIN=${DOMAIN}
 ACME_EMAIL=${ACME_EMAIL}
 EOF
@@ -233,14 +253,27 @@ fi
 files=(-f compose.yml)
 [[ -n "${DOMAIN}" ]] && files+=(-f compose.tls.yml)
 
+# Run the relayer alongside the orderbook only when a relayer secret was found
+# (RELAYER_ENABLED=1). The zk-relayer service is behind the `relayer` Compose
+# profile, so without this it stays off — preserving the "pure orderbook box"
+# default for deployments that don't co-locate a relayer.
+profiles=()
+if [[ "${RELAYER_ENABLED:-0}" == "1" ]]; then
+	profiles+=(--profile relayer)
+else
+	# `compose up` without the profile won't stop an already-running relayer
+	# (e.g. a prior boot had the secret, this one doesn't), so remove it.
+	docker rm -f zk-relayer >/dev/null 2>&1 || true
+fi
+
 # Serialize image pulls — two parallel extractions would peak above the
 # 1 GB RAM ceiling on e2-micro.
 export COMPOSE_PARALLEL_LIMIT=1
 
 log "docker compose pull"
-docker compose "${files[@]}" --env-file .env pull
+docker compose "${files[@]}" "${profiles[@]}" --env-file .env pull
 
 log "docker compose up -d"
-docker compose "${files[@]}" --env-file .env up -d
+docker compose "${files[@]}" "${profiles[@]}" --env-file .env up -d
 
 log "startup complete"
