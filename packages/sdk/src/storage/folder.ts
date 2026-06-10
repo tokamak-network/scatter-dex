@@ -51,8 +51,43 @@ function openHandleDB(): Promise<IDBDatabase | null> {
     version: 1,
     stores: [{ name: "handles", keyPath: "id" }],
     onWarn: (reason, err) => console.warn("zkscatter-fs:", reason, err),
+  }).then((db) => {
+    if (db) {
+      // Drop the cached connection once it closes — another tab's
+      // versionchange, or Fast Refresh tearing down the module, leaves the
+      // singleton pointing at a closing IDBDatabase whose `.transaction()`
+      // throws `InvalidStateError: …connection is closing`. Nulling the cache
+      // makes the next call re-open instead of reusing the dead handle.
+      const invalidate = () => { _dbPromise = null; };
+      db.addEventListener("close", invalidate);
+      db.onversionchange = () => { db.close(); invalidate(); };
+    }
+    return db;
   });
   return _dbPromise;
+}
+
+/** Run a readwrite transaction against the handle store, re-opening the
+ *  connection once if the cached one was closed underneath us (see
+ *  `openHandleDB`). Keeps every writer resilient to the closing-connection
+ *  race without each one re-implementing the retry. */
+async function withHandleStore(run: (store: IDBObjectStore) => void): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const db = await openHandleDB();
+    if (!db) return;
+    try {
+      const tx = db.transaction("handles", "readwrite");
+      run(tx.objectStore("handles"));
+      await txDone(tx);
+      return;
+    } catch (e) {
+      if (attempt === 0 && (e as DOMException)?.name === "InvalidStateError") {
+        _dbPromise = null; // closing connection — drop it and re-open
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 function txDone(tx: IDBTransaction): Promise<void> {
@@ -113,28 +148,16 @@ async function readRecord(id: string): Promise<HandleRecord | null> {
 }
 
 async function writeRecord(record: HandleRecord): Promise<void> {
-  const db = await openHandleDB();
-  if (!db) return;
-  const tx = db.transaction("handles", "readwrite");
-  tx.objectStore("handles").put(record);
-  await txDone(tx);
+  await withHandleStore((store) => store.put(record));
 }
 
 async function writePointer(currentId: string): Promise<void> {
-  const db = await openHandleDB();
-  if (!db) return;
-  const tx = db.transaction("handles", "readwrite");
   const rec: CurrentPointer = { id: CURRENT_POINTER_KEY, currentId };
-  tx.objectStore("handles").put(rec);
-  await txDone(tx);
+  await withHandleStore((store) => store.put(rec));
 }
 
 async function deleteEntry(id: string): Promise<void> {
-  const db = await openHandleDB();
-  if (!db) return;
-  const tx = db.transaction("handles", "readwrite");
-  tx.objectStore("handles").delete(id);
-  await txDone(tx);
+  await withHandleStore((store) => store.delete(id));
 }
 
 function mintFolderId(): string {
@@ -482,11 +505,7 @@ export async function clearPersistedFolder(): Promise<void> {
   currentId = null;
   _restorePromise = null;
   try {
-    const db = await openHandleDB();
-    if (!db) return;
-    const tx = db.transaction("handles", "readwrite");
-    tx.objectStore("handles").clear();
-    await txDone(tx);
+    await withHandleStore((store) => store.clear());
   } catch (e) {
     console.warn("Failed to clear persisted folder handles:", e);
   }
