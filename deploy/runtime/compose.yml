@@ -114,6 +114,13 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS}
       - SHARED_ORDERBOOK_URL=http://shared-orderbook:4000
       - RELAYER_PRIVATE_KEY_FILE=/run/secrets/relayer_key
+      # Admin auth (operator console). Both optional — when BOTH are empty the
+      # relayer's admin routes fail closed (403 "Admin auth is not configured").
+      #   RELAYER_REGISTRY_ADDRESS → wallet/SIWE auth: the connecting wallet must
+      #     be isActiveRelayer() on this registry.
+      #   ADMIN_API_KEY (>=32 bytes) → static-key fallback (x-admin-key header).
+      - RELAYER_REGISTRY_ADDRESS=${RELAYER_REGISTRY_ADDRESS:-}
+      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
     secrets:
       - relayer_key
     volumes:
