@@ -261,9 +261,12 @@ getLogs path already uses**, and no on-chain-private data is served.
    on). Also set `busy_timeout` in `db.ts`.
 1. **Server, dark — DONE:** `commitments` + `commitment_cursor` tables, the
    standalone indexer (`src/commitment-indexer.ts`, `npm run
-   index:commitments[:watch]`), and `GET /api/commitments` (public read). No
-   client change yet; deploy + backfill, then verify the endpoint matches an
-   on-chain scan.
+   index:commitments[:watch]`), `GET /api/commitments` (public read), and the
+   **deploy wiring** — a `commitment-indexer` service in
+   `deploy/runtime/compose.yml` + `COMMITMENT_DEPLOY_BLOCK` injected by
+   `deploy/gcp/vm-startup.sh` (set the `commitment-deploy-block` instance
+   metadata key). Roll out, let it backfill, then verify the endpoint matches an
+   on-chain scan before Phase 3 turns it on in the apps.
 2. **SDK opt-in — DONE:** `fetchCommitmentLeaves` (paged `GET /api/commitments`)
    + a `serverUrl` prop on `CommitmentTreeProvider`. Default **off** → identical
    behaviour until wired. When set, hydration tries the server, builds a tree,

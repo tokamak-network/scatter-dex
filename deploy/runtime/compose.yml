@@ -61,6 +61,30 @@ services:
       - orderbook-data:/data
     command: ["node", "dist/verify.js", "--watch"]
 
+  # Commitment indexer — same image as shared-orderbook, different entrypoint.
+  # Scans CommitmentInserted events from the deploy block and writes the leaves
+  # to the shared DB so GET /api/commitments can serve them (clients hydrate the
+  # Merkle tree without each scanning eth_getLogs). Shares orderbook-data
+  # because the DB is the rendezvous. Optional: omit if no RPC is configured.
+  commitment-indexer:
+    image: ${SHARED_ORDERBOOK_IMAGE}:${IMAGE_TAG:-latest}
+    container_name: commitment-indexer
+    restart: unless-stopped
+    depends_on:
+      shared-orderbook:
+        condition: service_healthy
+    environment:
+      - DB_PATH=${SHARED_ORDERBOOK_DB_PATH:-/data/shared-orderbook.db}
+      - RPC_URL=${RPC_URL}
+      - COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
+      - COMMITMENT_DEPLOY_BLOCK=${COMMITMENT_DEPLOY_BLOCK:-0}
+      - COMMITMENT_POLL_INTERVAL_SEC=${COMMITMENT_POLL_INTERVAL_SEC:-30}
+      - COMMITMENT_BLOCK_SAFETY_MARGIN=${COMMITMENT_BLOCK_SAFETY_MARGIN:-6}
+      - COMMITMENT_INDEX_BLOCK_RANGE=${COMMITMENT_INDEX_BLOCK_RANGE:-50000}
+    volumes:
+      - orderbook-data:/data
+    command: ["node", "dist/commitment-indexer.js", "--watch"]
+
   # zk-relayer is run per-operator (each relayer operator hosts their own),
   # NOT on the central orderbook box. Behind the "relayer" compose profile so
   # the default `up` (orderbook + settlement-verifier) does not start it.

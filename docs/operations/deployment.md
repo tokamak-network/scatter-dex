@@ -32,7 +32,7 @@ does **not** start one).
 
 | What | Where | Endpoint |
 | --- | --- | --- |
-| **shared-orderbook + settlement-verifier** | GCP e2-micro (`zkscatter-node`, `us-central1-a`, COS) — `deploy/gcp` | `http://136.115.115.93:4000` (`GET /health` → `{"status":"ok"}`) |
+| **shared-orderbook + settlement-verifier + commitment-indexer** | GCP e2-micro (`zkscatter-node`, `us-central1-a`, COS) — `deploy/gcp` | `http://136.115.115.93:4000` (`GET /health` → `{"status":"ok"}`; leaves at `GET /api/commitments`) |
 | **zk-relayer** | per-operator (not on the central box) | operator's own `:3002` |
 | **zk-X509 CMS backend** | Firebase (`zkscatter` project) — Cloud Functions + Firestore | `https://zkscatter.web.app/api/registries` |
 | **Frontends (hub/pay/pro/operators/admin)** | run locally per team member | `localhost:400x` |
@@ -254,6 +254,17 @@ The settlement-verifier (same image, `verify.js` entrypoint) is multi-network:
 |----------|---------|-------------|
 | `CHAINS` | — | JSON array of per-chain configs `[{"chainId":…,"rpcUrl":…,"settlementAddress":…}]`. Runs one verify loop per chain. |
 | `RPC_URL` / `PRIVATE_SETTLEMENT_ADDRESS` / `CHAIN_ID` | — / — / `11155111` | Single-chain fallback when `CHAINS` is unset. |
+
+The commitment-indexer (same image, `commitment-indexer.js` entrypoint) scans
+`CommitmentInserted` events into the shared DB so `GET /api/commitments` can
+serve Merkle leaves. Like the verifier it shares the orderbook DB volume and is
+multi-network:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COMMITMENT_CHAINS` | — | JSON array `[{"chainId":…,"rpcUrl":…,"commitmentPoolAddress":…,"deployBlock":…}]`. One indexer loop per chain. |
+| `RPC_URL` / `COMMITMENT_POOL_ADDRESS` / `COMMITMENT_DEPLOY_BLOCK` / `CHAIN_ID` | — / — / `0` / `11155111` | Single-chain fallback when `COMMITMENT_CHAINS` is unset. Set the deploy block from the ledger so it doesn't scan from genesis. |
+| `COMMITMENT_POLL_INTERVAL_SEC` / `COMMITMENT_BLOCK_SAFETY_MARGIN` / `COMMITMENT_INDEX_BLOCK_RANGE` | `30` / `6` / `50000` | Pass cadence, reorg margin, and `eth_getLogs` window. |
 
 ### Relayer
 

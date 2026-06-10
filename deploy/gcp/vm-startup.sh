@@ -43,6 +43,10 @@ AR_PATH=$(mget ar-path)
 IMAGE_TAG=$(mget image-tag latest)
 RPC_URL=$(mget rpc-url)
 COMMITMENT_POOL_ADDRESS=$(mget commitment-pool-address)
+# Pool deploy block for the commitment indexer (so it doesn't scan from
+# genesis). Defaults to 0 if unset — set the `commitment-deploy-block`
+# metadata key from the ledger's "deployBlock".
+COMMITMENT_DEPLOY_BLOCK=$(mget commitment-deploy-block 0)
 PRIVATE_SETTLEMENT_ADDRESS=$(mget private-settlement-address)
 CORS_ORIGINS=$(mget cors-origins)
 # SIWE admin allowlist — public wallet addresses, so it lives in metadata
@@ -156,6 +160,7 @@ SHARED_ORDERBOOK_PORT=4000
 ZK_RELAYER_PORT=3002
 RPC_URL=${RPC_URL}
 COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
+COMMITMENT_DEPLOY_BLOCK=${COMMITMENT_DEPLOY_BLOCK}
 PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
 CORS_ORIGINS=${CORS_ORIGINS}
 ADMIN_ADDRESSES=${ADMIN_ADDRESSES}
