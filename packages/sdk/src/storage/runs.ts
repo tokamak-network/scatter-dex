@@ -256,6 +256,10 @@ function isValidRecord(r: unknown): r is RunRecord {
   if (!isOptionalString(v.settleGasPaid)) return false;
   if (!isOptionalString(v.relayerFee)) return false;
   if (!isOptionalString(v.notes)) return false;
+  // payoutSeed is consumed via BigInt(...) on the resume path; reject a
+  // non-string here so a corrupt file fails validation up front rather
+  // than throwing an opaque SyntaxError deep in a re-settle.
+  if (!isOptionalString(v.payoutSeed)) return false;
   return true;
 }
 

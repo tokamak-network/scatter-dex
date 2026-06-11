@@ -665,7 +665,13 @@ function NewPayout() {
         // packages; a fresh run mints one and holds it in payoutSeedRef.
         // (finalizeRealSettle still hard-checks the on-chain event root.)
         if (resumeRecord?.payoutSeed && payoutSeedRef.current === null) {
-          payoutSeedRef.current = BigInt(resumeRecord.payoutSeed);
+          try {
+            payoutSeedRef.current = BigInt(resumeRecord.payoutSeed);
+          } catch {
+            throw new Error(
+              `This run's saved payoutSeed is invalid ("${resumeRecord.payoutSeed}") — can't reproduce its claim secrets to resume. Start a fresh payout instead.`,
+            );
+          }
         }
         const payoutSeed = (payoutSeedRef.current ??= randomFieldElement());
         const submitBatches: PayoutBatch[] = splitPayout(

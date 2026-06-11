@@ -57,12 +57,14 @@ describe("claimsRoot reproducibility (the fix)", () => {
     expect(await root()).toBe(await root());
   });
 
-  it("default random secrets produce DIFFERENT roots each call (the hazard this replaces)", async () => {
-    const root = async () => {
-      const batches = splitPayout(recips(), { token: TOKEN });
+  it("a different seed yields a different claimsRoot (secrets actually bind the root)", async () => {
+    const rootForSeed = async (seed: bigint) => {
+      const batches = splitPayout(await withDeterministicSecrets(recips(), seed, TOKEN), {
+        token: TOKEN,
+      });
       const { root } = await buildClaimsTree(batches[0]!.claims, batches[0]!.tier);
       return root;
     };
-    expect(await root()).not.toBe(await root());
+    expect(await rootForSeed(SEED)).not.toBe(await rootForSeed(SEED + 1n));
   });
 });
