@@ -39,7 +39,7 @@ describe("deepRecoverReleaseTime", () => {
     expect(res).not.toBeNull();
     expect(res!.releaseTime).toBe(BigInt(TRUE_RELEASE));
     // The recovered claims rebuild the exact target root.
-    const rebuilt = await buildClaimsTree(res!.claims, undefined);
+    const rebuilt = await buildClaimsTree(res!.claims);
     expect(toBytes32Hex(rebuilt.root)).toBe(target.toLowerCase());
   });
 

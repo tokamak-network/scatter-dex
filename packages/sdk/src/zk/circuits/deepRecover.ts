@@ -73,6 +73,12 @@ export async function deepRecoverReleaseTime(
   const maxCandidates = args.maxCandidates ?? 200_000;
 
   if (recipients.length === 0) throw new Error("deepRecover: no recipients");
+  // Candidates are converted with BigInt(t); reject non-/unsafe integers up
+  // front so the scan can't throw mid-loop or silently step over the wrong
+  // timestamps from precision loss.
+  if (![startSec, endSec, stepSec].every((n) => Number.isSafeInteger(n))) {
+    throw new Error("deepRecover: startSec/endSec/stepSec must be safe integers (unix seconds)");
+  }
   if (stepSec <= 0) throw new Error("deepRecover: stepSec must be positive");
   if (endSec < startSec) throw new Error("deepRecover: endSec < startSec");
   const tier: CircuitTier | undefined = TIERS.find((t) => t.cap === args.tierCap);

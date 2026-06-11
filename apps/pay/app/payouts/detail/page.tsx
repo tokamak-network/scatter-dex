@@ -601,7 +601,7 @@ function RepairClaimsBanner({
       {msg?.tone === "warn" && (
         <div className="mt-2">
           <Link href="/payouts/recover" className="text-[var(--color-primary)] hover:underline">
-            No backup? Deep recover from your wallet →
+            Can&apos;t repair here? Deep recover from your wallet →
           </Link>
         </div>
       )}
