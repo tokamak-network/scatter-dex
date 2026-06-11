@@ -9,6 +9,7 @@ import {
   splitPayout,
   withDeterministicSecrets,
   randomFieldElement,
+  toBytes32Hex,
   type PayoutBatch,
   pickActiveTier,
   ACTIVE_TIERS,
@@ -70,6 +71,7 @@ import {
 import {
   loadRun,
   saveRun,
+  saveClaimsBackup,
   type RecipientRow,
   type RunRecord,
 } from "@zkscatter/sdk/storage";
@@ -768,6 +770,35 @@ function NewPayout() {
         for (let i = 0; i < submitBatches.length; i++) {
           try {
             const prep = await preparePromises[i]!;
+            // Persist this batch's claim inputs keyed by claimsRoot BEFORE
+            // dispatching to the relayer. If the settle lands on-chain but
+            // the run record is never written (a crash, or a relayer that
+            // returns a different attempt's tx hash), the secrets for the
+            // root that actually settled stay recoverable from this backup —
+            // the contract has no refund path, so a lost secret strands the
+            // funds. A write failure aborts the batch (caught below) rather
+            // than settling without a recoverable backup.
+            await saveClaimsBackup({
+              version: 1,
+              createdAt: Math.floor(Date.now() / 1000),
+              chainId: cfg.chainId,
+              settlementAddress,
+              claimsRoot: toBytes32Hex(prep.ctx.authResult.claimsRoot),
+              tierCap: prep.ctx.batch.tier.cap,
+              token: tokenAddress,
+              tokenSymbol: token,
+              tokenDecimals: decimals,
+              payoutSeed: payoutSeed.toString(),
+              runLabel: label,
+              ...(account ? { senderLabel: account } : {}),
+              relayerUrl: relayer.url,
+              claims: prep.ctx.batch.claims.map((c) => ({
+                recipient: c.recipient,
+                amount: c.amount.toString(),
+                releaseTime: c.releaseTime.toString(),
+                secret: c.secret.toString(),
+              })),
+            });
             const sent = await submitRealSettle(prep, relayer.url);
             submitted.push({
               txHash: sent.txHash,

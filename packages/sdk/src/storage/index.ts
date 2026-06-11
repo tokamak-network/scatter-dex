@@ -20,5 +20,6 @@ export {
 export * from "./walletBook";
 export * from "./runs";
 export * from "./claimInbox";
+export * from "./claimsBackup";
 export * from "./wizardDrafts";
 export * from "./backup";
