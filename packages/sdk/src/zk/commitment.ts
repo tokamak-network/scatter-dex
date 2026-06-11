@@ -155,6 +155,22 @@ export function randomFieldElement(): bigint {
  *  releaseTime`) plus the per-claim `index`, so distinct recipients (or
  *  the same recipient at a different index) get distinct secrets even
  *  with identical amounts. */
+/** Poseidon preimage for a deterministic claim secret — the single
+ *  source of truth shared by {@link deriveClaimSecret} (one-off) and the
+ *  batched `withDeterministicSecrets` (Poseidon module fetched once), so
+ *  the two can never drift. A drift would make a recovery run regenerate
+ *  the wrong secrets. */
+export function claimSecretPreimage(
+  seed: bigint,
+  recipient: string,
+  token: string,
+  amount: bigint,
+  releaseTime: bigint,
+  index: number,
+): bigint[] {
+  return [seed, BigInt(recipient), BigInt(token), amount, releaseTime, BigInt(index)];
+}
+
 export async function deriveClaimSecret(
   seed: bigint,
   recipient: string,
@@ -163,14 +179,7 @@ export async function deriveClaimSecret(
   releaseTime: bigint,
   index: number,
 ): Promise<bigint> {
-  return poseidonHash([
-    seed,
-    BigInt(recipient),
-    BigInt(token),
-    amount,
-    releaseTime,
-    BigInt(index),
-  ]);
+  return poseidonHash(claimSecretPreimage(seed, recipient, token, amount, releaseTime, index));
 }
 
 /** Build a fresh `CommitmentNote` bound to the caller's BabyJub

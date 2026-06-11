@@ -1,5 +1,10 @@
 import { type CircuitTier, pickActiveTier } from "../constants";
-import { deriveClaimSecret, randomFieldElement } from "../commitment";
+import {
+  claimSecretPreimage,
+  getPoseidonModule,
+  poseidonHashWith,
+  randomFieldElement,
+} from "../commitment";
 import type { ClaimEntry } from "./authorize";
 
 /** Recipient line for a multi-recipient payout. The token is shared
@@ -68,22 +73,22 @@ export async function withDeterministicSecrets(
   seed: bigint,
   token: string,
 ): Promise<PayoutRecipient[]> {
-  return Promise.all(
-    recipients.map(async (r, i) =>
-      r.secret !== undefined
-        ? r
-        : {
-            ...r,
-            secret: await deriveClaimSecret(
-              seed,
-              r.recipient,
-              token,
-              r.amount,
-              r.releaseTime,
-              i,
-            ),
-          },
-    ),
+  // Fetch the Poseidon module once and hash synchronously per recipient
+  // (`poseidonHashWith`) rather than awaiting `deriveClaimSecret` in a
+  // loop — avoids a microtask per recipient. The preimage stays shared
+  // with `deriveClaimSecret` via `claimSecretPreimage`, so the recovery
+  // tool regenerates identical secrets.
+  const poseidon = await getPoseidonModule();
+  return recipients.map((r, i) =>
+    r.secret !== undefined
+      ? r
+      : {
+          ...r,
+          secret: poseidonHashWith(
+            poseidon,
+            claimSecretPreimage(seed, r.recipient, token, r.amount, r.releaseTime, i),
+          ),
+        },
   );
 }
 
