@@ -18,7 +18,12 @@ type Phase =
   | { kind: "idle" }
   | { kind: "running"; scanned: number; total: number }
   | { kind: "error"; message: string }
-  | { kind: "found"; releaseTime: number; links: { recipient: string; url: string }[] };
+  | {
+      kind: "found";
+      releaseTime: number;
+      links: { recipient: string; url: string }[];
+      backupSaved: boolean;
+    };
 
 /** Last-resort recovery for a payout whose claim links were lost: the
  *  seed is re-derived from the wallet, the operator supplies recipients +
@@ -123,17 +128,21 @@ export default function RecoverPage() {
         })),
       };
       const packages: ClaimPackage[] = await rebuildClaimPackages(backup);
+      // Persisting a backup is best-effort — surfacing the links is the
+      // priority. Track success so the UI can warn if it didn't save (no
+      // folder open / write denied) and the operator must copy the links now.
+      let backupSaved = true;
       try {
         await saveClaimsBackup(backup);
       } catch {
-        // Surfacing links is the priority; a folder write failure is non-fatal.
+        backupSaved = false;
       }
       const origin = typeof window !== "undefined" ? window.location.origin : "";
       const links = packages.map((p) => ({
         recipient: p.recipient,
         url: `${origin}/claim#${encodeClaimPackage(p)}`,
       }));
-      setPhase({ kind: "found", releaseTime: Number(res.releaseTime), links });
+      setPhase({ kind: "found", releaseTime: Number(res.releaseTime), links, backupSaved });
     } catch (e) {
       setPhase({ kind: "error", message: e instanceof Error ? e.message : "Recovery failed." });
     }
@@ -245,7 +254,14 @@ export default function RecoverPage() {
               {l.url}
             </div>
           ))}
-          <p className="text-[var(--color-text-muted)]">A backup was saved to your workspace folder.</p>
+          {phase.backupSaved ? (
+            <p className="text-[var(--color-text-muted)]">A backup was saved to your workspace folder.</p>
+          ) : (
+            <p className="text-[var(--color-warning)]">
+              ⚠ Couldn&apos;t save a backup (no workspace folder open or write denied) — copy these
+              links now.
+            </p>
+          )}
         </div>
       )}
 

@@ -1,5 +1,10 @@
 import { type CircuitTier, TIERS } from "../constants";
-import { deriveClaimSecret, toBytes32Hex } from "../commitment";
+import {
+  claimSecretPreimage,
+  getPoseidonModule,
+  poseidonHashWith,
+  toBytes32Hex,
+} from "../commitment";
 import { buildClaimsTree } from "./claim";
 
 /** One recipient line for deep recovery, in leaf order. The operator
@@ -83,6 +88,11 @@ export async function deepRecoverReleaseTime(
     );
   }
   const target = targetClaimsRoot.toLowerCase();
+  // Resolve Poseidon once and derive secrets synchronously in the loop —
+  // awaiting deriveClaimSecret per candidate would add a microtask hop on
+  // every one of up to maxCandidates iterations. claimSecretPreimage keeps
+  // the input shape identical to deriveClaimSecret (single source of truth).
+  const poseidon = await getPoseidonModule();
 
   let scanned = 0;
   for (let t = startSec; t <= endSec; t += stepSec) {
@@ -91,7 +101,10 @@ export async function deepRecoverReleaseTime(
     const claims: DeepRecoverClaim[] = [];
     for (let i = 0; i < recipients.length; i++) {
       const r = recipients[i]!;
-      const secret = await deriveClaimSecret(seed, r.recipient, token, r.amount, releaseTime, i);
+      const secret = poseidonHashWith(
+        poseidon,
+        claimSecretPreimage(seed, r.recipient, token, r.amount, releaseTime, i),
+      );
       claims.push({ recipient: r.recipient, token, amount: r.amount, releaseTime, secret });
     }
     const { root } = await buildClaimsTree(claims, tier);
