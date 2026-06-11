@@ -644,6 +644,15 @@ function NewPayout() {
         // decimals, claimFrom), so a retry reproduces the same claimsRoot.
         // (finalizeRealSettle additionally hard-checks the on-chain event
         // root, so even a divergence can never persist mismatched packages.)
+        // The preview memo clamps rows to MAX_RECIPIENTS_PER_RUN, so reusing
+        // it must not silently settle a truncated payout. Validation already
+        // disables Sign past the cap; assert it here too so a future gating
+        // regression fails loudly instead of dropping recipients on-chain.
+        if (rows.length > MAX_RECIPIENTS_PER_RUN) {
+          throw new Error(
+            `This payout has ${rows.length} recipients; Pay caps at ${MAX_RECIPIENTS_PER_RUN} per run. Reduce recipients or split into multiple runs.`,
+          );
+        }
         const submitBatches: PayoutBatch[] = batches;
         if (submitBatches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
