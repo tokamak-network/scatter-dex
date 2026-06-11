@@ -12,6 +12,7 @@ import {
   type PayoutBatch,
 } from "@zkscatter/sdk/zk";
 import { type SettleAuthSide } from "@zkscatter/sdk/contracts";
+import { eqAddr, PRIVATE_SETTLEMENT_IFACE } from "@zkscatter/sdk";
 import { RelayerClient, type AuthorizeOrderBody, type RelayerInfo } from "@zkscatter/sdk/relayer";
 import type { ClaimPackage } from "@zkscatter/sdk/notes";
 import { authorizeProver } from "./authorizeProver";
@@ -342,6 +343,36 @@ function buildAuthorizeOrderBody(prep: PreparedSettle): AuthorizeOrderBody {
   };
 }
 
+/** Minimal log shape `extractSettledClaimsRoot` reads — a real
+ *  `ethers.Log` satisfies it, and tests can synthesize one without
+ *  filling the full receipt. */
+type ReadableLog = { address: string; topics: ReadonlyArray<string>; data: string };
+
+/** Pull the on-chain-registered `claimsRoot` out of a settle receipt,
+ *  scanning only `ScatterDirectAuthSettled` logs from the expected
+ *  settlement contract — Pay's only settle path is `scatterDirectAuth`,
+ *  and the name filter avoids matching `PrivateClaim`'s `claimsRoot`.
+ *  Returns `null` when no settle event is present (a tx that didn't
+ *  register a group, or the wrong contract). */
+export function extractSettledClaimsRoot(
+  receipt: { logs: ReadonlyArray<ReadableLog> },
+  settlementAddress: string,
+): bigint | null {
+  for (const log of receipt.logs) {
+    if (!eqAddr(log.address, settlementAddress)) continue;
+    let parsed: ethers.LogDescription | null = null;
+    try {
+      parsed = PRIVATE_SETTLEMENT_IFACE.parseLog({ topics: log.topics, data: log.data });
+    } catch {
+      continue; // not a PrivateSettlement event
+    }
+    if (parsed?.name === "ScatterDirectAuthSettled" && parsed.args.claimsRoot != null) {
+      return BigInt(parsed.args.claimsRoot);
+    }
+  }
+  return null;
+}
+
 /** Phase 3 — wait for the receipt, then reconstruct the change UTXO
  *  and the per-recipient claim packages. Safe to run for many batches
  *  in parallel; the caller is responsible for ordering vault updates
@@ -359,6 +390,25 @@ export async function finalizeRealSettle(
   const receipt = await provider.waitForTransaction(txHash);
   if (!receipt || receipt.status !== 1) {
     throw new Error(`scatterDirectAuth tx failed: ${txHash}`);
+  }
+  // Verify the confirmed tx actually registered THIS settle's claimsRoot.
+  // `status === 1` only proves *some* tx mined — the relayer is polled by
+  // nullifier and, under load/retry, can hand back the tx hash of a
+  // *different* settle that shares this source note's nullifier (a retry
+  // regenerates per-claim secrets → a different claimsRoot). Without this
+  // check we'd persist claim packages whose root was never settled, leaving
+  // recipients permanently unable to claim while the funds sit in a group
+  // they don't have the secrets for. Match the settle event's claimsRoot
+  // against the proof's before trusting the hash.
+  const settledRoot = extractSettledClaimsRoot(receipt, ctx.settlementAddress);
+  if (settledRoot === null) {
+    throw new Error(
+      `Settle tx ${txHash} emitted no claims-group event for ${ctx.settlementAddress} — refusing to persist claim links.`,
+    );
+  } else if (settledRoot !== ctx.authResult.claimsRoot) {
+    throw new Error(
+      `Settle tx ${txHash} registered claimsRoot ${toBytes32Hex(settledRoot)} but this payout proved ${toBytes32Hex(ctx.authResult.claimsRoot)} — relayer returned a tx for a different settle. Not persisting claim links (recipients would be unable to claim).`,
+    );
   }
   // Reconstruct the change-UTXO preimage so the caller can persist it
   // as a new vault note. The on-chain `newCommitment` we just verified
