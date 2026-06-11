@@ -521,6 +521,7 @@ function RepairClaimsBanner({
   refresh: () => Promise<void>;
 }) {
   const { readProvider } = useWallet();
+  const folder = useFolderStorage();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ tone: "info" | "success" | "warn"; text: string } | null>(
     null,
@@ -530,6 +531,13 @@ function RepairClaimsBanner({
     setBusy(true);
     setMsg(null);
     try {
+      // Guard the folder inside the callback, not just via UI gating: with
+      // no workspace folder, listClaimsBackups() returns [] and the user
+      // would see a misleading "no backup found" instead of the real cause.
+      if (!folder.ready) {
+        setMsg({ tone: "warn", text: "Open a workspace folder first — the claims backup lives there." });
+        return;
+      }
       if (!readProvider) {
         setMsg({ tone: "warn", text: "Connect your wallet to check the on-chain settlement." });
         return;
