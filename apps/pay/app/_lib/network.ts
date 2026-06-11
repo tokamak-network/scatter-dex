@@ -22,6 +22,17 @@ function pick(value: string | undefined, fallback = ""): string {
   return value && value.length > 0 ? value : fallback;
 }
 
+// Parse an integer env (chainId, deployBlock) and fall back when it
+// isn't a non-negative integer. A bare `Number(pick(...))` lets a typo
+// like `"11155111abc"` become `NaN` and silently propagate into the
+// NetworkConfig — breaking the `KNOWN_EXPLORER_BASES[chainId]` lookup
+// and any other chainId-keyed logic. Mirrors `pickInt` in Pro's config.
+function pickInt(value: string | undefined, fallback: number): number {
+  if (!value || value.length === 0) return fallback;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 0 ? n : fallback;
+}
+
 // Each `process.env.NEXT_PUBLIC_*` access has to be a *literal* key
 // for Next to inline the value into the client bundle — a dynamic
 // lookup like `process.env[name]` is not statically analysable, so
@@ -43,7 +54,7 @@ export function getNetworkConfig(): NetworkConfig {
     const addr = overlay[t.symbol];
     return addr && addr !== ZERO ? { ...t, address: addr } : t;
   });
-  const chainId = Number(pick(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, "31337"));
+  const chainId = pickInt(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, 31337);
   return {
     chainId,
     rpcUrl: pick(process.env.NEXT_PUBLIC_PAY_RPC_URL, "http://127.0.0.1:8545"),
@@ -66,7 +77,7 @@ export function getNetworkConfig(): NetworkConfig {
     relayer: process.env.NEXT_PUBLIC_PAY_RELAYER_URL
       ? { url: process.env.NEXT_PUBLIC_PAY_RELAYER_URL }
       : undefined,
-    deployBlock: Number(pick(process.env.NEXT_PUBLIC_PAY_DEPLOY_BLOCK, "0")),
+    deployBlock: pickInt(process.env.NEXT_PUBLIC_PAY_DEPLOY_BLOCK, 0),
     // Shared orderbook base URL — when set, the commitment tree hydrates from
     // its /api/commitments indexer first, falling back to getLogs.
     sharedOrderbookUrl: pick(process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL) || undefined,
