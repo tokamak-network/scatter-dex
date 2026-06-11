@@ -59,6 +59,10 @@ export interface BuildRunRecordInput {
    *  across batches for a multi-batch run. Optional — stays undefined
    *  for the env-not-configured demo path. */
   relayerFee?: string;
+  /** Decimal-string per-payout seed the claim secrets were derived from.
+   *  Persisted so the claims tree / claimsRoot is reproducible for
+   *  retry-idempotency and recovery. Absent for the demo path. */
+  payoutSeed?: string;
 }
 
 /** Construct a `RunRecord` from the wizard's parsed state. The record
@@ -122,6 +126,7 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
     tokenAddress: input.tokenAddress ?? "",
     totalAmount: formatTotal(input.total),
     ...(input.relayerFee ? { relayerFee: input.relayerFee } : {}),
+    ...(input.payoutSeed ? { payoutSeed: input.payoutSeed } : {}),
     recipients,
     notifications: [],
   };

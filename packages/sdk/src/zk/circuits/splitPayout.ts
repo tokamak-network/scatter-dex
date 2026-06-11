@@ -1,5 +1,5 @@
 import { type CircuitTier, pickActiveTier } from "../constants";
-import { randomFieldElement } from "../commitment";
+import { deriveClaimSecret, randomFieldElement } from "../commitment";
 import type { ClaimEntry } from "./authorize";
 
 /** Recipient line for a multi-recipient payout. The token is shared
@@ -51,6 +51,40 @@ export interface PayoutBatch {
    *  matches the chunking. Every batch from one `splitPayout` call
    *  carries the same tier. */
   tier: CircuitTier;
+}
+
+/** Fill each recipient's `secret` deterministically from a per-payout
+ *  `seed` (see {@link deriveClaimSecret}), returning a new array ready
+ *  for {@link splitPayout}. Use this instead of the default random
+ *  generator whenever the caller wants the resulting `claimsRoot` to be
+ *  reproducible across retries / recovery — the secret for recipient `i`
+ *  is `deriveClaimSecret(seed, recipient, token, amount, releaseTime, i)`,
+ *  indexed by the recipient's position in the full payout (preserved by
+ *  `splitPayout`'s in-order chunking). `token` must match
+ *  {@link SplitPayoutOpts.token}. A recipient that already carries a
+ *  `secret` is left untouched. */
+export async function withDeterministicSecrets(
+  recipients: PayoutRecipient[],
+  seed: bigint,
+  token: string,
+): Promise<PayoutRecipient[]> {
+  return Promise.all(
+    recipients.map(async (r, i) =>
+      r.secret !== undefined
+        ? r
+        : {
+            ...r,
+            secret: await deriveClaimSecret(
+              seed,
+              r.recipient,
+              token,
+              r.amount,
+              r.releaseTime,
+              i,
+            ),
+          },
+    ),
+  );
 }
 
 /** Chunk a recipient list into batches that fit the picked circuit

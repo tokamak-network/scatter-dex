@@ -7,6 +7,8 @@ import { ethers } from "ethers";
 import { LAUNCH_TOKENS, chainName } from "@zkscatter/sdk";
 import {
   splitPayout,
+  withDeterministicSecrets,
+  randomFieldElement,
   type PayoutBatch,
   pickActiveTier,
   ACTIVE_TIERS,
@@ -495,6 +497,11 @@ function NewPayout() {
   // check and start two deposits (double approve + double gas).
   // The ref flips before any await, so the second click bails out
   // immediately even though the corresponding state hasn't flushed.
+  // Per-payout claim-secret seed. Minted once and held for the session so
+  // a relayer-delay retry re-derives the SAME claim secrets → same
+  // claimsRoot (idempotent); a resume reuses the original run's persisted
+  // seed instead. Lazily initialised in doSubmit.
+  const payoutSeedRef = useRef<bigint | null>(null);
   const depositInFlightRef = useRef(false);
   // AbortController per attempt — Cancel from <DepositProgress>
   // signals the in-flight realDeposit to bail at its next checkpoint.
@@ -622,6 +629,9 @@ function NewPayout() {
               ...(totalRelayerFeeRaw !== undefined
                 ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
                 : {}),
+              ...(payoutSeedRef.current !== null
+                ? { payoutSeed: payoutSeedRef.current.toString() }
+                : {}),
             });
         try {
           await saveRun(record);
@@ -634,26 +644,38 @@ function NewPayout() {
       };
 
       if (isNetworkConfigured(cfg) && tokenAddress && batches.length > 0) {
-        // Reuse the batches already built for the preview instead of
-        // re-splitting: splitPayout() draws fresh random per-claim secrets
-        // on every call, so a second attempt (e.g. after a relayer
-        // delay/retry) would settle the same source-note nullifier under a
-        // DIFFERENT claimsRoot — stranding funds in a group whose secrets
-        // were never persisted and leaving recipients unable to claim. The
-        // memo is stable across re-renders for an unchanged (rows, token,
-        // decimals, claimFrom), so a retry reproduces the same claimsRoot.
-        // (finalizeRealSettle additionally hard-checks the on-chain event
-        // root, so even a divergence can never persist mismatched packages.)
-        // The preview memo clamps rows to MAX_RECIPIENTS_PER_RUN, so reusing
-        // it must not silently settle a truncated payout. Validation already
-        // disables Sign past the cap; assert it here too so a future gating
-        // regression fails loudly instead of dropping recipients on-chain.
+        // Validation disables Sign past the recipient cap; assert it here
+        // too so a future gating regression fails loudly instead of silently
+        // settling a truncated payout (parseRecipientRows below sees the full
+        // `rows`, but the cap keeps batch sizing within the active tier).
         if (rows.length > MAX_RECIPIENTS_PER_RUN) {
           throw new Error(
             `This payout has ${rows.length} recipients; Pay caps at ${MAX_RECIPIENTS_PER_RUN} per run. Reduce recipients or split into multiple runs.`,
           );
         }
-        const submitBatches: PayoutBatch[] = batches;
+        // Derive claim secrets DETERMINISTICALLY from a per-payout seed
+        // instead of the random secrets splitPayout() draws by default. The
+        // original bug: a relayer-delay retry re-split with fresh random
+        // secrets → a DIFFERENT claimsRoot over the same source-note
+        // nullifier; the relayer settled one root but the other attempt's
+        // packages got persisted, stranding funds under a root whose secrets
+        // were lost. With a seeded derivation any retry/resume reproduces the
+        // identical secrets and root. Resume reuses the original run's
+        // persisted seed so the re-settle matches its already-issued
+        // packages; a fresh run mints one and holds it in payoutSeedRef.
+        // (finalizeRealSettle still hard-checks the on-chain event root.)
+        if (resumeRecord?.payoutSeed && payoutSeedRef.current === null) {
+          payoutSeedRef.current = BigInt(resumeRecord.payoutSeed);
+        }
+        const payoutSeed = (payoutSeedRef.current ??= randomFieldElement());
+        const submitBatches: PayoutBatch[] = splitPayout(
+          await withDeterministicSecrets(
+            parseRecipientRows(rows, decimals, claimFrom!),
+            payoutSeed,
+            tokenAddress,
+          ),
+          { token: tokenAddress },
+        );
         if (submitBatches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
             `This payout would need ${submitBatches.length} settlement ${MAX_BATCHES_PER_RUN === 1 ? "transactions" : "txs"}; Pay caps at ${MAX_BATCHES_PER_RUN === 1 ? "one" : MAX_BATCHES_PER_RUN} per payout. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
