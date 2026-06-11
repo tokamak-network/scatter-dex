@@ -1,4 +1,4 @@
-import { LAUNCH_TOKENS, type NetworkConfig } from "@zkscatter/sdk";
+import { KNOWN_EXPLORER_BASES, LAUNCH_TOKENS, type NetworkConfig } from "@zkscatter/sdk";
 
 // Pay's network config. Uses NEXT_PUBLIC_* envs at build time so
 // Pay never reads chain state from process.env at runtime — this
@@ -43,10 +43,18 @@ export function getNetworkConfig(): NetworkConfig {
     const addr = overlay[t.symbol];
     return addr && addr !== ZERO ? { ...t, address: addr } : t;
   });
+  const chainId = Number(pick(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, "31337"));
   return {
-    chainId: Number(pick(process.env.NEXT_PUBLIC_PAY_CHAIN_ID, "31337")),
+    chainId,
     rpcUrl: pick(process.env.NEXT_PUBLIC_PAY_RPC_URL, "http://127.0.0.1:8545"),
-    explorerBase: pick(process.env.NEXT_PUBLIC_PAY_EXPLORER_BASE) || undefined,
+    // Env override wins; otherwise fall back to the chain's known
+    // explorer (Sepolia → sepolia.etherscan.io, mainnet → etherscan.io,
+    // …) so every tx/address link works without an env per deploy.
+    // Unknown chains (e.g. localhost 31337) stay undefined → plain text.
+    explorerBase:
+      pick(process.env.NEXT_PUBLIC_PAY_EXPLORER_BASE) ||
+      KNOWN_EXPLORER_BASES[chainId] ||
+      undefined,
     contracts: {
       privateSettlement: pick(process.env.NEXT_PUBLIC_PAY_PRIVATE_SETTLEMENT, ZERO),
       commitmentPool: pick(process.env.NEXT_PUBLIC_PAY_COMMITMENT_POOL, ZERO),
