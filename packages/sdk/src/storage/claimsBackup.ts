@@ -103,7 +103,12 @@ export async function loadClaimsBackup(
   claimsRoot: string,
 ): Promise<ClaimsBackup | null> {
   if (!hasFolder()) return null;
-  const text = await loadFile(fileFor(claimsRoot));
+  let text: string | null;
+  try {
+    text = await loadFile(fileFor(claimsRoot));
+  } catch {
+    return null; // FS read failure — treat as "no backup", per the contract
+  }
   if (!text) return null;
   let parsed: unknown;
   try {
@@ -122,15 +127,16 @@ export async function listClaimsBackups(): Promise<ClaimsBackup[]> {
   const files = await listFiles(
     (name) => name.startsWith(PREFIX) && name.endsWith(SUFFIX),
   );
-  const out: ClaimsBackup[] = [];
-  for (const f of files) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(await f.read());
-    } catch {
-      continue;
-    }
-    if (isValidBackup(parsed)) out.push(parsed);
-  }
-  return out;
+  // Read concurrently; allSettled so one unreadable/corrupt file can't
+  // reject the whole list (and never leaves an unhandled rejection).
+  const settled = await Promise.allSettled(
+    files.map(async (f) => {
+      const parsed: unknown = JSON.parse(await f.read());
+      if (!isValidBackup(parsed)) throw new Error("invalid claims backup");
+      return parsed;
+    }),
+  );
+  return settled
+    .filter((r): r is PromiseFulfilledResult<ClaimsBackup> => r.status === "fulfilled")
+    .map((r) => r.value);
 }
