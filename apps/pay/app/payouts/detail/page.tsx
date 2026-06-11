@@ -598,6 +598,13 @@ function RepairClaimsBanner({
         </button>
       </div>
       {msg && <div className={`mt-2 ${toneClass}`}>{msg.text}</div>}
+      {msg?.tone === "warn" && (
+        <div className="mt-2">
+          <Link href="/payouts/recover" className="text-[var(--color-primary)] hover:underline">
+            No backup? Deep recover from your wallet →
+          </Link>
+        </div>
+      )}
     </div>
   );
 }
