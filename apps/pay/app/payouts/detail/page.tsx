@@ -23,6 +23,7 @@ import { submitClaim } from "../../_lib/claimSubmit";
 import {
   addClaimInboxEntry,
   indexLatestNotifications,
+  listClaimsBackups,
   saveRun,
   type ClaimedRecipientInput,
   type NotificationChannel,
@@ -33,6 +34,7 @@ import {
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
 import { useRunRecord } from "../../_lib/runRecord";
+import { makeIsRootSettled, repairRunClaims } from "../../_lib/repairClaims";
 import { ClaimReconciler } from "../../_lib/claimReconciler";
 import { getNetworkConfig } from "../../_lib/network";
 import { buildExplorerTxUrl, buildExplorerAddressUrl } from "../../_lib/explorerUrl";
@@ -375,6 +377,7 @@ function PayoutBody({
         lastClaimTx={lastClaimTx}
         onDismissSuccess={() => setLastClaimTx(null)}
       />
+      <RepairClaimsBanner record={record} refresh={refresh} />
       <RecipientTable
         record={record}
         logsByRow={logsByRow}
@@ -502,6 +505,100 @@ function PayoutHeader({ record }: { record: RunRecord }) {
         <ExportMenu record={record} />
       </div>
     </header>
+  );
+}
+
+/** Recovery affordance for a run whose persisted claim links point at a
+ *  claimsRoot that never settled on-chain (the relayer-delay stranding
+ *  bug). Rebuilds the links from the local claims backup for whichever
+ *  root actually settled and overwrites the run record. No-op when the
+ *  record already matches the chain. */
+function RepairClaimsBanner({
+  record,
+  refresh,
+}: {
+  record: RunRecord;
+  refresh: () => Promise<void>;
+}) {
+  const { readProvider } = useWallet();
+  const folder = useFolderStorage();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "info" | "success" | "warn"; text: string } | null>(
+    null,
+  );
+
+  const run = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      // Guard the folder inside the callback, not just via UI gating: with
+      // no workspace folder, listClaimsBackups() returns [] and the user
+      // would see a misleading "no backup found" instead of the real cause.
+      if (!folder.ready) {
+        setMsg({ tone: "warn", text: "Open a workspace folder first — the claims backup lives there." });
+        return;
+      }
+      if (!readProvider) {
+        setMsg({ tone: "warn", text: "Connect your wallet to check the on-chain settlement." });
+        return;
+      }
+      const settlementAddress = getNetworkConfig().contracts.privateSettlement;
+      const backups = await listClaimsBackups();
+      const res = await repairRunClaims({
+        record,
+        backups,
+        isRootSettled: makeIsRootSettled(readProvider, settlementAddress),
+      });
+      switch (res.status) {
+        case "ok":
+          setMsg({ tone: "success", text: "Claim links already match the on-chain settlement — nothing to repair." });
+          break;
+        case "no-backup":
+          setMsg({ tone: "warn", text: "No claims backup for this run was found in the current workspace folder." });
+          break;
+        case "no-settled-root":
+          setMsg({ tone: "warn", text: "Found a backup for this run, but its settlement isn't on-chain. If the settle is still pending, try again once it confirms." });
+          break;
+        case "repaired":
+          await saveRun(res.record);
+          await refresh();
+          setMsg({
+            tone: "success",
+            text: `Recovered ${res.recoveredCount} claim link(s) for the settled root ${res.settledRoot.slice(0, 10)}…. Recipients can claim now.`,
+          });
+          break;
+      }
+    } catch (e) {
+      setMsg({ tone: "warn", text: e instanceof Error ? e.message : "Repair failed." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toneClass =
+    msg?.tone === "success"
+      ? "text-[var(--color-success)]"
+      : msg?.tone === "warn"
+        ? "text-[var(--color-warning)]"
+        : "text-[var(--color-text-muted)]";
+
+  return (
+    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3 text-xs">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-[var(--color-text-muted)]">
+          Recipients seeing “claims group missing”? Rebuild this run’s claim links from the
+          local backup for whichever root actually settled on-chain.
+        </span>
+        <button
+          onClick={run}
+          disabled={busy}
+          className="shrink-0 rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 hover:bg-[var(--color-primary-soft)] disabled:opacity-50"
+        >
+          {busy ? "Checking…" : "Repair claim links"}
+        </button>
+      </div>
+      {msg && <div className={`mt-2 ${toneClass}`}>{msg.text}</div>}
+    </div>
   );
 }
 
