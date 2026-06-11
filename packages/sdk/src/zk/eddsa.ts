@@ -30,6 +30,14 @@ import { FIELD_MODULUS } from "./commitment";
  *  but that surfaces as a `ClaimsGroupAlreadyExists` revert on the second
  *  settle — self-detecting, never silent loss. */
 export function claimSeedFromKey(privateKey: Uint8Array): bigint {
+  // The wallet-derived EdDSA private key is keccak256 of the signature →
+  // always 32 bytes. Fail fast on anything else rather than silently
+  // hashing a malformed key into a different (unrecoverable) seed.
+  if (privateKey.length !== 32) {
+    throw new Error(
+      `claimSeedFromKey: expected a 32-byte key, got ${privateKey.length}`,
+    );
+  }
   const h = ethers.keccak256(
     ethers.concat([ethers.toUtf8Bytes("zkScatter:claim-seed:v1"), privateKey]),
   );

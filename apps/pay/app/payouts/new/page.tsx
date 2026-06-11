@@ -499,11 +499,6 @@ function NewPayout() {
   // check and start two deposits (double approve + double gas).
   // The ref flips before any await, so the second click bails out
   // immediately even though the corresponding state hasn't flushed.
-  // Per-payout claim-secret seed. Minted once and held for the session so
-  // a relayer-delay retry re-derives the SAME claim secrets → same
-  // claimsRoot (idempotent); a resume reuses the original run's persisted
-  // seed instead. Lazily initialised in doSubmit.
-  const payoutSeedRef = useRef<bigint | null>(null);
   const depositInFlightRef = useRef(false);
   // AbortController per attempt — Cancel from <DepositProgress>
   // signals the in-flight realDeposit to bail at its next checkpoint.
@@ -576,6 +571,11 @@ function NewPayout() {
     let txHash: string | undefined;
     let claimPackages: ClaimPackage[] | undefined;
     let totalRelayerFeeRaw: bigint | undefined;
+    // Per-payout claim-secret seed, set in the settle block below and read
+    // by persist(). Deterministic from the wallet (or the resumed run's
+    // persisted seed), so it's recomputed fresh each submit — no caching,
+    // which avoids a stale seed after a wallet switch.
+    let payoutSeed: bigint | undefined;
     // Whether `persist(allowFailure: true)` succeeded on the partial
     // path. The helper swallows save errors and returns null, so a
     // partial banner promising "saved" must check this flag rather
@@ -631,8 +631,8 @@ function NewPayout() {
               ...(totalRelayerFeeRaw !== undefined
                 ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
                 : {}),
-              ...(payoutSeedRef.current !== null
-                ? { payoutSeed: payoutSeedRef.current.toString() }
+              ...(payoutSeed !== undefined
+                ? { payoutSeed: payoutSeed.toString() }
                 : {}),
             });
         try {
@@ -671,7 +671,7 @@ function NewPayout() {
         // wallet for a payout we'll reject anyway.
         if (batches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
-            `This payout would need ${batches.length} settlement ${MAX_BATCHES_PER_RUN === 1 ? "transactions" : "txs"}; Pay caps at ${MAX_BATCHES_PER_RUN === 1 ? "one" : MAX_BATCHES_PER_RUN} per payout. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
+            `This payout would need ${batches.length} settlement transaction${batches.length === 1 ? "" : "s"}; Pay caps at ${MAX_BATCHES_PER_RUN === 1 ? "one" : MAX_BATCHES_PER_RUN} per payout. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
           );
         }
         // Block signing when no notes folder is picked. The settle
@@ -707,16 +707,22 @@ function NewPayout() {
         // settle path stays idempotent (same wallet → same seed → same
         // claimsRoot on retry), and finalizeRealSettle still hard-checks the
         // on-chain event root.
-        if (resumeRecord?.payoutSeed && payoutSeedRef.current === null) {
+        if (resumeRecord?.payoutSeed) {
+          // Resume always prefers the original run's persisted seed so the
+          // re-settle reproduces its already-issued packages' root.
           try {
-            payoutSeedRef.current = BigInt(resumeRecord.payoutSeed);
+            payoutSeed = BigInt(resumeRecord.payoutSeed);
           } catch {
             throw new Error(
               `This run's saved payoutSeed is invalid ("${resumeRecord.payoutSeed}") — can't reproduce its claim secrets to resume. Start a fresh payout instead.`,
             );
           }
+        } else {
+          // Deterministic from the connected wallet — recomputed each submit
+          // (a retry re-derives the same value; a wallet switch derives the
+          // new wallet's, with no stale cache).
+          payoutSeed = claimSeedFromKey(kp.privateKey);
         }
-        const payoutSeed = (payoutSeedRef.current ??= claimSeedFromKey(kp.privateKey));
         const submitBatches: PayoutBatch[] = splitPayout(
           await withDeterministicSecrets(
             parseRecipientRows(rows, decimals, claimFrom!),
