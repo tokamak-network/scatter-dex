@@ -40,7 +40,7 @@ async function makeBackup(seed: bigint): Promise<ClaimsBackup> {
   };
 }
 
-function makeRecord(packages: ClaimPackage[]): RunRecord {
+function makeRecord(packages: ClaimPackage[], payoutSeed?: string): RunRecord {
   return {
     id: "p_test",
     label: "test-ton-1",
@@ -53,6 +53,7 @@ function makeRecord(packages: ClaimPackage[]): RunRecord {
     tokenSymbol: "TON",
     tokenAddress: TOKEN,
     totalAmount: "300",
+    ...(payoutSeed ? { payoutSeed } : {}),
     recipients: packages.map((p, i) => ({
       rowIndex: i,
       name: `r${i}`,
@@ -135,5 +136,32 @@ describe("repairRunClaims", () => {
       isRootSettled: async () => false,
     });
     expect(res.status).toBe("no-settled-root");
+  });
+
+  it("disambiguates by payoutSeed: a same-recipients backup with a different seed is not matched", async () => {
+    const stale = await makeBackup(1n);
+    const real = await makeBackup(2n); // payoutSeed "2"
+    // Record carries seed "1" (stale attempt) — must NOT match the seed-"2" backup.
+    const record = makeRecord(await rebuildClaimPackages(stale), "1");
+    const res = await repairRunClaims({
+      record,
+      backups: [real],
+      isRootSettled: async (root) => root === real.claimsRoot,
+    });
+    expect(res.status).toBe("no-backup");
+  });
+
+  it("skips a candidate whose on-chain probe throws instead of aborting", async () => {
+    const stale = await makeBackup(1n);
+    const real = await makeBackup(2n);
+    const record = makeRecord(await rebuildClaimPackages(stale));
+    const res = await repairRunClaims({
+      record,
+      backups: [real],
+      isRootSettled: async () => {
+        throw new Error("RPC down");
+      },
+    });
+    expect(res.status).toBe("no-settled-root"); // not a thrown error
   });
 });

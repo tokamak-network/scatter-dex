@@ -69,29 +69,72 @@ export function recordClaimsRoot(record: RunRecord): string | null {
   return null;
 }
 
-/** Whether a backup belongs to this run: same chain + token, and the
- *  same set of recipient addresses. Amounts are intentionally not
- *  compared (the record stores display units, the backup token-raw); the
- *  address set plus the on-chain-root check below is enough to identify
- *  the run's settled group unambiguously. */
-function backupMatchesRun(backup: ClaimsBackup, record: RunRecord): boolean {
-  if (backup.chainId !== record.chainId) return false;
-  if (!eqAddr(backup.token, record.tokenAddress)) return false;
-  const recordAddrs = new Set(record.recipients.map((r) => r.address.toLowerCase()));
-  const backupAddrs = new Set(backup.claims.map((c) => c.recipient.toLowerCase()));
-  if (recordAddrs.size !== backupAddrs.size) return false;
-  for (const a of backupAddrs) if (!recordAddrs.has(a)) return false;
+function addrCounts(addrs: string[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const a of addrs) {
+    const k = a.toLowerCase();
+    m.set(k, (m.get(k) ?? 0) + 1);
+  }
+  return m;
+}
+
+function countsEqual(a: Map<string, number>, b: Map<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) if (b.get(k) !== v) return false;
   return true;
 }
 
-/** Overlay rebuilt packages onto a record by recipient address. */
+/** Whether a backup belongs to this run. A Pay run is single-batch
+ *  (MAX_BATCHES_PER_RUN = 1), so one run maps to exactly one backup.
+ *  Strongest signal: the per-payout seed, persisted on both the run
+ *  record (PR #1000) and the backup (PR #1001) — it pins the pair even
+ *  when an unrelated payout reused the same recipients + token + chain.
+ *  Legacy records without a seed fall back to a recipient-address
+ *  MULTISET match (counts included, so duplicate recipients don't
+ *  collapse). Amounts aren't compared (record stores display units, the
+ *  backup token-raw); the on-chain-root check downstream is the final
+ *  arbiter. */
+function backupMatchesRun(backup: ClaimsBackup, record: RunRecord): boolean {
+  if (backup.chainId !== record.chainId) return false;
+  if (!eqAddr(backup.token, record.tokenAddress)) return false;
+  if (backup.payoutSeed && record.payoutSeed) {
+    return backup.payoutSeed === record.payoutSeed;
+  }
+  return countsEqual(
+    addrCounts(record.recipients.map((r) => r.address)),
+    addrCounts(backup.claims.map((c) => c.recipient)),
+  );
+}
+
+/** Overlay rebuilt packages onto a record by leaf index (= rowIndex for
+ *  a single-batch run), with a recipient-address sanity check so a
+ *  misaligned backup can't write the wrong recipient's package onto a
+ *  row. Matching positionally (not by address) keeps duplicate-address
+ *  rows correct — an address Map would collapse them. */
 function applyPackagesToRecord(record: RunRecord, packages: ClaimPackage[]): RunRecord {
-  const byAddr = new Map(packages.map((p) => [p.recipient.toLowerCase(), p]));
+  const byLeaf = new Map(packages.map((p) => [p.leafIndex, p]));
   const recipients = record.recipients.map((r) => {
-    const pkg = byAddr.get(r.address.toLowerCase());
-    return pkg ? { ...r, claimPackage: encodeClaimPackage(pkg) } : r;
+    const pkg = byLeaf.get(r.rowIndex);
+    return pkg && eqAddr(pkg.recipient, r.address)
+      ? { ...r, claimPackage: encodeClaimPackage(pkg) }
+      : r;
   });
   return { ...record, recipients };
+}
+
+/** Probe a root's on-chain settlement, swallowing probe errors (a
+ *  malformed root in a hand-edited backup, or a transient RPC failure)
+ *  so one bad candidate is skipped rather than aborting the whole
+ *  repair. */
+async function safeIsRootSettled(
+  isRootSettled: (claimsRoot: string) => Promise<boolean>,
+  claimsRoot: string,
+): Promise<boolean> {
+  try {
+    return await isRootSettled(claimsRoot);
+  } catch {
+    return false;
+  }
 }
 
 export type RepairResult =
@@ -114,7 +157,7 @@ export async function repairRunClaims(args: {
   const { record, backups, isRootSettled } = args;
 
   const currentRoot = recordClaimsRoot(record);
-  if (currentRoot && (await isRootSettled(currentRoot))) {
+  if (currentRoot && (await safeIsRootSettled(isRootSettled, currentRoot))) {
     return { status: "ok" };
   }
 
@@ -123,7 +166,7 @@ export async function repairRunClaims(args: {
 
   let settled: ClaimsBackup | null = null;
   for (const b of candidates) {
-    if (await isRootSettled(b.claimsRoot)) {
+    if (await safeIsRootSettled(isRootSettled, b.claimsRoot)) {
       settled = b;
       break;
     }
