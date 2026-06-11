@@ -139,6 +139,49 @@ export function randomFieldElement(): bigint {
   return value;
 }
 
+/** Deterministically derive a per-claim secret from a per-payout seed.
+ *  Making the secret a pure function of `(seed, leaf fields, index)`
+ *  rather than drawing fresh randomness makes the whole claims tree —
+ *  and thus the `claimsRoot` — reproducible: a settle retry, or a later
+ *  recovery run, regenerates the exact same secrets and root. That
+ *  closes the failure mode where two settle attempts over one source
+ *  note produced different roots (random secrets) and the attempt whose
+ *  root actually landed on-chain had its secrets discarded, stranding
+ *  funds in a group nobody can claim. The `seed` is the only secret
+ *  input — persist it once per payout and every claim secret is
+ *  recoverable from it.
+ *
+ *  Inputs mirror the claim-leaf hash (`secret, recipient, token, amount,
+ *  releaseTime`) plus the per-claim `index`, so distinct recipients (or
+ *  the same recipient at a different index) get distinct secrets even
+ *  with identical amounts. */
+/** Poseidon preimage for a deterministic claim secret — the single
+ *  source of truth shared by {@link deriveClaimSecret} (one-off) and the
+ *  batched `withDeterministicSecrets` (Poseidon module fetched once), so
+ *  the two can never drift. A drift would make a recovery run regenerate
+ *  the wrong secrets. */
+export function claimSecretPreimage(
+  seed: bigint,
+  recipient: string,
+  token: string,
+  amount: bigint,
+  releaseTime: bigint,
+  index: number,
+): bigint[] {
+  return [seed, BigInt(recipient), BigInt(token), amount, releaseTime, BigInt(index)];
+}
+
+export async function deriveClaimSecret(
+  seed: bigint,
+  recipient: string,
+  token: string,
+  amount: bigint,
+  releaseTime: bigint,
+  index: number,
+): Promise<bigint> {
+  return poseidonHash(claimSecretPreimage(seed, recipient, token, amount, releaseTime, index));
+}
+
 /** Build a fresh `CommitmentNote` bound to the caller's BabyJub
  *  signing pubkey. */
 export function generateNote(

@@ -134,6 +134,14 @@ export interface RunRecord {
    *  free of an MD parser dependency and avoids HTML-injection paths).
    *  Empty / undefined when the operator hasn't typed anything. */
   notes?: string;
+  /** Decimal-string per-payout seed the claim secrets were derived from
+   *  (`deriveClaimSecret(seed, …)`). Persisting it makes the whole
+   *  claims tree — every recipient's secret and the on-chain
+   *  `claimsRoot` — reproducible, so a settle retry stays idempotent and
+   *  a recovery run can rebuild the exact claim packages if the original
+   *  ones are lost. Optional: records written before deterministic
+   *  secrets shipped (and env-not-configured demo runs) leave it unset. */
+  payoutSeed?: string;
   recipients: RecipientRow[];
   notifications: NotificationLog[];
 }
@@ -248,6 +256,10 @@ function isValidRecord(r: unknown): r is RunRecord {
   if (!isOptionalString(v.settleGasPaid)) return false;
   if (!isOptionalString(v.relayerFee)) return false;
   if (!isOptionalString(v.notes)) return false;
+  // payoutSeed is consumed via BigInt(...) on the resume path; reject a
+  // non-string here so a corrupt file fails validation up front rather
+  // than throwing an opaque SyntaxError deep in a re-settle.
+  if (!isOptionalString(v.payoutSeed)) return false;
   return true;
 }
 
