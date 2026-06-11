@@ -8,7 +8,7 @@ import { LAUNCH_TOKENS, chainName } from "@zkscatter/sdk";
 import {
   splitPayout,
   withDeterministicSecrets,
-  randomFieldElement,
+  claimSeedFromKey,
   toBytes32Hex,
   type PayoutBatch,
   pickActiveTier,
@@ -499,11 +499,6 @@ function NewPayout() {
   // check and start two deposits (double approve + double gas).
   // The ref flips before any await, so the second click bails out
   // immediately even though the corresponding state hasn't flushed.
-  // Per-payout claim-secret seed. Minted once and held for the session so
-  // a relayer-delay retry re-derives the SAME claim secrets → same
-  // claimsRoot (idempotent); a resume reuses the original run's persisted
-  // seed instead. Lazily initialised in doSubmit.
-  const payoutSeedRef = useRef<bigint | null>(null);
   const depositInFlightRef = useRef(false);
   // AbortController per attempt — Cancel from <DepositProgress>
   // signals the in-flight realDeposit to bail at its next checkpoint.
@@ -576,6 +571,11 @@ function NewPayout() {
     let txHash: string | undefined;
     let claimPackages: ClaimPackage[] | undefined;
     let totalRelayerFeeRaw: bigint | undefined;
+    // Per-payout claim-secret seed, set in the settle block below and read
+    // by persist(). Deterministic from the wallet (or the resumed run's
+    // persisted seed), so it's recomputed fresh each submit — no caching,
+    // which avoids a stale seed after a wallet switch.
+    let payoutSeed: bigint | undefined;
     // Whether `persist(allowFailure: true)` succeeded on the partial
     // path. The helper swallows save errors and returns null, so a
     // partial banner promising "saved" must check this flag rather
@@ -631,8 +631,8 @@ function NewPayout() {
               ...(totalRelayerFeeRaw !== undefined
                 ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
                 : {}),
-              ...(payoutSeedRef.current !== null
-                ? { payoutSeed: payoutSeedRef.current.toString() }
+              ...(payoutSeed !== undefined
+                ? { payoutSeed: payoutSeed.toString() }
                 : {}),
             });
         try {
@@ -666,27 +666,12 @@ function NewPayout() {
         // persisted seed so the re-settle matches its already-issued
         // packages; a fresh run mints one and holds it in payoutSeedRef.
         // (finalizeRealSettle still hard-checks the on-chain event root.)
-        if (resumeRecord?.payoutSeed && payoutSeedRef.current === null) {
-          try {
-            payoutSeedRef.current = BigInt(resumeRecord.payoutSeed);
-          } catch {
-            throw new Error(
-              `This run's saved payoutSeed is invalid ("${resumeRecord.payoutSeed}") — can't reproduce its claim secrets to resume. Start a fresh payout instead.`,
-            );
-          }
-        }
-        const payoutSeed = (payoutSeedRef.current ??= randomFieldElement());
-        const submitBatches: PayoutBatch[] = splitPayout(
-          await withDeterministicSecrets(
-            parseRecipientRows(rows, decimals, claimFrom!),
-            payoutSeed,
-            tokenAddress,
-          ),
-          { token: tokenAddress },
-        );
-        if (submitBatches.length > MAX_BATCHES_PER_RUN) {
+        // Batch-count guard up front (same length as submitBatches, which
+        // we build after the EdDSA derive below) so we don't prompt the
+        // wallet for a payout we'll reject anyway.
+        if (batches.length > MAX_BATCHES_PER_RUN) {
           throw new Error(
-            `This payout would need ${submitBatches.length} settlement ${MAX_BATCHES_PER_RUN === 1 ? "transactions" : "txs"}; Pay caps at ${MAX_BATCHES_PER_RUN === 1 ? "one" : MAX_BATCHES_PER_RUN} per payout. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
+            `This payout would need ${batches.length} settlement transaction${batches.length === 1 ? "" : "s"}; Pay caps at ${MAX_BATCHES_PER_RUN === 1 ? "one" : MAX_BATCHES_PER_RUN} per payout. Reduce recipients to ${MAX_RECIPIENTS_PER_RUN} or fewer, or split into multiple runs.`,
           );
         }
         // Block signing when no notes folder is picked. The settle
@@ -713,6 +698,39 @@ function NewPayout() {
         // The zkey is ~19 MB; on cold cache its fetch dwarfs the
         // ECDSA-derive wallet round-trip.
         const [kp] = await Promise.all([eddsa.derive(), authorizeProver.ready()]);
+        // Derive the per-payout claim-secret seed DETERMINISTICALLY from the
+        // wallet's eddsa key material (claimSeedFromKey) rather than random:
+        // it's re-derivable from the wallet alone, so there's no stored seed
+        // to lose and a recovery run can regenerate every claim secret by
+        // re-signing. A resume reuses the original run's persisted seed so
+        // the re-settle reproduces its already-issued packages' root. The
+        // settle path stays idempotent (same wallet → same seed → same
+        // claimsRoot on retry), and finalizeRealSettle still hard-checks the
+        // on-chain event root.
+        if (resumeRecord?.payoutSeed) {
+          // Resume always prefers the original run's persisted seed so the
+          // re-settle reproduces its already-issued packages' root.
+          try {
+            payoutSeed = BigInt(resumeRecord.payoutSeed);
+          } catch {
+            throw new Error(
+              `This run's saved payoutSeed is invalid ("${resumeRecord.payoutSeed}") — can't reproduce its claim secrets to resume. Start a fresh payout instead.`,
+            );
+          }
+        } else {
+          // Deterministic from the connected wallet — recomputed each submit
+          // (a retry re-derives the same value; a wallet switch derives the
+          // new wallet's, with no stale cache).
+          payoutSeed = claimSeedFromKey(kp.privateKey);
+        }
+        const submitBatches: PayoutBatch[] = splitPayout(
+          await withDeterministicSecrets(
+            parseRecipientRows(rows, decimals, claimFrom!),
+            payoutSeed,
+            tokenAddress,
+          ),
+          { token: tokenAddress },
+        );
         // Multi-batch pipeline: prove (queued, single-threaded) → sign
         // + send (sequential, signer-exclusive + monotonic nonces) →
         // receipts (parallel). The previous serial loop blocked

@@ -13,6 +13,36 @@
  *  key. This is deterministic — the same wallet always produces the
  *  same trading key — and never exposes the wallet's private key. */
 import { ethers } from "ethers";
+import { FIELD_MODULUS } from "./commitment";
+
+/** Domain-separated derivation of a per-payout claim-secret seed from the
+ *  wallet's deterministic EdDSA private key bytes (`keccak256` of the
+ *  fixed-message ECDSA signature). Because the key is re-derivable from
+ *  the wallet alone, so is the seed — there is no random seed to lose,
+ *  and a recovery run can regenerate every claim secret just by
+ *  re-signing. The domain tag keeps this value independent of the EdDSA
+ *  key's own uses. Reduced into the BN254 scalar field for use as a
+ *  Poseidon input.
+ *
+ *  Note: the seed is per-wallet (not per-payout); per-claim uniqueness
+ *  comes from the leaf fields in `deriveClaimSecret`. Two byte-identical
+ *  payouts (same recipients, amounts, releaseTime, order) would collide,
+ *  but that surfaces as a `ClaimsGroupAlreadyExists` revert on the second
+ *  settle — self-detecting, never silent loss. */
+export function claimSeedFromKey(privateKey: Uint8Array): bigint {
+  // The wallet-derived EdDSA private key is keccak256 of the signature →
+  // always 32 bytes. Fail fast on anything else rather than silently
+  // hashing a malformed key into a different (unrecoverable) seed.
+  if (privateKey.length !== 32) {
+    throw new Error(
+      `claimSeedFromKey: expected a 32-byte key, got ${privateKey.length}`,
+    );
+  }
+  const h = ethers.keccak256(
+    ethers.concat([ethers.toUtf8Bytes("zkScatter:claim-seed:v1"), privateKey]),
+  );
+  return BigInt(h) % FIELD_MODULUS;
+}
 
 /** Default fixed message used by `deriveEdDSAKey` when callers don't
  *  pass their own. Keeping this stable across SDK versions matters:
