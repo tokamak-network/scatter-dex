@@ -72,6 +72,21 @@ describe("claimsBackup save/load/list", () => {
     expect(await loadClaimsBackup(ROOT_A)).toBeNull();
   });
 
+  it("rejects a backup whose internal root disagrees with the file key", async () => {
+    // File keyed under ROOT_A but its contents claim ROOT_B (hand-edited).
+    store.set(
+      "zkscatter-claims-backup-" + ROOT_A.toLowerCase() + ".json",
+      JSON.stringify(backup(ROOT_B)),
+    );
+    expect(await loadClaimsBackup(ROOT_A)).toBeNull();
+    expect(await listClaimsBackups()).toHaveLength(0);
+  });
+
+  it("treats an unsupported tierCap as corrupt", async () => {
+    await saveClaimsBackup({ ...backup(ROOT_A), tierCap: 99 });
+    expect(await loadClaimsBackup(ROOT_A)).toBeNull();
+  });
+
   it("listClaimsBackups skips corrupt files instead of throwing", async () => {
     await saveClaimsBackup(backup(ROOT_A));
     store.set("zkscatter-claims-backup-deadbeef.json", "{ broken");

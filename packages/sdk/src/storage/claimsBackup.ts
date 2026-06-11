@@ -59,6 +59,10 @@ function fileFor(claimsRoot: string): string {
   return `${PREFIX}${claimsRoot.toLowerCase()}${SUFFIX}`;
 }
 
+/** Supported claims-tree capacities (= on-chain group tier). Recovery
+ *  maps `tierCap` → CircuitTier, so an out-of-range value is corrupt. */
+const TIER_CAPS = new Set([16, 64, 128]);
+
 function isValidClaim(c: unknown): c is ClaimsBackupClaim {
   if (!c || typeof c !== "object") return false;
   const v = c as Record<string, unknown>;
@@ -80,6 +84,7 @@ function isValidBackup(b: unknown): b is ClaimsBackup {
     typeof v.settlementAddress === "string" &&
     typeof v.claimsRoot === "string" &&
     typeof v.tierCap === "number" &&
+    TIER_CAPS.has(v.tierCap) &&
     typeof v.token === "string" &&
     typeof v.tokenSymbol === "string" &&
     typeof v.tokenDecimals === "number" &&
@@ -116,7 +121,12 @@ export async function loadClaimsBackup(
   } catch {
     return null;
   }
-  return isValidBackup(parsed) ? parsed : null;
+  if (!isValidBackup(parsed)) return null;
+  // Guard against a hand-edited / mis-keyed file: the contents must
+  // belong to the root we looked up, or callers would act on the wrong
+  // secrets.
+  if (parsed.claimsRoot.toLowerCase() !== claimsRoot.toLowerCase()) return null;
+  return parsed;
 }
 
 /** List every valid claims backup in the folder. Corrupt / unparseable
@@ -133,6 +143,12 @@ export async function listClaimsBackups(): Promise<ClaimsBackup[]> {
     files.map(async (f) => {
       const parsed: unknown = JSON.parse(await f.read());
       if (!isValidBackup(parsed)) throw new Error("invalid claims backup");
+      // Drop a file whose internal root disagrees with its filename key
+      // (e.g. copied/renamed) so the list never surfaces a misattributed
+      // backup.
+      if (fileFor(parsed.claimsRoot) !== f.filename) {
+        throw new Error("claims backup filename/root mismatch");
+      }
       return parsed;
     }),
   );
