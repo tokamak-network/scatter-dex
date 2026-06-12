@@ -325,7 +325,7 @@ async function main() {
 
   // Security: CORS whitelist. Default covers every localhost dev port
   // scatter-dex's dev stack might call from — frontend (3000),
-  // relayer A/B (3002/3003), and the four --apps mode apps (4001-4004,
+  // relayer A/B (3002/3003), and the six --apps mode apps (4001-4006,
   // per `scripts/dev.sh` APP_PORTS). dev.sh passes CORS_ORIGINS
   // explicitly when it starts the relayer, so this default mostly
   // matters for ad-hoc `npm run dev` from this directory without env.
@@ -340,6 +340,8 @@ async function main() {
           "http://localhost:4002", // apps/drop
           "http://localhost:4003", // apps/pro
           "http://localhost:4004", // apps/operators
+          "http://localhost:4005", // apps/admin
+          "http://localhost:4006", // apps/hub
         ]
   ).map(s => s.trim()).filter(Boolean);
   const corsWildcard = allowedOrigins.includes("*");

@@ -24,10 +24,10 @@ export const config = {
 
   // CORS — explicit origin list required in production.
   // Default allows localhost dev ports; set CORS_ORIGINS=* to allow all (not recommended).
-  // The 4001–4004 range matches `scripts/dev.sh`'s APP_PORTS dictionary
-  // (pay / drop / pro / operators). Keep these two lists in sync —
-  // dev.sh now passes CORS_ORIGINS explicitly when it starts this
-  // server, so this default is mostly a safety net for ad-hoc
+  // The 4001–4006 range matches `scripts/dev.sh`'s APP_PORTS dictionary
+  // (pay / drop / pro / operators / admin / hub). Keep these two lists
+  // in sync — dev.sh now passes CORS_ORIGINS explicitly when it starts
+  // this server, so this default is mostly a safety net for ad-hoc
   // `npm run dev` runs from this directory without env vars.
   corsOrigins: (
     process.env.CORS_ORIGINS?.trim()
@@ -40,6 +40,8 @@ export const config = {
           "http://localhost:4002", // apps/drop
           "http://localhost:4003", // apps/pro
           "http://localhost:4004", // apps/operators
+          "http://localhost:4005", // apps/admin
+          "http://localhost:4006", // apps/hub
         ]
   ).map(s => s.trim()).filter(Boolean),
 

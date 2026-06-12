@@ -79,7 +79,7 @@ NO_RELAYERS=false
 # shared-orderbook wasn't even passed CORS_ORIGINS — so adding a new
 # --apps entry (e.g. operators on :4004) silently broke its API calls
 # with `No 'Access-Control-Allow-Origin' header` on the affected
-# server. Sourcing one variable from APP_PORTS keeps the four ports
+# server. Sourcing one variable from APP_PORTS keeps the app ports
 # in lock-step with the rest of dev.sh's app-port truth.
 DEV_CORS_ORIGINS="http://localhost:3000,http://localhost:3002,http://localhost:3003"
 for _port in "${APP_PORTS[@]}"; do
