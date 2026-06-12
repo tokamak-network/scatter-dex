@@ -53,7 +53,7 @@ Without these shifts, the commit-reveal messages in this document cannot carry t
 
 ## 2. Reference Model: Steam Trading Bot Ecosystem
 
-zkScatter's federated relayer network is modeled after the **Steam trading bot ecosystem** (DMarket, Skinport, CS.Money, CSGOFloat, Buff163). The Steam analogy is already used in [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) §"Reference: Steam Trading Bot Ecosystem". This document deepens that analogy to cover the cross-bot communication layer — the part Steam handles centrally through the Valve API but that zkScatter must do decentralized.
+zkScatter's federated relayer network is modeled after the **Steam trading bot ecosystem** (DMarket, Skinport, CS.Money, CSGOFloat, Buff163). The current HTTP protocol this design replaces is documented in [shared-orderbook.md](../../architecture/shared-orderbook.md). This document uses the analogy to cover the cross-bot communication layer — the part Steam handles centrally through the Valve API but that zkScatter must do decentralized.
 
 ### 2.1 What Steam does that we copy
 
