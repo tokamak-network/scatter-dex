@@ -118,14 +118,22 @@ async function readInboxFile(filename: string): Promise<ClaimInboxEntry[]> {
 export async function loadClaimInbox(): Promise<ClaimInboxEntry[]> {
   if (!hasFolder()) return [];
   const appFile = appInboxFilename();
-  const legacy = await readInboxFile(LEGACY_CLAIM_INBOX_FILENAME);
-  if (!appFile) return legacy;
+  if (!appFile) return readInboxFile(LEGACY_CLAIM_INBOX_FILENAME);
+  // Read both files in parallel. `allSettled` (not `all`) so the second
+  // read's rejection can't surface as an unhandled rejection; we re-throw
+  // any corruption below so a bad file still reaches the UI rather than
+  // being silently dropped.
+  const [appR, legacyR] = await Promise.allSettled([
+    readInboxFile(appFile),
+    readInboxFile(LEGACY_CLAIM_INBOX_FILENAME),
+  ]);
+  if (appR.status === "rejected") throw appR.reason;
+  if (legacyR.status === "rejected") throw legacyR.reason;
   // App file ∪ legacy (legacy shown as read fallback). Dedup by id —
   // ids are disjoint across files, so this is a defensive union with
   // the app file winning.
-  const appEntries = await readInboxFile(appFile);
-  const seen = new Set(appEntries.map((e) => e.id));
-  return [...appEntries, ...legacy.filter((e) => !seen.has(e.id))];
+  const seen = new Set(appR.value.map((e) => e.id));
+  return [...appR.value, ...legacyR.value.filter((e) => !seen.has(e.id))];
 }
 
 async function writeInboxFile(
@@ -136,17 +144,24 @@ async function writeInboxFile(
   await saveFile(filename, JSON.stringify(payload, null, 2));
 }
 
-/** Which file an entry currently lives in — the app file if present
- *  there, else the legacy file, else null. Lets a mutation update a
- *  legacy entry in place without migrating it. */
-async function inboxFileForEntry(id: string): Promise<string | null> {
+/** Locate an entry's home file AND return that file's parsed entries, so
+ *  a mutation can rewrite it without a second read. App file first, then
+ *  the legacy file (mutated in place rather than migrated); null when the
+ *  entry is in neither. */
+async function findInboxFileAndEntries(
+  id: string,
+): Promise<{ filename: string; entries: ClaimInboxEntry[] } | null> {
   const appFile = appInboxFilename();
   if (appFile) {
     const appEntries = await readInboxFile(appFile);
-    if (appEntries.some((e) => e.id === id)) return appFile;
+    if (appEntries.some((e) => e.id === id)) {
+      return { filename: appFile, entries: appEntries };
+    }
   }
   const legacy = await readInboxFile(LEGACY_CLAIM_INBOX_FILENAME);
-  if (legacy.some((e) => e.id === id)) return LEGACY_CLAIM_INBOX_FILENAME;
+  if (legacy.some((e) => e.id === id)) {
+    return { filename: LEGACY_CLAIM_INBOX_FILENAME, entries: legacy };
+  }
   return null;
 }
 
@@ -230,10 +245,9 @@ export async function markClaimInboxEntryClaimed(
   txHash?: string,
 ): Promise<void> {
   return withLock(async () => {
-    const file = await inboxFileForEntry(id);
-    if (!file) return;
-    const entries = await readInboxFile(file);
-    const next = entries.map((e) =>
+    const found = await findInboxFileAndEntries(id);
+    if (!found) return;
+    const next = found.entries.map((e) =>
       e.id === id
         ? {
             ...e,
@@ -243,16 +257,18 @@ export async function markClaimInboxEntryClaimed(
           }
         : e,
     );
-    await writeInboxFile(file, next);
+    await writeInboxFile(found.filename, next);
   });
 }
 
 export async function removeClaimInboxEntry(id: string): Promise<void> {
   return withLock(async () => {
-    const file = await inboxFileForEntry(id);
-    if (!file) return;
-    const entries = await readInboxFile(file);
-    await writeInboxFile(file, entries.filter((e) => e.id !== id));
+    const found = await findInboxFileAndEntries(id);
+    if (!found) return;
+    await writeInboxFile(
+      found.filename,
+      found.entries.filter((e) => e.id !== id),
+    );
   });
 }
 
