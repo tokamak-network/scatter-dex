@@ -19,6 +19,7 @@ import { OrdersProvider } from "./lib/orders";
 import { ClaimReconciler } from "./lib/claimReconciler";
 import { SettleReconciler } from "./lib/settleReconciler";
 import { EdDSAKeyProvider } from "@zkscatter/sdk/react";
+import { ChunkReloadGuard } from "@zkscatter/sdk/react";
 import { RelayersProvider } from "./lib/relayers";
 import { TokensProvider } from "./lib/useProTokens";
 import { TradeFormProvider } from "./lib/tradeForm";
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <ChunkReloadGuard />
         <WalletProvider network={DEMO_NETWORK}>
           <ActiveNetworkProvider>
             <FolderProvider>
