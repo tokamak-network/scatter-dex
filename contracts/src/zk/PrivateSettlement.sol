@@ -456,7 +456,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
     // Async-root design: each side's `commitmentRoot` is independently
     // validated against `pool.isKnownRoot()` (the existing Tornado-style ring
     // buffer in `IncrementalMerkleTree`). The two roots are NOT required to be
-    // equal — see `docs/circuit-split/design.md` §2.3 S1 and §6 for the full
+    // equal — see `docs/design/circuit-split/design.md` §4.1 for the full
     // rationale. Forcing equality would couple both proofs to the same tree
     // snapshot and collapse the matching window in any active pool.
     //

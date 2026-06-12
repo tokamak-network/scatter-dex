@@ -26,7 +26,7 @@ include "./tags.circom";
 //    - The relayer has no economic incentive to honor a soft cancel
 //      (it loses fees)
 //    - Only an on-chain nullifier burn provides trust-minimized cancel
-//    - See: docs/circuit-split/cancel-design.md §6 (Candidate A+C)
+//    - See: docs/design/circuit-split/design.md §7
 //
 //  Privacy:
 //    - pubKeyAx/pubKeyAy are PRIVATE inputs (never exposed on-chain)
@@ -167,7 +167,7 @@ template Cancel(commitTreeDepth) {
 
     // ════════════════════════════════════════
     //  4b. RANGE CHECK
-    //      balance must fit in 128 bits (matches authorize.circom / settle.circom).
+    //      balance must fit in 128 bits (matches authorize.circom).
     // ════════════════════════════════════════
     component rcBalance = Num2Bits(128);
     rcBalance.in <== balance;
@@ -200,7 +200,7 @@ template Cancel(commitTreeDepth) {
     // ════════════════════════════════════════
     //  6. SUBMITTER BINDING
     //     Keeps `submitter` in the witness so the circom optimizer
-    //     doesn't prune it. Same idiom as authorize.circom / settle.circom
+    //     doesn't prune it. Same idiom as authorize.circom
     //     (where the field is called `relayer`). In cancel, the submitter
     //     is the user, not a relayer.
     // ════════════════════════════════════════
