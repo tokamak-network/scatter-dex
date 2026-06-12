@@ -38,13 +38,15 @@ describe("groupClaimInbox", () => {
     expect(groups[1].label).toBe("Titled");
   });
 
-  it("keeps the untitled key from colliding with a literal label", () => {
+  it("keeps the untitled bucket's key from colliding with a literal label", () => {
+    // "untitled" is the actual sentinel key; a run literally titled
+    // "untitled" must land in its own "t:"-prefixed bucket.
     const groups = groupClaimInbox([
       makeEntry("a"),
-      makeEntry("b", "__untitled__"),
+      makeEntry("b", "untitled"),
     ]);
-    expect(groups).toHaveLength(2);
-    expect(groups.map((g) => g.label)).toEqual([null, "__untitled__"]);
+    expect(groups.map((g) => g.key)).toEqual(["untitled", "t:untitled"]);
+    expect(groups.map((g) => g.label)).toEqual([null, "untitled"]);
   });
 
   it("returns no groups for an empty inbox", () => {

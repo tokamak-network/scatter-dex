@@ -83,8 +83,15 @@ export default function ClaimInbox() {
   >({});
   const isGroupCollapsed = (g: ClaimInboxGroup): boolean =>
     collapsedOverride[g.key] ?? g.entries.every((e) => e.status === "claimed");
+  // Derive the current value from the updater's own snapshot — reading
+  // the render-scope `collapsedOverride` here could drop a toggle when
+  // React batches rapid clicks (bot review on PR #1010).
   const toggleGroup = (g: ClaimInboxGroup) =>
-    setCollapsedOverride((s) => ({ ...s, [g.key]: !isGroupCollapsed(g) }));
+    setCollapsedOverride((s) => {
+      const collapsed =
+        s[g.key] ?? g.entries.every((e) => e.status === "claimed");
+      return { ...s, [g.key]: !collapsed };
+    });
 
   const refresh = useCallback(async () => {
     if (!folder.ready) {
@@ -345,7 +352,7 @@ export default function ClaimInbox() {
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
                         From {e.pkg.senderLabel ?? "unknown sender"} ·{" "}
-                        {e.pkg.runLabel ?? "Private payout"}
+                        {e.pkg.runLabel?.trim() || "Private payout"}
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
                         To <span className="font-mono">{shortAddr(e.pkg.recipient)}</span>
