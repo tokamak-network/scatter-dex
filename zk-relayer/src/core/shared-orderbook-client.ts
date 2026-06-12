@@ -19,12 +19,12 @@ const log = createLogger("shared-orderbook");
 /**
  * Shared Orderbook Client — connects relayer to the shared orderbook server.
  *
- * Two modes of operation (Steam bot analogy):
- * 1. **Server mode** (normal): Relayer posts listings to the central marketplace
- *    and subscribes to new orders via WebSocket.
+ * Two modes of operation:
+ * 1. **Server mode** (normal): Relayer posts listings to the central bulletin
+ *    board and subscribes to new orders via WebSocket.
  * 2. **P2P mode** (fallback): When the server is down, relayer communicates
- *    directly with known peers to exchange order summaries — like Steam bots
- *    that can trade directly via Trade Offers without the marketplace site.
+ *    directly with known peers to exchange order summaries — trade offers are
+ *    always exchanged directly, so settlement never depends on the server.
  */
 
 export interface PeerInfo {

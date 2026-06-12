@@ -51,69 +51,40 @@ This protocol assumes the two architectural shifts listed in [../dispute-registr
 
 Without these shifts, the commit-reveal messages in this document cannot carry the privacy guarantees they promise.
 
-## 2. Reference Model: Steam Trading Bot Ecosystem
+## 2. Design Principles
 
-zkScatter's federated relayer network is modeled after the **Steam trading bot ecosystem** (DMarket, Skinport, CS.Money, CSGOFloat, Buff163). The current HTTP protocol this design replaces is documented in [shared-orderbook.md](../../architecture/shared-orderbook.md). This document uses the analogy to cover the cross-bot communication layer — the part Steam handles centrally through the Valve API but that zkScatter must do decentralized.
+zkScatter's federated relayer network is a multi-operator marketplace: independent relayers each hold their own order "inventory" (public proofs, never witness data), publish listings to a shared medium, and coordinate settlement directly with each other. The current HTTP protocol this design replaces is documented in [shared-orderbook.md](../../architecture/shared-orderbook.md); this document specifies the decentralized communication layer that removes the central server from that picture.
 
-### 2.1 What Steam does that we copy
+### 2.1 Core mechanisms
 
-```
-┌─ User ─────┐
-│            │   Trade Offer
-│  Seller    │───────────────┐
-└────────────┘               │
-                             ▼
-                      ┌──────────────┐     Bot-to-Bot
-                      │   Bot_A      │◄────── Exchange ──────┐
-                      │  (inventory) │                        │
-                      └──────┬───────┘                        │
-                             │                         ┌──────┴───────┐
-                             │ List                    │    Bot_B     │
-                             ▼                         │  (inventory) │
-                      ┌──────────────┐                 └──────┬───────┘
-                      │  Marketplace │◄─── Buy order ─────────┘
-                      │  (orderbook) │
-                      └──────┬───────┘
-                             │
-                             ▼
-                      Settlement via Steam Trade Offer
-                      (atomic swap guaranteed by Steam)
-```
-
-| Steam trading bot pattern | zkScatter analog |
+| Concern | Mechanism |
 |---|---|
-| Bot holds item "inventory" | Relayer holds order "inventory" (public proofs, not witness data) |
-| Trade Offer API (propose/accept/confirm) | Waku message-based commit-reveal protocol |
-| Inter-bot inventory balancing trades | Cross-relayer fair exchange |
-| Per-bot API endpoint + rate limit | Per-relayer Waku content topic + RLN |
-| Order states: pending/active/traded/expired | Order state machine (see §5) |
-| Multi-bot parallel operation | Federated relayer network |
-| SteamWeb API style standardization | Standard Waku protocol schemas (protobuf) |
-| Trade Offer expiry + auto-cancel | Proof expiry + auto-refund |
+| Order inventory | Per-relayer; holds public proofs, not witness data |
+| Settlement coordination | Waku message-based commit-reveal protocol (propose/accept/confirm) |
+| Cross-relayer settlement | Fair exchange of the two Half-proofs |
+| Per-relayer addressing + abuse control | Per-relayer Waku content topic + RLN rate limiting |
+| Order lifecycle | Order state machine — pending/active/traded/expired (see §5) |
+| Operator structure | Federated network of independent relayer operators |
+| Interoperability | Standard Waku protocol schemas (protobuf) |
+| Liveness cleanup | Proof expiry + auto-refund |
 
-### 2.2 What Steam does that we explicitly avoid
+### 2.2 Failure modes the design rules out
 
-The Steam bot model has structural weaknesses that a decentralized, non-custodial DEX must not inherit:
+A decentralized, non-custodial settlement network must not inherit the structural weaknesses of centralized bot marketplaces:
 
-| Steam weakness | zkScatter improvement |
+| Weakness ruled out | zkScatter mechanism |
 |---|---|
-| Bots are custodial (hold items) | Relayers hold only proofs; funds stay in `CommitmentPool` |
-| Bot operators can exit-scam | Public dispute records + dual-CA identity → loss of users → loss of fees ([../dispute-registry/design.md](../dispute-registry/design.md)) |
-| Bot-to-bot trust is informal | Fair exchange protocol + on-chain dispute resolution |
-| API specs fragmented per company | Single standard Waku protocol (this document) |
-| Centralization (one operator runs many bots) | Federation gated by `RelayerRegistry` with public bond |
+| Custodial intermediaries | Relayers hold only proofs; funds stay in `CommitmentPool` |
+| Operator exit-scam | Public dispute records + dual-CA identity → loss of users → loss of fees ([../dispute-registry/design.md](../dispute-registry/design.md)) |
+| Informal peer-to-peer trust | Fair exchange protocol + on-chain dispute resolution |
+| Fragmented per-operator API specs | Single standard Waku protocol (this document) |
+| De-facto centralization | Federation gated by `RelayerRegistry` with public bond |
 | No audit trail of failed trades | Commit-reveal messages are signed, dispute-filable on-chain |
-| Marketplace is a central party | Orderbook is gossiped over Waku, no central matcher |
+| Central marketplace operator | Orderbook is gossiped over Waku, no central matcher |
 
 ### 2.3 The key insight
 
-From [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) lines 22-23:
-
-> Steam bots don't share private inventory data with each other. They share **public listings** through a central market, and settlement happens via Steam's **Trade Offer protocol**.
-
-zkScatter's evolution of this idea:
-
-> zkScatter relayers don't share private witness data with each other. They share **public order summaries + ZK proofs** through a **gossip network**, and settlement happens via a **commit-reveal fair exchange + on-chain ZK settlement** — eliminating both the "central market" trust requirement and the custodial "bot trust" requirement.
+> zkScatter relayers don't share private witness data with each other. They share **public order summaries + ZK proofs** through a **gossip network**, and settlement happens via a **commit-reveal fair exchange + on-chain ZK settlement** — no central market to trust, no custodial intermediary to trust.
 
 ## 3. Architecture Overview
 
@@ -973,8 +944,6 @@ Can a relayer operate as a "solo" node, receiving only its own users' orders and
 - **libp2p gossipsub**: https://docs.libp2p.io/concepts/pubsub/overview/ — underlying gossip protocol
 - **RLN (Rate Limiting Nullifier)**: https://rate-limiting-nullifier.github.io/ — ZK-based rate limiting
 - **EIP-712**: typed structured data hashing and signing
-- **Steam Web API**: reference for Trade Offer pattern (https://steamcommunity.com/dev)
-- **DMarket / Skinport / CS.Money**: real-world multi-bot trading architectures that inspired the federation model
 
 ---
 

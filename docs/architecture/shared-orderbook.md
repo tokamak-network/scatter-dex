@@ -6,13 +6,9 @@
 > [relayer-protocol/design.md](../design/relayer-protocol/design.md)
 > (pre-implementation).
 >
-> **Half-proof update**: this protocol originally shipped against the legacy
-> custodial flow, where users delegated commitment secrets to relayers and a
-> "Trade Offer" carried witness data between relayers. That flow is **retired**
-> (the `PrivateOrder` variant was removed post-S-M14). Today the orderbook
-> carries summaries of **authorize (Half-proof) orders**: users prove their own
-> side in the browser and hand the relayer a *proof*, never secrets. See
-> [circuit-split/design.md](../design/circuit-split/design.md).
+> The orderbook carries summaries of **authorize (Half-proof) orders**: users
+> prove their own side in the browser and hand the relayer a *proof*, never
+> secrets. See [circuit-split/design.md](../design/circuit-split/design.md).
 
 ## Motivation
 
