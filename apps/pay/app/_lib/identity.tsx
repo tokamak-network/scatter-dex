@@ -40,7 +40,14 @@ interface StatusValue {
 const StatusContext = createContext<StatusValue | null>(null);
 
 export function IdentityStatusProvider({ children }: { children: ReactNode }) {
-  const { account, readProvider } = useWallet();
+  // Read the identity gate through the app's public node (`rpcProvider`),
+  // not the wallet node (`readProvider`). Verification status is global
+  // on-chain data, and a broken wallet RPC — a chainId-spoofing fork, or
+  // an unauthorized/expired endpoint — would otherwise throw and render a
+  // false "Lookup failed" (or, worse, falsely gate a verified user). The
+  // public node is the same one settlement checks against. Same rationale
+  // as the commitment tree; see its provider comment.
+  const { account, rpcProvider } = useWallet();
   const cfg = useMemo(() => getNetworkConfig(), []);
   const gate = cfg.contracts.identityGate;
   const noGate = !gate || gate === ethers.ZeroAddress;
@@ -49,7 +56,7 @@ export function IdentityStatusProvider({ children }: { children: ReactNode }) {
   const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
-    if (!account || !readProvider || noGate) {
+    if (!account || !rpcProvider || noGate) {
       setState({ kind: "disconnected" });
       return;
     }
@@ -61,7 +68,7 @@ export function IdentityStatusProvider({ children }: { children: ReactNode }) {
         const { isVerified, verifiedUntil } = await loadIdentityVerification(
           gate,
           account!,
-          readProvider!,
+          rpcProvider!,
         );
         if (cancelled) return;
         setState(classifyIdentity(isVerified, verifiedUntil, Date.now()));
@@ -80,7 +87,7 @@ export function IdentityStatusProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [account, readProvider, gate, noGate, refreshTick]);
+  }, [account, rpcProvider, gate, noGate, refreshTick]);
 
   const refresh = useCallback(() => setRefreshTick((n) => n + 1), []);
   const value = useMemo<StatusValue>(() => ({ state, refresh }), [state, refresh]);
@@ -122,7 +129,7 @@ interface BatchCheckerValue {
 const BatchCheckerContext = createContext<BatchCheckerValue | null>(null);
 
 export function IdentityBatchProvider({ children }: { children: ReactNode }) {
-  const { readProvider } = useWallet();
+  const { rpcProvider } = useWallet();
   const cfg = useMemo(() => getNetworkConfig(), []);
   const gate = cfg.contracts.identityGate;
   const noGate = !gate || gate === ethers.ZeroAddress;
@@ -147,11 +154,11 @@ export function IdentityBatchProvider({ children }: { children: ReactNode }) {
     genRef.current += 1;
     setCache(new Map());
     inFlight.current.clear();
-  }, [gate, readProvider]);
+  }, [gate, rpcProvider]);
 
   const probe = useCallback(
     (addrRaw: string) => {
-      if (!readProvider || noGate) return;
+      if (!rpcProvider || noGate) return;
       const addr = ethers.isAddress(addrRaw)
         ? ethers.getAddress(addrRaw)
         : null;
@@ -165,7 +172,7 @@ export function IdentityBatchProvider({ children }: { children: ReactNode }) {
           const { isVerified, verifiedUntil } = await loadIdentityVerification(
             gate,
             addr,
-            readProvider,
+            rpcProvider,
           );
           if (genRef.current !== gen) return;
           setCache((prev) => {
@@ -194,7 +201,7 @@ export function IdentityBatchProvider({ children }: { children: ReactNode }) {
       })();
       inFlight.current.set(key, p);
     },
-    [readProvider, gate, noGate],
+    [rpcProvider, gate, noGate],
   );
 
   const get = useCallback(
@@ -271,7 +278,7 @@ interface AdminValue {
 const AdminContext = createContext<AdminValue | null>(null);
 
 export function IdentityGateAdminProvider({ children }: { children: ReactNode }) {
-  const { account, readProvider } = useWallet();
+  const { account, rpcProvider } = useWallet();
   const cfg = useMemo(() => getNetworkConfig(), []);
   const gate = cfg.contracts.identityGate;
   const noGate = !gate || gate === ethers.ZeroAddress;
@@ -293,12 +300,12 @@ export function IdentityGateAdminProvider({ children }: { children: ReactNode })
     // and the header link only cares about admin === true. This
     // avoids one RPC pair per route-mount in the unconnected
     // browsing case.
-    if (!account || !readProvider || noGate) {
+    if (!account || !rpcProvider || noGate) {
       return;
     }
     let cancelled = false;
     setLoading(true);
-    loadIdentityGateAdmin(gate, readProvider)
+    loadIdentityGateAdmin(gate, rpcProvider)
       .then((s) => {
         if (cancelled) return;
         setSnapshot(s);
@@ -313,7 +320,7 @@ export function IdentityGateAdminProvider({ children }: { children: ReactNode })
     return () => {
       cancelled = true;
     };
-  }, [account, readProvider, gate, noGate, tick]);
+  }, [account, rpcProvider, gate, noGate, tick]);
 
   const refresh = useCallback(() => setTick((n) => n + 1), []);
   const value = useMemo<AdminValue>(
