@@ -23,19 +23,20 @@ import { useEffect } from "react";
 const RELOAD_KEY = "zk:chunk-reload-at";
 const RELOAD_WINDOW_MS = 10_000;
 
+// The message text webpack/Turbopack/Next use for a failed chunk fetch.
+// No `g` flag, so the single instance is safe to reuse across `.test()`.
+const CHUNK_ERROR_RE = /ChunkLoadError|Loading chunk \d+|Failed to load chunk/i;
+
 /** True for the chunk-load failures Next/Turbopack/webpack surface — by
  *  error name, or by the message text when the name was lost crossing an
  *  `unhandledrejection` boundary. */
 export function isChunkLoadError(reason: unknown): boolean {
   if (!reason || typeof reason !== "object") {
-    return typeof reason === "string" && /ChunkLoadError|Loading chunk \d|Failed to load chunk/i.test(reason);
+    return typeof reason === "string" && CHUNK_ERROR_RE.test(reason);
   }
   const err = reason as { name?: unknown; message?: unknown };
   if (err.name === "ChunkLoadError") return true;
-  return (
-    typeof err.message === "string" &&
-    /ChunkLoadError|Loading chunk \d|Failed to load chunk/i.test(err.message)
-  );
+  return typeof err.message === "string" && CHUNK_ERROR_RE.test(err.message);
 }
 
 /** Mount once near the root of a Next App Router layout (inside `<body>`).
@@ -65,8 +66,13 @@ export function ChunkReloadGuard() {
       if (now - last < RELOAD_WINDOW_MS) {
         // Already reloaded once for this — the new build is still broken,
         // or the asset is genuinely gone. Stop; let the user hard-refresh.
+        // Keep the hint environment-agnostic (this fires in production too,
+        // after a deploy), with the dev-server tip only in development.
         console.error(
-          "[ChunkReloadGuard] chunk still failing after a reload — not looping. Hard-refresh (Cmd+Shift+R) or restart the dev server.",
+          "[ChunkReloadGuard] chunk still failing after a reload — not looping. Hard-refresh (Cmd+Shift+R) to load the latest build." +
+            (process.env.NODE_ENV !== "production"
+              ? " If it persists, restart the dev server."
+              : ""),
         );
         return;
       }
