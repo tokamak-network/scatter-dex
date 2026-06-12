@@ -6,9 +6,9 @@
 
 zkScatter is evolving from a **single-relayer custodial-witness model** (current) to a **federated relayer + client-side proving + fair-exchange** model. The change consists of three coordinated sub-designs:
 
-1. **[circuit-split/design.md](../design/circuit-split/design.md)** — the **Half-proof** primitive: replace the monolithic `settle.circom` with `authorize.circom`, so each user independently proves their own side in the browser. The relayer matches two `authorize` proofs and submits them as a single `settleAuth(makerProof, takerProof)` transaction. Relayers stop seeing witness data entirely.
-2. **[relayer-protocol/design.md](../design/relayer-protocol/design.md)** — replace HTTP Trade Offer with a Waku v2-based gossip + commit-reveal protocol. Relayers communicate directly with each other.
-3. **[dispute-registry/design.md](../design/dispute-registry/design.md)** — record cryptographic dispute evidence on-chain (no slashing); reputation built off-chain from event log; users avoid bad relayers via frontend display. Closes the L-3 TODO in `RelayerRegistry.sol` without bond manipulation.
+1. **[../design/circuit-split/design.md](../design/circuit-split/design.md)** — the **Half-proof** primitive: replace the monolithic `settle.circom` with `authorize.circom`, so each user independently proves their own side in the browser. The relayer matches two `authorize` proofs and submits them as a single `settleAuth(makerProof, takerProof)` transaction. Relayers stop seeing witness data entirely.
+2. **[../design/relayer-protocol/design.md](../design/relayer-protocol/design.md)** — replace HTTP Trade Offer with a Waku v2-based gossip + commit-reveal protocol. Relayers communicate directly with each other.
+3. **[../design/dispute-registry/design.md](../design/dispute-registry/design.md)** — record cryptographic dispute evidence on-chain (no slashing); reputation built off-chain from event log; users avoid bad relayers via frontend display. Closes the L-3 TODO in `RelayerRegistry.sol` without bond manipulation.
 
 These three are **mutually dependent** and must be designed and rolled out together. Each one alone is incomplete:
 

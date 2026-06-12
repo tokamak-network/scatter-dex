@@ -46,4 +46,4 @@ Patent draft, performance and archived analyses.
 ---
 
 ## Known follow-ups
-Internal cross-links inside moved docs may still reference old paths (e.g. `./architecture-v2.md`). Fix in-place as you encounter them. Removed: `papers/PAPER-v1-standard.md` (obsolete Split Hash-Lock design, replaced by zkScatter); `research/PAPER*.md` whitepaper drafts (described the deprecated monolithic `settle.circom` path — superseded by [../developers/docs/whitepaper.mdx](../developers/docs/whitepaper.mdx), but some docs still cite `PAPER.md` sections, e.g. `security/AUDIT.md`, `design/*/design.md`, `research/ids-draft.md`).
+Internal cross-links inside moved docs may still reference old paths (e.g. `./architecture-v2.md`). Fix in-place as you encounter them. Removed: `papers/PAPER-v1-standard.md` (obsolete Split Hash-Lock design, replaced by zkScatter); `research/PAPER*.md` whitepaper drafts (described the deprecated monolithic `settle.circom` path — superseded by [../developers/docs/whitepaper.mdx](../developers/docs/whitepaper.mdx); remaining references were retargeted to the whitepaper, and `research/ids-draft.md` keeps plain-text provenance citations to the removed drafts).
