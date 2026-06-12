@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
@@ -13,7 +13,9 @@ import {
   markClaimInboxEntryClaimed,
   parseClaimInboxInput,
   removeClaimInboxEntry,
+  groupClaimInbox,
   type ClaimInboxEntry,
+  type ClaimInboxGroup,
 } from "@zkscatter/sdk/storage";
 import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { useFolderStorage } from "../_lib/folderStorage";
@@ -71,6 +73,25 @@ export default function ClaimInbox() {
   // — Date.now() at module/init time produces SSR/CSR drift and
   // triggers a Next.js hydration mismatch on first paint.
   const [nowSec, setNowSec] = useState<number | undefined>(undefined);
+
+  const groups = useMemo(() => groupClaimInbox(entries), [entries]);
+  /** User toggles override the default; the default itself is derived
+   *  (fully-claimed groups start collapsed) so it stays correct as
+   *  statuses flip without an effect re-seeding state. */
+  const [collapsedOverride, setCollapsedOverride] = useState<
+    Record<string, boolean>
+  >({});
+  const isGroupCollapsed = (g: ClaimInboxGroup): boolean =>
+    collapsedOverride[g.key] ?? g.entries.every((e) => e.status === "claimed");
+  // Derive the current value from the updater's own snapshot — reading
+  // the render-scope `collapsedOverride` here could drop a toggle when
+  // React batches rapid clicks (bot review on PR #1010).
+  const toggleGroup = (g: ClaimInboxGroup) =>
+    setCollapsedOverride((s) => {
+      const collapsed =
+        s[g.key] ?? g.entries.every((e) => e.status === "claimed");
+      return { ...s, [g.key]: !collapsed };
+    });
 
   const refresh = useCallback(async () => {
     if (!folder.ready) {
@@ -309,8 +330,8 @@ export default function ClaimInbox() {
             <span className="font-mono">/claim?id=…</span>.
           </div>
         ) : (
-          <ul className="space-y-2">
-            {entries.map((e) => {
+          (() => {
+            const renderRow = (e: ClaimInboxEntry) => {
               const releaseSec = Number(BigInt(e.pkg.releaseTime));
               const status = rowStatusLabel(e, nowSec);
               return (
@@ -331,7 +352,7 @@ export default function ClaimInbox() {
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
                         From {e.pkg.senderLabel ?? "unknown sender"} ·{" "}
-                        {e.pkg.runLabel ?? "Private payout"}
+                        {e.pkg.runLabel?.trim() || "Private payout"}
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
                         To <span className="font-mono">{shortAddr(e.pkg.recipient)}</span>
@@ -375,8 +396,54 @@ export default function ClaimInbox() {
                   </div>
                 </li>
               );
-            })}
-          </ul>
+            };
+
+            // A single bucket (e.g. only untitled link-saves) keeps
+            // the flat list — a lone group header would be noise.
+            if (groups.length === 1) {
+              return <ul className="space-y-2">{groups[0].entries.map(renderRow)}</ul>;
+            }
+            return (
+              <div className="space-y-3">
+                {groups.map((g) => {
+                  const collapsed = isGroupCollapsed(g);
+                  const claimable = g.entries.filter(
+                    (e) => rowStatusLabel(e, nowSec) === "Claimable",
+                  ).length;
+                  const claimed = g.entries.filter(
+                    (e) => e.status === "claimed",
+                  ).length;
+                  return (
+                    <section key={g.key}>
+                      <button
+                        type="button"
+                        onClick={() => toggleGroup(g)}
+                        aria-expanded={!collapsed}
+                        className="flex w-full items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-left text-sm hover:bg-[var(--color-primary-soft)]"
+                      >
+                        <span className="font-semibold">
+                          <span className="mr-1.5 inline-block w-3 text-[var(--color-text-subtle)]">
+                            {collapsed ? "▸" : "▾"}
+                          </span>
+                          {g.label ?? "Private payout"}
+                        </span>
+                        <span className="text-xs text-[var(--color-text-muted)]">
+                          {g.entries.length} claim{g.entries.length === 1 ? "" : "s"}
+                          {claimable > 0 && <> · {claimable} claimable</>}
+                          {claimed > 0 && <> · {claimed} claimed</>}
+                        </span>
+                      </button>
+                      {!collapsed && (
+                        <ul className="mt-2 space-y-2 pl-1">
+                          {g.entries.map(renderRow)}
+                        </ul>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            );
+          })()
         )}
       </section>
         </>
