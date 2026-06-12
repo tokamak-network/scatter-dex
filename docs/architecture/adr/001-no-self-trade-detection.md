@@ -6,11 +6,11 @@
 > **Supersedes**: the earlier `settle.circom` design that exposed `pubKeyHash` as a public output and enforced `makerPubKeyHash != takerPubKeyHash` on-chain
 > **Related docs**:
 > - [../architecture-v2.md](../architecture-v2.md) §"Design decisions / D1" — the in-place rationale this ADR formalises
-> - [../circuit-split/design.md](../circuit-split/design.md) §2.2 (C5 removed) — the design that landed the change
-> - [../../circuits/authorize.circom](../../circuits/authorize.circom) — the realised primitive (see header comment, "issue #128 design correction")
+> - [../../design/circuit-split/design.md](../../design/circuit-split/design.md) §2.2 (C5 removed) — the design that landed the change
+> - [../../../circuits/authorize.circom](../../../circuits/authorize.circom) — the realised primitive (see header comment, "issue #128 design correction")
 > - [../PAPER.md](../../research/PAPER.md) §6 "Privacy Guarantees", §8 "Compliance Model" — the spec-level commitment
-> - [../relayer-protocol/design.md](../relayer-protocol/design.md) §10.3 — the relayer-side threat alignment
-> - [../dispute-registry/design.md](../dispute-registry/design.md) — the off-chain accountability layer that handles regulator-facing wash-trade questions
+> - [../../design/relayer-protocol/design.md](../../design/relayer-protocol/design.md) §10.3 — the relayer-side threat alignment
+> - [../../design/dispute-registry/design.md](../../design/dispute-registry/design.md) — the off-chain accountability layer that handles regulator-facing wash-trade questions
 
 ## Context
 

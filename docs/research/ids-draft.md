@@ -6,7 +6,7 @@
 > **Related docs (in repo)**:
 > - [PAPER.md](PAPER.md) §10 "Closest Prior Art: Jigsaw [23]" — the narrative disclosure of the Jigsaw reference in the specification
 > - [PAPER-ko.md](PAPER-ko.md) §10 "가장 가까운 선행기술: Jigsaw [23]" — Korean mirror
-> - [architecture-v2.md](architecture-v2.md) — Design decisions that distinguish over the references below
+> - [architecture-v2.md](../architecture/architecture-v2.md) — Design decisions that distinguish over the references below
 >
 > **Internal-only, non-repo notes** (referenced for provenance; reviewers do **not** need access to these to review this draft):
 > - `project_audit_findings_2026-04-09.md` — historical context for how the Jigsaw omission was identified during the 2026-04-09 audit. Maintained as a private working note in the applicant team's internal memory store, not committed to this repository.

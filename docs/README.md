@@ -33,13 +33,12 @@ Smart-contract hardening notes for external audit onboarding.
 - [HARDENING.md](security/HARDENING.md) — invariant suites, Slither config, gas/storage gates, manual verification checklist
 
 ## research/
-Whitepaper, patent draft, performance and archived analyses.
-- [PAPER.md](research/PAPER.md), [PAPER-ko.md](research/PAPER-ko.md) — whitepaper (standard)
-- [PAPER-academic.md](research/PAPER-academic.md), [PAPER-ko-academic.md](research/PAPER-ko-academic.md) — academic long-form
+Patent draft, performance and archived analyses.
+- Whitepaper: [../developers/docs/whitepaper.mdx](../developers/docs/whitepaper.mdx) — replaces the removed `PAPER*.md` drafts (see Known follow-ups)
 - [ids-draft.md](research/ids-draft.md) — patent disclosure draft
 - [perf-proving-analysis.md](research/perf-proving-analysis.md)
 
 ---
 
 ## Known follow-ups
-Internal cross-links inside moved docs may still reference old paths (e.g. `./architecture-v2.md`). Fix in-place as you encounter them. Removed: `papers/PAPER-v1-standard.md` (obsolete Split Hash-Lock design, replaced by zkScatter).
+Internal cross-links inside moved docs may still reference old paths (e.g. `./architecture-v2.md`). Fix in-place as you encounter them. Removed: `papers/PAPER-v1-standard.md` (obsolete Split Hash-Lock design, replaced by zkScatter); `research/PAPER*.md` whitepaper drafts (described the deprecated monolithic `settle.circom` path — superseded by [../developers/docs/whitepaper.mdx](../developers/docs/whitepaper.mdx), but some docs still cite `PAPER.md` sections, e.g. `security/AUDIT.md`, `design/*/design.md`, `research/ids-draft.md`).
