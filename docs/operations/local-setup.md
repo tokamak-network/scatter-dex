@@ -27,7 +27,7 @@ npm install         # first time only
 npm run build       # runs scripts/build.sh
 ```
 
-First run is slow (Powers-of-Tau generation, several minutes); subsequent runs reuse `circuits/build/pot*_final.ptau` but still re-run phase-2 setup (~30s+ for `settle`).
+First run is slow (Powers-of-Tau generation, several minutes); subsequent runs reuse `circuits/build/pot*_final.ptau` but still re-run phase-2 setup (~30s+ for the larger `authorize` tiers).
 
 ### Skipping the auto-rebuild
 

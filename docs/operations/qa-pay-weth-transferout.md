@@ -104,7 +104,7 @@ recipient browser profile.
    recipient's meta-address + the operator's ephemeral pub.
 3. Click **Claim**. The contract path:
    - `claimWithProof(...)` verifies the claim proof.
-   - Branch at `PrivateSettlement.sol:1018-1024` runs
+   - The WETH-unwrap branch in `_executeClaim` (`PrivateSettlement.sol`) runs
      `IWETH.withdraw(amount)` and `sendValue(stealthAddr, amount)`.
 4. After confirmation, the recipient is redirected (or can navigate)
    to `/stealth/inbox`.

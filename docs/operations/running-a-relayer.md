@@ -96,7 +96,7 @@ RELAYER_NAME="bot-1"          # your label on the leaderboard / RelayerPicker
 RELAYER_FEE=30                # basis points you keep per fill (max 500 = 5%)
 PORT=3004                     # a FREE port (see note) — yours to pick
 RELAYER_PUBLIC_URL=http://localhost:3004   # where peers/apps reach YOUR relayer
-CORS_ORIGINS=http://localhost:4001,http://localhost:4003,http://localhost:4004  # browser origins allowed to call you
+CORS_ORIGINS=http://localhost:4001,http://localhost:4002,http://localhost:4003,http://localhost:4004,http://localhost:4005,http://localhost:4006  # browser origins allowed to call you (pay/drop/pro/operators/admin/hub)
 DB_PATH=./zk-relayer-bot-1.db # your relayer's own SQLite file
 ```
 
@@ -145,7 +145,7 @@ npm run dev          # or: npm run build && npm start
 Sanity-check it answers (the registration probe hits this exact endpoint):
 
 ```bash
-curl -s http://localhost:3002/api/info | python3 -m json.tool
+curl -s http://localhost:3004/api/info | python3 -m json.tool   # PORT from the example config above
 # { "name": "My Relayer", "chainId": 1, "address": "0x…", ... }
 ```
 

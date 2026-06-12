@@ -45,8 +45,8 @@ Contracts (anvil :8545)
 이 명령 하나로 **5개 서비스** 전부 시작됩니다:
 1. anvil (로컬 블록체인)
 2. 컨트랙트 배포 (일반 + ZK)
-3. relayer (:3001, 일반 주문)
-4. zk-relayer (:3002, ZK 프라이빗 주문)
+3. zk-relayer A (:3002) / zk-relayer B (:3003) — ZK 프라이빗 주문
+4. shared-orderbook (:4000)
 5. frontend (:3000)
 
 ## 2. Private Escrow (ZK 입금)
@@ -54,7 +54,7 @@ Contracts (anvil :8545)
 http://localhost:3000/trade/private-escrow
 
 1. 지갑 연결
-2. **Select Folder** 클릭 → 노트 저장할 로컬 폴더 지정 (최초 1회)
+2. **Open Vault** 클릭 → 노트 저장할 로컬 폴더 지정 (최초 1회)
 3. 토큰 선택 (ETH, WETH, USDC)
 4. 금액 입력
 5. **Deposit Privately** 클릭
@@ -72,12 +72,12 @@ http://localhost:3000/trade/private-escrow
 http://localhost:3000/trade/private-order
 
 ### 최초 1회: 트레이딩 키 생성
-1. **Generate Key** 클릭
+1. **Generate with Wallet** 클릭 (저장된 키가 있으면 **Unlock with Wallet**)
 2. MetaMask에서 메시지 서명 → EdDSA 키 자동 유도
 3. 이후 주문 서명 시 MetaMask 팝업 없이 즉시 서명됨
 
 ### 커밋먼트 선택
-1. **Open Notes Folder** 클릭 → Private Escrow에서 사용한 같은 폴더 선택
+1. **Open Vault** 클릭 → Private Escrow에서 사용한 같은 폴더 선택
 2. Sell 토큰에 해당하는 노트 목록이 표시됨
 3. 사용할 노트 선택 → sell amount 자동 입력
 
@@ -287,5 +287,5 @@ npm run build
 build.sh는 각 회로의 constraint 수에 맞게 PTAU 크기를 자동 결정합니다 (최소 pot14).
 authorize 회로 (Half-proof, per-side): withdraw/claim 과 함께 pot14~pot16 수준. 정산은 `settleAuth(makerProof, takerProof)` 가 각각 독립적으로 검증합니다.
 
-authorize 회로 public inputs (per side, 14개):
-`commitmentRoot, nullifier, nonceNullifier, newCommitment, sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, claimsRoot, totalLocked, relayer, orderHash`
+authorize 회로 public signals (per side, 15개 — `pubKeyBind` 는 회로 출력이라 verifier 배열의 index 0):
+`pubKeyBind, commitmentRoot, nullifier, nonceNullifier, newCommitment, sellToken, buyToken, sellAmount, buyAmount, maxFee, expiry, claimsRoot, totalLocked, relayer, orderHash`
