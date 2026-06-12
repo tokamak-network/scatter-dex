@@ -26,11 +26,25 @@ const LEGACY_CLAIM_INBOX_FILENAME = "zkscatter-claim-inbox.json";
 
 let _appNamespace: string | null = null;
 
+// The namespace is interpolated straight into a filename, so restrict it
+// to a safe slug — no path separators or other characters a directory
+// handle would choke on at write time.
+const APP_NAMESPACE_RE = /^[a-z0-9-]+$/;
+
 /** Scope this app's claim inbox to its own file
  *  (`zkscatter-<app>-claim-inbox.json`). Call once at app init (e.g. in
- *  the root providers). Pay passes `"pay"`, Pro passes `"pro"`. */
+ *  the root providers). Pay passes `"pay"`, Pro passes `"pro"`. The
+ *  namespace is lowercased and must be a `[a-z0-9-]` slug; an empty
+ *  string clears the scope (legacy shared file). Throws on an unsafe
+ *  value so the misconfiguration surfaces at init, not at first write. */
 export function setClaimInboxApp(app: string): void {
-  _appNamespace = app.trim() || null;
+  const ns = app.trim().toLowerCase();
+  if (ns && !APP_NAMESPACE_RE.test(ns)) {
+    throw new Error(
+      `setClaimInboxApp: invalid app namespace ${JSON.stringify(app)} — expected a lowercase [a-z0-9-] slug`,
+    );
+  }
+  _appNamespace = ns || null;
 }
 
 /** The app-scoped inbox filename, or null when no namespace is set (the

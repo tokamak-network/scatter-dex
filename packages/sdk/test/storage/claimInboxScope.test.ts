@@ -113,6 +113,13 @@ describe("claim inbox per-app scoping", () => {
     expect(JSON.parse(files.get(PAY_FILE)!).entries).toHaveLength(0);
   });
 
+  it("rejects unsafe namespaces but accepts/clears valid ones", () => {
+    expect(() => setClaimInboxApp("pay/../etc")).toThrow(/invalid app namespace/);
+    expect(() => setClaimInboxApp("a b")).toThrow(/invalid app namespace/);
+    expect(() => setClaimInboxApp("pro")).not.toThrow();
+    expect(() => setClaimInboxApp("")).not.toThrow(); // clears to legacy
+  });
+
   it("dedups against the merged legacy+app view", async () => {
     setClaimInboxApp(""); // legacy holds (A,0)
     await add(ROOT_A, 0);
