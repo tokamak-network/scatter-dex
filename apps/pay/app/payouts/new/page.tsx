@@ -622,7 +622,7 @@ function NewPayout() {
               operatorAddress: account,
               chainId,
               rows,
-              total,
+              totalAmount: ethers.formatUnits(requiredRaw, decimals),
               claimFrom,
               txHash,
               claimPackages,
@@ -1770,7 +1770,9 @@ function NewPayout() {
                 >
                   {rows.length} / {MAX_RECIPIENTS_PER_RUN} recipients
                 </span>
-                <span className="font-semibold">{total.toLocaleString()} {token}</span>
+                {/* Format from the exact bigint sum — float toLocaleString()
+                    caps at 3 fraction digits and would show 0.0005 ETH as "0.001". */}
+                <span className="font-semibold">{ethers.formatUnits(requiredRaw, decimals)} {token}</span>
               </div>
             </div>
             {validation.length > 0 && (

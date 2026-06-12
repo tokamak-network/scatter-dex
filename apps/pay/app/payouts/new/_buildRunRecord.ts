@@ -23,13 +23,6 @@ export function mintRunId(): string {
   return `p_${ts}_${rand}`;
 }
 
-/** Format a JS number total back into the comma-separated display
- *  string that `RunRecord.totalAmount` expects. Uses 2 fraction
- *  digits like the wizard's review screen. */
-export function formatTotal(n: number): string {
-  return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-}
-
 export interface BuildRunRecordInput {
   categoryId: CategoryId;
   label: string;
@@ -38,7 +31,12 @@ export interface BuildRunRecordInput {
   operatorAddress: string | null;
   chainId: number | null;
   rows: WizardRow[];
-  total: number;
+  /** Exact aggregate amount in display units (e.g.
+   *  `ethers.formatUnits(requiredRaw, decimals)`). Stored verbatim in
+   *  `RunRecord.totalAmount` — the old float→`toLocaleString(…, max 2
+   *  fraction digits)` path silently truncated sub-cent token amounts
+   *  (0.0345 ETH became "0.03", 0.001 ETH became "0"). */
+  totalAmount: string;
   claimFrom: string | undefined;
   /** Real settle tx hash when scatterDirectAuth was submitted; falls
    *  back to a deterministic zero hash for env-not-configured demos. */
@@ -124,7 +122,7 @@ export function buildRunRecord(input: BuildRunRecordInput): RunRecord {
     txHash: input.txHash ?? "0x" + "0".repeat(64),
     tokenSymbol: input.token,
     tokenAddress: input.tokenAddress ?? "",
-    totalAmount: formatTotal(input.total),
+    totalAmount: input.totalAmount,
     ...(input.relayerFee ? { relayerFee: input.relayerFee } : {}),
     ...(input.payoutSeed ? { payoutSeed: input.payoutSeed } : {}),
     recipients,
