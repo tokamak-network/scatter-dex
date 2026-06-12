@@ -503,7 +503,7 @@ This is the **asymmetric-reveal** position — A has already sent `REVEAL(A)` an
 The residual cost to A in Point 3 is **one round of latency** (up to `2·T_C + 2·T_R` ≈ 10 min) and **one burned order identifier** (must re-sign with a new nonce). There is no privacy loss, no fund loss, and no stuck state.
 
 **Point 4 — A reveals a proof that does not match its COMMIT.**
-The REVEAL message contains `commit_hash` which must equal `keccak256(proof_bytes || salt)`. B checks this locally: if the hash doesn't match, B does not proceed to `settlePrivate` and files a **Type 2 `RevealCommitMismatch`** dispute via `DisputeRegistry.recordMismatch`. The on-chain registry recomputes the same `keccak256(proofBytes, salt)` and verifies the inequality (see [../dispute-registry/design.md](../dispute-registry/design.md) §"Type 2: Reveal/commit mismatch", line 217). The asymmetry is the same as Point 3 — A has essentially aborted, just in a more provable way.
+The REVEAL message contains `commit_hash` which must equal `keccak256(proof_bytes || salt)`. B checks this locally: if the hash doesn't match, B does not proceed to `settleAuth` and files a **Type 2 `RevealCommitMismatch`** dispute via `DisputeRegistry.recordMismatch`. The on-chain registry recomputes the same `keccak256(proofBytes, salt)` and verifies the inequality (see [../dispute-registry/design.md](../dispute-registry/design.md) §"Type 2: Reveal/commit mismatch", line 217). The asymmetry is the same as Point 3 — A has essentially aborted, just in a more provable way.
 
 **Point 5 — Both sides withhold.**
 No dispute is filed (both are aborting). The round times out at `2·T_C + 2·T_R`. Both orders return to `OPEN`. The only cost is latency.
