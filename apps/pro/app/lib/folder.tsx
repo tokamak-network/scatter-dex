@@ -30,9 +30,14 @@ import {
   listKnownFolders,
   restoreFolder,
   selectFolder,
+  setClaimInboxApp,
   switchToFolder,
   type KnownFolder,
 } from "@zkscatter/sdk/storage";
+
+// Scope the claim inbox to this app so claims saved here don't surface
+// in another product (Pay) that shares the same workspace folder.
+setClaimInboxApp("pro");
 
 interface FolderState {
   /** Whether the host browser supports the File System Access API.

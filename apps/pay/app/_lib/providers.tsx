@@ -15,6 +15,11 @@ import {
   IdentityGateAdminProvider,
   IdentityStatusProvider,
 } from "./identity";
+import { setClaimInboxApp } from "@zkscatter/sdk/storage";
+
+// Scope the claim inbox to this app so claims saved here don't surface
+// in another product (Pro) that shares the same workspace folder.
+setClaimInboxApp("pay");
 
 export function PayProviders({ children }: { children: React.ReactNode }) {
   const network = useMemo(() => getNetworkConfig(), []);
