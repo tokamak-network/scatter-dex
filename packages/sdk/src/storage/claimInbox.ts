@@ -13,7 +13,45 @@ import {
 } from "../notes";
 import { hasFolder, loadFile, saveFile } from "./folder";
 
-const CLAIM_INBOX_FILENAME = "zkscatter-claim-inbox.json";
+// Claim inboxes are scoped per app: each product (Pay, Pro, …) keeps
+// its own file, so a claim saved in one app doesn't surface in another
+// that merely shares the same workspace folder. `setClaimInboxApp` picks
+// the namespace once at app init; until then — and for any consumer that
+// never sets it — we fall back to the original shared filename.
+//
+// The pre-split shared file (`zkscatter-claim-inbox.json`) stays readable
+// as a legacy fallback so existing entries don't vanish, and its entries
+// stay mutable in place; only NEW entries land in the app-scoped file.
+const LEGACY_CLAIM_INBOX_FILENAME = "zkscatter-claim-inbox.json";
+
+let _appNamespace: string | null = null;
+
+// The namespace is interpolated straight into a filename, so restrict it
+// to a safe slug — no path separators or other characters a directory
+// handle would choke on at write time.
+const APP_NAMESPACE_RE = /^[a-z0-9-]+$/;
+
+/** Scope this app's claim inbox to its own file
+ *  (`zkscatter-<app>-claim-inbox.json`). Call once at app init (e.g. in
+ *  the root providers). Pay passes `"pay"`, Pro passes `"pro"`. The
+ *  namespace is lowercased and must be a `[a-z0-9-]` slug; an empty
+ *  string clears the scope (legacy shared file). Throws on an unsafe
+ *  value so the misconfiguration surfaces at init, not at first write. */
+export function setClaimInboxApp(app: string): void {
+  const ns = app.trim().toLowerCase();
+  if (ns && !APP_NAMESPACE_RE.test(ns)) {
+    throw new Error(
+      `setClaimInboxApp: invalid app namespace ${JSON.stringify(app)} — expected a lowercase [a-z0-9-] slug`,
+    );
+  }
+  _appNamespace = ns || null;
+}
+
+/** The app-scoped inbox filename, or null when no namespace is set (the
+ *  legacy shared file is then the only store). */
+function appInboxFilename(): string | null {
+  return _appNamespace ? `zkscatter-${_appNamespace}-claim-inbox.json` : null;
+}
 
 export class ClaimInboxCorruptError extends Error {
   constructor(message: string) {
@@ -57,9 +95,10 @@ function isValidEntry(e: unknown): e is ClaimInboxEntry {
   return true;
 }
 
-export async function loadClaimInbox(): Promise<ClaimInboxEntry[]> {
-  if (!hasFolder()) return [];
-  const text = await loadFile(CLAIM_INBOX_FILENAME);
+/** Parse + validate one inbox file. Returns [] when absent. Throws
+ *  `ClaimInboxCorruptError` (naming the file) on malformed content. */
+async function readInboxFile(filename: string): Promise<ClaimInboxEntry[]> {
+  const text = await loadFile(filename);
   if (!text) return [];
 
   let parsed: unknown;
@@ -67,7 +106,7 @@ export async function loadClaimInbox(): Promise<ClaimInboxEntry[]> {
     parsed = JSON.parse(text);
   } catch (e) {
     throw new ClaimInboxCorruptError(
-      `${CLAIM_INBOX_FILENAME} is not valid JSON: ${
+      `${filename} is not valid JSON: ${
         e instanceof Error ? e.message : "parse error"
       }`,
     );
@@ -80,21 +119,64 @@ export async function loadClaimInbox(): Promise<ClaimInboxEntry[]> {
     !Array.isArray((parsed as { entries?: unknown }).entries)
   ) {
     throw new ClaimInboxCorruptError(
-      `${CLAIM_INBOX_FILENAME} has an unsupported shape (expected { version: 1, entries: [...] })`,
+      `${filename} has an unsupported shape (expected { version: 1, entries: [...] })`,
     );
   }
   const entries = (parsed as { entries: unknown[] }).entries;
   if (!entries.every(isValidEntry)) {
-    throw new ClaimInboxCorruptError(
-      `${CLAIM_INBOX_FILENAME} contains invalid entries`,
-    );
+    throw new ClaimInboxCorruptError(`${filename} contains invalid entries`);
   }
-  return entries;
+  return entries as ClaimInboxEntry[];
 }
 
-async function writeInbox(entries: ClaimInboxEntry[]): Promise<void> {
+export async function loadClaimInbox(): Promise<ClaimInboxEntry[]> {
+  if (!hasFolder()) return [];
+  const appFile = appInboxFilename();
+  if (!appFile) return readInboxFile(LEGACY_CLAIM_INBOX_FILENAME);
+  // Read both files in parallel. `allSettled` (not `all`) so the second
+  // read's rejection can't surface as an unhandled rejection; we re-throw
+  // any corruption below so a bad file still reaches the UI rather than
+  // being silently dropped.
+  const [appR, legacyR] = await Promise.allSettled([
+    readInboxFile(appFile),
+    readInboxFile(LEGACY_CLAIM_INBOX_FILENAME),
+  ]);
+  if (appR.status === "rejected") throw appR.reason;
+  if (legacyR.status === "rejected") throw legacyR.reason;
+  // App file ∪ legacy (legacy shown as read fallback). Dedup by id —
+  // ids are disjoint across files, so this is a defensive union with
+  // the app file winning.
+  const seen = new Set(appR.value.map((e) => e.id));
+  return [...appR.value, ...legacyR.value.filter((e) => !seen.has(e.id))];
+}
+
+async function writeInboxFile(
+  filename: string,
+  entries: ClaimInboxEntry[],
+): Promise<void> {
   const payload: ClaimInboxFile = { version: 1, entries };
-  await saveFile(CLAIM_INBOX_FILENAME, JSON.stringify(payload, null, 2));
+  await saveFile(filename, JSON.stringify(payload, null, 2));
+}
+
+/** Locate an entry's home file AND return that file's parsed entries, so
+ *  a mutation can rewrite it without a second read. App file first, then
+ *  the legacy file (mutated in place rather than migrated); null when the
+ *  entry is in neither. */
+async function findInboxFileAndEntries(
+  id: string,
+): Promise<{ filename: string; entries: ClaimInboxEntry[] } | null> {
+  const appFile = appInboxFilename();
+  if (appFile) {
+    const appEntries = await readInboxFile(appFile);
+    if (appEntries.some((e) => e.id === id)) {
+      return { filename: appFile, entries: appEntries };
+    }
+  }
+  const legacy = await readInboxFile(LEGACY_CLAIM_INBOX_FILENAME);
+  if (legacy.some((e) => e.id === id)) {
+    return { filename: LEGACY_CLAIM_INBOX_FILENAME, entries: legacy };
+  }
+  return null;
 }
 
 let _mutationQueue: Promise<unknown> = Promise.resolve();
@@ -162,7 +244,12 @@ export async function addClaimInboxEntry(input: {
       pkg: input.pkg,
       status: "available",
     };
-    await writeInbox([...entries, entry]);
+    // New entries always land in the app-scoped file (legacy stays
+    // read-only). `entries` (the merged view) is only used for the
+    // dedup above; write back the target file's own contents.
+    const target = appInboxFilename() ?? LEGACY_CLAIM_INBOX_FILENAME;
+    const targetEntries = await readInboxFile(target);
+    await writeInboxFile(target, [...targetEntries, entry]);
     return { entry, isNew: true };
   });
 }
@@ -172,8 +259,9 @@ export async function markClaimInboxEntryClaimed(
   txHash?: string,
 ): Promise<void> {
   return withLock(async () => {
-    const entries = await loadClaimInbox();
-    const next = entries.map((e) =>
+    const found = await findInboxFileAndEntries(id);
+    if (!found) return;
+    const next = found.entries.map((e) =>
       e.id === id
         ? {
             ...e,
@@ -183,14 +271,18 @@ export async function markClaimInboxEntryClaimed(
           }
         : e,
     );
-    await writeInbox(next);
+    await writeInboxFile(found.filename, next);
   });
 }
 
 export async function removeClaimInboxEntry(id: string): Promise<void> {
   return withLock(async () => {
-    const entries = await loadClaimInbox();
-    await writeInbox(entries.filter((e) => e.id !== id));
+    const found = await findInboxFileAndEntries(id);
+    if (!found) return;
+    await writeInboxFile(
+      found.filename,
+      found.entries.filter((e) => e.id !== id),
+    );
   });
 }
 
