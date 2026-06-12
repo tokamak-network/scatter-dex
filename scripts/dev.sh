@@ -359,14 +359,18 @@ if [ "$SHOULD_RESET_STATE" = true ]; then
   wipe_dev_dbs
 fi
 
-# Always rebuild Groth16 verifiers + zkeys before deploy. Each phase-2
-# setup emits different vkey constants, and the only way to guarantee
-# zkey ↔ Verifier.sol consistency (no InvalidProof at runtime) is to
-# regenerate them in one atomic build. The generated Verifier.sol files
-# are gitignored for this reason.
+# Ensure Groth16 verifiers + zkeys exist before deploy. circuits/build.sh
+# REUSES existing zkeys and re-exports Verifier.sol from them — that
+# export is deterministic, so zkey ↔ Verifier.sol consistency (no
+# InvalidProof at runtime) holds without minting a fresh setup. Crucially
+# this means a local/mock run no longer regenerates the canonical zkey
+# set that pairs with the live-network verifiers (which is what silently
+# clobbered every zkey on 2026-06-11). Pass FORCE_CIRCUIT_SETUP=1 only
+# when a circuit actually changed — that mints a new artifact set which
+# must be committed, distributed, and redeployed on-chain.
 #
-# Set SKIP_CIRCUIT_BUILD=1 to bypass when you know nothing changed since
-# the last build (saves ~30s+ on the settle phase-2).
+# Set SKIP_CIRCUIT_BUILD=1 to bypass even the export step when you know
+# nothing changed since the last build.
 # Mirror circuits/build wasm + zkey into every consumer surface
 # (frontend/, apps/pro/) when they've drifted. Normally circuits/build.sh
 # does this at the end of `npm run build`; with SKIP_CIRCUIT_BUILD=1 we
@@ -431,7 +435,7 @@ ensure_circuits_built() {
     sync_zk_assets_from_build
     return
   fi
-  echo "  Building circuits (regenerates zkeys + Verifier.sol — first run is slow)..."
+  echo "  Building circuits (reuses existing zkeys; FORCE_CIRCUIT_SETUP=1 after circuit changes)..."
   # `if !` instead of post-hoc `$?` check so the failure is caught even
   # under `set -e` (which would otherwise abort before the diagnostic runs).
   if ! ( cd "$ROOT_DIR/circuits" && npm run build ) > "$LOG_DIR/circuit-build.log" 2>&1; then

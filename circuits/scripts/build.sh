@@ -64,6 +64,29 @@ required_ptau() {
   echo "$size"
 }
 
+# Export the vkey JSON + Solidity verifier for a circuit from its zkey.
+# Both are deterministic functions of the zkey, so they're refreshed only
+# when missing or older than the zkey — a no-op build then skips 9
+# snarkjs startups and doesn't dirty file-watchers (the contracts copy
+# is also skipped when byte-identical).
+export_verifier_artifacts() {
+  local zkey="$1" circuit="$2" verifier_name="$3"
+  # -s (not -f): an interrupted run can leave 0-byte outputs that would
+  # otherwise be trusted forever.
+  if [ ! -s "$BUILD/${circuit}_vkey.json" ] || [ "$zkey" -nt "$BUILD/${circuit}_vkey.json" ]; then
+    $SNARKJS zkey export verificationkey "$zkey" "$BUILD/${circuit}_vkey.json"
+  fi
+  if [ ! -s "$BUILD/${verifier_name}.sol" ] || [ "$zkey" -nt "$BUILD/${verifier_name}.sol" ]; then
+    $SNARKJS zkey export solidityverifier "$zkey" "$BUILD/${verifier_name}.sol"
+  fi
+  # 2>/dev/null: a missing destination (clean checkout — generated
+  # verifiers are gitignored) is the expected first-run case, not noise.
+  if ! cmp -s "$BUILD/${verifier_name}.sol" "../contracts/src/zk/${verifier_name}.sol" 2>/dev/null; then
+    cp "$BUILD/${verifier_name}.sol" "../contracts/src/zk/${verifier_name}.sol"
+    echo "  Copied to contracts/src/zk/${verifier_name}.sol"
+  fi
+}
+
 # Ensure a Powers of Tau file of the given size exists.
 ensure_ptau() {
   local size="$1"
@@ -88,13 +111,69 @@ ensure_ptau() {
 # for CIRCUITS[$i]. Kept as a positional array for bash 3.2 compatibility.
 CONSTRAINT_COUNTS=()
 
+# Reuse-don't-regenerate: Groth16 phase-2 setup draws fresh entropy on
+# every run, so rebuilding an existing zkey silently replaces the
+# canonical artifact set that pairs with the verifiers deployed on live
+# networks (circuits/zk-manifest.json is the canonical fingerprint; the
+# 2026-06-11 mock run that clobbered every zkey is the cautionary tale).
+# A local stack never needs a fresh setup — exporting Verifier.sol from
+# the *existing* zkey (done below in both paths) already guarantees the
+# zkey ↔ Verifier.sol pairing that the old always-rebuild behavior was
+# protecting. Phase-2 setup therefore runs only when the zkey is missing
+# or explicitly requested with FORCE_CIRCUIT_SETUP=1. Forcing mints a
+# new artifact set: it must be committed, pushed to the GCS bucket, and
+# the on-chain verifiers redeployed — otherwise every proof reverts
+# InvalidProof().
+FORCE_CIRCUIT_SETUP="${FORCE_CIRCUIT_SETUP:-0}"
+
 for CIRCUIT in "${CIRCUITS[@]}"; do
   VERIFIER_NAME=$(verifier_name_for "$CIRCUIT")
+  ZKEY="$BUILD/${CIRCUIT}_final.zkey"
   echo ""
+
+  if [ -s "$ZKEY" ] && [ "$FORCE_CIRCUIT_SETUP" != "1" ]; then
+    echo "─── Reusing circuit: ${CIRCUIT} (zkey exists; FORCE_CIRCUIT_SETUP=1 to regenerate) ───"
+    # Reuse assumes the circuit source is unchanged. The scan covers all
+    # .circom files (not just this circuit's entrypoint) because tier
+    # wrappers share template bodies — a template edit invalidates every
+    # wrapper's zkey. Warn so a real circuit change isn't silently
+    # proven against a stale key.
+    STALE_SRC="$(find . -name '*.circom' -newer "$ZKEY" -not -path './node_modules/*' 2>/dev/null | head -1)"
+    if [ -n "$STALE_SRC" ]; then
+      echo "  WARNING: ${STALE_SRC#./} is newer than the kept zkey — if the"
+      echo "           circuit logic changed, rerun with FORCE_CIRCUIT_SETUP=1."
+    fi
+    # Only compile when outputs are missing/empty — recompiling over a
+    # kept zkey could pair a newer wasm with an older proving key. If a
+    # source is also newer than the zkey, refuse rather than mint that
+    # mismatched pair.
+    if [ ! -s "$BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm" ] || [ ! -s "$BUILD/${CIRCUIT}.r1cs" ]; then
+      if [ -n "$STALE_SRC" ]; then
+        echo "  ERROR: wasm/r1cs are missing and ${STALE_SRC#./} is newer than the"
+        echo "         kept zkey — compiling now could pair a changed circuit with"
+        echo "         the old proving key. Rerun with FORCE_CIRCUIT_SETUP=1 (new"
+        echo "         setup) or restore the sources that match the zkey."
+        exit 1
+      fi
+      echo "  Compiling ${CIRCUIT}.circom (missing wasm/r1cs)..."
+      mkdir -p "$BUILD"
+      circom "${CIRCUIT}.circom" --r1cs --wasm --sym -o "$BUILD/"
+    fi
+    CONSTRAINT_COUNTS+=("reused")
+    export_verifier_artifacts "$ZKEY" "$CIRCUIT" "$VERIFIER_NAME"
+    continue
+  fi
+
   echo "─── Building circuit: ${CIRCUIT} ───"
+  if [ "$FORCE_CIRCUIT_SETUP" = "1" ] && [ -f "$ZKEY" ]; then
+    echo "  WARNING: FORCE_CIRCUIT_SETUP=1 — overwriting the existing zkey."
+    echo "           The new set must be committed/distributed and the"
+    echo "           on-chain verifiers redeployed, or proofs will revert"
+    echo "           InvalidProof()."
+  fi
 
   # 1. Compile circuit
-  echo "  [1/5] Compiling ${CIRCUIT}.circom..."
+  echo "  [1/4] Compiling ${CIRCUIT}.circom..."
   mkdir -p "$BUILD"
   circom "${CIRCUIT}.circom" --r1cs --wasm --sym -o "$BUILD/"
 
@@ -106,29 +185,21 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
   fi
   CONSTRAINT_COUNTS+=("$CONSTRAINTS")
   PTAU_SIZE=$(required_ptau "$CONSTRAINTS")
-  echo "  [2/5] Circuit has $CONSTRAINTS constraints → needs pot$PTAU_SIZE (2^$PTAU_SIZE = $((2**PTAU_SIZE)))"
+  echo "  [2/4] Circuit has $CONSTRAINTS constraints → needs pot$PTAU_SIZE (2^$PTAU_SIZE = $((2**PTAU_SIZE)))"
 
   # 3. Ensure PTAU file exists
   ensure_ptau "$PTAU_SIZE"
 
   # 4. Circuit-specific setup (Phase 2)
-  echo "  [3/5] Circuit-specific setup (Phase 2)..."
+  echo "  [3/4] Circuit-specific setup (Phase 2)..."
   $SNARKJS groth16 setup "$BUILD/${CIRCUIT}.r1cs" "$BUILD/pot${PTAU_SIZE}_final.ptau" "$BUILD/${CIRCUIT}_0000.zkey"
   $SNARKJS zkey contribute "$BUILD/${CIRCUIT}_0000.zkey" "$BUILD/${CIRCUIT}_final.zkey" \
     --name="Dev contribution" -v -e="scatter-circuit-dev-$(date +%s)"
   rm -f "$BUILD/${CIRCUIT}_0000.zkey"
 
-  # 5. Export verification key
-  echo "  [4/5] Exporting verification key..."
-  $SNARKJS zkey export verificationkey "$BUILD/${CIRCUIT}_final.zkey" "$BUILD/${CIRCUIT}_vkey.json"
-
-  # 6. Export Solidity verifier
-  echo "  [5/5] Generating Solidity verifier..."
-  $SNARKJS zkey export solidityverifier "$BUILD/${CIRCUIT}_final.zkey" "$BUILD/${VERIFIER_NAME}.sol"
-
-  # Copy to contracts
-  cp "$BUILD/${VERIFIER_NAME}.sol" "../contracts/src/zk/${VERIFIER_NAME}.sol"
-  echo "  Copied to contracts/src/zk/${VERIFIER_NAME}.sol"
+  # 5. Export verification key + Solidity verifier, copy to contracts
+  echo "  [4/4] Exporting verification key + Solidity verifier..."
+  export_verifier_artifacts "$ZKEY" "$CIRCUIT" "$VERIFIER_NAME"
 done
 
 # Copy WASM + zkey to every consumer surface. apps/pro is the
@@ -170,7 +241,11 @@ echo "=== Build complete ==="
 for i in "${!CIRCUITS[@]}"; do
   CIRCUIT="${CIRCUITS[$i]}"
   VERIFIER_NAME=$(verifier_name_for "$CIRCUIT")
-  echo "  Circuit:       ${CIRCUIT}.circom (${CONSTRAINT_COUNTS[$i]} constraints)"
+  if [ "${CONSTRAINT_COUNTS[$i]}" = "reused" ]; then
+    echo "  Circuit:       ${CIRCUIT}.circom (existing zkey reused)"
+  else
+    echo "  Circuit:       ${CIRCUIT}.circom (${CONSTRAINT_COUNTS[$i]} constraints)"
+  fi
   echo "  WASM:          $BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm"
   echo "  zkey:          $BUILD/${CIRCUIT}_final.zkey"
   echo "  Verifier:      contracts/src/zk/${VERIFIER_NAME}.sol"

@@ -312,6 +312,11 @@ describe("authorize.circom (Half-proof PoC)", () => {
     const vkey = require(VKEY_PATH);
     const ok = await snarkjs.groth16.verify(vkey, publicSignals, proof);
     expect(ok).toBe(true);
+
+    if (process.env.DUMP_CALLDATA) {
+      const calldata = await snarkjs.groth16.exportSolidityCallData(proof, publicSignals);
+      fs.writeFileSync(process.env.DUMP_CALLDATA, calldata);
+    }
   }, 120000);
 
   test("partial-spend: residual commitment is non-zero and proof verifies", async () => {
