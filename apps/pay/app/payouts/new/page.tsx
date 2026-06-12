@@ -622,7 +622,7 @@ function NewPayout() {
               operatorAddress: account,
               chainId,
               rows,
-              total,
+              totalAmount: ethers.formatUnits(requiredRaw, decimals),
               claimFrom,
               txHash,
               claimPackages,
@@ -1104,6 +1104,27 @@ function NewPayout() {
         sum += ethers.parseUnits(cleaned, decimals);
       } catch {
         return 0n;
+      }
+    }
+    return sum;
+  }, [rows, decimals]);
+
+  // Display-only sibling of `requiredRaw`: SKIPS unparseable rows
+  // instead of bailing to the 0n sentinel, so the review total keeps
+  // tracking the valid rows while the operator is mid-edit (one bad
+  // amount string would otherwise blank the whole figure — Copilot
+  // review on PR #1009). Settlement and the shortfall check stay on
+  // the strict `requiredRaw`; validation blocks submit while any row
+  // is invalid, so the two only diverge in transient editing states.
+  const displayTotalRaw = useMemo<bigint>(() => {
+    let sum = 0n;
+    for (const r of rows) {
+      const cleaned = r.amount.replace(/[,_\s]/g, "");
+      if (!/^\d+(\.\d+)?$/.test(cleaned)) continue;
+      try {
+        sum += ethers.parseUnits(cleaned, decimals);
+      } catch {
+        continue;
       }
     }
     return sum;
@@ -1770,7 +1791,11 @@ function NewPayout() {
                 >
                   {rows.length} / {MAX_RECIPIENTS_PER_RUN} recipients
                 </span>
-                <span className="font-semibold">{total.toLocaleString()} {token}</span>
+                {/* Format from the exact bigint sum — float toLocaleString()
+                    caps at 3 fraction digits and would show 0.0005 ETH as
+                    "0.001". Lenient sum so a mid-edit invalid row doesn't
+                    blank the figure. */}
+                <span className="font-semibold">{ethers.formatUnits(displayTotalRaw, decimals)} {token}</span>
               </div>
             </div>
             {validation.length > 0 && (
