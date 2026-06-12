@@ -74,10 +74,10 @@
 
 | 플로우 | 증명 형태 | 호출자 | 용도 |
 |--------|----------|--------|------|
-| `settlePrivate` | 풀 증명 1개(`settle.circom`) | maker.relayer 또는 taker.relayer | 단일 릴레이어가 양쪽 witness 를 모두 본 상태에서 집행(레거시). |
-| `settleAuth` | half-proof 2개(`authorize.circom` ×2) | 한쪽 릴레이어 | **메인 플로우**. 사용자가 로컬에서 증명 생성, 릴레이어는 witness 불가시. |
+| `settleAuth` | half-proof 2개(`authorize.circom` ×2) | maker.relayer 또는 taker.relayer | **메인 플로우**. 사용자가 로컬에서 증명 생성, 릴레이어는 witness 불가시. |
 | `settleWithDex` | half-proof 1개 + DEX 스왑 | self-relayer (permissionless) | 시장가 주문용. 화이트리스트된 DEX 라우터로 스왑 후 Claims 등록. |
-| `scatterDirect / scatterDirectAuth` | 출금 증명 / authorize 증명 | 릴레이어 | 동일 토큰 1자 → 여러 수령자 분배(스캐터). |
+| `scatterDirect` | 출금 증명(`withdraw.circom`) | 릴레이어(`onlyRelayer`) | 동일 토큰 1자 → 여러 수령자 분배(레거시 스캐터). |
+| `scatterDirectAuth` | authorize 증명 1개 | 증명에 바인딩된 릴레이어 | 동일 토큰 스캐터의 half-proof 판(`sellToken == buyToken` 강제). |
 
 추가 기능:
 - `cancelPrivate` — 에스크로 회전(old nullifier burn + new commitment 삽입) 으로 대기중 주문 취소.
@@ -87,13 +87,15 @@
 
 | 변수 | 설명 |
 |------|------|
-| `pool` | 연동된 CommitmentPool (immutable) |
-| `settleVerifier`, `claimVerifier` | 메인 Groth16 verifier (immutable) |
-| `authorizeVerifier`, `cancelVerifier`, `batchAuthorizeVerifier` | 업그레이드 가능 verifier |
+| `pool` | 연동된 CommitmentPool (`initialize` 1회 설정, 재할당 없음) |
+| `authorizeVerifierByTier[uint8]` | 티어(16/64/128 = max claims per side)별 authorize verifier 레지스트리. `setAuthorizeVerifier(tier, addr)` 로 owner 가 교체, `address(0)` = 해당 티어 비활성(`TierNotConfigured`) |
+| `claimVerifierByTier[uint8]` | 티어별 claim verifier 레지스트리(티어마다 claims tree 깊이가 달라 단일 verifier 불가) |
+| `batchAuthorizeVerifierByTier[uint8]` | 선택적 5-페어링 배치 verifier(양측 동일 티어일 때만 사용) |
+| `cancelVerifier` | cancel.circom verifier(티어 무관 단일) |
 | `nullifiers`, `nonceNullifiers`, `claimNullifiers` | 3종 nullifier 세트 |
-| `claimsGroups[root] → {totalLocked, totalClaimed, token}` | Claims Group 등록부 |
-| `relayerRegistry`, `feeVault` | 선택적 모듈 |
-| `whitelistedTokens`, `whitelistedDexRouters` | 허용 리스트 |
+| `claimsGroups[root] → {totalLocked, totalClaimed, token, tier}` | Claims Group 등록부. `tier` 로 claim 시 verifier 디스패치 |
+| `relayerRegistry`, `feeVault`, `sanctionsList`, `identityGate` | 선택적 모듈(`address(0)` = 비활성) |
+| `whitelistedTokens`(+열거 미러), `whitelistedDexRouters` | 허용 리스트 |
 | `dexPlatformFeeBps` | DEX 플랫폼 수수료(0–500bps = 최대 5%) |
 | `weth` | WETH 주소(자동 언래핑용) |
 
@@ -111,14 +113,14 @@
 | **상호 배제** | `makerNullifier ≠ takerNullifier`, `makerNonceNullifier ≠ takerNonceNullifier` |
 | **루트 유효성** | 각 쪽의 `commitmentRoot` 가 pool 의 최근 링 버퍼에 존재 (비동기 루트 허용) |
 
-> **비동기 루트**: `settlePrivate` 은 양측 같은 루트를 요구하지만 `settleAuth` 는 각기 다른 루트를 허용한다. nullifier 가 이중지출을 막기 때문에 안전하다. 이로써 maker/taker 가 다른 블록에서 증명을 생성할 수 있다.
+> **비동기 루트**: `settleAuth` 는 maker/taker 가 각기 다른 루트를 사용하는 것을 허용한다(각자 링 버퍼 내 존재만 요구). nullifier 가 이중지출을 막기 때문에 안전하며, 이로써 maker/taker 가 다른 블록에서 증명을 생성할 수 있다.
 
 ### 2.4 설정/권한
 
-- `onlyOwner`: verifier 교체, 화이트리스트, 수수료, 제재, 세틀먼트 관리.
-- `onlyRelayer` modifier: `settleWithDex` 는 릴레이어 레지스트리 skip(마켓 오더 개방).
+- `onlyOwner`: verifier 레지스트리, 화이트리스트, 수수료, 제재·신원 게이트 관리.
+- 릴레이어 레지스트리 검사(설정 시): `settleAuth` 는 양쪽 릴레이어 활성 여부를 인라인 검사, `scatterDirect` 는 `onlyRelayer` modifier, `scatterDirectAuth` 는 증명에 바인딩된 릴레이어를 검사. `settleWithDex` 와 `cancelPrivate` 는 레지스트리 검사 없음(permissionless — 시장가 주문/사용자 직접 취소).
 - 릴레이어 바인딩: 증명 안에 릴레이어 주소가 포함 → 다른 주소 대체 불가.
-- `_requireNotSanctioned` : 세틀·클레임에서 송신자·수령자 제재 확인.
+- `_requireNotSanctioned`: 세틀 제출자·클레임 수령자 제재 확인. `_requireIdentityVerified`: `identityGate` 설정 시 클레임 수령자의 zk-X509 검증 상태 확인.
 - 모든 상태 변경 함수에 `nonReentrant`.
 
 ### 2.5 수수료 라우팅
@@ -140,12 +142,12 @@
 
 ### 2.6 이벤트
 
-`PrivateSettled`, `PrivateSettledAuth`, `SettledWithDex`, `DexPlatformFeeCollected`, `DexSurplusCollected`, `PrivateCancel`, `ScatterDirect`, `ScatterDirectAuthSettled`, `PrivateClaim`, 그리고 각종 구성 이벤트.
+`PrivateSettledAuth`, `SettledWithDex`, `DexPlatformFeeCollected`, `DexSurplusCollected`, `PrivateCancel`, `ScatterDirect`, `ScatterDirectAuthSettled`, `PrivateClaim`, 그리고 각종 구성 이벤트.
 
 ### 2.7 연동
 
 - `CommitmentPool`: `insertCommitment`, `transferToSettlement`, `withdrawFor`, `transferFee`
-- `FeeVault`: `deposit`, `depositPlatformRevenue`
-- `RelayerRegistry`: `isActiveRelayer`, `getSettlementInfo`
-- `SettleVerifyLib`: `packSettleSignals`, `packAuthSignals`, `validateCrossSide`, `validateDexProof`, `validateScatterAuth`, `validateTimestampWindow`, `requireDistinctClaimsRoots`, `maybeInsertCommitment`, `registerClaimsGroup`
-- Verifier 계열: Groth16 증명 검증
+- `FeeVault`: `deposit`(릴레이어 수수료), `accrueDexFee` / `accrueDexSurplus`(DEX 플랫폼 수익)
+- `RelayerRegistry`: `isActiveRelayer`
+- `SettleVerifyLib`: `packAuthSignals`, `validateCrossSide`, `validateDexProof`, `validateScatterAuth`, `requireDistinctClaimsRoots`, `maybeInsertCommitment`, `registerClaimsGroup`
+- Verifier 계열: Groth16 증명 검증(티어별 레지스트리 디스패치)

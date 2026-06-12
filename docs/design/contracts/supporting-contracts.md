@@ -10,21 +10,22 @@
 - `totalTracked[token]` — 전체 릴레이어 합(지급능력 검증용)
 - `platformRevenue[token]` — 프로토콜 수익(분리 관리)
 - `platformFeeBps` — 플랫폼 수수료 bps (0–5000)
-- `pendingFeeBps`, `pendingFeeEffectiveTime` — 수수료 변경 1일 타임락
-- `treasury`, `authorizedDepositors`
+- `pendingFeeBps`, `pendingFeeEffectiveTime` — 수수료 변경 타임락(기본 1일, `setFeeChangeDelay` 로 최대 30일까지 조정)
+- `treasury`, `authorizedDepositors`, `weth`(ETH 인출용)
 
 ### 주요 함수
 | 함수 | 호출자 | 설명 |
 |------|--------|------|
 | `deposit(relayer, token, amount)` | authorizedDepositors | 릴레이어 수수료 적립. `tokenBalance ≥ totalTracked + platformRevenue` 검증. |
-| `depositPlatformRevenue(token, amount, source)` | authorizedDepositors | 플랫폼 수익 적립(source 는 `fee`/`surplus` 등 태깅). |
+| `accrueDexFee(token, amount)` / `accrueDexSurplus(token, amount)` | authorizedDepositors | DEX 플랫폼 수수료 / positive slippage 를 `platformRevenue` 에 적립. |
 | `claim(token)` | 릴레이어 | 잔액 전액 인출 — `platformFeeBps` 만큼 treasury, 나머지 송신자에게 전송. |
+| `claimAsEth(token)` | 릴레이어 | WETH 잔액을 ETH 로 언래핑해 인출. |
 | `withdrawPlatformRevenue(token)` | treasury / owner | 누적 플랫폼 수익을 treasury 로. |
-| `scheduleFeeChange / applyFeeChange / cancelFeeChange` | owner | 1일 타임락으로 수수료 조정. |
+| `scheduleFeeChange / applyFeeChange / cancelFeeChange` | owner | 타임락(기본 1일)으로 수수료 조정. `setFeeChangeDelay` 로 지연 기간 변경(≤30일). |
 
 ### 불변식
 1. **지급능력**: `token.balanceOf(vault) ≥ totalTracked + platformRevenue`
-2. **1일 타임락**: 수수료 변경은 릴레이어가 구 요율로 인출할 시간을 확보.
+2. **수수료 변경 타임락**: 릴레이어가 구 요율로 인출할 시간을 확보(기본 1일).
 
 ---
 
@@ -34,8 +35,8 @@
 릴레이어 온체인 등록/본드/쿨다운 관리. 선택적 zk-X509 아이덴티티 게이트 연동.
 
 ### 주요 상태
-- `minBond` — 최소 본드(0 이면 옵션)
-- `bondToken` — 본드 토큰. `address(0)` = 네이티브(`msg.value`) 모드, 비-제로 = ERC20 모드(init 시 1회 고정)
+- `minBond` — 최소 본드(0 이면 옵션). `setMinBond` 로 조정
+- `bondToken` — 본드 토큰. `address(0)` = 네이티브(`msg.value`) 모드, 비-제로 = ERC20 모드. `setBondToken`/`setBond` 로 owner 가 변경 가능 — 기존 릴레이어의 본드는 **등록 당시 토큰**으로 기록되어 영향 없음(신규 등록에만 적용)
 - `relayers[address] → Relayer{url, name, fee(bps ≤ 500), bond, registeredAt, exitRequestedAt, active}`
 - `relayerList[]` — 등록 이력(iteration 용, append-only)
 - `treasury`, `identityRegistry`
@@ -47,23 +48,23 @@
 | `register(url, name, fee, bondAmount)` | 본드 ≥ `minBond`, `fee ≤ 500bps`, **zk-X509 `isVerified` 통과**. `kycApprovalRegistry` 설정 시 **AND 게이트**로 `isApproved` 도 요구(미설정 시 zk-X509 단독). **결제 모드**: 네이티브(`bondToken==0`)면 본드는 `msg.value`, `bondAmount` 는 0; ERC20 모드면 `bondAmount` 를 `transferFrom`(사전 `approve` 필요), `msg.value` 는 0. 혼용 시 `WrongPaymentMode` revert. |
 | `addBond(bondAmount) payable` | 본드 증액(`register` 와 동일 결제 모드 규칙). |
 | `updateInfo(url, name, fee)` | 정보 갱신(exit 중이면 금지). |
-| `requestExit()` | 자가 exit 대기 시작(7일). 즉시 활성 집합에서 숨김. |
+| `requestExit()` | 자가 exit 대기 시작(쿨다운 기본 7일, `setExitCooldown` 으로 최대 30일까지 조정). 즉시 활성 집합에서 숨김. |
 | `executeExit()` | 쿨다운 후 본드 회수(`active=false`). 자가·강제 exit 공통 환급 경로. |
 | `adminRemoveRelayer(relayer, reason)` (owner) | **관리자 강제 제거** — 대신 `exitRequestedAt` 설정(멱등)해 즉시 서비스에서 숨기고 쿨다운 시작. `active` 는 유지하여 본드가 묶이지 않음(쿨다운 후 릴레이어가 `executeExit` 로 회수). 이 콜에서 본드를 push 하지 않아 악의 릴레이어가 수신 거부로 자신의 강제 제거를 막는(griefing) 것이 불가. 슬래싱 아님. |
 | `setKycApprovalRegistry(addr)` (owner) | KYC AND 게이트 설정/해제(`address(0)`). 신규 `register` 에만 적용. |
-| `isActiveRelayer / getFee / getSettlementInfo` | PrivateSettlement 가 호출. `exitRequestedAt > 0` 이면 비활성으로 집계. |
+| `isActiveRelayer / getFee / getSettlementInfo` | view 조회. PrivateSettlement 는 `isActiveRelayer` 만 호출; 나머지는 오프체인/프론트용. `exitRequestedAt > 0` 이면 비활성으로 집계. |
 
 ### 라이프사이클
 ```
 register ─▶ ACTIVE ─┬─ requestExit ──────────────┐
-                    └─ adminRemoveRelayer(강제) ──┴─▶ EXITING(즉시 서비스 숨김) ─[7일]─▶ executeExit ─▶ 본드 회수
+                    └─ adminRemoveRelayer(강제) ──┴─▶ EXITING(즉시 서비스 숨김) ─[쿨다운(기본 7일)]─▶ executeExit ─▶ 본드 회수
 ```
 - **본드 회수 불변식**: 활성 집합에서 내리는 모든 경로(자가/강제)가 본드 전액을 회수 가능 상태로 유지. stranded 상태 부재.
 - 강제 제거된 릴레이어는 `updateInfo`/`register`/`requestExit` 가 모두 revert 되어 되돌릴 수 없음.
 
 ### 특성
 - **본드 슬래싱 미지원**(L-3): 실패 시 릴레이어 가스만 손실. (강제 제거도 전액 환급 — 슬래싱은 별도 메커니즘)
-- **7일 쿨다운**: 자가·강제 exit 공통.
+- **exit 쿨다운**: 자가·강제 exit 공통. 기본 7일, owner 가 최대 30일까지 조정.
 - **O(n) 활성 조회**(L-4): 대량 사용시 이벤트 인덱싱 권장.
 
 ---
@@ -131,14 +132,12 @@ Tornado 스타일 Poseidon append-only tree + 루트 링 버퍼.
 PrivateSettlement 의 EIP-170 (24KB 바이트코드) 초과를 피하기 위해 **외부 라이브러리로 분리**한 pure/view helpers.
 
 주요 함수:
-- `packSettleSignals(SettleParams)` → `uint[18]` (settle.circom 입력)
-- `packAuthSignals(AuthorizeProof)` → `uint[15]` (authorize.circom 입력)
+- `packAuthSignals(AuthorizeProof)` → `uint[15]` (authorize.circom 공개 신호 — `pubKeyBind` 가 index 0)
 - `validateCrossSide(…)` — settleAuth 교차 불변식 집합(C1/C2/C4, fee 상한, expiry, 화이트리스트).
 - `validateDexProof(…)` — settleWithDex 선검증(deadline, self-relayer, 토큰 호환).
-- `validateScatterAuth(…)` — scatterDirectAuth 용.
-- `validateTimestampWindow(currentTs, tol)` — `currentTs ≤ block.timestamp ≤ currentTs + tol`.
+- `validateScatterAuth(…)` — scatterDirectAuth 용(동일 토큰·fee 캡·claims+fee 캡).
 - `requireDistinctClaimsRoots(a, b, lockedA, lockedB)` — 동일 root 중복 방지(한쪽이 0 이면 예외 허용).
-- `maybeInsertCommitment / registerClaimsGroup` — inlined helper(DELEGATECALL 오버헤드 방지).
+- `maybeInsertCommitment / registerClaimsGroup` — inlined helper(DELEGATECALL 오버헤드 방지). `registerClaimsGroup` 은 티어를 함께 기록.
 
 ---
 
@@ -148,10 +147,9 @@ PrivateSettlement 의 EIP-170 (24KB 바이트코드) 초과를 피하기 위해 
 |-----------|------|--------|
 | `IDepositVerifier` | 3 = [commitment, token, amount] | CommitmentPool.deposit |
 | `IVerifier` (withdraw) | 7 | CommitmentPool.withdraw |
-| `ISettleVerifier` | 18 | PrivateSettlement.settlePrivate |
-| `IAuthorizeVerifier` | 15 | settleAuth, settleWithDex, scatterDirectAuth |
-| `IBatchAuthorizeVerifier` | 15+15 | settleAuth (선택) — 2개 증명을 5-페어링으로 압축 |
-| `IClaimVerifier` | 6 = [claimsRoot, nullifier, amount, token, recipient, releaseTime] | claimWithProof |
+| `IAuthorizeVerifier` | 15 (index 0 = `pubKeyBind`) | settleAuth, settleWithDex, scatterDirectAuth — 티어(16/64/128)별 레지스트리 |
+| `IBatchAuthorizeVerifier` | 15+15 | settleAuth (선택) — 2개 증명을 5-페어링으로 압축. 양측 동일 티어일 때만 |
+| `IClaimVerifier` | 6 = [claimsRoot, nullifier, amount, token, recipient, releaseTime] | claimWithProof — 티어별 레지스트리(claims tree 깊이 4/6/7) |
 | `ICancelVerifier` | 5 = [root, oldNullifier, oldNonceNullifier, newCommitment, submitter] | cancelPrivate |
 
 모든 verifier 는 snarkJS 로 proving key 로부터 자동 생성된 Groth16 검증 컨트랙트이며 구조는 동일:
@@ -167,6 +165,6 @@ PrivateSettlement 의 EIP-170 (24KB 바이트코드) 초과를 피하기 위해 
 ## 10. 업그레이드 가능성
 
 - **Immutable**: `IncrementalMerkleTree` 의 `levels` / `ROOT_HISTORY_SIZE`. (CommitmentPool 의 verifier 와 PrivateSettlement 의 `weth` 는 프록시 이전엔 immutable 이었으나 현재는 `initialize` 에서 1회 설정 후 불변인 상태 변수 — 재할당 없음.)
-- **Ownable + 타임락**: `authorizedSettlement` 변경(24h), `platformFeeBps` 변경(1일).
-- **Ownable 즉시 교체**: `authorizeVerifier`, `cancelVerifier`, `batchAuthorizeVerifier`, 화이트리스트, sanctions list.
+- **Ownable + 타임락**: `authorizedSettlement` 변경(24h), `platformFeeBps` 변경(기본 1일, ≤30일 조정).
+- **Ownable 즉시 교체**: verifier 레지스트리(`setAuthorizeVerifier(tier)` / `setClaimVerifier(tier)` / `setBatchAuthorizeVerifier(tier)` / `setCancelVerifier`), 화이트리스트, sanctions list, identity gate.
 - **소유권 이전**: 모두 `Ownable2Step` 로 실수로 인한 락아웃 방지.

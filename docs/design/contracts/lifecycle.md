@@ -5,7 +5,8 @@
 ```
 [0] 초기화 (오너)
     └─ CommitmentPool 배포 → PrivateSettlement 배포
-    └─ pool.queueSetAuthorizedSettlement(settlement) → 24h 후 activateAuthorizedSettlement()
+    └─ pool.setAuthorizedSettlement(settlement)  (최초 1회는 즉시 설정 가능;
+       이후 교체는 queueSetAuthorizedSettlement → 24h 후 activateAuthorizedSettlement)
     └─ pool.setTokenWhitelist, settlement.setTokenWhitelist
     └─ (옵션) settlement.setRelayerRegistry / setFeeVault / setAuthorizeVerifier / setBatchAuthorizeVerifier
 
@@ -34,24 +35,26 @@
     두 증명은 매칭 릴레이어로 전달됨(witness 는 노출되지 않음).
 
 [3] SETTLE (온체인 세틀먼트)
-    tx: settlement.settleAuth(makerProof, takerProof, fees, ...)
-      ├─ SettleVerifyLib.validateCrossSide(maker, taker, ...)
+    tx: settlement.settleAuth({maker, taker, feeTokenMaker, feeTokenTaker})
+      ├─ msg.sender ∈ {maker.relayer, taker.relayer} + 제재 확인 + 티어별 verifier 조회
+      ├─ SettleVerifyLib.validateCrossSide(maker, taker, fees)
       │   ├─ C1: makerSellToken == takerBuyToken, 역도 성립
-      │   ├─ C2: takerSell × takerBuy ≥ makerSell × makerBuy (가격 보호)
+      │   ├─ C2: makerBuy × takerBuy ≤ makerSell × takerSell (가격 보호)
       │   ├─ C4: totalLocked_i + fee_i ≤ 반대편 sellAmount
-      │   ├─ fee ≤ maxFee × reverseSell / 10000
-      │   └─ expiry, whitelist, distinct claimsRoot 체크
+      │   ├─ fee_i × 10000 ≤ 자기쪽 buyAmount × 자기쪽 maxFee
+      │   └─ 비-제로 금액, expiry, whitelist 체크
+      ├─ 동일 nullifier 양측 제출 차단(intra-tx equality) → 저장된 nullifier 4종 확인
       ├─ pool.isKnownRoot(maker.commRoot) && pool.isKnownRoot(taker.commRoot)
-      ├─ batchAuthorizeVerifier.verifyProof 또는 authorizeVerifier ×2
-      ├─ 상호 nullifier ≠ 상대 nullifier 검사
+      ├─ batchAuthorizeVerifier(양측 동일 티어 + 등록 시) 또는 authorizeVerifier ×2
+      ├─ relayerRegistry 활성 확인(설정 시, 양쪽)
       ├─ nullifiers/nonceNullifiers 소진 기록
       ├─ pool.insertCommitment(newCommMaker), insertCommitment(newCommTaker)
-      ├─ pool.transferToSettlement(tokenMaker, totalLockedMaker + feeMaker)
-      │  반대편도 동일
-      ├─ 수수료 라우팅:
-      │   (FeeVault set) → feeVault.deposit(makerRelayer, tokenMaker, feeTokenMaker)
-      │   (unset)        → ERC20.transfer(makerRelayer, feeTokenMaker)
-      ├─ claimsGroups[claimsRootMaker] = {totalLocked, 0, tokenMaker} 등록
+      ├─ pool.transferToSettlement(maker.buyToken, totalLockedMaker)
+      │  반대편도 동일 (수수료는 별도 경로 ↓)
+      ├─ 수수료 라우팅 (pool.transferFee 경유):
+      │   (FeeVault set) → pool.transferFee(feeVault, …) + feeVault.deposit(maker.relayer, …)
+      │   (unset)        → pool.transferFee(maker.relayer, …)
+      ├─ claimsGroups[claimsRootMaker] = {totalLocked, 0, token, tier} 등록 (양측, distinct root 검사)
       └─ event PrivateSettledAuth
 
 [4] CLAIM (수령자가 개별 트랜잭션으로 청구)
@@ -60,7 +63,8 @@
       - 비공개: claimSecret, leafIndex, path[4], pathIdx[4]
 
     tx: settlement.claimWithProof(proof, claimsRoot, nullifier, amount, token, recipient, releaseTime)
-      ├─ 제재 확인, block.timestamp ≥ releaseTime
+      ├─ 수령자 제재 확인 + (identityGate 설정 시) zk-X509 검증 확인, block.timestamp ≥ releaseTime
+      ├─ claimVerifierByTier[group.tier] 로 티어별 verifier 디스패치
       ├─ claimNullifiers[nullifier] 소진 기록
       ├─ claimsGroups[claimsRoot].totalClaimed += amount (≤ totalLocked)
       ├─ 토큰 == WETH 이면 IWETH.withdraw → recipient 로 ETH 전송
@@ -116,4 +120,4 @@ Relayer ─► FeeVault.claim ─► (platformFee → treasury) + (나머지 →
 | claimWithProofBatch (N claims) | ~180K × N (최대 20) | 원자적 |
 | cancelPrivate | ~320K | 단건 Groth16 + insertCommitment |
 
-> 값은 환경에 따라 변동. 릴리즈마다 `contracts/test/*.gas.t.sol` 로 측정.
+> 값은 환경에 따라 변동. `forge snapshot`(`contracts/.gas-snapshot`) 으로 측정.
