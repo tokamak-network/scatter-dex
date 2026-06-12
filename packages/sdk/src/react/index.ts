@@ -1,4 +1,5 @@
 export * from "./wallet";
+export * from "./ChunkReloadGuard";
 export * from "./connect-wallet-pill";
 export * from "./useMounted";
 export * from "./commitmentTree";

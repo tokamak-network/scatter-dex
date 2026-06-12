@@ -8,6 +8,7 @@ import { IdentityPill } from "./_components/IdentityPill";
 import { IdentityMenu } from "./_components/IdentityMenu";
 import { Pill, StatusDot, AppShellHeader } from "@zkscatter/ui";
 import { chainName } from "@zkscatter/sdk";
+import { ChunkReloadGuard } from "@zkscatter/sdk/react";
 import { getNetworkConfig } from "./_lib/network";
 import "./globals.css";
 
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <ChunkReloadGuard />
         <PayProviders>
           <AppShellHeader
             brand={<Brand />}

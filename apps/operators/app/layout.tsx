@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { WalletProvider } from "@zkscatter/sdk/react";
+import { WalletProvider, ChunkReloadGuard } from "@zkscatter/sdk/react";
 import { WrongChainBanner } from "./components/WrongChainBanner";
 import { Brand } from "./components/Brand";
 import { OperatorWalletDropdown } from "./components/OperatorWalletDropdown";
@@ -26,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
+        <ChunkReloadGuard />
         <WalletProvider network={DEMO_NETWORK}>
           <OperatorProvider>
             <OperatorIdentityProvider>
