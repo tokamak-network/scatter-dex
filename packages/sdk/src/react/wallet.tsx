@@ -51,20 +51,35 @@ export interface WalletState {
   signer: ethers.Signer | null;
   /** Browser provider wrapping the wallet's EIP-1193. */
   provider: ethers.BrowserProvider | null;
-  /** Read provider for view calls. Always non-null. When a wallet is
-   *  connected on the right chain this is an `InjectedMulticallProvider`
-   *  reading through the user's own node (with Multicall3 batching);
-   *  otherwise it's a public-RPC `JsonRpcProvider` fallback built from
-   *  `network.rpcUrl`. Drop-in either way — pass it to `new Contract`. */
+  /** Read provider for **per-user** view calls (your balance, your claim
+   *  status — data scoped to the connected account). Always non-null. When
+   *  a wallet is connected on the right chain this is an
+   *  `InjectedMulticallProvider` reading through the user's own node (with
+   *  Multicall3 batching); otherwise it's a public-RPC `JsonRpcProvider`
+   *  fallback built from `network.rpcUrl`. Drop-in either way — pass it to
+   *  `new Contract`.
+   *
+   *  Do NOT use this for **correctness-critical, globally-identical** reads
+   *  (commitment tree, identity-gate verification, anything whose result
+   *  gates a proof or a tx) — use `rpcProvider`. The user's node can be a
+   *  chainId-spoofing fork or a broken/unauthorized endpoint that silently
+   *  serves stale or erroring data; those reads must come from the same
+   *  node settlement trusts. */
   readProvider: ethers.Provider;
   /** Which node the current `readProvider` reads from — `"wallet"` (the
-   *  user's connected node) or `"rpc"` (public fallback). Useful for a
-   *  debug/status indicator. */
+   *  user's connected node) or `"rpc"` (public fallback). Debug/status
+   *  indicator only — it does NOT describe where authoritative reads go
+   *  (those always use `rpcProvider`, regardless of this value). */
   readSource: "wallet" | "rpc";
-  /** Always-public JsonRpcProvider built from `network.rpcUrl`. Use it for
-   *  write preflight (gas/fee estimation via `runWrite`) so a throttled
-   *  wallet RPC can't make the estimate fail; the tx still broadcasts
-   *  through the connected wallet. */
+  /** Always-public `JsonRpcProvider` built from `network.rpcUrl` — the
+   *  app's authoritative node. Two uses:
+   *    1. Write preflight (gas/fee estimation via `runWrite`) so a
+   *       throttled wallet RPC can't gate the estimate; the tx still
+   *       broadcasts through the connected wallet.
+   *    2. Correctness-critical, globally-identical reads (commitment tree,
+   *       identity gate) that must not trust a forked/broken wallet node.
+   *  Reading these here costs nothing per-user the wallet node would save,
+   *  and guarantees agreement with the settlement node. */
   rpcProvider: ethers.JsonRpcProvider;
   /** Best-effort wallet vendor name; null when disconnected. */
   walletName: string | null;

@@ -125,6 +125,14 @@ export async function getMerkleProofWithFallback(
   throw new CommitmentProofUnavailableError(commitment);
 }
 
+/** Backoff (ms) before a `refresh()`-driven re-hydrate may re-run, given
+ *  the consecutive-failure streak: 0.5s after the 1st failure, doubling to
+ *  a 30s ceiling. Streak 0 (healthy) yields 0.5s, which only debounces
+ *  bursts. Exported for unit tests. */
+export function rehydrateBackoffMs(failStreak: number): number {
+  return Math.min(30_000, 500 * 2 ** failStreak);
+}
+
 const Ctx = createContext<CommitmentTreeState | null>(null);
 
 export function useCommitmentTree(): CommitmentTreeState {
@@ -160,10 +168,21 @@ export function CommitmentTreeProvider({
   serverUrl,
   children,
 }: CommitmentTreeProviderProps) {
-  const { readProvider } = useWallet();
+  // Authoritative reads go through the app's configured public node
+  // (`rpcProvider`), NOT the connected wallet's node (`readProvider`).
+  // The commitment tree is global on-chain data — identical for every
+  // user, so reading it from the wallet's own node buys nothing — and
+  // it's correctness-critical: a wrong leaf set or root produces proofs
+  // the chain rejects, or strands a real deposit. A wallet node can be a
+  // chainId-spoofing fork (passes the app's chainId gate but serves a
+  // stale state) or a broken/unauthorized endpoint; either silently
+  // breaks hydration. `rpcProvider` is the same node settlement trusts,
+  // so the `isKnownRoot` gate below is meaningful. (General per-user
+  // reads — balances, fees — still use the wallet node; see PR #957.)
+  const { rpcProvider } = useWallet();
   // Derived in render so React state stays a single source of truth;
   // the useEffect also recomputes locally so its deps stay [poolAddress,
-  // readProvider] without listing this synthetic value.
+  // rpcProvider] without listing this synthetic value.
   const isLive = poolAddress !== ZERO_ADDRESS;
 
   // Tree is keyed on `poolAddress` — switching invalidates state.
@@ -175,13 +194,25 @@ export function CommitmentTreeProvider({
   const [leafCount, setLeafCount] = useState(0);
   const [ready, setReady] = useState(!isLive);
   // Bumped by `refresh()` to retrigger the hydrate effect — the rest
-  // of the deps (`poolAddress`, `readProvider`) are stable across a
+  // of the deps (`poolAddress`, `rpcProvider`) are stable across a
   // session, so this is the only mutable handle into the effect.
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // Auto-rehydrate backoff. When a source stays broken (a dead/forked
+  // RPC, an indexer outage), every failed proof calls `refresh()`, which
+  // would otherwise re-run the effect immediately — rebuilding a
+  // depth-20 tree and logging each time. Under a Next dev server that
+  // forwards + source-maps browser console output, that tight loop
+  // ballooned the dev process heap into an OOM. These refs gate
+  // refresh()-driven re-runs behind exponential backoff keyed on the
+  // consecutive-failure streak; direct dep changes (poolAddress,
+  // serverUrl) bypass the gate and re-hydrate at once.
+  const lastAttemptRef = useRef(0);
+  const failStreakRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // Capture fresh tree + index instances LOCALLY so any in-flight
-    // insert() that resumes after a poolAddress / readProvider swap
+    // insert() that resumes after a poolAddress / rpcProvider swap
     // cannot accidentally write into the new effect's tree. Refs are
     // updated to point at this iteration's instances; the cancelled
     // flag below also gates resumed callbacks from publishing.
@@ -203,6 +234,8 @@ export function CommitmentTreeProvider({
       return;
     }
     setReady(false);
+    // Stamp this attempt so `refresh()` can measure backoff from it.
+    lastAttemptRef.current = Date.now();
 
     let cancelled = false;
 
@@ -251,13 +284,13 @@ export function CommitmentTreeProvider({
       //      Requiring `t.nextIndex >= nextIndex()` rejects the lagging set so
       //      the caller falls back / retries instead of trusting a short tree.
       const [known, onchainCount] = await Promise.all([
-        isKnownPoolRoot(readProvider, poolAddress, t.root),
+        isKnownPoolRoot(rpcProvider, poolAddress, t.root),
         // Best-effort: a transient nextIndex() failure (rate limit / timeout)
         // must not reject hydration when isKnownRoot would otherwise pass.
         // Falling back to 0 simply skips the completeness gate for this
         // attempt — isKnownRoot still guards correctness, and a later
         // refresh re-checks completeness once the RPC recovers.
-        getPoolNextIndex(readProvider, poolAddress).catch(() => 0),
+        getPoolNextIndex(rpcProvider, poolAddress).catch(() => 0),
       ]);
       if (cancelled) return null;
       return known && t.nextIndex >= onchainCount ? { tree: t, index: idx } : null;
@@ -266,7 +299,7 @@ export function CommitmentTreeProvider({
     chain = chain.then(async () => {
       try {
         const fromGetLogs = () =>
-          loadCommitmentInsertedHistory(readProvider, poolAddress, { fromBlock });
+          loadCommitmentInsertedHistory(rpcProvider, poolAddress, { fromBlock });
 
         let built: { tree: IncrementalMerkleTree; index: Map<string, number> } | null = null;
 
@@ -278,7 +311,7 @@ export function CommitmentTreeProvider({
         const server = serverUrl?.trim();
         if (server) {
           try {
-            const chainId = (await readProvider.getNetwork()).chainId;
+            const chainId = (await rpcProvider.getNetwork()).chainId;
             if (cancelled) return;
             built = await buildVerified(() => fetchCommitmentLeaves(server, chainId));
             if (!built) {
@@ -310,15 +343,18 @@ export function CommitmentTreeProvider({
         indexRef.current = index;
         setLeafCount(tree.nextIndex);
         setReady(true);
+        failStreakRef.current = 0;
       } catch (err) {
-        // Keep `ready=false` so spend flows don't use an empty
-        // tree as truth. Apps can refresh; retry-on-failure is a
-        // future iteration.
+        if (cancelled) return;
+        // Keep `ready=false` so spend flows don't use an empty tree as
+        // truth. The streak grows the backoff `refresh()` enforces, so a
+        // persistently-failing source can't spin the effect.
+        failStreakRef.current += 1;
         console.error("[commitmentTree] history fetch failed:", err);
       }
     });
 
-    const unsubscribe = subscribeCommitmentInserted(readProvider, poolAddress, (row) => {
+    const unsubscribe = subscribeCommitmentInserted(rpcProvider, poolAddress, (row) => {
       if (cancelled) return;
       chain = chain.then(async () => {
         // Wrap the per-event work in try/catch so a single insert()
@@ -347,10 +383,32 @@ export function CommitmentTreeProvider({
       cancelled = true;
       unsubscribe();
     };
-  }, [poolAddress, fromBlock, serverUrl, readProvider, refreshNonce]);
+  }, [poolAddress, fromBlock, serverUrl, rpcProvider, refreshNonce]);
+
+  // Clear any pending backoff retry on unmount.
+  useEffect(
+    () => () => {
+      if (retryTimerRef.current != null) clearTimeout(retryTimerRef.current);
+    },
+    [],
+  );
 
   const refresh = useCallback(() => {
-    setRefreshNonce((n) => n + 1);
+    // Exponential backoff keyed on the consecutive-failure streak:
+    // 0.5s after the 1st failure, doubling to a 30s ceiling. A healthy
+    // tree (streak 0) only debounces bursts within 0.5s — a deposit that
+    // just confirmed still re-hydrates promptly. Multiple refresh() calls
+    // inside the window coalesce into one pending timer.
+    const backoffMs = rehydrateBackoffMs(failStreakRef.current);
+    const waited = Date.now() - lastAttemptRef.current;
+    if (waited >= backoffMs) {
+      setRefreshNonce((n) => n + 1);
+    } else if (retryTimerRef.current == null) {
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null;
+        setRefreshNonce((n) => n + 1);
+      }, backoffMs - waited);
+    }
   }, []);
 
   const findIndex = useCallback((commitment: bigint): number => {
