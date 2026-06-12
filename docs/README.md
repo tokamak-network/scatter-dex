@@ -9,12 +9,17 @@ System-level architecture and decision records.
 - [adr/](architecture/adr/) — Architecture Decision Records
 
 ## design/
-Component design specs. Pre-implementation items are labeled in-document.
-- [zk-escrow.md](design/zk-escrow.md), [zk-settle-stealth.md](design/zk-settle-stealth.md), [stealth-address-claim.md](design/stealth-address-claim.md)
-- [circuit-split/](design/circuit-split/) — Half-proof circuit split (Phase 1, implemented)
+Component design specs. Status is labeled in-document.
+- [circuit-split/](design/circuit-split/) — Half-proof primitive (implemented)
+- [contracts/](design/contracts/) — 컨트랙트 설계 (한글, current)
+- [proof-system/](design/proof-system/) — ZK 증명 시스템 설계 (한글, current)
+- [relayer-kyc-onboarding/](design/relayer-kyc-onboarding/) — 2-gate operator onboarding (implemented)
+- [async-settlement-protocol.md](design/async-settlement-protocol.md), [commitment-history-indexer.md](design/commitment-history-indexer.md), [relayer-claim-fee-policy.md](design/relayer-claim-fee-policy.md) — implemented protocol/infra specs
+- [pay-eoa-claim-inbox.md](design/pay-eoa-claim-inbox.md), [pay-wizard-categories-and-per-row-claim.md](design/pay-wizard-categories-and-per-row-claim.md) — Pay app specs (latter: WIP)
 - [relayer-protocol/](design/relayer-protocol/) — Waku gossip protocol (Phase 2, pre-implementation)
 - [dispute-registry/](design/dispute-registry/) — Dispute + reputation (Phase 3, pre-implementation)
 - [mobile/](design/mobile/) — Mobile proving fallback (pre-implementation)
+- [archive/](design/archive/) — superseded/completed designs (stealth, legacy settle, finished migrations)
 
 ## operations/
 Deploy, run, and secure the system.

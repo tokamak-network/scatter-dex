@@ -1,6 +1,6 @@
 # Commitment-history indexer (server-served Merkle leaves)
 
-**Status:** proposed
+**Status:** implemented — `GET /api/commitments` (shared-orderbook commitment indexer, PR #980–#985)
 **Author:** (design)
 **Related:** `packages/sdk/src/core/pool.ts` (`loadCommitmentInsertedHistory`),
 `packages/sdk/src/react/commitmentTree.tsx`, `shared-orderbook/src/verify.ts`,

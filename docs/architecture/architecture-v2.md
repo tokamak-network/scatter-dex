@@ -220,30 +220,16 @@ If you only have time for one document, read in this order based on your role:
 
 ```
 docs/
-├── architecture-v2.md             ← THIS FILE (entry point)
-│
-├── circuit-split/
-│   └── design.md                  ← Half-proof primitive (Phase 1)
-│
-├── relayer-protocol/
-│   └── design.md                  ← Waku v2 federated protocol (Phase 2)
-│
-├── dispute-registry/
-│   └── design.md                  ← Record-only dispute + reputation (Phase 3)
-│
-├── design-shared-orderbook.md     ← LEGACY: current HTTP Trade Offer (deprecated by Phase 2)
-├── relayer-security.md            ← Operational threat model (sections §1-§3 obsoleted by Phase 1)
-├── gas-cost-analysis.md           ← Gas baseline (referenced by all v2 docs)
-├── PAPER.md                       ← Overall research paper + compliance model
-├── PAPER-ko.md                    ← Korean translation
-├── papers/                        ← Academic versions of PAPER.md
-├── zk-private-trading.md          ← User-facing flow (mostly unchanged in v2)
-├── design-zk-escrow.md            ← Escrow design (unchanged)
-├── design-zk-settle-stealth.md    ← Stealth address settlement (unchanged)
-├── design-stealth-address-claim.md ← Stealth address claim (unchanged)
-├── deployment.md
-├── local-setup.md
-├── test-scenarios.md
-├── demo-script-en.md
-└── demo-script-ko.md
+├── architecture/
+│   ├── architecture-v2.md         ← THIS FILE (entry point)
+│   └── shared-orderbook.md        ← current HTTP protocol (Phase 2가 대체 예정)
+├── design/
+│   ├── circuit-split/design.md    ← Half-proof primitive (Phase 1, implemented)
+│   ├── relayer-protocol/design.md ← Waku v2 federated protocol (Phase 2)
+│   └── dispute-registry/design.md ← Record-only dispute + reputation (Phase 3)
+└── operations/
+    ├── relayer-security.md        ← threat model (§1–§3 obsoleted by Phase 1)
+    └── gas-cost-analysis.md       ← gas baseline
 ```
+
+전체 문서 인덱스는 [docs/README.md](../README.md) 참조.

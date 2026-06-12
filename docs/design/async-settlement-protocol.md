@@ -1,7 +1,6 @@
 # Async Settlement Protocol
 
-**Status:** Draft
-**Branch:** `feat/async-settlement-protocol`
+**Status:** Implemented — async settlement worker + 202 accept-then-settle (PR #391), cross-relayer matcher의 async-FSM 연동 포함
 **Date:** 2026-04-23
 
 ## Motivation
