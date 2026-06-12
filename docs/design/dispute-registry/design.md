@@ -8,8 +8,8 @@
 > - [../design-shared-orderbook.md](../../architecture/shared-orderbook.md) — current Trade Offer (legacy)
 > - [../relayer-security.md](../../operations/relayer-security.md) — operational threat model
 > - [../PAPER.md](../../research/PAPER.md) §Compliance — dual-CA identity model that makes reputation enforceable
-> - [../../contracts/src/RelayerRegistry.sol](../../contracts/src/RelayerRegistry.sol) — relayer bond + identity gate (no changes required)
-> - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — settlement events used as ground truth
+> - [../../contracts/src/RelayerRegistry.sol](../../../contracts/src/RelayerRegistry.sol) — relayer bond + identity gate (no changes required)
+> - [../../contracts/src/zk/PrivateSettlement.sol](../../../contracts/src/zk/PrivateSettlement.sol) — settlement events used as ground truth
 
 ## Motivation
 
@@ -528,8 +528,8 @@ The L-3 note in `RelayerRegistry.sol` is now answered by: **"slashing is unneces
 ## References
 
 ### Internal
-- [../../contracts/src/RelayerRegistry.sol](../../contracts/src/RelayerRegistry.sol) — relayer bond + identity (no changes)
-- [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — settlement contract (one mapping added)
+- [../../contracts/src/RelayerRegistry.sol](../../../contracts/src/RelayerRegistry.sol) — relayer bond + identity (no changes)
+- [../../contracts/src/zk/PrivateSettlement.sol](../../../contracts/src/zk/PrivateSettlement.sol) — settlement contract (one mapping added)
 - [../circuit-split/design.md](../circuit-split/design.md) — split proofs that produce commit-reveal evidence
 - [../relayer-protocol/design.md](../relayer-protocol/design.md) — Waku v2 protocol that produces signed commits/reveals
 - [../PAPER.md](../../research/PAPER.md) §Compliance — dual-CA identity model

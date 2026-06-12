@@ -7,8 +7,8 @@
 > - [../dispute-registry/design.md](../dispute-registry/design.md) — dispute resolution that depends on this protocol's commit-reveal messages
 > - [../relayer-security.md](../../operations/relayer-security.md) — operational threat model
 > - [../PAPER.md](../../research/PAPER.md) — compliance and trust model
-> - [../../contracts/src/RelayerRegistry.sol](../../contracts/src/RelayerRegistry.sol) — relayer discovery and bond
-> - [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target
+> - [../../contracts/src/RelayerRegistry.sol](../../../contracts/src/RelayerRegistry.sol) — relayer discovery and bond
+> - [../../contracts/src/zk/PrivateSettlement.sol](../../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target
 
 ## 1. Motivation
 
@@ -965,8 +965,8 @@ Can a relayer operate as a "solo" node, receiving only its own users' orders and
 - [../dispute-registry/design.md](../dispute-registry/design.md) — on-chain dispute resolver (depends on this protocol's commit-reveal)
 - [../relayer-security.md](../../operations/relayer-security.md) — operational threat model for individual relayers
 - [../PAPER.md](../../research/PAPER.md) — overall zkScatter architecture and compliance model
-- [../../contracts/src/RelayerRegistry.sol](../../contracts/src/RelayerRegistry.sol) — relayer discovery and bond
-- [../../contracts/src/zk/PrivateSettlement.sol](../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target
+- [../../contracts/src/RelayerRegistry.sol](../../../contracts/src/RelayerRegistry.sol) — relayer discovery and bond
+- [../../contracts/src/zk/PrivateSettlement.sol](../../../contracts/src/zk/PrivateSettlement.sol) — on-chain settlement target
 
 ### External
 - **Waku v2**: https://docs.waku.org/ — Ethereum-native messaging layer
