@@ -53,11 +53,18 @@ totalLocked × 10000 ≥ buyAmount × (10000 − maxFee)
 
 **증명**: 이중지출을 위해선 동일 escrow nullifier 가 두 번 소진되어야 함. nullifier 는 commitment preimage 의 결정론적 함수이므로 같은 UTXO 는 같은 nullifier 를 낳음. 서로 다른 루트라도 onchain `nullifiers[]` 세트가 단일 진실(single source of truth) → 두 번째 시도는 revert.
 
-### 2.7 자기거래 방지(Layer 2 in settle.circom)
+### 2.7 자기거래(self-trade)는 의도적으로 허용 — D1
 
-- Layer 1 (legacy): pubKey 동일 시 거부.
-- Layer 2: nullifier/nonceNullifier 동일 시 거부 — preimage 이 달라도 동일 UTXO 면 차단.
-- **half-proof 모델에서는 pubKey 체크 생략 예정(ADR architecture-v2.md D1)**: 자금 무결성은 nullifier 로 충분.
+자기거래 방지 체크는 **존재하지 않는다**
+([ADR-001](../../architecture/adr/001-no-self-trade-detection.md)).
+온체인 자기거래 검사는 per-trader-stable 공개 신호를 요구해 거래
+클러스터링 오라클이 되고, 자금 무결성은 nullifier 가 이미 보장한다.
+같은 키 양쪽 정산이 **성공**하는 positive 테스트로 결정이 잠겨 있다.
+
+단, 별개의 가드로 `settleAuth` 는 **동일 nullifier 양측 제출**을
+intra-tx 에서 거부한다(PR #133) — 같은 커밋먼트로 두 증명을 만들어
+`2 × totalLocked` 를 빼가는 풀 드레인을 차단하는 검사이며, 자기거래
+방지가 아니라 이중지출 방지다.
 
 ### 2.8 pubKeyBind 로 **온체인 링크성 차단**
 
@@ -88,9 +95,9 @@ commitment 안에 이미 박혀 있는 `pubKeyAx/Ay` 이며, 매칭 개인키는
 **예치자 지갑에서만** 파생된다 (`packages/sdk/src/zk/eddsa.ts`).
 → 노트 파일만 복사한 공격자는 서명 키가 없어 회로를 통과할 수 없다.
 
-**비용**: ~4,600 추가 constraints (총 ~10,800), 프루빙 시간 ~1.5s →
-~2.0s desktop 측정 기준. EdDSAPoseidonVerifier 의 기존 cancel/settle
-사용과 동일한 패턴.
+**비용**: ~4,600 추가 constraints (총 6,348 — `snarkjs r1cs info` 실측),
+프루빙 시간 ~1.5s → ~2.0s desktop 측정 기준. EdDSAPoseidonVerifier 의
+기존 authorize/cancel 사용과 동일한 패턴.
 
 **메시지 바인딩 선택**: `Poseidon-2(nullifierHash, recipient)`.
 - `nullifierHash` 포함 → 다른 노트의 sig 를 재사용 불가
@@ -126,10 +133,10 @@ sellAmount × buyAmount 와 같은 곱은 BN254 필드(254-bit) 내부에서 수
 
 ## 5. 관련 ADR / 보고서
 
-- `docs/design/architecture-v2.md` — half-proof 모델 도입 결정
-- `docs/circuit-split/bit-width-audit.md` — 126/128-bit 범위 감사
+- [`docs/architecture/architecture-v2.md`](../../architecture/architecture-v2.md) — half-proof 모델 도입 결정
+- `docs/circuit-split/bit-width-audit.md` — 126/128-bit 범위 감사 (docs 재구성 때 삭제 — git 히스토리에서 열람)
 - `SECURITY_ISSUES.md` — 이슈 #127(HIGH), #128(CRITICAL), #150(pubKeyBind) 해결 이력
-- 외부 감사: `docs/audits/` (릴리즈 별)
+- 감사 온보딩: [`docs/security/AUDIT.md`](../../security/AUDIT.md), [`docs/security/HARDENING.md`](../../security/HARDENING.md)
 
 ## 6. 체크리스트: 새 회로 도입 시 점검 사항
 

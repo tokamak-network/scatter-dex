@@ -219,7 +219,7 @@ template Withdraw(levels) {
     //  optimizer can't drop it. `relayer` is still a public input
     //  but doesn't participate in any constraint inside the EdDSA
     //  path, so keep the squaring idiom used by authorize.circom /
-    //  settle.circom to defend against a future optimizer change
+    //  cancel.circom to defend against a future optimizer change
     //  that would treat unused public signals as dead.
     // ════════════════════════════════════════
     signal relayerSq;
