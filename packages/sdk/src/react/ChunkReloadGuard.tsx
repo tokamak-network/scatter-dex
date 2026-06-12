@@ -43,7 +43,14 @@ export function isChunkLoadError(reason: unknown): boolean {
  *  stale-chunk reload loop into a single recovering reload. */
 export function ChunkReloadGuard() {
   useEffect(() => {
+    // A failed render often fires several chunk errors in the same tick
+    // (multiple dynamic imports). Once we've decided to reload, latch so
+    // the trailing events don't re-read the just-written timestamp and
+    // log the misleading "still failing" message right before unload.
+    let isReloading = false;
+
     const recover = (reason: unknown) => {
+      if (isReloading) return;
       if (!isChunkLoadError(reason)) return;
       let last = 0;
       try {
@@ -68,6 +75,7 @@ export function ChunkReloadGuard() {
       } catch {
         return;
       }
+      isReloading = true;
       window.location.reload();
     };
 
