@@ -8,10 +8,8 @@ import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
  *
  * Each relayer can fetch the list of known peers (other relayers + their URLs).
  * If the shared orderbook server goes offline, relayers can use these cached
- * peer lists to communicate directly and exchange order summaries peer-to-peer.
- *
- * Steam analogy: even if the marketplace site goes down, bots that already
- * know each other can still trade directly via Steam Trade Offers.
+ * peer lists to communicate directly and exchange order summaries peer-to-peer
+ * — relayers that already know each other can still match and settle.
  */
 export function createPeerRoutes(
   orderbook: SharedOrderbook,

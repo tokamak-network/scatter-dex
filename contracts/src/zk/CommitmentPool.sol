@@ -18,9 +18,12 @@ import {IIdentityRegistry} from "../interfaces/IIdentityRegistry.sol";
 /// @title CommitmentPool
 /// @notice UTXO-based private escrow using Poseidon Merkle tree and Groth16 ZK proofs.
 /// @dev Users deposit tokens by submitting a commitment (leaf in Merkle tree).
-///      Withdrawals require a ZK proof of commitment ownership + nullifier.
-///      Commitment = Poseidon(ownerSecret, token, amount, salt)
-///      Nullifier  = Poseidon(ownerSecret, salt)
+///      Withdrawals require a ZK proof of commitment ownership + nullifier
+///      + an EdDSA signature by the pubkey bound into the commitment.
+///      Commitment = Poseidon(TAG_COMMITMENT_V2, ownerSecret, token, amount,
+///                            salt, pubKeyAx, pubKeyAy)   (v2, issue #128)
+///      Nullifier  = Poseidon(TAG_ESCROW_NULL, ownerSecret, salt)
+///      Tag values live in circuits/tags.circom (domain separation).
 contract CommitmentPool is
     IncrementalMerkleTree,
     ReentrancyGuardUpgradeable,
@@ -289,7 +292,11 @@ contract CommitmentPool is
     // ─── Deposit ─────────────────────────────────────────────────
 
     /// @notice Deposit tokens and add a commitment to the Merkle tree.
-    /// @dev commitment = Poseidon(ownerSecret, token, amount, salt) computed off-chain.
+    /// @dev commitment = Poseidon(TAG_COMMITMENT_V2, ownerSecret, token, amount,
+    ///      salt, pubKeyAx, pubKeyAy) computed off-chain (v2 — binds the BabyJub
+    ///      signing pubkey; deposit.circom also validates the pubkey via BabyCheck
+    ///      + small-order-subgroup rejection, an invariant every downstream
+    ///      spending circuit relies on).
     ///      A ZK deposit proof is REQUIRED to bind the on-chain (commitment, token, amount)
     ///      tuple to the Poseidon preimage. Without this, a malicious user could deposit
     ///      1 wei while submitting a commitment claiming an arbitrary balance, then drain
@@ -407,12 +414,17 @@ contract CommitmentPool is
 
     /// @notice Withdraw tokens by proving ownership of a commitment via ZK proof.
     /// @dev The proof verifies:
-    ///   1. The prover knows (ownerSecret, token, amount, salt) for a commitment in the tree
-    ///   2. nullifierHash = Poseidon(ownerSecret, salt) — prevents double-spend
+    ///   1. The prover knows (ownerSecret, token, amount, salt, pubKeyAx, pubKeyAy)
+    ///      for a v2 commitment in the tree
+    ///   2. nullifierHash = Poseidon(TAG_ESCROW_NULL, ownerSecret, salt) — prevents double-spend
     ///   3. withdrawAmount <= amount in commitment
-    ///   4. newCommitment = Poseidon(ownerSecret, token, changeAmount, newSalt) if change > 0
+    ///   4. newCommitment = Poseidon(TAG_COMMITMENT_V2, ownerSecret, token,
+    ///      changeAmount, newSalt, pubKeyAx, pubKeyAy) if change > 0
     ///   5. tokenHash = Poseidon(token) — binds to correct token
-    ///   6. recipient and relayer are bound in the proof
+    ///   6. an EdDSA signature by the commitment-bound pubkey over
+    ///      Poseidon(nullifierHash, recipient) — a copied note file alone cannot
+    ///      withdraw, and a leaked proof cannot be replayed to a new recipient
+    ///   7. recipient and relayer are bound in the proof
     /// @param proofA Groth16 proof point A
     /// @param proofB Groth16 proof point B
     /// @param proofC Groth16 proof point C

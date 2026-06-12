@@ -49,7 +49,7 @@ or `setClaimVerifier(uint8 tier, address verifier)`.
 
 | Role | Authority | Held by (target) |
 |---|---|---|
-| **Proxy admin** | Replaces a proxy's implementation. Cannot read or write contract storage directly. Cannot transfer ownership of the implementation's logic. | Dedicated `ProxyAdmin` contract owned by the multisig. Each upgradeable proxy has its own admin instance to limit blast radius. |
+| **Proxy admin** | Replaces a proxy's implementation. Cannot read or write contract storage directly. Cannot transfer ownership of the implementation's logic. | A **single shared `ProxyAdmin`** owned by the multisig governs all upgradeable proxies (`SharedAdminProxy` pattern — see `contracts/deployments/11155111.md`); one admin keeps upgrade authority auditable in one place. |
 | **Owner** (per contract, `Ownable2Step` / `Ownable2StepUpgradeable`) | Calls owner-gated mutators on a specific contract: registry add/remove, **pause/unpause via `pause()` / `unpause()`** (OpenZeppelin `PausableUpgradeable` since PR #677), fee-collector update, per-tier verifier registration. The owner is the only role that can pause — there is no separate `Pauser` permission today. | Operations multisig. |
 | **Identity registry CA** | Adds / removes individual zk-X509 registries inside `IdentityGate`. | `IdentityGate.owner`, set to the operations multisig. |
 | **Sanctions list manager** | Adds / removes addresses from `SanctionsList`. | `SanctionsList.owner`, set to the operations multisig. |

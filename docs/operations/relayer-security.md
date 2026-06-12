@@ -6,7 +6,7 @@ The zkScatter relayer operates as a trusted intermediary that holds users' priva
 
 ## Trust Model
 
-Users explicitly trust their chosen relayer with sensitive data when submitting orders. This is analogous to the Steam trading bot model — users delegate their items (commitment secrets) to a bot (relayer) for automated trading.
+Users explicitly trust their chosen relayer with sensitive data when submitting orders — they delegate their commitment secrets to the relayer for automated trading.
 
 ### Data Classification
 

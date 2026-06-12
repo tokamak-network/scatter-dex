@@ -1,7 +1,6 @@
 # Async Settlement Protocol
 
-**Status:** Draft
-**Branch:** `feat/async-settlement-protocol`
+**Status:** Implemented — async settlement worker + 202 accept-then-settle (PR #391), cross-relayer matcher의 async-FSM 연동 포함
 **Date:** 2026-04-23
 
 ## Motivation
@@ -127,11 +126,16 @@ steps before responding:
 6. Respond `202 Accepted` with:
 
 ```jsonc
+// 구현은 §2.3 의 상태 객체 전체에 nullifier/pollUrl 을 더해 반환한다
 {
   "status": "accepted",
   "nullifier": "0x...",
-  "orderId": "...",      // optional external handle (unchanged)
   "submittedAt": 1714..., // ms epoch
+  "updatedAt": 1714...,
+  "attempt": 0,
+  "settleTxHash": null,
+  "error": null,
+  "expiresAt": 1714...,   // unix seconds (from order.expiry)
   "pollUrl": "/api/authorize-orders/0x..." // convenience
 }
 ```
@@ -191,6 +195,12 @@ expired                         (expiry time passed without settlement)
 Backwards compatibility: the today-used values (`pending`, `matched`,
 `settled`, `cancelled`) are kept as aliases for one release; new clients use
 the new names.
+
+> 구현 노트: `matched` 는 settlement worker 가 매칭~정산 사이에 쓰는
+> **인메모리 중간 상태**로 남아 있다 (`settlement-worker.ts` — DB 상태는
+> `settling` 유지, 클라이언트에 노출되지 않음). 멱등성 검사용
+> `IN_FLIGHT_STATUSES` 는 `{matched, settling}` 이다
+> (`types/authorize-order.ts`).
 
 ### 2.4 Idempotency
 

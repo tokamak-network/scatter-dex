@@ -6,9 +6,9 @@
 
 zkScatter is evolving from a **single-relayer custodial-witness model** (current) to a **federated relayer + client-side proving + fair-exchange** model. The change consists of three coordinated sub-designs:
 
-1. **[circuit-split/design.md](circuit-split/design.md)** — the **Half-proof** primitive: replace the monolithic `settle.circom` with `authorize.circom`, so each user independently proves their own side in the browser. The relayer matches two `authorize` proofs and submits them as a single `settleAuth(makerProof, takerProof)` transaction. Relayers stop seeing witness data entirely.
-2. **[relayer-protocol/design.md](relayer-protocol/design.md)** — replace HTTP Trade Offer with a Waku v2-based gossip + commit-reveal protocol modeled after the Steam trading bot ecosystem. Relayers communicate directly with each other.
-3. **[dispute-registry/design.md](dispute-registry/design.md)** — record cryptographic dispute evidence on-chain (no slashing); reputation built off-chain from event log; users avoid bad relayers via frontend display. Closes the L-3 TODO in `RelayerRegistry.sol` without bond manipulation.
+1. **[../design/circuit-split/design.md](../design/circuit-split/design.md)** — the **Half-proof** primitive: replace the monolithic `settle.circom` with `authorize.circom`, so each user independently proves their own side in the browser. The relayer matches two `authorize` proofs and submits them as a single `settleAuth(makerProof, takerProof)` transaction. Relayers stop seeing witness data entirely.
+2. **[../design/relayer-protocol/design.md](../design/relayer-protocol/design.md)** — replace HTTP Trade Offer with a Waku v2-based gossip + commit-reveal protocol. Relayers communicate directly with each other.
+3. **[../design/dispute-registry/design.md](../design/dispute-registry/design.md)** — record cryptographic dispute evidence on-chain (no slashing); reputation built off-chain from event log; users avoid bad relayers via frontend display. Closes the L-3 TODO in `RelayerRegistry.sol` without bond manipulation.
 
 These three are **mutually dependent** and must be designed and rolled out together. Each one alone is incomplete:
 
@@ -220,30 +220,16 @@ If you only have time for one document, read in this order based on your role:
 
 ```
 docs/
-├── architecture-v2.md             ← THIS FILE (entry point)
-│
-├── circuit-split/
-│   └── design.md                  ← Half-proof primitive (Phase 1)
-│
-├── relayer-protocol/
-│   └── design.md                  ← Waku v2 federated protocol (Phase 2)
-│
-├── dispute-registry/
-│   └── design.md                  ← Record-only dispute + reputation (Phase 3)
-│
-├── design-shared-orderbook.md     ← LEGACY: current HTTP Trade Offer (deprecated by Phase 2)
-├── relayer-security.md            ← Operational threat model (sections §1-§3 obsoleted by Phase 1)
-├── gas-cost-analysis.md           ← Gas baseline (referenced by all v2 docs)
-├── PAPER.md                       ← Overall research paper + compliance model
-├── PAPER-ko.md                    ← Korean translation
-├── papers/                        ← Academic versions of PAPER.md
-├── zk-private-trading.md          ← User-facing flow (mostly unchanged in v2)
-├── design-zk-escrow.md            ← Escrow design (unchanged)
-├── design-zk-settle-stealth.md    ← Stealth address settlement (unchanged)
-├── design-stealth-address-claim.md ← Stealth address claim (unchanged)
-├── deployment.md
-├── local-setup.md
-├── test-scenarios.md
-├── demo-script-en.md
-└── demo-script-ko.md
+├── architecture/
+│   ├── architecture-v2.md         ← THIS FILE (entry point)
+│   └── shared-orderbook.md        ← current HTTP protocol (Phase 2가 대체 예정)
+├── design/
+│   ├── circuit-split/design.md    ← Half-proof primitive (Phase 1, implemented)
+│   ├── relayer-protocol/design.md ← Waku v2 federated protocol (Phase 2)
+│   └── dispute-registry/design.md ← Record-only dispute + reputation (Phase 3)
+└── operations/
+    ├── relayer-security.md        ← threat model (§1–§3 obsoleted by Phase 1)
+    └── gas-cost-analysis.md       ← gas baseline
 ```
+
+전체 문서 인덱스는 [docs/README.md](../README.md) 참조.

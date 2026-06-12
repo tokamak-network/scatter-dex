@@ -9,12 +9,17 @@ System-level architecture and decision records.
 - [adr/](architecture/adr/) — Architecture Decision Records
 
 ## design/
-Component design specs. Pre-implementation items are labeled in-document.
-- [zk-escrow.md](design/zk-escrow.md), [zk-settle-stealth.md](design/zk-settle-stealth.md), [stealth-address-claim.md](design/stealth-address-claim.md)
-- [circuit-split/](design/circuit-split/) — Half-proof circuit split (Phase 1, implemented)
+Component design specs. Status is labeled in-document.
+- [circuit-split/](design/circuit-split/) — Half-proof primitive (implemented)
+- [contracts/](design/contracts/) — 컨트랙트 설계 (한글, current)
+- [proof-system/](design/proof-system/) — ZK 증명 시스템 설계 (한글, current)
+- [relayer-kyc-onboarding/](design/relayer-kyc-onboarding/) — 2-gate operator onboarding (implemented)
+- [async-settlement-protocol.md](design/async-settlement-protocol.md), [commitment-history-indexer.md](design/commitment-history-indexer.md), [relayer-claim-fee-policy.md](design/relayer-claim-fee-policy.md) — implemented protocol/infra specs
+- [pay-eoa-claim-inbox.md](design/pay-eoa-claim-inbox.md), [pay-wizard-categories-and-per-row-claim.md](design/pay-wizard-categories-and-per-row-claim.md) — Pay app specs (latter: WIP)
 - [relayer-protocol/](design/relayer-protocol/) — Waku gossip protocol (Phase 2, pre-implementation)
 - [dispute-registry/](design/dispute-registry/) — Dispute + reputation (Phase 3, pre-implementation)
 - [mobile/](design/mobile/) — Mobile proving fallback (pre-implementation)
+- [archive/](design/archive/) — superseded/completed designs (stealth, legacy settle, finished migrations)
 
 ## operations/
 Deploy, run, and secure the system.
@@ -33,13 +38,12 @@ Smart-contract hardening notes for external audit onboarding.
 - [HARDENING.md](security/HARDENING.md) — invariant suites, Slither config, gas/storage gates, manual verification checklist
 
 ## research/
-Whitepaper, patent draft, performance and archived analyses.
-- [PAPER.md](research/PAPER.md), [PAPER-ko.md](research/PAPER-ko.md) — whitepaper (standard)
-- [PAPER-academic.md](research/PAPER-academic.md), [PAPER-ko-academic.md](research/PAPER-ko-academic.md) — academic long-form
+Patent draft, performance and archived analyses.
+- Whitepaper: [../developers/docs/whitepaper.mdx](../developers/docs/whitepaper.mdx) — replaces the removed `PAPER*.md` drafts (see Known follow-ups)
 - [ids-draft.md](research/ids-draft.md) — patent disclosure draft
 - [perf-proving-analysis.md](research/perf-proving-analysis.md)
 
 ---
 
 ## Known follow-ups
-Internal cross-links inside moved docs may still reference old paths (e.g. `./architecture-v2.md`). Fix in-place as you encounter them. Removed: `papers/PAPER-v1-standard.md` (obsolete Split Hash-Lock design, replaced by zkScatter).
+Internal cross-links inside moved docs may still reference old paths (e.g. `./architecture-v2.md`). Fix in-place as you encounter them. Removed: `papers/PAPER-v1-standard.md` (obsolete Split Hash-Lock design, replaced by zkScatter); `research/PAPER*.md` whitepaper drafts (described the deprecated monolithic `settle.circom` path — superseded by [../developers/docs/whitepaper.mdx](../developers/docs/whitepaper.mdx); remaining references were retargeted to the whitepaper, and `research/ids-draft.md` keeps plain-text provenance citations to the removed drafts).

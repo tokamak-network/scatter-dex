@@ -121,7 +121,8 @@ User                          PrivateSettlement          CancelVerifier         
  │                                  │                          │                        │
  │ tx: cancelPrivate(proof, signals)                            │                        │
  ├─────────────────────────────────▶│                          │                        │
- │                                  │ submitter == msg.sender 확인                       │
+ │                                  │ newCommitment != 0 확인 (잔액 brick 방지)           │
+ │                                  │ msg.sender 를 공개 신호 [4](submitter) 로 바인딩    │
  │                                  │ nullifiers[oldNull]?=false │                        │
  │                                  │ nonceNullifiers[oldNonce]?=false                   │
  │                                  ├─verifyProof─────────────▶│                        │
@@ -157,8 +158,10 @@ User                          PrivateSettlement          CancelVerifier         
   │   ├─ (반대편 동일)                        │
   │   ├─ pool.insertCommitment(maker.newComm)│
   │   ├─ pool.transferToSettlement           │
-  │   ├─ FeeVault.deposit / direct transfer  │
-  │   └─ claimsGroups[rootM] = {locked,0,tkn}│
+  │   ├─ pool.transferFee → FeeVault.deposit │
+  │   │   (FeeVault 미설정 시 릴레이어 직접) │
+  │   └─ claimsGroups[rootM] =               │
+  │        {locked, 0, token, tier}          │
   └──────────┬──────────────────────────────┘
              ▼
   ┌─────────────────────────────────────────┐
@@ -176,9 +179,9 @@ User                          PrivateSettlement          CancelVerifier         
        ┌──────────────────────────┬──────────────────────┼────────────────────────┐
        │                          │                      │                        │
        ▼                          ▼                      ▼                        ▼
-  authorize                 withdraw              settle (legacy)             cancel
-  + settleAuth              pool.withdraw         settlePrivate               cancelPrivate
-       │                          │                      │                        │
+  authorize                 withdraw              authorize 단독             cancel
+  + settleAuth              pool.withdraw         settleWithDex /            cancelPrivate
+       │                          │               scatterDirectAuth              │
        │ (escrow+nonce null burn) │ (escrow null burn)   │ (escrow+nonce burn)    │ (escrow+nonce burn)
        ▼                          ▼                      ▼                        ▼
   ┌──────────────┐        ┌──────────────┐      ┌──────────────┐        ┌───────────────┐

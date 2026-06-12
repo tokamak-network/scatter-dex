@@ -1,8 +1,13 @@
 # Pay Wizard — Categories & Per-Row Claim Time
 
 Date: 2026-05-10
-Branch: `feat/wizard-categories-and-per-row-claim`
-Status: Design — implementation deferred to next session
+Branch: `feat/wizard-categories-and-per-row-claim` (merged)
+Status: **부분 구현** — 카테고리 rename(§2)은 구현 완료
+(`_categories.ts`, `BuildRunRecordInput.categoryId`; wizardDrafts 의
+`templateId` 키는 의도적으로 유지). **Per-row claim time(§3)은 미구현**
+— SDK 인프라는 준비됨(`RecipientRow.claimFrom`,
+`packages/sdk/src/storage/runs.ts`)이나 위자드 UI(per-row 컬럼·토글·
+Review 표시)는 아직 단일 `claimFrom` 입력만 노출.
 
 ## 1. Why
 

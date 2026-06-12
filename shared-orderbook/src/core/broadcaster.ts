@@ -6,10 +6,8 @@ export type { BroadcastEvent } from "@scatter-dex/types";
 
 /**
  * WebSocket broadcaster — pushes real-time events to connected relayers.
- *
- * Steam analogy: when a new item is listed on CSGOFloat, all watching
- * bots receive a real-time notification. Same here — relayers subscribe
- * and receive new order summaries as they arrive.
+ * Relayers subscribe and receive new order summaries as they arrive,
+ * so local matching can react without polling.
  */
 export class OrderBroadcaster {
   private wss: WebSocketServer | null = null;

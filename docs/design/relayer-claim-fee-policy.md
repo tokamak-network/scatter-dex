@@ -154,7 +154,7 @@ Each step is independent: B3 alone gives on-chain policy without circuit change;
 - Funds step: query selected relayer's `/api/info`, read `claim_fees[tokenSymbol]`.
 - Compute:
   ```
-  serviceFee   = sellAmount × bps / 10000
+  serviceFee   = lockedAmount × bps / 10000   // lockedAmount = 수령액 합(required); 구현 apps/pay/app/_lib/payoutFees.ts
   claimReserve = N × claim_fees[token]
   relayerFee   = serviceFee + claimReserve
   // The on-chain check is `fee × 10000 ≤ sellAmount × maxFee`,

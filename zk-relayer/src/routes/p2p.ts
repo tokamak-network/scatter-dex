@@ -21,9 +21,8 @@ import type {
  *
  * When the shared orderbook server is down, relayers fall back to P2P mode:
  * they POST order summaries directly to each other's /api/p2p/orders endpoint.
- *
- * Steam analogy: two Steam bots can trade directly via Trade Offers without
- * needing the marketplace site to be online.
+ * The bulletin board is a discovery convenience, not a dependency of
+ * settlement — trade offers are always exchanged directly between relayers.
  */
 export function createP2PRoutes(
   onRemoteOrder: (order: OrderSummary) => void,

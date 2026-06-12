@@ -10,8 +10,8 @@ state alone.
 | Deposit to CommitmentPool | depositor EOA, token, amount, commitment hash, timestamp | future settlement counterparties, future claim recipients | `CommitmentInserted` (+ ERC-20 `Transfer`) |
 | Withdraw from CommitmentPool | recipient EOA, token, amount, nullifier, timestamp | provenance chain inside the pool | `Withdrawal` (+ ERC-20 `Transfer`) |
 | settleAuth (OTC match) | relayer (msg.sender), claimsRoot, both nullifiers, both new commitments, fee routing, timestamp | which depositor produced each side, per-recipient amount detail inside the claimsRoot | `PrivateSettledAuth` |
-| scatterDirectAuth (1:N) | issuer/relayer, claimsRoot, total locked, fee, timestamp | per-recipient amount detail until each recipient claims | `PrivateScatterDirectAuth` |
-| settleWithDex (asset conversion) | relayer, external router address, AMM swap events on the router itself, claimsRoot, total locked, timestamp | per-recipient amount detail | `PrivateSettledDex` |
+| scatterDirectAuth (1:N) | issuer/relayer, claimsRoot, total locked, fee, timestamp | per-recipient amount detail until each recipient claims | `ScatterDirectAuthSettled` |
+| settleWithDex (asset conversion) | relayer, external router address, AMM swap events on the router itself, claimsRoot, total locked, timestamp | per-recipient amount detail | `SettledWithDex` |
 | claimWithProof | recipient EOA, token, amount, claim nullifier, claimsRoot, timestamp | which leaf index inside the claimsRoot, other unclaimed leaves of the same root | `PrivateClaim` |
 | claimWithProofBatch | up to 20 (recipient, amount, token, nullifier) tuples plus the same metadata as claimWithProof | same as claimWithProof | `PrivateClaim` × N |
 | cancelPrivate (commitment rotation) | submitter EOA, escrow nullifier, nonce nullifier, new commitment hash, timestamp | the user's identity beyond the submitter EOA | `PrivateCancel` |

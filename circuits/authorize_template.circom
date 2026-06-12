@@ -32,6 +32,10 @@ include "./tags.circom";
 //    - totalLocked             sum of claim amounts (what this user receives)
 //    - relayer                 relayer address bound to the proof
 //    - orderHash               EdDSA-signed order hash
+//    - pubKeyBind              Poseidon(pubKeyAx, pubKeyAy, nullifier) —
+//                              compliance binding (§10 below). Declared as a
+//                              circuit *output*, so it sorts FIRST (index 0)
+//                              in the verifier's public-signal array.
 //
 //  ── pubkey binding & the deliberate absence of pubKeyHash ──
 //
@@ -82,8 +86,8 @@ include "./tags.circom";
 //  (withdraw/authorize/cancel/claim) rely on the invariant that every
 //  commitment in the merkle tree was produced by a well-formed pubkey.
 //
-//  See: project_half_proof_design.md for the full context on how this
-//  folds into the trustless settlement flow.
+//  See: docs/design/circuit-split/design.md for the full context on how
+//  this folds into the trustless settlement flow.
 // ════════════════════════════════════════════════════════════════════
 
 // ── Poseidon Merkle membership proof ──
@@ -225,8 +229,9 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  The real reason is headroom for in-circuit `LessEqThan(252)`
     //  range comparisons on price products — any path that reuses this
     //  tree (settleAuth, settleWithDex, scatterDirectAuth) must refuse
-    //  the same set of "too large" amounts. See
-    //  `docs/circuit-split/bit-width-audit.md §5` for the full analysis.
+    //  the same set of "too large" amounts. See the bit-width audit
+    //  (`docs/circuit-split/bit-width-audit.md` §5, removed in the docs
+    //  reorg f1adf118 — recover it from git history) for the full analysis.
     //
     //  Do NOT widen any of these range checks past 126 bits without
     //  re-running that audit.
@@ -306,7 +311,7 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  3. DOMAIN-SEPARATED NULLIFIERS
     //     escrow   nullifier = Poseidon(TAG_ESCROW_NULL, secret, salt)
     //     nonce    nullifier = Poseidon(TAG_NONCE_NULL,  secret, nonce)
-    //     (same tags as settle/withdraw/claim — see tags.circom)
+    //     (same tags as withdraw/claim/cancel/deposit — see tags.circom)
     // ════════════════════════════════════════
     component nullComp = Poseidon(3);
     nullComp.inputs[0] <== TAG_ESCROW_NULL();
@@ -338,7 +343,8 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //  5. NEW (RESIDUAL) COMMITMENT
     //     newBalance = balance - sellAmount
     //     newCommitment = IsZero(newBalance) ? 0
-    //                   : Poseidon(secret, sellToken, newBalance, newSalt)
+    //                   : Poseidon(TAG_COMMITMENT_V2, secret, sellToken,
+    //                              newBalance, newSalt, pubKeyAx, pubKeyAy)
     // ════════════════════════════════════════
     signal newBalance;
     newBalance <== balance - sellAmount;
@@ -509,7 +515,7 @@ template Authorize(commitTreeDepth, maxClaimsPerSide, claimsTreeDepth) {
     //     nullifier each time), so observers without the user's pubKey cannot link trades.
     //     However, a relayer who knows the user's pubKey CAN recompute
     //     pubKeyBind and link all trades by that user. This is intentional
-    //     for compliance. See docs/adr/002-pubkeybind-privacy-tradeoff.md.
+    //     for compliance. See docs/architecture/adr/002-pubkeybind-privacy-tradeoff.md.
     // ════════════════════════════════════════
     component pubKeyBindHasher = Poseidon(3);
     pubKeyBindHasher.inputs[0] <== pubKeyAx;

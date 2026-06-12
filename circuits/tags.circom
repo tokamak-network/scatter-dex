@@ -7,8 +7,8 @@ pragma circom 2.0.0;
 //  codebase prepends one of these tags as the first input so the
 //  preimage spaces are disjoint by construction. Keeping the constants
 //  in one file removes the silent-drift hazard of duplicating them
-//  across settle.circom / withdraw.circom / claim.circom / deposit.circom
-//  / authorize.circom.
+//  across withdraw.circom / claim.circom / deposit.circom /
+//  authorize.circom / cancel.circom.
 //
 //  WARNING: any change to these values is a *consensus break*. The
 //  matching off-chain helpers must be updated in lock-step:

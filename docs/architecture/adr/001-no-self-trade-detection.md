@@ -6,11 +6,11 @@
 > **Supersedes**: the earlier `settle.circom` design that exposed `pubKeyHash` as a public output and enforced `makerPubKeyHash != takerPubKeyHash` on-chain
 > **Related docs**:
 > - [../architecture-v2.md](../architecture-v2.md) §"Design decisions / D1" — the in-place rationale this ADR formalises
-> - [../circuit-split/design.md](../circuit-split/design.md) §2.2 (C5 removed) — the design that landed the change
-> - [../../circuits/authorize.circom](../../circuits/authorize.circom) — the realised primitive (see header comment, "issue #128 design correction")
-> - [../PAPER.md](../../research/PAPER.md) §6 "Privacy Guarantees", §8 "Compliance Model" — the spec-level commitment
-> - [../relayer-protocol/design.md](../relayer-protocol/design.md) §10.3 — the relayer-side threat alignment
-> - [../dispute-registry/design.md](../dispute-registry/design.md) — the off-chain accountability layer that handles regulator-facing wash-trade questions
+> - [../../design/circuit-split/design.md](../../design/circuit-split/design.md) §2.2 (C5 removed) — the design that landed the change
+> - [../../../circuits/authorize.circom](../../../circuits/authorize.circom) — the realised primitive (see header comment, "issue #128 design correction")
+> - [../../../developers/docs/whitepaper.mdx](../../../developers/docs/whitepaper.mdx) — the spec-level commitment (supersedes the removed PAPER.md §6 "Privacy Guarantees" / §8 "Compliance Model")
+> - [../../design/relayer-protocol/design.md](../../design/relayer-protocol/design.md) §10.3 — the relayer-side threat alignment
+> - [../../design/dispute-registry/design.md](../../design/dispute-registry/design.md) — the off-chain accountability layer that handles regulator-facing wash-trade questions
 
 ## Context
 
@@ -31,7 +31,7 @@ When we redesigned the prover model into the **Half-proof primitive** (`authoriz
 
 Concretely, this means:
 
-1. **`circuits/authorize.circom` exposes no per-trader-stable public output.** The 14 public signals are: `commitmentRoot`, `nullifier`, `nonceNullifier`, `newCommitment`, `sellToken`, `buyToken`, `sellAmount`, `buyAmount`, `maxFee`, `expiry`, `claimsRoot`, `totalLocked`, `relayer`, `orderHash`. None of these are tied to a specific trader identity across trades. Nullifiers are one-time use and unlinkable; the rest are trade parameters.
+1. **`circuits/authorize.circom` exposes no per-trader-stable public output.** The 15 public signals are: `pubKeyBind` (added post-ADR — `Poseidon(pubKeyAx, pubKeyAy, nullifier)`, per-trade unique so it preserves this invariant; see [ADR-002](002-pubkeybind-privacy-tradeoff.md)), `commitmentRoot`, `nullifier`, `nonceNullifier`, `newCommitment`, `sellToken`, `buyToken`, `sellAmount`, `buyAmount`, `maxFee`, `expiry`, `claimsRoot`, `totalLocked`, `relayer`, `orderHash`. None of these are tied to a specific trader identity across trades. Nullifiers are one-time use and unlinkable; the rest are trade parameters.
 2. **`PrivateSettlement.settleAuth(...)` does not compare pubkeys.** It does not even know the pubkeys — they are private inputs to each `authorize.circom` proof. The only cross-side checks are token compatibility, price compatibility, and the claims+fees cap. There is no `MakerTakerSameKey` revert. (The legacy `settlePrivate(...)` entrypoint — which previously carried the same commitment after PR #129 removed `pubKeyHash` — has since been removed entirely, so `settleAuth` is the only ZK-settlement path.)
 3. **The relayer is allowed to match a trader against themselves.** If the matching engine surfaces such a pairing, the protocol will settle it. The relayer's off-chain matching logic may filter self-matches at its own discretion (it has the user identity locally), but the protocol does not require it to.
 4. **Compliance / wash-trading concerns are handled at the dual-CA layer**, not at the protocol layer. See §"Wash-trading is a compliance question, not a settlement question" below for the rationale.

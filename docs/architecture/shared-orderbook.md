@@ -1,228 +1,244 @@
 # Shared Orderbook: Relayer-to-Relayer Order Matching Protocol
 
+> **Status**: Implemented and live (`shared-orderbook/` server +
+> `zk-relayer` integration). This document describes the **current HTTP
+> protocol**. The planned Waku gossip replacement is specced separately in
+> [relayer-protocol/design.md](../design/relayer-protocol/design.md)
+> (pre-implementation).
+>
+> The orderbook carries summaries of **authorize (Half-proof) orders**: users
+> prove their own side in the browser and hand the relayer a *proof*, never
+> secrets. See [circuit-split/design.md](../design/circuit-split/design.md).
+
 ## Motivation
 
-Currently, a maker and taker must submit orders to the **same relayer** for matching to occur. If multiple relayers operate independently, liquidity is fragmented — orders on Relayer A can't match with orders on Relayer B.
+A maker and taker must reach the **same settlement transaction** for matching
+to occur. If multiple relayers operate independently, liquidity is fragmented
+— orders on Relayer A can't match with orders on Relayer B.
 
-This design document proposes a **shared orderbook** that enables cross-relayer matching, modeled after the Steam trading bot ecosystem.
-
-## Reference: Steam Trading Bot Ecosystem
-
-Steam bots trade game items (CS2 skins, etc.) through centralized marketplaces:
-
-| Component | Steam | zkScatter (proposed) |
-|-----------|-------|---------------------|
-| Central market | CSGOFloat, Buff163 | Shared Orderbook Server |
-| Bot | Trading bot (per operator) | Relayer (per operator) |
-| Item listing | Bot registers inventory via API | Relayer posts order summary via API |
-| Matching | Market matches buyer/seller | Orderbook matches maker/taker |
-| Settlement | Steam Trade Offer | settleAuth() with ZK proofs |
-| Fee | Market takes 2-5% | FeeVault (platform fee on claim) |
-| Escrow | Steam Guard holds items | CommitmentPool holds commitments |
-
-Key insight: Steam bots don't share private inventory data with each other. They share **public listings** through a central market, and settlement happens via Steam's **Trade Offer protocol**.
+The shared orderbook enables cross-relayer matching with a strict division of
+labor: relayers share **public listings** through a central bulletin board,
+matching happens **locally on each relayer**, and settlement is coordinated
+**directly relayer-to-relayer** (the Trade Offer). Private data never enters
+the picture at any layer — even the user's *own* relayer holds only the
+user's self-generated proof, never witness data.
 
 ## Architecture
 
-### What is shared (public)
-- Token pair (e.g., WETH → USDC)
-- Amount / price
-- Order direction (buy/sell)
-- Expiry time
+### What is shared (public, on the orderbook)
+- `chainId` (network-scoped book; defaults to Sepolia when omitted)
+- Token pair (`sellToken` / `buyToken`)
+- `sellAmount` / `buyAmount` (limit price)
+- `maxFee` (bps) and `expiry`
 - Relayer address + endpoint URL
-- Order ID (nonce)
+- `id` — an **opaque 32-byte offer handle** (for authorize orders,
+  `bytes32(nullifier)`). Deliberately unlinkable to the user's EdDSA pubkey.
 
-### What stays private (per-relayer)
-- `ownerSecret`, `salt`, `balance` — commitment secrets
+### What never leaves the user's device
+- `secret`, `salt`, `balance` — commitment preimage
 - EdDSA private key
-- Claims structure (recipients, amounts, release times)
+- Claim preimages (recipients, amounts, release times)
+
+The relayer holds the user's **authorize proof + public signals**
+(`AuthorizeOrderFile`), which is sufficient to settle and insufficient to
+forge — every trade parameter is bound by the user's EdDSA-signed `orderHash`
+inside the proof.
 
 ### Flow
 
 ```
-┌─────────┐         ┌──────────────────┐         ┌─────────┐
-│  User A │─secret──│   Relayer X      │         │  User B │
-│ (maker) │         │                  │         │ (taker) │
-└─────────┘         │  1. Receives     │         └─────────┘
-                    │     full order   │              │
-                    │  2. Posts summary│              │
-                    │     to shared    │              │
-                    │     orderbook    │         ┌─────────┐
-                    └────────┬─────────┘         │ Relayer │
-                             │                   │    Y    │
-                             ▼                   └────┬────┘
-                    ┌──────────────────┐              │
-                    │  Shared Orderbook│◄─── 3. Posts summary
-                    │     Server       │
-                    │                  │
-                    │  4. Match found! │
-                    │     Notify X & Y │
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  5. Settlement   │
-                    │  Relayer decided │
-                    │  (X or Y)        │
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  6. Users send   │
-                    │  secrets to the  │
-                    │  settling relayer│
-                    └────────┬─────────┘
-                             │
-                    ┌────────▼─────────┐
-                    │  7. ZK proof     │
-                    │  generated +     │
-                    │  on-chain settle │
-                    └──────────────────┘
+┌─────────┐          ┌──────────────────┐          ┌─────────┐
+│  User A │──proof──▶│   Relayer X      │          │  User B │
+│ (maker) │ (browser │  (maker side)    │          │ (taker) │
+└─────────┘  proving)│                  │          └────┬────┘
+                     │ 1. Stores proof  │               │ proof
+                     │ 2. Posts summary │          ┌────▼────┐
+                     └────────┬─────────┘          │ Relayer │
+                              │                    │    Y    │
+                              ▼                    └────┬────┘
+                     ┌──────────────────┐               │
+                     │ Shared Orderbook │◀── 3. Posts summary
+                     │ (listing only —  │               │
+                     │  no matching)    │── 4. order:new broadcast
+                     └──────────────────┘               │
+                                                        ▼
+                     5. Relayer Y finds a compatible local order
+                        and sends a Trade Offer DIRECTLY to X:
+                        POST /api/p2p/authorize-trade-offer
+                        { makerNullifier, takerOrder (proof) }
+                                                        │
+                     ┌──────────────────┐               │
+                     │ 6. Relayer X     │◀──────────────┘
+                     │  validates taker │
+                     │  proof + compat, │
+                     │  calls           │
+                     │  settleAuth(m,t) │
+                     └──────────────────┘
 ```
 
 ### Step-by-step
 
-1. **User A** submits full order (with secrets) to **Relayer X**
-2. **Relayer X** posts order summary (no secrets) to **Shared Orderbook**
-3. **User B** submits full order (with secrets) to **Relayer Y**
-4. **Relayer Y** posts order summary → Shared Orderbook detects match
-5. Shared Orderbook notifies both relayers: "Match found"
-6. **Settlement relayer** is determined (see below)
-7. Both users are notified: "Send your secrets to [settling relayer]"
-8. Users send secrets to the settling relayer
-9. Settling relayer matches the two Half-proofs and calls `settleAuth()`
-10. Fee goes to FeeVault → settling relayer claims, shares with matching relayer
+1. **User A** generates an authorize proof in the browser and submits it to
+   **Relayer X** (`POST /api/authorize-orders`). No secrets are transmitted.
+2. **Relayer X** posts an order summary (no proof, no signals beyond the trade
+   parameters) to the shared orderbook.
+3. **User B** does the same on **Relayer Y**.
+4. The server broadcasts `order:new`; each relayer's
+   `AuthorizeCrossRelayerMatchService` scans its **local** orders for
+   token/price compatibility.
+5. On a hit, the local side acts as **taker** and sends a Trade Offer directly
+   to the maker's relayer: `POST /api/p2p/authorize-trade-offer` with
+   `{ makerNullifier, takerOrder }` — `takerOrder` is the taker's
+   proof file, not witness data.
+6. The **maker's relayer** re-validates the taker proof and the cross-side
+   compatibility rules, then submits `settleAuth(makerProof, takerProof)`
+   on-chain.
+7. Both relayers mark the orders matched (`POST /api/orders/:id/matched`) and
+   report the settlement to the server's stats/leaderboard endpoints.
 
-### Settlement Relayer Selection
+**No user interaction after order submission** — the relayer already holds
+everything needed to settle (the proof), and nothing it holds can be abused
+beyond settling the exact signed order.
 
-Options:
-- **First-come**: whoever claims the match first settles
-- **Maker's relayer**: maker's relayer always settles (maker has priority)
-- **Auction**: relayers bid on settlement right (lowest fee wins)
-- **Round-robin**: alternate between matched relayers
+**Races**: both relayers may fire offers simultaneously. A local lock prevents
+redundant attempts on the same order; the cross-relayer race is settled
+deterministically on-chain — the loser's transaction reverts with
+`NullifierAlreadySpent`.
 
-Recommended start: **Maker's relayer settles** (simplest, maker already trusts their relayer with secrets).
+### Settlement relayer
 
-### Fee Sharing
+**The maker's relayer settles** (the taker side initiates the offer).
+`settleAuth` itself accepts submission from either bound relayer, so the
+protocol can evolve without a contract change.
 
-When Relayer X settles a match that Relayer Y found:
-- Settlement fee goes to FeeVault credited to Relayer X
-- Relayer X owes Relayer Y a **matching fee** (off-chain or on-chain split)
+### Fees
 
-Options:
-- Off-chain settlement between relayers (simple, trust-based)
-- FeeVault split: credit both relayers proportionally (requires contract change)
-- Matching bounty: fixed reward for the relayer that found the match
+Fee handling is **trustless and per-side**: each user's
+EdDSA-signed `orderHash` binds their own relayer, and the contract routes
+`feeTokenMaker` → maker's relayer and `feeTokenTaker` → taker's relayer. A
+relayer cannot redirect the counterparty's fee.
 
-## Implementation Plan
+There is no fee settlement between relayers — on-chain both fees route by
+proof. The Trade Offer *response* does echo the taker-side fee (`takerFee`,
+`takerFeeToken`) so the taker's relayer can record revenue in its local
+`fee_history` for leaderboard parity; this is off-chain accounting only, no
+value transfer.
 
-### Phase 1: Shared Orderbook Server (MVP)
+## Server API (implemented)
 
-A REST/WebSocket server acting as a bulletin board. **The server does not perform matching** — each relayer matches locally against its own private orders (see Steam bot model above).
+A REST/WebSocket bulletin board. **The server does not perform matching** —
+each relayer matches locally against its own private orders. Writes require
+signed relayer auth headers
+(`x-relayer-address` / `x-relayer-signature` / `x-relayer-timestamp`, with
+method + path + body-hash binding and a ±300 s window); reads are
+rate-limited.
 
 ```
-POST   /api/orders              — post order summary (listing)
-GET    /api/orders              — list open orders (with filters)
-GET    /api/orders/:pair        — orders for a specific token pair
-DELETE /api/orders/:id          — cancel/expire order
-POST   /api/relayers/register   — register relayer (with heartbeat)
-POST   /api/relayers/heartbeat  — keep-alive ping
-GET    /api/relayers            — list active relayers
-GET    /api/peers               — peer list for P2P fallback
-GET    /api/stats               — orderbook statistics
-WS     /ws/orders               — real-time order/cancel broadcast
+POST   /api/orders                        — post order summary (listing)
+GET    /api/orders                        — list open orders (filters incl. chainId)
+GET    /api/orders/:pair                  — orders for a token pair
+DELETE /api/orders/:id                    — cancel (posting relayer only)
+POST   /api/orders/:id/matched            — flip own open order to matched
+POST   /api/relayers/register             — register relayer
+POST   /api/relayers/heartbeat            — keep-alive ping
+GET    /api/relayers                      — list active relayers
+GET    /api/relayers/:address             — single relayer detail
+GET    /api/peers                         — peer list for P2P fallback
+GET    /api/stats                         — orderbook statistics
+POST   /api/settlements                   — relayer reports a settlement
+GET    /api/settlements                   — settlement feed
+GET    /api/settlements/relayers/:addr/stats — per-relayer stats
+GET    /api/settlements/network/totals    — network totals
+GET    /api/settlements/leaderboard       — relayer leaderboard
+GET    /api/commitments                   — Merkle-leaf range feed (commitment indexer)
+POST   /api/kyc/submit, GET /api/kyc/status — relayer-operator KYC intake
+/api/admin/*                              — SIWE-gated admin (audit log, verify stats)
+GET    /health                            — liveness
+WS     /ws/orders                         — real-time broadcast
 ```
 
-> **Note:** The original design included `POST /api/match` for server-initiated matching. This was removed in favor of relayer-side matching — the server is a pure listing service, not a matchmaker.
-
-**Order Summary Schema:**
+**Order summary schema** (`OrderSummary` in `packages/types`):
 ```json
 {
-  "id": "0x...",  // 32-byte hex offer handle (e.g. bytes32(nullifier) for authorize orders)
-  "relayer": "0x...",
+  "id": "0x…",                  // 32-byte hex offer handle (bytes32(nullifier))
+  "chainId": 11155111,
+  "relayer": "0x…",
   "relayerUrl": "https://relayer-x.example.com",
-  "sellToken": "0x...",
-  "buyToken": "0x...",
+  "sellToken": "0x…",
+  "buyToken": "0x…",
   "sellAmount": "1000000000000000000",
   "buyAmount": "2000000000000000000",
-  "minFillAmount": "500000000000000000",
+  "minFillAmount": "0",
   "maxFee": 30,
   "expiry": 1712624000,
   "createdAt": 1712537600
 }
 ```
 
-**WebSocket Broadcast Events:**
+**WebSocket broadcast events** (`BroadcastEvent`):
 ```json
-// New order posted
 { "type": "order:new", "order": { /* OrderSummary */ } }
-
-// Order cancelled
-{ "type": "order:cancelled", "orderId": "0x...-nonce", "relayer": "0x..." }
-
-// Relayer joined
-{ "type": "relayer:registered", "relayer": "0x...", "url": "https://..." }
-
-// Relayer went offline (stale heartbeat)
-{ "type": "relayer:offline", "relayer": "0x..." }
+{ "type": "order:cancelled", "orderId": "0x…", "relayer": "0x…" }
+{ "type": "order:matched",   "orderId": "0x…", "relayer": "0x…" }
+{ "type": "order:expired",   "orderId": "0x…" }
+{ "type": "relayer:registered", "relayer": "0x…", "url": "https://…" }
+{ "type": "relayer:offline",  "relayer": "0x…" }
 ```
 
-> **Match notification is NOT sent by the server.** Relayers discover matches locally and coordinate directly via P2P (Trade Offer pattern).
+> **Match notification is NOT sent by the server.** Relayers discover matches
+> locally and coordinate directly via the P2P Trade Offer. `order:matched` is
+> an after-the-fact status broadcast from the owning relayer, so other books
+> can drop the listing (and the UI doesn't mis-render settled trades as
+> "cancelled").
 
-### Phase 2: Relayer Integration (Implemented — PR #113)
+### P2P fallback
 
-Each relayer adds:
-1. On order receipt → POST summary to shared orderbook (automatic)
-2. On remote order arrival → attempt matching against local orders
-3. On cross-relayer match → Trade Offer protocol: taker's relayer sends full order to maker's relayer
-4. Maker's relayer (settling relayer) re-verifies EdDSA, generates ZK proof, settles on-chain
+When the shared orderbook server is down, relayers exchange summaries
+directly: `POST /api/p2p/orders` on each peer (discovered earlier via
+`GET /api/peers`), same signed-header auth. The Trade Offer endpoint
+(`/api/p2p/authorize-trade-offer`) is always direct relayer-to-relayer,
+server up or not — the bulletin board is a discovery convenience, not a
+dependency of settlement.
 
-> **No user interaction required for cross-relayer settlement.** The user already delegated their secrets to their relayer on order submission. The relayer handles matching and settlement automatically — analogous to Steam bots completing trades without user intervention after the initial listing.
+## Frontend integration
 
-### Phase 3: Deployment (Implemented — PR #114, #115)
+- **Shared Orderbook Status Panel** — server health and stats (relayers /
+  orders / pairs)
+- **Relayer Card** — shared-orderbook registration state, heartbeat, shared
+  order count
+- **Global Orderbook Tab** — aggregated view across relayers (Local/Global
+  toggle)
+- **Cross badge** — marks orders matched across relayers
+- **Order submission notice** — informs users their order summary is published
+  to the shared orderbook
 
-- Docker Compose with shared orderbook server + multi-relayer support
-- Testnet deployment guide with contract deployment and configuration
-- Security documentation and production checklist
+## Future: decentralization
 
-### Phase 3.5: Frontend UX (Implemented)
-
-Frontend integration following the Steam bot marketplace model:
-
-1. **Shared Orderbook Status Panel** — server health, stats (relayers/orders/pairs)
-2. **Relayer Card Extension** — shared orderbook registration, heartbeat, shared order count
-3. **Global Orderbook Tab** — aggregated view of all orders across relayers (Local/Global toggle)
-4. **Cross-Relayer Badge** — purple "Cross" badge on orders matched across relayers
-5. **Order Submission Notice** — informs users their order is published to shared orderbook
-
-> **Design reference**: Steam trading bot marketplaces (CSGOFloat, Buff163) where bots display inventory, stats, and trade status. zkScatter relayers are the "bots" and the shared orderbook is the "marketplace".
-
-### Phase 3.6: Trustless Fee Split (Implemented)
-
-Settle circuit redesigned with dual relayer binding:
-
-1. **orderHash** now includes `relayerAddress` — user's EdDSA signature binds the order to a specific relayer
-2. **Public signals**: single `relayer` → `makerRelayer` + `takerRelayer`
-3. **Contract**: fee split based on proof — `feeTokenMaker` → `makerRelayer`, `feeTokenTaker` → `takerRelayer`
-4. **Either relayer can submit**: only makerRelayer or takerRelayer can call settleAuth (prevents DoS)
-5. **Trustless**: Relayer A cannot redirect Relayer B's fee because it's bound in User B's EdDSA signature
-
-### Phase 4: Decentralization (future)
-
-Replace central server with:
-- P2P gossip (libp2p)
-- On-chain orderbook (L2 only, due to gas)
-- Hybrid: on-chain order hashes + off-chain data
+Replace the central server with Waku v2 gossip + commit-reveal — specced in
+[relayer-protocol/design.md](../design/relayer-protocol/design.md).
 
 ## Security Considerations
 
-1. **Secret exposure**: Users delegate secrets to their relayer on order submission. Cross-relayer secret transfer (via Trade Offer) is handled automatically by relayers — no additional user approval needed. See [relayer-security.md](../operations/relayer-security.md) for details
-2. **Relayer impersonation**: Shared orderbook must verify relayer identity (signed messages or on-chain registry check)
-3. **Order front-running**: Order summaries are public — MEV bots could front-run. Mitigated by relayer binding in ZK proof
-4. **DoS**: Rate limiting on shared orderbook API
-5. **Stale orders**: Automatic expiry + heartbeat from relayers
+1. **No witness exposure**: relayers hold proofs, not secrets. A malicious
+   relayer can at worst settle the exact order the user signed (or refuse to —
+   mitigated by [cancel](../design/circuit-split/design.md) §7).
+2. **Relayer impersonation**: all writes (server and P2P) carry relayer
+   signatures with method/path/body-hash binding and a timestamp window;
+   order mutation (`DELETE`, `:id/matched`) is restricted to the posting
+   relayer.
+3. **Order front-running**: summaries are public — but settlement requires the
+   bound relayer's submission and the user-signed proof, so an observer cannot
+   steal a match; at worst they learn trade intent.
+4. **Linkability**: the offer handle is opaque (`bytes32(nullifier)`) and the
+   summary contains no per-trader-stable value, consistent with D1.
+5. **DoS**: per-route rate limiting + per-relayer write limits.
+6. **Stale orders**: automatic expiry + relayer heartbeats (`relayer:offline`
+   broadcast on stale heartbeat).
 
 ## Non-Goals (for now)
 
-- Partial fills (matching part of an order)
-- Multi-relayer settlement (splitting proof generation across relayers)
+- Partial fills (`minFillAmount` is carried in the schema but matching and
+  settlement are all-or-nothing)
+- Multi-relayer settlement (splitting one settlement across >2 relayers)
 - On-chain orderbook
 - Encrypted order summaries

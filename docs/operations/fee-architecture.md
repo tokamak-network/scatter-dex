@@ -56,7 +56,7 @@ zkScatter has two distinct fee models for its two order types.
 
 | Contract | Function | Role |
 |----------|----------|------|
-| `PrivateSettlement.sol` | `settleAuth()` lines 648-655 | Deducts fee from counterparty's sellAmount |
+| `PrivateSettlement.sol` | `settleAuth()` fee routing | Deducts fee from counterparty's sellAmount |
 | `PrivateSettlement.sol` | `_routeFeeFromPoolTo()` | Routes fee from pool → FeeVault |
 | `FeeVault.sol` | `deposit()` | Credits relayer balance |
 | `FeeVault.sol` | `claim()` | Splits: relayer + platformFee → treasury |
@@ -93,7 +93,7 @@ zkScatter has two distinct fee models for its two order types.
 
 | Contract | Function | Role |
 |----------|----------|------|
-| `PrivateSettlement.sol` | `settleWithDex()` lines 888-900 | Deducts fee, sends to treasury |
+| `PrivateSettlement.sol` | `settleWithDex()` platform-fee block | Deducts fee, sends to treasury |
 | `PrivateSettlement.sol` | `setDexPlatformFee()` | Owner sets fee rate (0-500 bps) |
 | `PrivateSettlement.sol` | `MAX_DEX_PLATFORM_FEE_BPS` | Constant: 500 (5% cap) |
 

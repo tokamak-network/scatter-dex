@@ -13,10 +13,9 @@ function indexKey(order: Pick<OrderSummary, "chainId" | "sellToken" | "buyToken"
 }
 
 /**
- * Relayer registry — models the Steam bot registration pattern.
- * Each relayer registers with the shared orderbook and maintains
- * presence via periodic heartbeats, just as Steam trading bots
- * register their inventory with marketplace sites (CSGOFloat, Buff163).
+ * Relayer registry — each relayer registers with the shared orderbook
+ * and maintains presence via periodic heartbeats; stale heartbeats mark
+ * the relayer offline and expire its listings.
  */
 export interface RelayerInfo {
   address: string;       // Ethereum address (lowercase)
@@ -28,10 +27,8 @@ export interface RelayerInfo {
 }
 
 /**
- * In-memory shared orderbook.
- *
- * Modeled after Steam marketplace aggregators:
- * - Relayers = trading bots (each operates independently with private state)
+ * In-memory shared orderbook — a pure listing service:
+ * - Relayers operate independently, each with private state
  * - OrderSummary = public listing (only trade-relevant public fields)
  * - Matching = relayer-side (each relayer finds matches against own private orders)
  * - Settlement = Trade Offer (handled by the settling relayer off-server)
@@ -56,7 +53,7 @@ export class SharedOrderbook {
 
   get size(): number { return this.orders.size; }
 
-  // ─── Relayer registry (Steam bot registration pattern) ───
+  // ─── Relayer registry ───
 
   registerRelayer(address: string, url: string, name?: string): RelayerInfo {
     // Validate URL format
@@ -99,7 +96,7 @@ export class SharedOrderbook {
     return [...this.relayers.values()].filter(r => r.lastHeartbeat >= cutoff);
   }
 
-  // ─── Order management (Steam listing pattern) ───
+  // ─── Order management ───
 
   addOrder(order: OrderSummary): StoredOrder {
     // Duplicate guard — prevent index drift on re-insertion

@@ -27,9 +27,8 @@
 
 3. **소차수 부분군 거부(small-order rejection)**
    `8·P` 를 3회 point doubling 으로 계산, `(8·P).x ≠ 0` assert.
-   → identity `(0,1)` 과 나머지 6개 small-order 키를 거부.
-
-4. **추가 안전망**: `pubKeyAx ≠ 0`.
+   → identity `(0,1)` 을 포함한 8개 small-order 점 전부를 거부.
+   (초안의 `pubKeyAx ≠ 0` 단독 검사를 PR #129 에서 완전한 부분군 검사로 대체.)
 
 ### 특수 기능
 - **EdDSA 서명 없음** — 커밋먼트 자체와 온체인 `transferFrom` 이 금액을 원자적으로 바인딩.
@@ -40,7 +39,9 @@
 ## 2. authorize.circom — Half-Proof 주문 인가 (메인)
 
 ### 목적
-한 사용자가 자신의 주문 측을 독립 증명. 두 개의 authorize 증명이 `settleAuth` 에서 결합되어 스왑을 완성.
+한 사용자가 자신의 주문 측을 독립 증명. 두 개의 authorize 증명이 `settleAuth` 에서 결합되어 스왑을 완성. (단독으로도 `settleWithDex` / `scatterDirectAuth` 에서 소비됨.)
+
+템플릿(`authorize_template.circom`) + 티어별 래퍼 구조: 티어 16(기본, 22,826 제약) / 64(56,474) / 128(101,338) — 티어 = claims 슬롯 수.
 
 ### 입력
 
@@ -58,13 +59,13 @@
 | 8 | `buyAmount` | 기대 최소 수령량 (126-bit) |
 | 9 | `maxFee` | 릴레이어 최대 수수료 bps (≤ 10000) |
 | 10 | `expiry` | 만료 unix 타임스탬프 |
-| 11 | `claimsRoot` | claims Merkle root (깊이 4) |
+| 11 | `claimsRoot` | claims Merkle root (깊이 4/6/7 — 티어별) |
 | 12 | `totalLocked` | claim 총합 (128-bit) |
 | 13 | `relayer` | 바인딩된 릴레이어 주소 |
 | 14 | `orderHash` | EdDSA 서명된 주문 해시 |
-| 15 | `pubKeyBind` *(출력)* | `P_3(pubKeyAx, pubKeyAy, nullifier)` — 컴플라이언스용 |
+| 15 | `pubKeyBind` *(출력)* | `P_3(pubKeyAx, pubKeyAy, nullifier)` — 컴플라이언스용. circom 이 출력을 앞에 배치하므로 verifier 의 pubSignals 배열에선 **index 0** |
 
-**비공개:** `secret`, `balance`, `salt`, `pubKeyAx/Ay`, Merkle path (depth=20), `nonce`, `newSalt`, EdDSA `(sigS, sigR8x, sigR8y)`, 16개 claim preimage.
+**비공개:** `secret`, `balance`, `salt`, `pubKeyAx/Ay`, Merkle path (depth=20), `nonce`, `newSalt`, EdDSA `(sigS, sigR8x, sigR8y)`, 티어 크기(16/64/128)만큼의 claim preimage.
 
 ### 제약 조건
 
@@ -116,55 +117,30 @@
 
 ---
 
-## 3. settle.circom — 모놀리식 (레거시)
-
-### 목적
-maker+taker witness 를 모두 가진 릴레이어가 단일 증명으로 스왑 전체를 증명. 아직 하위호환으로 유지.
-
-### 공개 신호 (18)
-`commitmentRoot`, `makerNullifier`, `takerNullifier`, `makerNonceNullifier`, `takerNonceNullifier`, `makerNewCommitment`, `takerNewCommitment`, `claimsRootMaker`, `claimsRootTaker`, `totalLockedMaker`, `totalLockedTaker`, `tokenMaker`, `tokenTaker`, `feeTokenMaker`, `feeTokenTaker`, `currentTimestamp`, `makerRelayer`, `takerRelayer`.
-
-### 주요 제약(13 섹션)
-1. 양측 commitment 멤버십 (v2)
-2. 양측 nullifier
-3. **토큰 호환**: `makerSellToken = tokenTaker`, `takerSellToken = tokenMaker`
-4. **가격 보호**: `makerSell × takerSell ≥ makerBuy × takerBuy`
-5. 만료: `currentTimestamp ≤ expiry`
-6. 수수료 범위/floor 검증
-7. 잔액 충분성
-8. 최소 수령
-9. **Claims+fee 캡**: `totalLockedMaker + feeMaker ≤ takerSell` (반대편 동일)
-10. Claims 검증 (토큰 강제 포함)
-11. 잔여 commitment
-12. 양측 EdDSA 서명
-13. **자기거래 방지**(레거시): 양측 pubKey 동일 또는 nullifier 동일시 거부 → v2 모델에선 완화 예정
-
-제약 규모 ~60–65K.
-
----
-
-## 4. withdraw.circom — 직접 출금
+## 3. withdraw.circom — 직접 출금
 
 **공개(7):** `root`, `nullifierHash`, `newCommitment`, `tokenHash`, `withdrawAmount`, `recipient`, `relayer`.
 
-**비공개:** commitment preimage + Merkle path + `newSalt`.
+**비공개:** commitment preimage(`pubKeyAx/Ay` 포함) + Merkle path + `newSalt` + EdDSA 서명 `(sigS, sigR8x, sigR8y)`.
 
-**제약:**
+**제약 (6,348):**
 1. v2 commitment 멤버십
 2. `nullifierHash = P_3(0, secret, salt)`
 3. `tokenHash = P_1(token)` — 토큰을 해시로 노출(원본 ERC20 주소는 회로 외부에서 비교)
-4. 잔액 범위 + change commitment
-5. `recipient * recipient`, `relayer * relayer` 바인딩
-
-서명 없음(nullifier 가 replay 방지).
+4. 잔액 범위 + change commitment (v2, 같은 pubkey)
+5. **EdDSA 게이트 (2026-05-19)**: 커밋먼트에 바인딩된 pubKey 로
+   `P_2(nullifierHash, recipient)` 에 서명 — 노트 파일 복사만으로는
+   출금 불가, 유출된 증명을 다른 recipient 로 재사용 불가
+   (`recipient` 는 서명 메시지에 직접 제약됨)
+6. `relayer * relayer` 바인딩
 
 ---
 
-## 5. claim.circom — Claims Tree 리프 청구
+## 4. claim.circom — Claims Tree 리프 청구
 
 **공개(6):** `claimsRoot`, `nullifier`, `amount`, `token`, `recipient`, `releaseTime`.
 
-**비공개:** `claimSecret`, `leafIndex`, path(depth 4).
+**비공개:** `claimSecret`, `leafIndex`, path(티어별 depth 4/6/7).
 
 **제약:**
 1. `claimLeaf = P_5(claimSecret, recipient, token, amount, releaseTime)`
@@ -172,17 +148,17 @@ maker+taker witness 를 모두 가진 릴레이어가 단일 증명으로 스왑
 3. `nullifier = P_3(2, claimSecret, leafIndex)` — claim 도메인
 4. 공개 입력 바인딩(제곱)
 
-제약 ~1.5–2K. 가장 작은 회로.
+제약: 1,555 (티어 16) / 2,041 (64) / 2,284 (128). 가장 작은 회로.
 
 ---
 
-## 6. cancel.circom — 주문 취소 & 에스크로 회전
+## 5. cancel.circom — 주문 취소 & 에스크로 회전
 
 **공개(5):** `commitmentRoot`, `oldNullifier`, `oldNonceNullifier`, `newCommitment`, `submitter`.
 
 **비공개:** old commitment preimage + path + `freshSalt` + EdDSA 서명 `(sigS, R8x, R8y)`.
 
-**제약:**
+**제약 (10,708):**
 1. 기존 commitment 멤버십.
 2. `oldNullifier = P_3(0, secret, salt)`, `oldNonceNullifier = P_3(1, secret, nonce)`.
 3. 회전 commitment = 동일 `(secret, token, balance, pubKey)` + **새 salt**.
@@ -194,7 +170,7 @@ maker+taker witness 를 모두 가진 릴레이어가 단일 증명으로 스왑
 
 ---
 
-## 7. tags.circom — 도메인 분리 상수
+## 6. tags.circom — 도메인 분리 상수
 
 ```circom
 function TAG_ESCROW_NULL()   { return 0; }

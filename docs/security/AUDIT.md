@@ -106,7 +106,7 @@ pinned-block mainnet fork.
 | Slither config | `contracts/slither.config.json` | Detector + path filters, with inline rationale |
 | Storage baselines | `contracts/storage-layouts/*.json` | One JSON per upgradeable contract |
 | Compliance write-ups | [`docs/cex-compliance/`](../cex-compliance/) | KoFIU / OFAC enforcement model |
-| Research paper | [`docs/research/PAPER.md`](../research/PAPER.md) | End-to-end protocol design + threat model |
+| Whitepaper | [`developers/docs/whitepaper.mdx`](../../developers/docs/whitepaper.mdx) | End-to-end protocol design + threat model (supersedes the removed `docs/research/PAPER.md`) |
 | CI workflows | [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), [`deep-fuzz.yml`](../../.github/workflows/deep-fuzz.yml) | What runs on every PR vs. nightly |
 
 ## Toolchain pins

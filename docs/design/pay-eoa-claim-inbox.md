@@ -39,9 +39,11 @@ see §4.
 
 ### 2.2 Nav entry
 
-`Claims` link added to the main nav between `New payout` and `Address
-book`. Stealth Inbox stays reachable through the existing `Stealth`
-dropdown.
+`Inbox` link added to the main nav after `Address book`
+(`apps/pay/app/layout.tsx`). The stealth inbox page still exists at
+`/stealth/inbox` but is no longer linked from the nav — the stealth
+surface is being removed per
+[ADR-0001](../architecture-decisions/0001-stealth-deprecation.md).
 
 ### 2.3 Auto-save trigger on `/claim`
 
@@ -64,7 +66,7 @@ discarded immediately. State: `idle` → `saving` → `saved` (or
   package hand-off is **not** accepted here — that path is stealth-only
   and lives in `/stealth/inbox`.
 - Rows show amount/token/sender label/run label/available-from + a
-  status chip (`Available` / `Locked` / `Claimed`). `Open` button jumps
+  status chip (`Claimable` / `Locked` / `Claimed`). `Open` button jumps
   to `/claim?id=saved_<leafIndex>#<base64Package>`; the existing claim
   flow takes over from there. `Remove` deletes the entry.
 - The "now" clock ticks once per minute so `Locked → Claimable` flips

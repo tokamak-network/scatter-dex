@@ -1,6 +1,6 @@
 # Commitment-history indexer (server-served Merkle leaves)
 
-**Status:** proposed
+**Status:** implemented — `GET /api/commitments` (shared-orderbook commitment indexer, PR #980–#985)
 **Author:** (design)
 **Related:** `packages/sdk/src/core/pool.ts` (`loadCommitmentInsertedHistory`),
 `packages/sdk/src/react/commitmentTree.tsx`, `shared-orderbook/src/verify.ts`,
@@ -76,17 +76,17 @@ SQLite file, so the API never touches the chain.
 
 ```sql
 CREATE TABLE IF NOT EXISTS commitments (
-  chainId     INTEGER NOT NULL,
-  leafIndex   INTEGER NOT NULL,
-  commitment  TEXT    NOT NULL,   -- 0x-hex of the uint256
-  blockNumber INTEGER NOT NULL,
-  PRIMARY KEY (chainId, leafIndex)
+  chain_id     INTEGER NOT NULL,
+  leaf_index   INTEGER NOT NULL,
+  commitment   TEXT    NOT NULL,   -- 0x-hex of the uint256
+  block_number INTEGER NOT NULL,
+  PRIMARY KEY (chain_id, leaf_index)
 );
 
 -- one row per chain: how far the indexer has scanned
 CREATE TABLE IF NOT EXISTS commitment_cursor (
-  chainId        INTEGER PRIMARY KEY,
-  lastScanBlock  INTEGER NOT NULL
+  chain_id         INTEGER PRIMARY KEY,
+  last_scan_block  INTEGER NOT NULL
 );
 ```
 
@@ -109,12 +109,12 @@ cursor resume and aids debugging.
 All access uses better-sqlite3 **prepared statements with bound params** — never
 string-interpolate `chainId` / `fromLeaf` / `limit`.
 
-DB methods to add:
-- `upsertCommitments(rows: {chainId, leafIndex, commitment, blockNumber}[])`
-  (single transaction, `INSERT … ON CONFLICT(chainId,leafIndex) DO UPDATE`).
-- `listCommitments(chainId, fromLeaf, limit)` → ordered by `leafIndex ASC`.
+DB methods (구현):
+- `upsertCommitments(chainId, rows: CommitmentLeaf[])`
+  (single transaction, `INSERT … ON CONFLICT(chain_id, leaf_index) DO UPDATE`).
+- `listCommitments(chainId, fromLeaf, limit)` → ordered by `leaf_index ASC`.
 - `getCommitmentCursor(chainId)` / `setCommitmentCursor(chainId, block)`.
-- `maxCommitmentLeaf(chainId)` → for the response's `total`.
+- `commitmentNextIndex(chainId)` → for the response's `total`.
 
 ## Indexer loop (`shared-orderbook/src/core/commitment-indexer.ts`)
 
@@ -131,18 +131,14 @@ Per pass, per chain:
 4. `upsertCommitments(rows)` then `setCommitmentCursor(chainId, end)` **after
    each window** (so a crash mid-backfill resumes, not restarts).
 
-**Backfill speed (optimization).** Because the PK is `(chainId, leafIndex)`,
-upserts are **order-independent and idempotent**, so the *initial* backfill may
-run windows with **bounded concurrency** (mirror the verifier's `CONCURRENCY =
-8`) to cut first-sync wall-clock. The cursor must then advance to the lowest
-*contiguous* completed window (don't jump the cursor past a still-in-flight
-gap). Steady-state tail scanning stays sequential and tiny.
+**Backfill speed.** 구현은 정확성을 위해 **순차 윈도우 스캔**이다 (동시
+백필 최적화는 미적용 — PK가 `(chain_id, leaf_index)` 라 멱등이므로 필요해지면
+verifier 의 `CONCURRENCY = 8` 패턴을 가져올 수 있음). 윈도우마다 커서를
+전진시켜 중단 시 재개된다.
 
-**Reorg.** `blockSafetyMargin` keeps the cursor a few confirmations behind head.
-A reorg that *shrinks* the leaf set could leave stale high-`leafIndex` rows; if
-a pass sees the on-chain leaf count (`pool.nextIndex()` / event tail) below the
-stored max, prune rows above it. The client-side root check (below) is the
-backstop regardless.
+**Reorg.** `blockSafetyMargin` 이 커서를 head 보다 몇 컨펌 뒤에 유지하는
+것이 유일한 방어다 — 줄어든 리프 세트에 대한 **prune 로직은 구현돼 있지
+않다**. 클라이언트 측 루트 검증(아래)이 최종 백스톱이다.
 
 Config mirrors `verify.ts`'s `CHAINS` JSON, with two new per-chain fields:
 
@@ -222,8 +218,9 @@ paths:
 > before `ready`:
 > 1. **`pool.isKnownRoot(localRoot)` must be `true`** — catches a *substituted*
 >    commitment value (the resulting root isn't any root the pool ever had).
-> 2. **`localLeafCount >= pool.nextIndex() − margin`** — catches a *truncated
->    tail*. `margin` is a few leaves to tolerate inserts landing mid-scan.
+> 2. **`localLeafCount >= pool.nextIndex()`** — catches a *truncated tail*.
+>    구현은 margin 없는 정확 비교이며, PR #996 에서 이 검사를 best-effort
+>    로 완화(노드가 `nextIndex` 읽기에 실패해도 root 검사만으로 진행).
 >
 > On failure from the server path → **fall back to `getLogs`** and re-check; if
 > `getLogs` also fails, stay `not-ready` and surface the divergence.
