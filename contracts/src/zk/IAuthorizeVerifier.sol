@@ -26,10 +26,15 @@ pragma solidity ^0.8.28;
 ///   [13] relayer          uint160 packed into uint256 — relayer bound in proof
 ///   [14] orderHash        bytes32 — Poseidon hash over the EdDSA-signed order parameters
 ///
-/// The current `circuits/authorize.circom` uses `commitTreeDepth = 20`,
-/// `maxClaimsPerSide = 16`, `claimsTreeDepth = 4`. If those parameters
-/// change, the deployed `AuthorizeVerifier` must be regenerated and
-/// re-pointed via `PrivateSettlement.setAuthorizeVerifier(...)`.
+/// The authorize circuit ships in tiers keyed by max claims per side —
+/// tier 16 (`authorize.circom`, `claimsTreeDepth = 4`), tier 64
+/// (`authorize_64.circom`, depth 6), tier 128 (`authorize_128.circom`,
+/// depth 7) — all sharing `commitTreeDepth = 20` and this same 15-signal
+/// ABI (the claims set is hashed into `claimsRoot`, so the tier never
+/// reaches the verifier interface). Each tier has its own Groth16
+/// verifier deployment, registered via
+/// `PrivateSettlement.setAuthorizeVerifier(tier, addr)`; regenerating a
+/// circuit means re-pointing that tier's entry.
 ///
 /// See `docs/design/circuit-split/design.md` for the architectural rationale
 /// and the bit-width audit (`docs/circuit-split/bit-width-audit.md` §5,
