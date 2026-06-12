@@ -126,9 +126,10 @@ export async function getMerkleProofWithFallback(
 }
 
 /** Backoff (ms) before a `refresh()`-driven re-hydrate may re-run, given
- *  the consecutive-failure streak: 0.5s after the 1st failure, doubling to
- *  a 30s ceiling. Streak 0 (healthy) yields 0.5s, which only debounces
- *  bursts. Exported for unit tests. */
+ *  the consecutive-failure streak. Streak 0 (healthy, no failures yet)
+ *  yields 0.5s — only enough to debounce bursts. Each subsequent failure
+ *  doubles it: streak 1 → 1s, streak 2 → 2s, … up to a 30s ceiling
+ *  (reached at streak 6). Exported for unit tests. */
 export function rehydrateBackoffMs(failStreak: number): number {
   return Math.min(30_000, 500 * 2 ** failStreak);
 }
@@ -385,23 +386,39 @@ export function CommitmentTreeProvider({
     };
   }, [poolAddress, fromBlock, serverUrl, rpcProvider, refreshNonce]);
 
-  // Clear any pending backoff retry on unmount.
-  useEffect(
-    () => () => {
-      if (retryTimerRef.current != null) clearTimeout(retryTimerRef.current);
-    },
-    [],
-  );
+  // Reset backoff and cancel any pending retry whenever the hydrate
+  // context changes (or on unmount). A timer scheduled for the old
+  // pool/provider must not fire against the new one — the hydrate effect
+  // re-runs on these same deps, so that retry is redundant anyway — and
+  // the fresh context deserves a clean failure streak. `refreshNonce` is
+  // deliberately absent: a refresh()-driven retry must NOT reset the
+  // streak, or the backoff could never grow.
+  useEffect(() => {
+    failStreakRef.current = 0;
+    return () => {
+      if (retryTimerRef.current != null) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [poolAddress, fromBlock, serverUrl, rpcProvider]);
 
   const refresh = useCallback(() => {
-    // Exponential backoff keyed on the consecutive-failure streak:
-    // 0.5s after the 1st failure, doubling to a 30s ceiling. A healthy
-    // tree (streak 0) only debounces bursts within 0.5s — a deposit that
-    // just confirmed still re-hydrates promptly. Multiple refresh() calls
-    // inside the window coalesce into one pending timer.
+    // Exponential backoff keyed on the consecutive-failure streak (streak
+    // 0 = healthy = 0.5s, doubling to a 30s ceiling). A healthy tree only
+    // debounces bursts within 0.5s — a deposit that just confirmed still
+    // re-hydrates promptly. Multiple refresh() calls inside the window
+    // coalesce into one pending timer.
     const backoffMs = rehydrateBackoffMs(failStreakRef.current);
     const waited = Date.now() - lastAttemptRef.current;
     if (waited >= backoffMs) {
+      // The window has already elapsed — re-hydrate now and cancel any
+      // timer left pending from an earlier within-window call, so it
+      // can't fire a second, redundant hydrate.
+      if (retryTimerRef.current != null) {
+        clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
       setRefreshNonce((n) => n + 1);
     } else if (retryTimerRef.current == null) {
       retryTimerRef.current = setTimeout(() => {
