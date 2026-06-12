@@ -26,7 +26,7 @@ user's self-generated proof, never witness data.
 ## Architecture
 
 ### What is shared (public, on the orderbook)
-- `chainId` (network-scoped book; defaults to Sepolia for legacy posts)
+- `chainId` (network-scoped book; defaults to Sepolia when omitted)
 - Token pair (`sellToken` / `buyToken`)
 - `sellAmount` / `buyAmount` (limit price)
 - `maxFee` (bps) and `expiry`
@@ -107,23 +107,22 @@ deterministically on-chain — the loser's transaction reverts with
 
 ### Settlement relayer
 
-**The maker's relayer settles** (the taker side initiates the offer). This was
-chosen over first-come / auction / round-robin alternatives for simplicity;
+**The maker's relayer settles** (the taker side initiates the offer).
 `settleAuth` itself accepts submission from either bound relayer, so the
 protocol can evolve without a contract change.
 
 ### Fees
 
-Fee handling is **trustless and per-side** (Phase 3.6, see below): each user's
+Fee handling is **trustless and per-side**: each user's
 EdDSA-signed `orderHash` binds their own relayer, and the contract routes
 `feeTokenMaker` → maker's relayer and `feeTokenTaker` → taker's relayer. A
 relayer cannot redirect the counterparty's fee.
 
-The earlier idea of an off-chain "matching fee" owed between relayers is
-**dead** — on-chain both fees route by proof. The Trade Offer *response* does
-echo the taker-side fee (`takerFee`, `takerFeeToken`) so the taker's relayer
-can record revenue in its local `fee_history` for leaderboard parity; this is
-off-chain accounting only, no value transfer.
+There is no fee settlement between relayers — on-chain both fees route by
+proof. The Trade Offer *response* does echo the taker-side fee (`takerFee`,
+`takerFeeToken`) so the taker's relayer can record revenue in its local
+`fee_history` for leaderboard parity; this is off-chain accounting only, no
+value transfer.
 
 ## Server API (implemented)
 
@@ -201,41 +200,28 @@ directly: `POST /api/p2p/orders` on each peer (discovered earlier via
 server up or not — the bulletin board is a discovery convenience, not a
 dependency of settlement.
 
-## Rollout history
+## Frontend integration
 
-- **Phase 1 — server MVP**: listing service, registration, heartbeat, WS.
-- **Phase 2 — relayer integration** (PR #113): auto-post on receipt, local
-  matching on remote arrival, direct Trade Offer, maker-relayer settlement.
-- **Phase 3 — deployment** (PR #114, #115): Docker Compose, testnet guide,
-  security checklist.
-- **Phase 3.5 — frontend UX**: status panel, relayer-card orderbook state,
-  Local/Global orderbook toggle, "Cross" badge on cross-relayer matches,
-  submission notice.
-- **Phase 3.6 — trustless fee split**: `orderHash` binds the user's relayer;
-  public signals carry one `relayer` per side; the contract routes each side's
-  fee to that side's relayer; only a bound relayer can submit.
-- **Half-proof migration**: orderbook entries switched to authorize-order
-  summaries keyed by offer handle; the witness-carrying `PrivateOrder` Trade
-  Offer was retired (tracker #29).
-- **Later additions**: per-network books (`chainId`), settlement
-  reporting/leaderboard, commitment-indexer feed (`GET /api/commitments`),
-  relayer KYC intake, SIWE admin surface.
+- **Shared Orderbook Status Panel** — server health and stats (relayers /
+  orders / pairs)
+- **Relayer Card** — shared-orderbook registration state, heartbeat, shared
+  order count
+- **Global Orderbook Tab** — aggregated view across relayers (Local/Global
+  toggle)
+- **Cross badge** — marks orders matched across relayers
+- **Order submission notice** — informs users their order summary is published
+  to the shared orderbook
 
-### Phase 4: Decentralization (future)
+## Future: decentralization
 
 Replace the central server with Waku v2 gossip + commit-reveal — specced in
-[relayer-protocol/design.md](../design/relayer-protocol/design.md). The
-on-chain-orderbook and libp2p alternatives mentioned in earlier drafts were
-folded into that design.
+[relayer-protocol/design.md](../design/relayer-protocol/design.md).
 
 ## Security Considerations
 
 1. **No witness exposure**: relayers hold proofs, not secrets. A malicious
    relayer can at worst settle the exact order the user signed (or refuse to —
-   mitigated by [cancel](../design/circuit-split/design.md) §7). The legacy
-   custodial threat model in
-   [relayer-security.md](../operations/relayer-security.md) §1–§3 no longer
-   applies to this path.
+   mitigated by [cancel](../design/circuit-split/design.md) §7).
 2. **Relayer impersonation**: all writes (server and P2P) carry relayer
    signatures with method/path/body-hash binding and a timestamp window;
    order mutation (`DELETE`, `:id/matched`) is restricted to the posting
