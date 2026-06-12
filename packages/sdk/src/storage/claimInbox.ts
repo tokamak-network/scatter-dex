@@ -193,3 +193,34 @@ export async function removeClaimInboxEntry(id: string): Promise<void> {
     await writeInbox(entries.filter((e) => e.id !== id));
   });
 }
+
+/** Inbox entries bucketed by the sender-provided run title. Link-saved
+ *  claims carry `runLabel` inside the encoded package, so they fold
+ *  into the same buckets as auto-saved ones; packages without a title
+ *  share one untitled bucket (`label === null` — render it with the
+ *  same "Private payout" fallback the row copy uses). Shared by Pay's
+ *  /inbox and Pro's /claims so the two stay in lock-step. */
+export interface ClaimInboxGroup {
+  key: string;
+  label: string | null;
+  entries: ClaimInboxEntry[];
+}
+
+export function groupClaimInbox(entries: ClaimInboxEntry[]): ClaimInboxGroup[] {
+  const byKey = new Map<string, ClaimInboxGroup>();
+  for (const e of entries) {
+    const label = e.pkg.runLabel?.trim() || null;
+    // Prefix titled keys so a literal run title can never collide
+    // with the untitled bucket's sentinel key.
+    const key = label === null ? "untitled" : `t:${label}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = { key, label, entries: [] };
+      byKey.set(key, g);
+    }
+    g.entries.push(e);
+  }
+  // Callers pass entries sorted newest-first, so first-appearance
+  // order ranks groups by their most recent claim — no extra sort.
+  return [...byKey.values()];
+}
