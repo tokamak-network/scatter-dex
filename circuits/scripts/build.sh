@@ -71,13 +71,17 @@ required_ptau() {
 # is also skipped when byte-identical).
 export_verifier_artifacts() {
   local zkey="$1" circuit="$2" verifier_name="$3"
-  if [ ! -f "$BUILD/${circuit}_vkey.json" ] || [ "$zkey" -nt "$BUILD/${circuit}_vkey.json" ]; then
+  # -s (not -f): an interrupted run can leave 0-byte outputs that would
+  # otherwise be trusted forever.
+  if [ ! -s "$BUILD/${circuit}_vkey.json" ] || [ "$zkey" -nt "$BUILD/${circuit}_vkey.json" ]; then
     $SNARKJS zkey export verificationkey "$zkey" "$BUILD/${circuit}_vkey.json"
   fi
-  if [ ! -f "$BUILD/${verifier_name}.sol" ] || [ "$zkey" -nt "$BUILD/${verifier_name}.sol" ]; then
+  if [ ! -s "$BUILD/${verifier_name}.sol" ] || [ "$zkey" -nt "$BUILD/${verifier_name}.sol" ]; then
     $SNARKJS zkey export solidityverifier "$zkey" "$BUILD/${verifier_name}.sol"
   fi
-  if ! cmp -s "$BUILD/${verifier_name}.sol" "../contracts/src/zk/${verifier_name}.sol"; then
+  # 2>/dev/null: a missing destination (clean checkout — generated
+  # verifiers are gitignored) is the expected first-run case, not noise.
+  if ! cmp -s "$BUILD/${verifier_name}.sol" "../contracts/src/zk/${verifier_name}.sol" 2>/dev/null; then
     cp "$BUILD/${verifier_name}.sol" "../contracts/src/zk/${verifier_name}.sol"
     echo "  Copied to contracts/src/zk/${verifier_name}.sol"
   fi
@@ -127,18 +131,30 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
   ZKEY="$BUILD/${CIRCUIT}_final.zkey"
   echo ""
 
-  if [ -f "$ZKEY" ] && [ "$FORCE_CIRCUIT_SETUP" != "1" ]; then
+  if [ -s "$ZKEY" ] && [ "$FORCE_CIRCUIT_SETUP" != "1" ]; then
     echo "─── Reusing circuit: ${CIRCUIT} (zkey exists; FORCE_CIRCUIT_SETUP=1 to regenerate) ───"
-    # Reuse assumes the circuit source is unchanged: only compile when
-    # outputs are missing (recompiling over a kept zkey could pair a
-    # newer wasm with an older proving key), and warn when a .circom
-    # file is newer than the kept zkey so a real circuit change isn't
-    # silently proven against a stale key.
-    if [ -n "$(find . -name '*.circom' -newer "$ZKEY" -not -path './node_modules/*' 2>/dev/null | head -1)" ]; then
-      echo "  WARNING: a .circom source is newer than the kept zkey — if the"
+    # Reuse assumes the circuit source is unchanged. The scan covers all
+    # .circom files (not just this circuit's entrypoint) because tier
+    # wrappers share template bodies — a template edit invalidates every
+    # wrapper's zkey. Warn so a real circuit change isn't silently
+    # proven against a stale key.
+    STALE_SRC="$(find . -name '*.circom' -newer "$ZKEY" -not -path './node_modules/*' 2>/dev/null | head -1)"
+    if [ -n "$STALE_SRC" ]; then
+      echo "  WARNING: ${STALE_SRC#./} is newer than the kept zkey — if the"
       echo "           circuit logic changed, rerun with FORCE_CIRCUIT_SETUP=1."
     fi
-    if [ ! -f "$BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm" ] || [ ! -f "$BUILD/${CIRCUIT}.r1cs" ]; then
+    # Only compile when outputs are missing/empty — recompiling over a
+    # kept zkey could pair a newer wasm with an older proving key. If a
+    # source is also newer than the zkey, refuse rather than mint that
+    # mismatched pair.
+    if [ ! -s "$BUILD/${CIRCUIT}_js/${CIRCUIT}.wasm" ] || [ ! -s "$BUILD/${CIRCUIT}.r1cs" ]; then
+      if [ -n "$STALE_SRC" ]; then
+        echo "  ERROR: wasm/r1cs are missing and ${STALE_SRC#./} is newer than the"
+        echo "         kept zkey — compiling now could pair a changed circuit with"
+        echo "         the old proving key. Rerun with FORCE_CIRCUIT_SETUP=1 (new"
+        echo "         setup) or restore the sources that match the zkey."
+        exit 1
+      fi
       echo "  Compiling ${CIRCUIT}.circom (missing wasm/r1cs)..."
       mkdir -p "$BUILD"
       circom "${CIRCUIT}.circom" --r1cs --wasm --sym -o "$BUILD/"
@@ -149,7 +165,7 @@ for CIRCUIT in "${CIRCUITS[@]}"; do
   fi
 
   echo "─── Building circuit: ${CIRCUIT} ───"
-  if [ -f "$ZKEY" ]; then
+  if [ "$FORCE_CIRCUIT_SETUP" = "1" ] && [ -f "$ZKEY" ]; then
     echo "  WARNING: FORCE_CIRCUIT_SETUP=1 — overwriting the existing zkey."
     echo "           The new set must be committed/distributed and the"
     echo "           on-chain verifiers redeployed, or proofs will revert"
