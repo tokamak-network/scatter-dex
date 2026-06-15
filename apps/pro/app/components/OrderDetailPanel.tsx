@@ -28,9 +28,6 @@ interface Props {
    *  has the right (e.g. order in `matching` and submitted in this
    *  session). Triggers the parent's CancelOrderModal. */
   onCancel?: () => void;
-  /** Optional — only rendered for `claimable` orders carrying a
-   *  claim payload. Triggers the parent's ClaimModal. */
-  onClaim?: () => void;
   /** Label for the header close button (default `"+ New order"`).
    *  Drawer hosts pass `"Close"` so the button reads naturally
    *  in that context. */
@@ -46,7 +43,6 @@ export function OrderDetailPanel({
   order,
   onClose,
   onCancel,
-  onClaim,
   closeLabel = "+ New order",
 }: Props) {
   const { network } = useActiveNetwork();
@@ -157,14 +153,11 @@ export function OrderDetailPanel({
         <RawFieldsSection order={order} tokens={liveTokens} notes={notes} />
       )}
 
-      {(onCancel || onClaim) && (
+      {onCancel && (
         <footer className="flex justify-end gap-2 border-t border-[var(--color-border)] px-5 py-4">
-          {onCancel && (
-            <Button variant="secondary" onClick={onCancel}>
-              Cancel order
-            </Button>
-          )}
-          {onClaim && <Button onClick={onClaim}>Claim →</Button>}
+          <Button variant="secondary" onClick={onCancel}>
+            Cancel order
+          </Button>
         </footer>
       )}
     </section>
@@ -554,11 +547,12 @@ function ChangeResidualCard({
  *  Each row shows the recipient's leaf index (the slot in the
  *  order's claims tree, useful to disambiguate when two
  *  recipients share the same address), short address, amount,
- *  release time, and a derived status badge. Status comes from
- *  the parent order today (claimable / claimed / cancelled all
- *  collapse to one bit because Pro doesn't yet listen per-row).
- *  Future iteration: per-row status from PrivateClaim events
- *  keyed on the row's own nullifier. */
+ *  release time, and a derived status badge. Per-row status comes
+ *  from `order.claimedLeafIndexes` (the same set the claim modal and
+ *  the per-row claim action use) so a recipient that's already been
+ *  claimed reads "Claimed" while its siblings still read "Ready" —
+ *  the order-level status alone can't express a partial 1/2-claimed
+ *  state. */
 function RecipientsTable({
   claims,
   order,
@@ -571,13 +565,23 @@ function RecipientsTable({
   showTechnical: boolean;
 }) {
   const list = claims ?? [];
-  const perRowStatus = order.status === "claimed"
-    ? { label: "Claimed", tone: "success" as const }
-    : order.status === "cancelled"
+  const claimedSet = new Set(order.claimedLeafIndexes ?? []);
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Per-recipient status mirrors the row's own "Claim now" gate and the
+  // Claims inbox: claimed (nullifier spent) → Claimed; settled but before
+  // its releaseTime → Locked; settled and released → Ready; pre-settle →
+  // Pending. Driven by `claimedLeafIndexes` + `releaseTime`, never the
+  // order-level status alone (which can't express a partial/locked state).
+  const rowStatus = (c: NonNullable<OrderRecord["claims"]>[number]) =>
+    order.status === "cancelled"
       ? { label: "Cancelled", tone: "muted" as const }
-      : order.status === "claimable"
-        ? { label: "Ready", tone: "success" as const }
-        : { label: "Pending settle", tone: "muted" as const };
+      : claimedSet.has(c.leafIndex)
+        ? { label: "Claimed", tone: "success" as const }
+        : order.status === "claimable" || order.status === "claimed"
+          ? nowSec < Number(c.releaseTime)
+            ? { label: "Locked", tone: "muted" as const }
+            : { label: "Ready", tone: "success" as const }
+          : { label: "Pending settle", tone: "muted" as const };
   // Per-recipient share actions only make sense once the order has
   // actually settled (the claims tree is rooted on-chain). Pre-
   // settle rows still render so the operator can preview, but the
@@ -626,15 +630,20 @@ function RecipientsTable({
                 {formatWhen(Number(c.releaseTime) * 1000)}
               </td>
               <td className="px-4 py-2 text-right">
-                <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                    perRowStatus.tone === "success"
-                      ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
-                      : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"
-                  }`}
-                >
-                  {perRowStatus.label}
-                </span>
+                {(() => {
+                  const st = rowStatus(c);
+                  return (
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                        st.tone === "success"
+                          ? "bg-[var(--color-success-soft)] text-[var(--color-success)]"
+                          : "bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+                      }`}
+                    >
+                      {st.label}
+                    </span>
+                  );
+                })()}
               </td>
               <td className="px-4 py-2 text-right">
                 <ShareActions order={order} target={c} enabled={shareEnabled} />

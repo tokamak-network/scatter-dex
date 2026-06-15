@@ -13,9 +13,6 @@ interface Props {
   /** Optional — only shown when the order is in `matching` and was
    *  submitted in this session (the parent decides eligibility). */
   onCancel?: () => void;
-  /** Optional — only shown when the order is `claimable` and carries
-   *  the claim payload. */
-  onClaim?: () => void;
 }
 
 /** Right slide-out wrapper that hosts the same `OrderDetailPanel`
@@ -31,7 +28,7 @@ interface Props {
  *  shown order stays mounted through the close animation so the
  *  panel slides out with its content intact instead of popping
  *  empty mid-transition. */
-export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: Props) {
+export function OrderDetailDrawer({ order, open, onClose, onCancel }: Props) {
   const [displayed, setDisplayed] = useState<OrderRecord | null>(order);
   useEffect(() => {
     if (order) {
@@ -86,7 +83,6 @@ export function OrderDetailDrawer({ order, open, onClose, onCancel, onClaim }: P
             order={displayed}
             onClose={onClose}
             onCancel={onCancel}
-            onClaim={onClaim}
             closeLabel="Close"
           />
         </div>
