@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { shortAddr, useCuratedNetworkTokens } from "@zkscatter/sdk/react";
 import type { TokenInfo } from "@zkscatter/sdk";
 import { useOrders, type OrderRecord, type OrderStatus } from "../lib/orders";
-import { ClaimModal } from "../components/ClaimModal";
 import { CancelOrderModal } from "../components/CancelOrderModal";
 import { StatusBadge } from "../components/StatusBadge";
 import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
@@ -31,16 +30,6 @@ function isExpired(o: OrderRecord, nowMs: number): boolean {
   return Number(o.expiry) * 1000 <= nowMs;
 }
 
-/** "Claim (3/5)" for multi-recipient orders with partial progress,
- *  plain "Claim" for single-recipient (the common case). Lifted out
- *  of the JSX rather than inlined as an IIFE so the row markup stays
- *  declarative (Gemini review #845). */
-function claimButtonLabel(o: OrderRecord): string {
-  const total = o.claims?.length ?? 1;
-  if (total <= 1) return "Claim";
-  const done = o.claimedLeafIndexes?.length ?? 0;
-  return `Claim (${done}/${total})`;
-}
 
 /** Pair display is "BASE/QUOTE" (e.g. ETH/USDC). For side=sell the
  *  user sells base, gets quote; for side=buy the user sells quote,
@@ -151,7 +140,6 @@ export default function Orders() {
   }, []);
   const all = orders;
   const realIds = useMemo(() => new Set(orders.map((o) => o.id)), [orders]);
-  const [claimTarget, setClaimTarget] = useState<OrderRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<OrderRecord | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<OrderRecord | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
@@ -168,8 +156,6 @@ export default function Orders() {
   );
   const drawerCanCancel =
     liveDrawerTarget?.status === "matching" && realIds.has(liveDrawerTarget.id);
-  const drawerCanClaim =
-    liveDrawerTarget?.status === "claimable" && !!liveDrawerTarget.claim;
 
   const visible = useMemo(() => {
     if (filter === "all") return all;
@@ -313,10 +299,10 @@ export default function Orders() {
                   )}
                   {o.status === "claimable" && o.claim && (
                     <button
-                      onClick={() => setClaimTarget(o)}
+                      onClick={() => setDrawerTarget(o)}
                       className="rounded-md border border-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary)] hover:bg-[var(--color-primary-soft)]"
                     >
-                      {claimButtonLabel(o)}
+                      View
                     </button>
                   )}
                 </td>
@@ -326,11 +312,6 @@ export default function Orders() {
         </table>
       </div>
 
-      <ClaimModal
-        open={!!claimTarget}
-        order={claimTarget}
-        onClose={() => setClaimTarget(null)}
-      />
       <CancelOrderModal
         open={!!cancelTarget}
         order={cancelTarget}
@@ -344,14 +325,6 @@ export default function Orders() {
           drawerCanCancel
             ? () => {
                 if (liveDrawerTarget) setCancelTarget(liveDrawerTarget);
-                setDrawerTarget(null);
-              }
-            : undefined
-        }
-        onClaim={
-          drawerCanClaim
-            ? () => {
-                if (liveDrawerTarget) setClaimTarget(liveDrawerTarget);
                 setDrawerTarget(null);
               }
             : undefined

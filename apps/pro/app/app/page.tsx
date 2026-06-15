@@ -13,7 +13,6 @@ import { useTradeForm } from "../lib/tradeForm";
 import { OrderModal } from "../components/OrderModal";
 import { OrderDetailPanel } from "../components/OrderDetailPanel";
 import { CancelOrderModal } from "../components/CancelOrderModal";
-import { ClaimModal } from "../components/ClaimModal";
 import { MyPositionPanel } from "../components/MyPositionPanel";
 import type { OrderRecord } from "../lib/orders";
 import { PairSelector } from "../components/PairSelector";
@@ -111,7 +110,6 @@ export default function Workbench() {
   // mutate vault / orders state and two instances would step on
   // each other).
   const [cancelOrder, setCancelOrder] = useState<OrderRecord | null>(null);
-  const [claimOrder, setClaimOrder] = useState<OrderRecord | null>(null);
   // DepositModal lives at the page level so both entry points hit
   // the same instance — the left-panel "+ Deposit" button and the
   // inline empty-state CTA inside `NoteSelect`. Two modal instances
@@ -451,11 +449,6 @@ export default function Workbench() {
                   ? () => setCancelOrder(selectedOrder)
                   : undefined
               }
-              onClaim={
-                selectedOrder.status === "claimable"
-                  ? () => setClaimOrder(selectedOrder)
-                  : undefined
-              }
             />
           </div>
         ) : (
@@ -710,11 +703,6 @@ export default function Workbench() {
         open={!!cancelOrder}
         onClose={() => setCancelOrder(null)}
         order={cancelOrder}
-      />
-      <ClaimModal
-        open={!!claimOrder}
-        onClose={() => setClaimOrder(null)}
-        order={claimOrder}
       />
     </div>
   );
