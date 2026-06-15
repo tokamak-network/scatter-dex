@@ -108,9 +108,14 @@ export default function SharedOrderbookPage() {
     }
     const sellAmt = ethers.formatUnits(o.buyAmount, sellTok.decimals);
     const buyAmt = ethers.formatUnits(o.sellAmount, buyTok.decimals);
+    // `resolveToken` reads an ERC-20 view that relabels the native ETH slot
+    // to its on-chain identity "WETH". The workbench's pairs use the UI
+    // symbol "ETH" (LAUNCH_PAIRS = "ETH/USDC"), so hand off "ETH" — else
+    // `findPair("WETH/USDC")` misses and Take Order silently no-ops.
+    const pairSymbol = (s: string) => (s.toUpperCase() === "WETH" ? "ETH" : s);
     const params = new URLSearchParams({
-      sellSymbol: sellTok.symbol,
-      buySymbol: buyTok.symbol,
+      sellSymbol: pairSymbol(sellTok.symbol),
+      buySymbol: pairSymbol(buyTok.symbol),
       sellAmount: sellAmt,
       buyAmount: buyAmt,
       // Raw-wei companions so the workbench / OrderModal can bypass
