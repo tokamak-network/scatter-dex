@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Button, useToast } from "@zkscatter/ui";
 import { useCuratedNetworkTokens, useWallet } from "@zkscatter/sdk/react";
@@ -938,7 +937,6 @@ function ShareActions({
   const { tokens: liveTokens } = useCuratedNetworkTokens(network);
   const { account, readProvider, signer } = useWallet();
   const toast = useToast();
-  const router = useRouter();
   const [busy, setBusy] = useState<null | "copy" | "email" | "save" | "claim">(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -1029,6 +1027,28 @@ function ShareActions({
       toast.push({
         kind: "error",
         title: "Couldn't build claim link",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Open this recipient's claim page (`/claim?...#<package>`) — the same
+  // URL "Copy claim link" produces, but navigated to directly in a new
+  // tab so the operator can run the recipient-facing claim flow without
+  // copy-pasting. Opened in `_blank` so the order drawer stays put.
+  const onOpenClaim = async () => {
+    setBusy("copy");
+    try {
+      const pkg = await buildPkg();
+      const url = buildClaimLink(window.location.origin, order, pkg);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      console.error("[ShareActions.openClaim]", err);
+      toast.push({
+        kind: "error",
+        title: "Couldn't open claim page",
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -1236,14 +1256,8 @@ function ShareActions({
             <ShareMenuItem onClick={onSave} disabled={disabled}>
               Save to Claims inbox
             </ShareMenuItem>
-            <ShareMenuItem
-              onClick={() => {
-                setMenuOpen(false);
-                router.push("/claims");
-              }}
-              disabled={false}
-            >
-              Open Claims page
+            <ShareMenuItem onClick={onOpenClaim} disabled={disabled}>
+              Open claim page
             </ShareMenuItem>
             <ShareMenuItem onClick={onEmail} disabled={disabled}>
               Send via Gmail
