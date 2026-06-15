@@ -308,7 +308,9 @@ export default function ClaimsPage() {
             e.pkg.leafIndex,
           )
         ) {
-          await markClaimInboxEntryClaimed(e.id).catch(() => {});
+          await markClaimInboxEntryClaimed(e.id).catch((markErr) => {
+            console.warn("[Pro] mark-claimed (backstop) failed", markErr);
+          });
           await refresh();
           flashRow(e.id, "✓ Already claimed");
           return;
