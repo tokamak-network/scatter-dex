@@ -3,6 +3,7 @@ import Link from "next/link";
 import { WalletProvider } from "@zkscatter/sdk/react";
 import { ConnectWalletPill } from "./components/ConnectWalletPill";
 import { WrongChainBanner } from "./components/WrongChainBanner";
+import { CommitmentTreeHealthBanner } from "./components/CommitmentTreeHealthBanner";
 import { AppShellHeader } from "@zkscatter/ui";
 import { NetworkSwitcher } from "./components/NetworkSwitcher";
 import { IdentityPill } from "./components/IdentityPill";
@@ -82,6 +83,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                               }
                             />
                             <WrongChainBanner />
+                            <CommitmentTreeHealthBanner />
                             <main className="mx-auto max-w-6xl px-6 py-10">{children}</main>
                             <footer className="border-t border-[var(--color-border)] py-6 text-center text-xs text-[var(--color-text-subtle)]">
                               <div>Scatter Pro · Powered by zkScatter · Tokamak Network</div>
