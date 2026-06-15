@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import { Button, useToast } from "@zkscatter/ui";
 import { useCuratedNetworkTokens, useWallet } from "@zkscatter/sdk/react";
@@ -937,6 +938,7 @@ function ShareActions({
   const { tokens: liveTokens } = useCuratedNetworkTokens(network);
   const { account, readProvider, signer } = useWallet();
   const toast = useToast();
+  const router = useRouter();
   const [busy, setBusy] = useState<null | "copy" | "email" | "save" | "claim">(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -1233,6 +1235,15 @@ function ShareActions({
             </ShareMenuItem>
             <ShareMenuItem onClick={onSave} disabled={disabled}>
               Save to Claims inbox
+            </ShareMenuItem>
+            <ShareMenuItem
+              onClick={() => {
+                setMenuOpen(false);
+                router.push("/claims");
+              }}
+              disabled={false}
+            >
+              Open Claims page
             </ShareMenuItem>
             <ShareMenuItem onClick={onEmail} disabled={disabled}>
               Send via Gmail
