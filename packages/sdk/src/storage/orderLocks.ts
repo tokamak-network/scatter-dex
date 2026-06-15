@@ -15,6 +15,10 @@ interface OrderLockRow {
   noteId?: unknown;
   /** Settle deadline as a hex unix-seconds string (`WireOrder.expiryHex`). */
   expiryHex?: unknown;
+  /** Change-note commitment as a 0x-hex string (`WireOrder.changeCommitmentHex`).
+   *  Present when the order left a residual; used to flag the phantom
+   *  change note of an expired matching order as discarded. */
+  changeCommitmentHex?: unknown;
 }
 
 /** True when `expiryHex` (a hex unix-seconds string) is at/before
@@ -64,24 +68,42 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** noteIds pinned by OPEN orders across EVERY product's per-order
- *  files for (`chainId`, `accountKey`). Escrow notes and funds are
- *  shared between products (Pay, Pro), so a note funding an open order
- *  in one product must read as locked in the other — otherwise a
- *  withdraw there burns the note's nullifier and strands the order.
+/** Content-addressed note id from a commitment's 0x-hex string. Mirrors
+ *  `notes/folderAdapter` `idForCommitment` (`"c-" + commitment.toString(16)`)
+ *  — replicated here so the storage layer needn't import the notes layer.
+ *  Returns null for a non-hex string. */
+function noteIdForCommitmentHex(hex: unknown): string | null {
+  if (typeof hex !== "string" || !/^0x[0-9a-fA-F]+$/.test(hex)) return null;
+  return "c-" + BigInt(hex).toString(16);
+}
+
+export interface CrossAppNoteStates {
+  /** noteIds funding an OPEN, non-expired order — reconciled but not
+   *  directly spendable (withdrawing strands the order). */
+  lockedNoteIds: Set<string>;
+  /** noteIds of phantom CHANGE notes from `matching` orders that expired
+   *  before settling. The settleAuth never ran, so the change commitment
+   *  will never be inserted on-chain — a `leafIndex < 0` note matching one
+   *  is a ghost, not a real pending deposit, and must not inflate the
+   *  pending balance. Mirrors apps/pro noteStatus's `discarded`. */
+  discardedNoteIds: Set<string>;
+}
+
+/** Cross-product note states derived from EVERY product's per-order files
+ *  for (`chainId`, `accountKey`). Escrow notes/funds are shared between
+ *  products (Pay, Pro) but orders live in per-app files, so each product
+ *  must read the others' orders to classify a shared note correctly.
  *
- *  Files are `zkscatter-<app>-order-<chainId>-<accountKey>-<id>.json`,
- *  one `WireOrder` object each (see `apps/pro/app/lib/orders.tsx`).
- *  `accountKey` scopes to the connected wallet — another wallet's
- *  orders can't lock this wallet's notes. `excludeApp` skips the
- *  caller's own product. Per-file errors are swallowed (a corrupt or
- *  foreign file must never hide a real lock); a missing/unavailable
- *  folder yields an empty set. */
-export async function loadCrossAppLockedNoteIds(
+ *  Files are `zkscatter-<app>-order-<chainId>-<accountKey>-<id>.json`, one
+ *  `WireOrder` object each (see `apps/pro/app/lib/orders.tsx`). `accountKey`
+ *  scopes to the connected wallet. `excludeApp` skips the caller's own
+ *  product. Per-file errors are swallowed (a corrupt/foreign file must
+ *  never hide a real lock); a missing folder yields empty sets. */
+export async function loadCrossAppNoteStates(
   chainId: number,
   accountKey: string,
   opts: CrossAppLockOptions = {},
-): Promise<Set<string>> {
+): Promise<CrossAppNoteStates> {
   const list = opts.listFilesImpl ?? defaultListFiles;
   const nowMs = opts.nowMs ?? Date.now();
   const exclude = opts.excludeApp?.trim().toLowerCase();
@@ -90,7 +112,8 @@ export async function loadCrossAppLockedNoteIds(
   const re = new RegExp(
     `^zkscatter-([a-z0-9]+)-order-${chainId}-${escapeRegExp(acct)}-.+\\.json$`,
   );
-  const locked = new Set<string>();
+  const lockedNoteIds = new Set<string>();
+  const discardedNoteIds = new Set<string>();
   let entries: FolderFileEntry[];
   try {
     entries = await list((name) => {
@@ -98,7 +121,7 @@ export async function loadCrossAppLockedNoteIds(
       return !!m && m[1] !== exclude;
     });
   } catch {
-    return locked; // folder unavailable → no locks known
+    return { lockedNoteIds, discardedNoteIds }; // folder unavailable
   }
   await Promise.allSettled(
     entries.map(async (entry) => {
@@ -110,8 +133,23 @@ export async function loadCrossAppLockedNoteIds(
       }
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
       const row = parsed as OrderLockRow;
-      if (orderRowLocksNote(row, nowMs)) locked.add(row.noteId as string);
+      if (orderRowLocksNote(row, nowMs)) lockedNoteIds.add(row.noteId as string);
+      // Phantom change note: a matching order that expired before settling.
+      if (row.status === "matching" && isOrderExpiredHex(row.expiryHex, nowMs)) {
+        const id = noteIdForCommitmentHex(row.changeCommitmentHex);
+        if (id) discardedNoteIds.add(id);
+      }
     }),
   );
-  return locked;
+  return { lockedNoteIds, discardedNoteIds };
+}
+
+/** Convenience wrapper returning just the locked noteIds — for callers
+ *  (e.g. the withdraw submit guard) that don't need the discarded set. */
+export async function loadCrossAppLockedNoteIds(
+  chainId: number,
+  accountKey: string,
+  opts: CrossAppLockOptions = {},
+): Promise<Set<string>> {
+  return (await loadCrossAppNoteStates(chainId, accountKey, opts)).lockedNoteIds;
 }

@@ -4,7 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { LAUNCH_TOKENS, formatTokenLabel } from "@zkscatter/sdk";
-import { loadCrossAppLockedNoteIds } from "@zkscatter/sdk/storage";
+import { loadCrossAppNoteStates } from "@zkscatter/sdk/storage";
 import { shortTxHash } from "@zkscatter/sdk/util";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
@@ -52,13 +52,15 @@ export function PoolBalanceCard() {
   const { notes, loaded } = useVault();
   const tree = useCommitmentTree();
   const [expanded, setExpanded] = useState(false);
-  // noteIds funding an OPEN order in another product (e.g. Scatter Pro).
-  // Escrow notes are shared across products, but each keeps its orders
-  // in its own files — so without this Pay would offer Withdraw on a
-  // note already committed to a Pro order, burning the nullifier and
-  // stranding that order. Refreshed alongside the tree (and on the
-  // Refresh button) since Pay can't observe Pro's order files live.
+  // Cross-product note states derived from other products' order files
+  // (e.g. Scatter Pro). Escrow notes are shared but orders live per-app,
+  // so without this Pay would (a) offer Withdraw on a note committed to a
+  // Pro order (burning its nullifier, stranding the order) and (b) count a
+  // phantom change note from an expired Pro order as real pending funds.
+  // Refreshed on wallet change + the Refresh button (Pay can't observe
+  // Pro's order files live).
   const [lockedNoteIds, setLockedNoteIds] = useState<ReadonlySet<string>>(new Set());
+  const [discardedNoteIds, setDiscardedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [lockRefresh, setLockRefresh] = useState(0);
   const hasPending = useMemo(
     () => notes.some((n) => n.leafIndex < 0),
@@ -67,23 +69,37 @@ export function PoolBalanceCard() {
   useEffect(() => {
     if (!account || chainId == null) {
       setLockedNoteIds(new Set());
+      setDiscardedNoteIds(new Set());
       return;
     }
     let cancelled = false;
-    loadCrossAppLockedNoteIds(chainId, account)
+    loadCrossAppNoteStates(chainId, account)
       .then((s) => {
-        if (!cancelled) setLockedNoteIds(s);
+        if (cancelled) return;
+        setLockedNoteIds(s.lockedNoteIds);
+        setDiscardedNoteIds(s.discardedNoteIds);
       })
       .catch(() => {
-        if (!cancelled) setLockedNoteIds(new Set());
+        if (cancelled) return;
+        setLockedNoteIds(new Set());
+        setDiscardedNoteIds(new Set());
       });
     return () => {
       cancelled = true;
     };
-    // Locks depend only on wallet identity + manual refresh — NOT on
-    // vault `loaded` (locks live in other products' order files, not the
-    // local notes). `lockRefresh` re-fetches on the Refresh button.
+    // States depend only on wallet identity + manual refresh — NOT on
+    // vault `loaded` (orders live in other products' files, not local
+    // notes). `lockRefresh` re-fetches on the Refresh button.
   }, [account, chainId, lockRefresh]);
+  // While a lock is live, re-read every 60s so an order that crosses its
+  // expiry mid-session auto-flips the note from locked → available (and
+  // its change → discarded) without a manual Refresh — same cadence as
+  // Pro's escrow re-tick. Stops once nothing is locked.
+  useEffect(() => {
+    if (lockedNoteIds.size === 0) return;
+    const id = window.setInterval(() => setLockRefresh((n) => n + 1), 60_000);
+    return () => window.clearInterval(id);
+  }, [lockedNoteIds]);
   // Auto-poll the on-chain commitment tree while any local note is
   // still waiting on its `CommitmentInserted` event. Without this, a
   // change UTXO from a fresh settle can sit Pending until the user
@@ -126,6 +142,11 @@ export function PoolBalanceCard() {
     const notesBySymbol = new Map<string, VaultNote[]>();
     if (loaded) {
       for (const n of notes) {
+        // Phantom change note from an expired order (other product) —
+        // its commitment never lands on-chain, so it's neither balance
+        // nor real pending. Drop it entirely, mirroring Pro's hidden
+        // `discarded` notes.
+        if (discardedNoteIds.has(n.id)) continue;
         // `n.symbol` is the source of truth in the vault; the
         // whitelist key matches it for tokens we care about.
         let b = bucketBySymbol.get(n.symbol);
@@ -180,7 +201,15 @@ export function PoolBalanceCard() {
       return bv - av;
     });
     return list;
-  }, [notes, loaded, lockedNoteIds]);
+  }, [notes, loaded, lockedNoteIds, discardedNoteIds]);
+
+  // Count of phantom change notes hidden from the breakdown (parity with
+  // Pro's "N discarded · expired orders" hint), so the operator knows the
+  // note total isn't silently dropping rows.
+  const discardedCount = useMemo(
+    () => (loaded ? notes.filter((n) => discardedNoteIds.has(n.id)).length : 0),
+    [notes, loaded, discardedNoteIds],
+  );
 
   // Headline is the SPENDABLE (available) USD — locked and pending
   // funds are excluded so the operator never reads it as money they can
@@ -295,6 +324,14 @@ export function PoolBalanceCard() {
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
             Spendable now across {rows.length} whitelisted tokens. Click for
             per-token breakdown.
+            {discardedCount > 0 && (
+              <span
+                title="Change notes from orders that expired before settling. Their commitment never lands on-chain, so they're hidden from the balance."
+                className="ml-1 text-[var(--color-text-subtle)]"
+              >
+                · {discardedCount} discarded (expired orders)
+              </span>
+            )}
           </div>
         </div>
         <div className="flex gap-2">

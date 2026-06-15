@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   loadCrossAppLockedNoteIds,
+  loadCrossAppNoteStates,
   orderRowLocksNote,
   isOrderExpiredHex,
 } from "../../src/storage/orderLocks";
@@ -152,5 +153,78 @@ describe("loadCrossAppLockedNoteIds", () => {
       },
     });
     expect(locked.size).toBe(0);
+  });
+});
+
+describe("loadCrossAppNoteStates — discarded change notes", () => {
+  // idForCommitment("0x2a") === "c-2a"
+  const CHANGE = "0x2a";
+  const CHANGE_ID = "c-2a";
+
+  it("flags the change note of an EXPIRED matching order as discarded", async () => {
+    const entries = [
+      entry(f("pro", "o1"), {
+        status: "matching",
+        noteId: "c-funding",
+        expiryHex: PAST,
+        changeCommitmentHex: CHANGE,
+      }),
+    ];
+    const { lockedNoteIds, discardedNoteIds } = await loadCrossAppNoteStates(CHAIN, ACCT, {
+      nowMs: NOW,
+      listFilesImpl: lister(entries),
+    });
+    // Expired matching: funding note is recoverable (NOT locked), change is discarded.
+    expect([...lockedNoteIds]).toEqual([]);
+    expect([...discardedNoteIds]).toEqual([CHANGE_ID]);
+  });
+
+  it("does NOT discard the change of a live (non-expired) matching order", async () => {
+    const entries = [
+      entry(f("pro", "o1"), {
+        status: "matching",
+        noteId: "c-funding",
+        expiryHex: FUTURE,
+        changeCommitmentHex: CHANGE,
+      }),
+    ];
+    const { lockedNoteIds, discardedNoteIds } = await loadCrossAppNoteStates(CHAIN, ACCT, {
+      nowMs: NOW,
+      listFilesImpl: lister(entries),
+    });
+    expect([...lockedNoteIds]).toEqual(["c-funding"]); // still locked
+    expect(discardedNoteIds.size).toBe(0); // change is legit pending, not discarded
+  });
+
+  it("does NOT discard a claimable order's change (only matching expires to a phantom)", async () => {
+    const entries = [
+      entry(f("pro", "o1"), {
+        status: "claimable",
+        noteId: "c-funding",
+        expiryHex: PAST,
+        changeCommitmentHex: CHANGE,
+      }),
+    ];
+    const { discardedNoteIds } = await loadCrossAppNoteStates(CHAIN, ACCT, {
+      nowMs: NOW,
+      listFilesImpl: lister(entries),
+    });
+    expect(discardedNoteIds.size).toBe(0);
+  });
+
+  it("ignores a malformed changeCommitmentHex", async () => {
+    const entries = [
+      entry(f("pro", "o1"), {
+        status: "matching",
+        noteId: "c-funding",
+        expiryHex: PAST,
+        changeCommitmentHex: "garbage",
+      }),
+    ];
+    const { discardedNoteIds } = await loadCrossAppNoteStates(CHAIN, ACCT, {
+      nowMs: NOW,
+      listFilesImpl: lister(entries),
+    });
+    expect(discardedNoteIds.size).toBe(0);
   });
 });
