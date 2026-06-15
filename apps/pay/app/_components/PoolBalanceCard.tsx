@@ -62,9 +62,13 @@ export function PoolBalanceCard() {
   const [lockedNoteIds, setLockedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [discardedNoteIds, setDiscardedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [lockRefresh, setLockRefresh] = useState(0);
+  // Exclude discarded phantom notes: they're `leafIndex < 0` but never
+  // reconcile (their order expired), so counting them would keep the 3s
+  // `tree.refresh()` poll running forever waiting on an event that can't
+  // come.
   const hasPending = useMemo(
-    () => notes.some((n) => n.leafIndex < 0),
-    [notes],
+    () => notes.some((n) => n.leafIndex < 0 && !discardedNoteIds.has(n.id)),
+    [notes, discardedNoteIds],
   );
   useEffect(() => {
     if (!account || chainId == null) {
