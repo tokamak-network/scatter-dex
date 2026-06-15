@@ -62,14 +62,6 @@ export function PoolBalanceCard() {
   const [lockedNoteIds, setLockedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [discardedNoteIds, setDiscardedNoteIds] = useState<ReadonlySet<string>>(new Set());
   const [lockRefresh, setLockRefresh] = useState(0);
-  // Exclude discarded phantom notes: they're `leafIndex < 0` but never
-  // reconcile (their order expired), so counting them would keep the 3s
-  // `tree.refresh()` poll running forever waiting on an event that can't
-  // come.
-  const hasPending = useMemo(
-    () => notes.some((n) => n.leafIndex < 0 && !discardedNoteIds.has(n.id)),
-    [notes, discardedNoteIds],
-  );
   useEffect(() => {
     if (!account || chainId == null) {
       setLockedNoteIds(new Set());
@@ -104,18 +96,10 @@ export function PoolBalanceCard() {
     const id = window.setInterval(() => setLockRefresh((n) => n + 1), 60_000);
     return () => window.clearInterval(id);
   }, [lockedNoteIds]);
-  // Auto-poll the on-chain commitment tree while any local note is
-  // still waiting on its `CommitmentInserted` event. Without this, a
-  // change UTXO from a fresh settle can sit Pending until the user
-  // navigates back to the wizard's funds step (which has its own
-  // poller). The reconciler converts `findIndex` hits to leafIndex
-  // updates, so a forced refresh on a 3 s tick is enough to flip
-  // Pending → Ready as soon as the node sees the event.
-  useEffect(() => {
-    if (!hasPending) return;
-    const id = window.setInterval(() => tree.refresh(), 3000);
-    return () => window.clearInterval(id);
-  }, [hasPending, tree]);
+  // (The "poll tree.refresh while a note is pending" loop that used to live
+  // here is now handled globally by the SDK leaf-index reconciler — see
+  // `useLeafIndexReconciler` (VaultReconciler). Keeping a second copy here
+  // just double-polled the same tree.)
   // Symbols whose per-note drawer is currently open. Stored as a Set
   // so toggling one row doesn't collapse the others — the operator
   // commonly inspects multiple tokens side by side.
