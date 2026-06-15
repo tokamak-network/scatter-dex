@@ -319,6 +319,26 @@ function ClaimInner() {
           if (spent) {
             setAlreadyClaimed(true);
             setPhase({ kind: "idle" });
+            // Mirror the success path's bookkeeping so this claim still
+            // lands in the local Claims inbox history (no txHash — it's
+            // the relayer's response that timed out, not the tx).
+            if (folder.ready) {
+              try {
+                const rawInput =
+                  typeof window !== "undefined" ? window.location.href : "";
+                const { entry } = await addClaimInboxEntry({
+                  rawInput,
+                  pkg: parsed.pkg,
+                });
+                await markClaimInboxEntryClaimed(entry.id);
+                setSavedInboxId(entry.id);
+              } catch (saveErr) {
+                console.warn(
+                  "[Pro] save-to-inbox after post-failure probe failed",
+                  saveErr,
+                );
+              }
+            }
             return;
           }
         }
