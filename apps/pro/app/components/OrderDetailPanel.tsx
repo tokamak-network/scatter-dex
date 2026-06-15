@@ -15,6 +15,7 @@ import { useVault } from "../lib/vault";
 import { formatClaimAmount, formatField, formatLocalStampSec, formatWhen } from "../lib/format";
 import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPackage";
 import { submitClaim } from "../lib/claimSubmit";
+import { isClaimNullifierSpent } from "../lib/claimProbe";
 
 interface Props {
   order: OrderRecord;
@@ -1201,6 +1202,37 @@ function ShareActions({
       });
     } catch (err) {
       console.error("[ShareActions.claim]", err);
+      // Backstop: the relayer can land the claim on-chain even if its
+      // response errors/times out. Re-probe the nullifier — if it's spent,
+      // the claim succeeded, so show success rather than a false failure.
+      try {
+        if (
+          readProvider &&
+          (await isClaimNullifierSpent(
+            readProvider,
+            settlement,
+            target.secret,
+            target.leafIndex,
+          ))
+        ) {
+          try {
+            const pkg = await buildPkg();
+            const rawInput = buildClaimLink(window.location.origin, order, pkg);
+            const { entry } = await addClaimInboxEntry({ rawInput, pkg });
+            await markClaimInboxEntryClaimed(entry.id);
+          } catch (saveErr) {
+            console.warn("[Pro] save-claimed-to-inbox (backstop) failed", saveErr);
+          }
+          toast.push({
+            kind: "success",
+            title: "Already claimed",
+            description: "This recipient's claim already landed on-chain.",
+          });
+          return;
+        }
+      } catch (probeErr) {
+        console.warn("[ShareActions.claim] post-failure probe failed", probeErr);
+      }
       toast.push({
         kind: "error",
         title: "Claim failed",
