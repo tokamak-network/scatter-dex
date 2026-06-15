@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { LAUNCH_TOKENS, formatTokenLabel } from "@zkscatter/sdk";
+import { loadCrossAppLockedNoteIds } from "@zkscatter/sdk/storage";
 import { shortTxHash } from "@zkscatter/sdk/util";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
@@ -25,10 +26,20 @@ const PINNED_USD_SYMBOLS = new Set(["USDC", "USDT"]);
 
 interface TokenRow {
   symbol: string;
-  rawBalance: bigint;
   decimals: number;
-  /** Numeric balance × USD price. NaN when the price is unknown. */
-  usdValue: number;
+  /** Spendable-now balance: reconciled notes not pinned by an order. */
+  availableRaw: bigint;
+  /** Reconciled but funding an open order (here or in another product). */
+  lockedRaw: bigint;
+  /** Not yet reconciled on-chain (leafIndex < 0). */
+  pendingRaw: bigint;
+  /** Available / locked / pending numeric × USD price. NaN when the
+   *  price is unknown. `availableUsd` drives the spendable headline;
+   *  the other two feed the locked/pending totals shown beside it so
+   *  the operator can see at a glance what's parked outside spendable. */
+  availableUsd: number;
+  lockedUsd: number;
+  pendingUsd: number;
   pinned: boolean;
   /** Per-commitment notes for this token, sorted Ready first then by
    *  leaf index. Drives the per-token drawer when the operator
@@ -37,14 +48,42 @@ interface TokenRow {
 }
 
 export function PoolBalanceCard() {
-  const { account } = useWallet();
+  const { account, chainId } = useWallet();
   const { notes, loaded } = useVault();
   const tree = useCommitmentTree();
   const [expanded, setExpanded] = useState(false);
+  // noteIds funding an OPEN order in another product (e.g. Scatter Pro).
+  // Escrow notes are shared across products, but each keeps its orders
+  // in its own files — so without this Pay would offer Withdraw on a
+  // note already committed to a Pro order, burning the nullifier and
+  // stranding that order. Refreshed alongside the tree (and on the
+  // Refresh button) since Pay can't observe Pro's order files live.
+  const [lockedNoteIds, setLockedNoteIds] = useState<ReadonlySet<string>>(new Set());
+  const [lockRefresh, setLockRefresh] = useState(0);
   const hasPending = useMemo(
     () => notes.some((n) => n.leafIndex < 0),
     [notes],
   );
+  useEffect(() => {
+    if (!account || chainId == null) {
+      setLockedNoteIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    loadCrossAppLockedNoteIds(chainId, account)
+      .then((s) => {
+        if (!cancelled) setLockedNoteIds(s);
+      })
+      .catch(() => {
+        if (!cancelled) setLockedNoteIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Locks depend only on wallet identity + manual refresh — NOT on
+    // vault `loaded` (locks live in other products' order files, not the
+    // local notes). `lockRefresh` re-fetches on the Refresh button.
+  }, [account, chainId, lockRefresh]);
   // Auto-poll the on-chain commitment tree while any local note is
   // still waiting on its `CommitmentInserted` event. Without this, a
   // change UTXO from a fresh settle can sit Pending until the user
@@ -78,23 +117,40 @@ export function PoolBalanceCard() {
   // across notes the vault has. Sorted by USD value descending so
   // the biggest pools surface first when the panel is expanded.
   const rows = useMemo<TokenRow[]>(() => {
-    const balanceBySymbol = new Map<string, bigint>();
+    interface Bucket {
+      available: bigint;
+      locked: bigint;
+      pending: bigint;
+    }
+    const bucketBySymbol = new Map<string, Bucket>();
     const notesBySymbol = new Map<string, VaultNote[]>();
     if (loaded) {
       for (const n of notes) {
         // `n.symbol` is the source of truth in the vault; the
         // whitelist key matches it for tokens we care about.
-        const sum = balanceBySymbol.get(n.symbol) ?? 0n;
-        balanceBySymbol.set(n.symbol, sum + n.note.amount);
+        let b = bucketBySymbol.get(n.symbol);
+        if (!b) {
+          b = { available: 0n, locked: 0n, pending: 0n };
+          bucketBySymbol.set(n.symbol, b);
+        }
+        // Same three-way split the per-note drawer shows: unconfirmed →
+        // pending; reconciled but pinned by an open order → locked;
+        // otherwise spendable → available.
+        if (n.leafIndex < 0) b.pending += n.note.amount;
+        else if (lockedNoteIds.has(n.id)) b.locked += n.note.amount;
+        else b.available += n.note.amount;
         const arr = notesBySymbol.get(n.symbol);
         if (arr) arr.push(n); else notesBySymbol.set(n.symbol, [n]);
       }
     }
     const list: TokenRow[] = Object.values(LAUNCH_TOKENS).map((t) => {
-      const raw = balanceBySymbol.get(t.symbol) ?? 0n;
-      const numeric = Number(ethers.formatUnits(raw, t.decimals));
+      const b = bucketBySymbol.get(t.symbol) ?? { available: 0n, locked: 0n, pending: 0n };
       const price = APPROX_USD_PRICE[t.symbol];
-      const usdValue = price !== undefined ? numeric * price : NaN;
+      const toUsd = (raw: bigint) =>
+        price !== undefined ? Number(ethers.formatUnits(raw, t.decimals)) * price : NaN;
+      const availableUsd = toUsd(b.available);
+      const lockedUsd = toUsd(b.locked);
+      const pendingUsd = toUsd(b.pending);
       const tokenNotes = (notesBySymbol.get(t.symbol) ?? []).slice().sort((a, b) => {
         // Ready (leafIndex >= 0) before Pending; within a group, by
         // leafIndex ascending so the on-chain order matches what the
@@ -106,32 +162,60 @@ export function PoolBalanceCard() {
       });
       return {
         symbol: t.symbol,
-        rawBalance: raw,
         decimals: t.decimals,
-        usdValue,
+        availableRaw: b.available,
+        lockedRaw: b.locked,
+        pendingRaw: b.pending,
+        availableUsd,
+        lockedUsd,
+        pendingUsd,
         pinned: PINNED_USD_SYMBOLS.has(t.symbol),
         notes: tokenNotes,
       };
     });
     list.sort((a, b) => {
-      // NaN-USD rows go last; otherwise descending.
-      const av = Number.isFinite(a.usdValue) ? a.usdValue : -Infinity;
-      const bv = Number.isFinite(b.usdValue) ? b.usdValue : -Infinity;
+      // NaN-USD rows go last; otherwise by spendable USD descending.
+      const av = Number.isFinite(a.availableUsd) ? a.availableUsd : -Infinity;
+      const bv = Number.isFinite(b.availableUsd) ? b.availableUsd : -Infinity;
       return bv - av;
     });
     return list;
-  }, [notes, loaded]);
+  }, [notes, loaded, lockedNoteIds]);
 
-  // Skip rows whose price is unknown — including them would make the
-  // headline look authoritative when half the inputs are guesses.
-  const totalUsd = useMemo(
+  // Headline is the SPENDABLE (available) USD — locked and pending
+  // funds are excluded so the operator never reads it as money they can
+  // pay out right now. Skip rows whose price is unknown — including them
+  // would make the headline look authoritative when half the inputs are
+  // guesses.
+  const availableUsd = useMemo(
     () =>
       rows.reduce(
-        (sum, r) => (Number.isFinite(r.usdValue) ? sum + r.usdValue : sum),
+        (sum, r) => (Number.isFinite(r.availableUsd) ? sum + r.availableUsd : sum),
         0,
       ),
     [rows],
   );
+  // Aggregate USD parked outside `available`, shown beside the headline
+  // so a `0` available doesn't read as an empty pool and the operator
+  // sees how much is locked / still confirming across all tokens.
+  const lockedUsd = useMemo(
+    () =>
+      rows.reduce(
+        (sum, r) => (Number.isFinite(r.lockedUsd) ? sum + r.lockedUsd : sum),
+        0,
+      ),
+    [rows],
+  );
+  const pendingUsd = useMemo(
+    () =>
+      rows.reduce(
+        (sum, r) => (Number.isFinite(r.pendingUsd) ? sum + r.pendingUsd : sum),
+        0,
+      ),
+    [rows],
+  );
+  const hasLocked = useMemo(() => rows.some((r) => r.lockedRaw > 0n), [rows]);
+  const hasPendingFunds = useMemo(() => rows.some((r) => r.pendingRaw > 0n), [rows]);
   // True when at least one non-stable, balance-bearing token rolled
   // into the headline — its price came from the static fallback table
   // rather than a live feed, so the badge tells the operator to take
@@ -141,8 +225,8 @@ export function PoolBalanceCard() {
       rows.some(
         (r) =>
           !r.pinned &&
-          r.rawBalance > 0n &&
-          Number.isFinite(r.usdValue),
+          r.availableRaw > 0n &&
+          Number.isFinite(r.availableUsd),
       ),
     [rows],
   );
@@ -179,10 +263,10 @@ export function PoolBalanceCard() {
       <div className="flex items-start justify-between">
         <div>
           <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-            Pool balance (approximate USD)
+            Available balance (approximate USD)
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold">{formatUsd(totalUsd)}</span>
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="text-2xl font-semibold">{formatUsd(availableUsd)}</span>
             {hasApprox && (
               <span
                 title="Non-stable token prices use a static fallback table. Wire a live feed for authoritative values."
@@ -191,15 +275,34 @@ export function PoolBalanceCard() {
                 approx
               </span>
             )}
+            {hasPendingFunds && (
+              <span
+                title="Notes still awaiting on-chain confirmation — not yet spendable."
+                className="text-xs font-medium text-[var(--color-text-muted)]"
+              >
+                ⏳ {formatUsd(pendingUsd)} pending
+              </span>
+            )}
+            {hasLocked && (
+              <span
+                title="Notes funding open orders — not spendable until they settle or are cancelled."
+                className="text-xs font-medium text-[var(--color-warning)]"
+              >
+                🔒 {formatUsd(lockedUsd)} locked
+              </span>
+            )}
           </div>
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-            Total escrowed across {rows.length} whitelisted tokens. Click for
+            Spendable now across {rows.length} whitelisted tokens. Click for
             per-token breakdown.
           </div>
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => tree.refresh()}
+            onClick={() => {
+              tree.refresh();
+              setLockRefresh((n) => n + 1);
+            }}
             title="Re-hydrate the commitment tree from on-chain history"
             className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
           >
@@ -220,7 +323,7 @@ export function PoolBalanceCard() {
               <tr>
                 <th className="px-3 py-2 text-left">Token</th>
                 <th className="px-3 py-2 text-right">Notes</th>
-                <th className="px-3 py-2 text-right">Balance</th>
+                <th className="px-3 py-2 text-right">Available</th>
                 <th className="px-3 py-2 text-right">USD value</th>
               </tr>
             </thead>
@@ -270,11 +373,31 @@ export function PoolBalanceCard() {
                             : `${noteCount}`}
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-xs">
-                        {formatBalance(r.rawBalance, r.decimals)}
+                        <div>{formatBalance(r.availableRaw, r.decimals)}</div>
+                        {(r.lockedRaw > 0n || r.pendingRaw > 0n) && (
+                          <div className="mt-0.5 flex justify-end gap-2 text-[10px] font-normal">
+                            {r.lockedRaw > 0n && (
+                              <span
+                                title="Funding an open order — not spendable until it settles or is cancelled."
+                                className="text-[var(--color-warning)]"
+                              >
+                                🔒 {formatBalance(r.lockedRaw, r.decimals)}
+                              </span>
+                            )}
+                            {r.pendingRaw > 0n && (
+                              <span
+                                title="Awaiting on-chain confirmation."
+                                className="text-[var(--color-text-muted)]"
+                              >
+                                ⏳ {formatBalance(r.pendingRaw, r.decimals)}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-xs">
-                        {Number.isFinite(r.usdValue)
-                          ? formatUsd(r.usdValue)
+                      <td className="px-3 py-2 text-right font-mono text-xs align-top">
+                        {Number.isFinite(r.availableUsd)
+                          ? formatUsd(r.availableUsd)
                           : "—"}
                       </td>
                     </tr>
@@ -285,6 +408,7 @@ export function PoolBalanceCard() {
                             notes={r.notes}
                             decimals={r.decimals}
                             symbol={r.symbol}
+                            lockedNoteIds={lockedNoteIds}
                             onWithdraw={setWithdrawing}
                           />
                         </td>
@@ -326,11 +450,15 @@ function NotesDrawer({
   notes,
   decimals,
   symbol,
+  lockedNoteIds,
   onWithdraw,
 }: {
   notes: VaultNote[];
   decimals: number;
   symbol: string;
+  /** noteIds funding an open order in another product — withdraw is
+   *  blocked for these (spending would strand that order). */
+  lockedNoteIds: ReadonlySet<string>;
   /** Open the WithdrawModal targeting `note`. Disabled per-row when
    *  the commitment hasn't reconciled (`leafIndex < 0`) — the
    *  withdraw circuit needs an authoritative leaf index. */
@@ -352,18 +480,27 @@ function NotesDrawer({
         <tbody>
           {notes.map((n) => {
             const ready = n.leafIndex >= 0;
+            // Reconciled but committed to an open order in another
+            // product — spendable on-chain, but withdrawing it here
+            // would burn the nullifier and strand that order.
+            const locked = ready && lockedNoteIds.has(n.id);
+            const lockTitle =
+              "Committed to an open order in another product (e.g. Scatter Pro). Cancel or settle that order there to free this note.";
             return (
               <tr key={n.id} className="border-t border-[var(--color-border)]">
                 <td className="px-2 py-1.5 font-medium">{n.label}</td>
                 <td className="px-2 py-1.5">
                   <span
+                    title={locked ? lockTitle : undefined}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      ready
-                        ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
-                        : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+                      locked
+                        ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+                        : ready
+                          ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+                          : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
                     }`}
                   >
-                    {ready ? "Ready" : "Pending"}
+                    {locked ? "Locked · order" : ready ? "Ready" : "Pending"}
                   </span>
                 </td>
                 <td className="px-2 py-1.5 text-right font-mono">
@@ -379,11 +516,13 @@ function NotesDrawer({
                   <button
                     type="button"
                     onClick={() => onWithdraw(n)}
-                    disabled={!ready}
+                    disabled={!ready || locked}
                     title={
-                      ready
-                        ? "Withdraw this commitment back to an EOA (operator pays gas)"
-                        : "Wait for the commitment to reconcile on-chain (one block)"
+                      locked
+                        ? lockTitle
+                        : ready
+                          ? "Withdraw this commitment back to an EOA (operator pays gas)"
+                          : "Wait for the commitment to reconcile on-chain (one block)"
                     }
                     className="rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
                   >
