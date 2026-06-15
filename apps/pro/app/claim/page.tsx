@@ -297,6 +297,54 @@ function ClaimInner() {
       }
     } catch (err) {
       console.error("[Pro] claim failed", err);
+      // A gasless relayer can land the claim on-chain even though our
+      // request timed out waiting for its response ("signal timed out").
+      // Before declaring failure, re-probe the nullifier: if it's spent,
+      // the claim actually succeeded — show the "already claimed" success
+      // state instead of a false error.
+      try {
+        if (readProvider) {
+          const nullifier = await computeClaimNullifier(
+            BigInt(parsed.pkg.secret),
+            BigInt(parsed.pkg.leafIndex),
+          );
+          const settlement = new ethers.Contract(
+            parsed.pkg.settlementAddress,
+            PRIVATE_SETTLEMENT_ABI,
+            readProvider,
+          );
+          const spent = (await settlement.claimNullifiers(
+            toBytes32Hex(nullifier),
+          )) as boolean;
+          if (spent) {
+            setAlreadyClaimed(true);
+            setPhase({ kind: "idle" });
+            // Mirror the success path's bookkeeping so this claim still
+            // lands in the local Claims inbox history (no txHash — it's
+            // the relayer's response that timed out, not the tx).
+            if (folder.ready) {
+              try {
+                const rawInput =
+                  typeof window !== "undefined" ? window.location.href : "";
+                const { entry } = await addClaimInboxEntry({
+                  rawInput,
+                  pkg: parsed.pkg,
+                });
+                await markClaimInboxEntryClaimed(entry.id);
+                setSavedInboxId(entry.id);
+              } catch (saveErr) {
+                console.warn(
+                  "[Pro] save-to-inbox after post-failure probe failed",
+                  saveErr,
+                );
+              }
+            }
+            return;
+          }
+        }
+      } catch (probeErr) {
+        console.warn("[Pro] post-failure nullifier probe failed", probeErr);
+      }
       setPhase({
         kind: "error",
         message: err instanceof Error ? err.message : String(err),
