@@ -22,9 +22,16 @@ interface OrderLockRow {
  *  `apps/pro` `isOrderExpired` (pre-`expiry` rows are never expired).
  *  Exported for unit tests. */
 export function isOrderExpiredHex(expiryHex: unknown, nowMs: number): boolean {
-  if (typeof expiryHex !== "string" || expiryHex.length === 0) return false;
+  // Only a clean 0x-hex string (the `WireOrder.expiryHex` format) counts as
+  // a real deadline. `Number()` coerces empties/whitespace ("", "   ") to 0
+  // and other junk unpredictably, which would read as "expired at epoch" and
+  // silently FREE a locked note. Anything not strictly 0x-hex is treated as
+  // "no deadline → never expired", keeping the order LOCKED (the safe side).
+  if (typeof expiryHex !== "string" || !/^0x[0-9a-fA-F]+$/.test(expiryHex)) {
+    return false;
+  }
   const sec = Number(expiryHex);
-  if (!Number.isFinite(sec)) return false;
+  if (!Number.isFinite(sec)) return false; // absurdly long hex → Infinity
   return sec * 1000 <= nowMs;
 }
 

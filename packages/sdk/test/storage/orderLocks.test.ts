@@ -53,10 +53,15 @@ describe("isOrderExpiredHex", () => {
     expect(isOrderExpiredHex(PAST, NOW)).toBe(true);
     expect(isOrderExpiredHex(FUTURE, NOW)).toBe(false);
   });
-  it("is never-expired for missing/garbage values", () => {
-    expect(isOrderExpiredHex(undefined, NOW)).toBe(false);
-    expect(isOrderExpiredHex("", NOW)).toBe(false);
-    expect(isOrderExpiredHex("nope", NOW)).toBe(false);
+  it("is never-expired for missing/garbage values (keeps the order locked)", () => {
+    // Anything not a clean 0x-hex string must NOT read as expired — else a
+    // corrupt value would silently free a locked note (Number("  ")===0).
+    for (const junk of [undefined, "", "   ", "\t", "0x", "nope", "123", "0xZZ", 42]) {
+      expect(isOrderExpiredHex(junk, NOW)).toBe(false);
+    }
+  });
+  it("treats a well-formed 0x-hex past deadline as expired", () => {
+    expect(isOrderExpiredHex("0x0", NOW)).toBe(true); // epoch 0
   });
 });
 
