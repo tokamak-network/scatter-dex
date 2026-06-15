@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { LAUNCH_TOKENS, formatTokenLabel } from "@zkscatter/sdk";
+import { loadCrossAppLockedNoteIds } from "@zkscatter/sdk/storage";
 import { shortTxHash } from "@zkscatter/sdk/util";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
@@ -37,14 +38,42 @@ interface TokenRow {
 }
 
 export function PoolBalanceCard() {
-  const { account } = useWallet();
+  const { account, chainId } = useWallet();
   const { notes, loaded } = useVault();
   const tree = useCommitmentTree();
   const [expanded, setExpanded] = useState(false);
+  // noteIds funding an OPEN order in another product (e.g. Scatter Pro).
+  // Escrow notes are shared across products, but each keeps its orders
+  // in its own files — so without this Pay would offer Withdraw on a
+  // note already committed to a Pro order, burning the nullifier and
+  // stranding that order. Refreshed alongside the tree (and on the
+  // Refresh button) since Pay can't observe Pro's order files live.
+  const [lockedNoteIds, setLockedNoteIds] = useState<ReadonlySet<string>>(new Set());
+  const [lockRefresh, setLockRefresh] = useState(0);
   const hasPending = useMemo(
     () => notes.some((n) => n.leafIndex < 0),
     [notes],
   );
+  useEffect(() => {
+    if (!account || chainId == null) {
+      setLockedNoteIds(new Set());
+      return;
+    }
+    let cancelled = false;
+    loadCrossAppLockedNoteIds(chainId, account)
+      .then((s) => {
+        if (!cancelled) setLockedNoteIds(s);
+      })
+      .catch(() => {
+        if (!cancelled) setLockedNoteIds(new Set());
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Locks depend only on wallet identity + manual refresh — NOT on
+    // vault `loaded` (locks live in other products' order files, not the
+    // local notes). `lockRefresh` re-fetches on the Refresh button.
+  }, [account, chainId, lockRefresh]);
   // Auto-poll the on-chain commitment tree while any local note is
   // still waiting on its `CommitmentInserted` event. Without this, a
   // change UTXO from a fresh settle can sit Pending until the user
@@ -199,7 +228,10 @@ export function PoolBalanceCard() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => tree.refresh()}
+            onClick={() => {
+              tree.refresh();
+              setLockRefresh((n) => n + 1);
+            }}
             title="Re-hydrate the commitment tree from on-chain history"
             className="rounded-md border border-[var(--color-border-strong)] px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)]"
           >
@@ -285,6 +317,7 @@ export function PoolBalanceCard() {
                             notes={r.notes}
                             decimals={r.decimals}
                             symbol={r.symbol}
+                            lockedNoteIds={lockedNoteIds}
                             onWithdraw={setWithdrawing}
                           />
                         </td>
@@ -326,11 +359,15 @@ function NotesDrawer({
   notes,
   decimals,
   symbol,
+  lockedNoteIds,
   onWithdraw,
 }: {
   notes: VaultNote[];
   decimals: number;
   symbol: string;
+  /** noteIds funding an open order in another product — withdraw is
+   *  blocked for these (spending would strand that order). */
+  lockedNoteIds: ReadonlySet<string>;
   /** Open the WithdrawModal targeting `note`. Disabled per-row when
    *  the commitment hasn't reconciled (`leafIndex < 0`) — the
    *  withdraw circuit needs an authoritative leaf index. */
@@ -352,18 +389,27 @@ function NotesDrawer({
         <tbody>
           {notes.map((n) => {
             const ready = n.leafIndex >= 0;
+            // Reconciled but committed to an open order in another
+            // product — spendable on-chain, but withdrawing it here
+            // would burn the nullifier and strand that order.
+            const locked = ready && lockedNoteIds.has(n.id);
+            const lockTitle =
+              "Committed to an open order in another product (e.g. Scatter Pro). Cancel or settle that order there to free this note.";
             return (
               <tr key={n.id} className="border-t border-[var(--color-border)]">
                 <td className="px-2 py-1.5 font-medium">{n.label}</td>
                 <td className="px-2 py-1.5">
                   <span
+                    title={locked ? lockTitle : undefined}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                      ready
-                        ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
-                        : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+                      locked
+                        ? "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+                        : ready
+                          ? "bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
+                          : "bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
                     }`}
                   >
-                    {ready ? "Ready" : "Pending"}
+                    {locked ? "Locked · order" : ready ? "Ready" : "Pending"}
                   </span>
                 </td>
                 <td className="px-2 py-1.5 text-right font-mono">
@@ -379,11 +425,13 @@ function NotesDrawer({
                   <button
                     type="button"
                     onClick={() => onWithdraw(n)}
-                    disabled={!ready}
+                    disabled={!ready || locked}
                     title={
-                      ready
-                        ? "Withdraw this commitment back to an EOA (operator pays gas)"
-                        : "Wait for the commitment to reconcile on-chain (one block)"
+                      locked
+                        ? lockTitle
+                        : ready
+                          ? "Withdraw this commitment back to an EOA (operator pays gas)"
+                          : "Wait for the commitment to reconcile on-chain (one block)"
                     }
                     className="rounded border border-[var(--color-border-strong)] px-2 py-0.5 text-[10px] hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
                   >

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ethers } from "ethers";
 import { Modal } from "@zkscatter/ui";
 import { formatTokenLabel } from "@zkscatter/sdk";
+import { loadCrossAppLockedNoteIds } from "@zkscatter/sdk/storage";
 import { useEdDSAKey, useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { useVault } from "../_lib/vault";
@@ -65,7 +66,7 @@ export function WithdrawModal({
   note: VaultNote;
   onClose: () => void;
 }) {
-  const { account, signer } = useWallet();
+  const { account, chainId, signer } = useWallet();
   const { derive: deriveEdDSA } = useEdDSAKey();
   const vault = useVault();
   const tree = useCommitmentTree();
@@ -105,6 +106,22 @@ export function WithdrawModal({
     }
     setError(null);
     try {
+      // Defense-in-depth against the cross-app lock: re-check right
+      // before spending in case an order in another product (e.g.
+      // Scatter Pro) pinned this note after the pool card last
+      // refreshed. The drawer already disables the button for locked
+      // notes; this catches the TOCTOU where the lock appeared since.
+      // Withdrawing a pinned note would burn its nullifier and strand
+      // the order.
+      if (account && chainId != null) {
+        const locked = await loadCrossAppLockedNoteIds(chainId, account);
+        if (locked.has(note.id)) {
+          setError(
+            "This note funds an open order in another product (e.g. Scatter Pro). Cancel or settle that order before withdrawing.",
+          );
+          return;
+        }
+      }
       // Withdraw circuit now gates on an EdDSA signature over
       // Poseidon(nullifierHash, recipient) — derive (or unlock)
       // the wallet-bound key before kicking off the prover.
