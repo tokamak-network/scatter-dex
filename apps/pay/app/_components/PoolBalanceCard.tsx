@@ -96,10 +96,9 @@ export function PoolBalanceCard() {
     const id = window.setInterval(() => setLockRefresh((n) => n + 1), 60_000);
     return () => window.clearInterval(id);
   }, [lockedNoteIds]);
-  // (The "poll tree.refresh while a note is pending" loop that used to live
-  // here is now handled globally by the SDK leaf-index reconciler — see
-  // `useLeafIndexReconciler` (VaultReconciler). Keeping a second copy here
-  // just double-polled the same tree.)
+  // Tree re-hydration while a note is pending is handled globally by the
+  // SDK leaf-index reconciler (`useLeafIndexReconciler` via VaultReconciler),
+  // so this card doesn't poll the tree itself.
   // Symbols whose per-note drawer is currently open. Stored as a Set
   // so toggling one row doesn't collapse the others — the operator
   // commonly inspects multiple tokens side by side.
