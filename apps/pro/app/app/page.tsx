@@ -8,6 +8,7 @@ import { Button, EmptyState, Field } from "@zkscatter/ui";
 import { useVault } from "../lib/vault";
 import { useOrders } from "../lib/orders";
 import { deriveNoteStatus } from "../lib/noteStatus";
+import { useCrossAppNoteStates } from "../lib/useCrossAppNoteStates";
 import { useSharedOrderbook } from "../lib/orderbook";
 import { useTradeForm } from "../lib/tradeForm";
 import { OrderModal } from "../components/OrderModal";
@@ -132,22 +133,29 @@ export default function Workbench() {
   >(undefined);
   const { notes } = useVault();
   const { orders } = useOrders();
+  // Locks/discards from other products' orders (e.g. Pay) so the funding
+  // picker excludes a note that funds another product's open order.
+  const { states: crossApp } = useCrossAppNoteStates();
   // Funding picker only surfaces notes that are spendable right now:
   // locked (pinned by an open order) and pending (leafIndex < 0 or
   // change residual awaiting settle) are filtered out so the user
   // can't pick a note the prover would reject.
   const fundableNotes = useMemo(
-    () => notes.filter((n) => {
-      const info = deriveNoteStatus(n, orders);
-      // `recoverableExpired` notes classify as `available` so the
-      // escrow page can withdraw them, but reusing one to fund a
-      // new order would share an escrowNullifier with the still-
-      // matching expired order and the first cancelPrivate would
-      // burn both (ord-1/ord-2 zombie regression). Withdraw first,
-      // re-deposit, then fund.
-      return info.status === "available" && !info.recoverableExpired;
-    }),
-    [notes, orders],
+    () => {
+      const now = Date.now();
+      return notes.filter((n) => {
+        const info = deriveNoteStatus(n, orders, now, crossApp);
+        // `recoverableExpired` notes classify as `available` so the
+        // escrow page can withdraw them, but reusing one to fund a
+        // new order would share an escrowNullifier with the still-
+        // matching expired order and the first cancelPrivate would
+        // burn both (ord-1/ord-2 zombie regression). Withdraw first,
+        // re-deposit, then fund. A note funding another product's open
+        // order reads as `locked` via `crossApp` and is excluded too.
+        return info.status === "available" && !info.recoverableExpired;
+      });
+    },
+    [notes, orders, crossApp],
   );
 
   // Resolve the base-token address on this network for the

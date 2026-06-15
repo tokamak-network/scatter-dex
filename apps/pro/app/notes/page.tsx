@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { EmptyState } from "@zkscatter/ui";
 import { useVault, type VaultNote } from "../lib/vault";
 import { useOrders } from "../lib/orders";
+import { useCrossAppNoteStates } from "../lib/useCrossAppNoteStates";
 import {
   aggregateBySymbol,
   deriveNoteStatus,
@@ -22,6 +23,11 @@ import { formatNum, formatWhen } from "../lib/format";
 export default function EscrowPage() {
   const { notes } = useVault();
   const { orders, loaded: ordersLoaded } = useOrders();
+  // Locks/discards from OTHER products' orders (e.g. Pay) so a shared note
+  // funding another product's open order reads as Locked (not withdrawable)
+  // here too, and a phantom change note from another product's expired
+  // order is hidden as discarded — symmetric with Pay's view.
+  const { states: crossApp } = useCrossAppNoteStates();
   const [withdrawNote, setWithdrawNote] = useState<VaultNote | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
 
@@ -37,8 +43,8 @@ export default function EscrowPage() {
   }, []);
 
   const symbolBuckets = useMemo(
-    () => aggregateBySymbol(notes, orders, nowMs),
-    [notes, orders, nowMs],
+    () => aggregateBySymbol(notes, orders, nowMs, crossApp),
+    [notes, orders, nowMs, crossApp],
   );
 
   // Build a `noteId → NoteStatusInfo` lookup once per (notes,
@@ -49,9 +55,9 @@ export default function EscrowPage() {
   const statusMap = useMemo(() => {
     if (!ordersLoaded) return new Map<string, NoteStatusInfo>();
     const m = new Map<string, NoteStatusInfo>();
-    for (const n of notes) m.set(n.id, deriveNoteStatus(n, orders, nowMs));
+    for (const n of notes) m.set(n.id, deriveNoteStatus(n, orders, nowMs, crossApp));
     return m;
-  }, [notes, orders, ordersLoaded, nowMs]);
+  }, [notes, orders, ordersLoaded, nowMs, crossApp]);
 
   // Hide phantom change notes from expired matching orders: their
   // commitment was pre-computed at submit time but `settleAuth`

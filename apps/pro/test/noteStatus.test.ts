@@ -278,3 +278,53 @@ describe("aggregateBySymbol", () => {
     expect(aggregateBySymbol(notes, [])[0]!.available).toBeCloseTo(10000.5);
   });
 });
+
+describe("deriveNoteStatus — cross-app locks/discards", () => {
+  const empty = { lockedNoteIds: new Set<string>(), discardedNoteIds: new Set<string>() };
+
+  it("locks a reconciled note funding another product's open order (no local order)", () => {
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const crossApp = { lockedNoteIds: new Set(["n1"]), discardedNoteIds: new Set<string>() };
+    const info = deriveNoteStatus(note, [], Date.now(), crossApp);
+    expect(info.status).toBe("locked");
+    // No local order to attribute it to — generic locked.
+    expect(info.lockedByOrder).toBeUndefined();
+  });
+
+  it("discards a pending change note from another product's expired order", () => {
+    const note = makeNote({ id: "n1", leafIndex: -1 });
+    const crossApp = { lockedNoteIds: new Set<string>(), discardedNoteIds: new Set(["n1"]) };
+    expect(deriveNoteStatus(note, [], Date.now(), crossApp).status).toBe("discarded");
+  });
+
+  it("prefers the local order detail when a note is locked both locally and cross-app", () => {
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    const order = makeOrder({ id: "o1", noteId: "n1", status: "matching" });
+    const crossApp = { lockedNoteIds: new Set(["n1"]), discardedNoteIds: new Set<string>() };
+    const info = deriveNoteStatus(note, [order], Date.now(), crossApp);
+    expect(info.status).toBe("locked");
+    expect(info.lockedByOrder).toBe(order); // local wins → keeps "ord-N" detail
+  });
+
+  it("is a no-op when the cross-app sets are empty / omitted", () => {
+    const note = makeNote({ id: "n1", leafIndex: 5 });
+    expect(deriveNoteStatus(note, [], Date.now(), empty).status).toBe("available");
+    expect(deriveNoteStatus(note, []).status).toBe("available");
+  });
+
+  it("aggregateBySymbol counts cross-app-locked into `locked`, hides discarded", () => {
+    const notes = [
+      makeNote({ id: "lk", symbol: "ETH", amount: "2.0", leafIndex: 1 }),
+      makeNote({ id: "dc", symbol: "ETH", amount: "9.0", leafIndex: -1 }),
+      makeNote({ id: "av", symbol: "ETH", amount: "3.0", leafIndex: 2 }),
+    ];
+    const crossApp = {
+      lockedNoteIds: new Set(["lk"]),
+      discardedNoteIds: new Set(["dc"]),
+    };
+    const row = aggregateBySymbol(notes, [], Date.now(), crossApp)[0]!;
+    expect(row.available).toBeCloseTo(3.0);
+    expect(row.locked).toBeCloseTo(2.0);
+    expect(row.pending).toBeCloseTo(0); // discarded note excluded entirely
+  });
+});
