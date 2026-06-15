@@ -26,10 +26,18 @@ const PINNED_USD_SYMBOLS = new Set(["USDC", "USDT"]);
 
 interface TokenRow {
   symbol: string;
-  rawBalance: bigint;
   decimals: number;
-  /** Numeric balance × USD price. NaN when the price is unknown. */
-  usdValue: number;
+  /** Spendable-now balance: reconciled notes not pinned by an order. */
+  availableRaw: bigint;
+  /** Reconciled but funding an open order (here or in another product). */
+  lockedRaw: bigint;
+  /** Not yet reconciled on-chain (leafIndex < 0). */
+  pendingRaw: bigint;
+  /** Available numeric × USD price. NaN when the price is unknown.
+   *  Drives the spendable headline — locked/pending are deliberately
+   *  excluded so the number reflects what the operator can actually
+   *  pay out right now. */
+  availableUsd: number;
   pinned: boolean;
   /** Per-commitment notes for this token, sorted Ready first then by
    *  leaf index. Drives the per-token drawer when the operator
@@ -107,23 +115,37 @@ export function PoolBalanceCard() {
   // across notes the vault has. Sorted by USD value descending so
   // the biggest pools surface first when the panel is expanded.
   const rows = useMemo<TokenRow[]>(() => {
-    const balanceBySymbol = new Map<string, bigint>();
+    interface Bucket {
+      available: bigint;
+      locked: bigint;
+      pending: bigint;
+    }
+    const bucketBySymbol = new Map<string, Bucket>();
     const notesBySymbol = new Map<string, VaultNote[]>();
     if (loaded) {
       for (const n of notes) {
         // `n.symbol` is the source of truth in the vault; the
         // whitelist key matches it for tokens we care about.
-        const sum = balanceBySymbol.get(n.symbol) ?? 0n;
-        balanceBySymbol.set(n.symbol, sum + n.note.amount);
+        let b = bucketBySymbol.get(n.symbol);
+        if (!b) {
+          b = { available: 0n, locked: 0n, pending: 0n };
+          bucketBySymbol.set(n.symbol, b);
+        }
+        // Same three-way split the per-note drawer shows: unconfirmed →
+        // pending; reconciled but pinned by an open order → locked;
+        // otherwise spendable → available.
+        if (n.leafIndex < 0) b.pending += n.note.amount;
+        else if (lockedNoteIds.has(n.id)) b.locked += n.note.amount;
+        else b.available += n.note.amount;
         const arr = notesBySymbol.get(n.symbol);
         if (arr) arr.push(n); else notesBySymbol.set(n.symbol, [n]);
       }
     }
     const list: TokenRow[] = Object.values(LAUNCH_TOKENS).map((t) => {
-      const raw = balanceBySymbol.get(t.symbol) ?? 0n;
-      const numeric = Number(ethers.formatUnits(raw, t.decimals));
+      const b = bucketBySymbol.get(t.symbol) ?? { available: 0n, locked: 0n, pending: 0n };
+      const availNumeric = Number(ethers.formatUnits(b.available, t.decimals));
       const price = APPROX_USD_PRICE[t.symbol];
-      const usdValue = price !== undefined ? numeric * price : NaN;
+      const availableUsd = price !== undefined ? availNumeric * price : NaN;
       const tokenNotes = (notesBySymbol.get(t.symbol) ?? []).slice().sort((a, b) => {
         // Ready (leafIndex >= 0) before Pending; within a group, by
         // leafIndex ascending so the on-chain order matches what the
@@ -135,32 +157,42 @@ export function PoolBalanceCard() {
       });
       return {
         symbol: t.symbol,
-        rawBalance: raw,
         decimals: t.decimals,
-        usdValue,
+        availableRaw: b.available,
+        lockedRaw: b.locked,
+        pendingRaw: b.pending,
+        availableUsd,
         pinned: PINNED_USD_SYMBOLS.has(t.symbol),
         notes: tokenNotes,
       };
     });
     list.sort((a, b) => {
-      // NaN-USD rows go last; otherwise descending.
-      const av = Number.isFinite(a.usdValue) ? a.usdValue : -Infinity;
-      const bv = Number.isFinite(b.usdValue) ? b.usdValue : -Infinity;
+      // NaN-USD rows go last; otherwise by spendable USD descending.
+      const av = Number.isFinite(a.availableUsd) ? a.availableUsd : -Infinity;
+      const bv = Number.isFinite(b.availableUsd) ? b.availableUsd : -Infinity;
       return bv - av;
     });
     return list;
-  }, [notes, loaded]);
+  }, [notes, loaded, lockedNoteIds]);
 
-  // Skip rows whose price is unknown — including them would make the
-  // headline look authoritative when half the inputs are guesses.
-  const totalUsd = useMemo(
+  // Headline is the SPENDABLE (available) USD — locked and pending
+  // funds are excluded so the operator never reads it as money they can
+  // pay out right now. Skip rows whose price is unknown — including them
+  // would make the headline look authoritative when half the inputs are
+  // guesses.
+  const availableUsd = useMemo(
     () =>
       rows.reduce(
-        (sum, r) => (Number.isFinite(r.usdValue) ? sum + r.usdValue : sum),
+        (sum, r) => (Number.isFinite(r.availableUsd) ? sum + r.availableUsd : sum),
         0,
       ),
     [rows],
   );
+  // Whether any token still has funds parked outside `available` —
+  // drives the "+ locked / pending" hint under the headline so a `0`
+  // available doesn't read as an empty pool.
+  const hasLocked = useMemo(() => rows.some((r) => r.lockedRaw > 0n), [rows]);
+  const hasPendingFunds = useMemo(() => rows.some((r) => r.pendingRaw > 0n), [rows]);
   // True when at least one non-stable, balance-bearing token rolled
   // into the headline — its price came from the static fallback table
   // rather than a live feed, so the badge tells the operator to take
@@ -170,8 +202,8 @@ export function PoolBalanceCard() {
       rows.some(
         (r) =>
           !r.pinned &&
-          r.rawBalance > 0n &&
-          Number.isFinite(r.usdValue),
+          r.availableRaw > 0n &&
+          Number.isFinite(r.availableUsd),
       ),
     [rows],
   );
@@ -208,10 +240,10 @@ export function PoolBalanceCard() {
       <div className="flex items-start justify-between">
         <div>
           <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
-            Pool balance (approximate USD)
+            Available balance (approximate USD)
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-semibold">{formatUsd(totalUsd)}</span>
+            <span className="text-2xl font-semibold">{formatUsd(availableUsd)}</span>
             {hasApprox && (
               <span
                 title="Non-stable token prices use a static fallback table. Wire a live feed for authoritative values."
@@ -222,8 +254,18 @@ export function PoolBalanceCard() {
             )}
           </div>
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-            Total escrowed across {rows.length} whitelisted tokens. Click for
-            per-token breakdown.
+            Spendable now across {rows.length} whitelisted tokens.
+            {(hasLocked || hasPendingFunds) && (
+              <>
+                {" "}
+                <span className="text-[var(--color-warning)]">
+                  Some funds are {hasLocked ? "locked in orders" : ""}
+                  {hasLocked && hasPendingFunds ? " / " : ""}
+                  {hasPendingFunds ? "pending confirmation" : ""}
+                </span>{" "}
+                — see the per-token breakdown.
+              </>
+            )}
           </div>
         </div>
         <div className="flex gap-2">
@@ -252,7 +294,7 @@ export function PoolBalanceCard() {
               <tr>
                 <th className="px-3 py-2 text-left">Token</th>
                 <th className="px-3 py-2 text-right">Notes</th>
-                <th className="px-3 py-2 text-right">Balance</th>
+                <th className="px-3 py-2 text-right">Available</th>
                 <th className="px-3 py-2 text-right">USD value</th>
               </tr>
             </thead>
@@ -302,11 +344,31 @@ export function PoolBalanceCard() {
                             : `${noteCount}`}
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-xs">
-                        {formatBalance(r.rawBalance, r.decimals)}
+                        <div>{formatBalance(r.availableRaw, r.decimals)}</div>
+                        {(r.lockedRaw > 0n || r.pendingRaw > 0n) && (
+                          <div className="mt-0.5 flex justify-end gap-2 text-[10px] font-normal">
+                            {r.lockedRaw > 0n && (
+                              <span
+                                title="Funding an open order — not spendable until it settles or is cancelled."
+                                className="text-[var(--color-warning)]"
+                              >
+                                🔒 {formatBalance(r.lockedRaw, r.decimals)}
+                              </span>
+                            )}
+                            {r.pendingRaw > 0n && (
+                              <span
+                                title="Awaiting on-chain confirmation."
+                                className="text-[var(--color-text-muted)]"
+                              >
+                                ⏳ {formatBalance(r.pendingRaw, r.decimals)}
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-xs">
-                        {Number.isFinite(r.usdValue)
-                          ? formatUsd(r.usdValue)
+                      <td className="px-3 py-2 text-right font-mono text-xs align-top">
+                        {Number.isFinite(r.availableUsd)
+                          ? formatUsd(r.availableUsd)
                           : "—"}
                       </td>
                     </tr>
