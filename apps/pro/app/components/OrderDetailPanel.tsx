@@ -548,11 +548,11 @@ function ChangeResidualCard({
  *  order's claims tree, useful to disambiguate when two
  *  recipients share the same address), short address, amount,
  *  release time, and a derived status badge. Per-row status comes
- *  from `order.claimedLeafIndexes` (the same set the claim modal and
- *  the per-row claim action use) so a recipient that's already been
- *  claimed reads "Claimed" while its siblings still read "Ready" —
- *  the order-level status alone can't express a partial 1/2-claimed
- *  state. */
+ *  from `order.claimedLeafIndexes` + `releaseTime` (the same inputs the
+ *  row's own "Claim now" gate uses) so a recipient that's already been
+ *  claimed reads "Claimed", one still before its release reads "Locked",
+ *  and its released siblings read "Ready" — the order-level status alone
+ *  can't express a partial 1/2-claimed (or locked) state. */
 function RecipientsTable({
   claims,
   order,
@@ -566,7 +566,19 @@ function RecipientsTable({
 }) {
   const list = claims ?? [];
   const claimedSet = new Set(order.claimedLeafIndexes ?? []);
-  const nowSec = Math.floor(Date.now() / 1000);
+  // Ticking wall clock for the per-row release gate. Effect-initialised
+  // (null on the server + first client render) so SSR and hydration agree;
+  // a 30s interval then re-evaluates so a row flips Locked → Ready when its
+  // `releaseTime` passes without waiting on an unrelated re-render. While
+  // null (pre-mount) a settled row reads "Ready" — same as both initial
+  // renders, so no hydration mismatch.
+  const [nowSec, setNowSec] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = () => setNowSec(Math.floor(Date.now() / 1000));
+    tick();
+    const id = setInterval(tick, 30_000);
+    return () => clearInterval(id);
+  }, []);
   // Per-recipient status mirrors the row's own "Claim now" gate and the
   // Claims inbox: claimed (nullifier spent) → Claimed; settled but before
   // its releaseTime → Locked; settled and released → Ready; pre-settle →
@@ -578,7 +590,7 @@ function RecipientsTable({
       : claimedSet.has(c.leafIndex)
         ? { label: "Claimed", tone: "success" as const }
         : order.status === "claimable" || order.status === "claimed"
-          ? nowSec < Number(c.releaseTime)
+          ? nowSec !== null && nowSec < Number(c.releaseTime)
             ? { label: "Locked", tone: "muted" as const }
             : { label: "Ready", tone: "success" as const }
           : { label: "Pending settle", tone: "muted" as const };
