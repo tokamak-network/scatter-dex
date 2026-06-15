@@ -53,6 +53,14 @@ export interface CommitmentTreeState {
    *  happens, but the bumped nonce still re-fires the effect (a
    *  cheap no-op). */
   refresh(): void;
+  /** Non-null when the last hydrate could not produce a trustworthy
+   *  tree from the connected network — the node rate-limited us (HTTP
+   *  429), was unreachable, returned a leaf set that fails the on-chain
+   *  root check, or looks like a different fork than the canonical chain.
+   *  A user-facing string; UIs should surface it (e.g. a banner) so the
+   *  user can fix their wallet's network instead of hitting an opaque
+   *  `CommitmentProofUnavailableError` at spend time. Null when healthy. */
+  hydrationError: string | null;
 }
 
 /** Thrown when the supplied pool has a real CommitmentPool but the
@@ -134,6 +142,51 @@ export function rehydrateBackoffMs(failStreak: number): number {
   return Math.min(30_000, 500 * 2 ** failStreak);
 }
 
+/** Human label for the node whose read failed, used in user-facing
+ *  messages. Wallet-sourced failures are actionable ("switch your RPC");
+ *  public-RPC ones aren't tied to the user's wallet. */
+function nodeLabel(source: "wallet" | "rpc"): string {
+  return source === "wallet" ? "your wallet's network (RPC)" : "the network";
+}
+
+/** A hydrate that completed the network round-trip but produced a tree we
+ *  refuse to trust — an incomplete/out-of-sync leaf set, or a root the
+ *  canonical RPC rejects (wallet on a fork). Carries its own user-facing
+ *  message so the catch site needn't re-classify it from the error text.
+ *  `message` (the Error message) stays a developer-facing diagnostic. */
+class HydrationUnverifiedError extends Error {
+  constructor(
+    readonly userMessage: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HydrationUnverifiedError";
+  }
+}
+
+/** Map a hydrate failure to a user-facing, actionable message. Verification
+ *  failures (`HydrationUnverifiedError`) carry their own message and are
+ *  handled at the catch site; this classifies the REMAINING transport
+ *  errors — an HTTP 429 / throttle gets the rate-limit message, anything
+ *  else falls back to a generic "couldn't load" with the raw reason.
+ *  `source` names whether the offending node is the user's wallet RPC
+ *  (actionable: switch it) or the app's public RPC. Exported for tests. */
+export function describeHydrationError(
+  err: unknown,
+  source: "wallet" | "rpc",
+): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const node = nodeLabel(source);
+  // Only wallet-sourced failures are fixable by the user (switch RPC); a
+  // public-RPC failure isn't tied to their wallet, so omit that advice.
+  const switchHint =
+    source === "wallet" ? " — or switch your wallet to a less-throttled RPC" : "";
+  if (/429|too many requests|rate.?limit|throttl/i.test(msg)) {
+    return `${node} is rate-limiting requests (HTTP 429). Wait a moment and retry${switchHint}.`;
+  }
+  return `Couldn't load the commitment tree from ${node}: ${msg}. Check the network connection and retry${switchHint}.`;
+}
+
 const Ctx = createContext<CommitmentTreeState | null>(null);
 
 export function useCommitmentTree(): CommitmentTreeState {
@@ -169,21 +222,31 @@ export function CommitmentTreeProvider({
   serverUrl,
   children,
 }: CommitmentTreeProviderProps) {
-  // Authoritative reads go through the app's configured public node
-  // (`rpcProvider`), NOT the connected wallet's node (`readProvider`).
-  // The commitment tree is global on-chain data — identical for every
-  // user, so reading it from the wallet's own node buys nothing — and
-  // it's correctness-critical: a wrong leaf set or root produces proofs
-  // the chain rejects, or strands a real deposit. A wallet node can be a
-  // chainId-spoofing fork (passes the app's chainId gate but serves a
-  // stale state) or a broken/unauthorized endpoint; either silently
-  // breaks hydration. `rpcProvider` is the same node settlement trusts,
-  // so the `isKnownRoot` gate below is meaningful. (General per-user
-  // reads — balances, fees — still use the wallet node; see PR #957.)
-  const { rpcProvider } = useWallet();
-  // Derived in render so React state stays a single source of truth;
-  // the useEffect also recomputes locally so its deps stay [poolAddress,
-  // rpcProvider] without listing this synthetic value.
+  // Tree reads (getLogs history + the live subscription's continuous
+  // polling) go through the connected wallet's node (`readProvider`),
+  // which already falls back to the public node (`rpcProvider`) when
+  // disconnected / wrong-chain. Rationale: the shared public RPC
+  // (publicnode) rate-limits the app's read volume with HTTP 429s, which
+  // surface to the user as a stuck tree — "server leaves failed root
+  // check" → getLogs fallback → `CommitmentProofUnavailableError` at
+  // spend time. The wallet's own node carries that load without
+  // throttling, so the spend path no longer depends on the public RPC.
+  //
+  // Correctness is NOT taken on faith from the wallet node:
+  //   1. The same `isKnownRoot` + completeness gate runs against
+  //      `readProvider`, so a throttled/lagging/empty wallet node fails
+  //      the gate instead of publishing a short or bad tree.
+  //   2. After a successful build we best-effort cross-check the root
+  //      against the trusted `rpcProvider` (the node settlement trusts).
+  //      If that node is reachable and does NOT recognise the root, the
+  //      wallet is on a different fork / stale chain — we surface
+  //      `hydrationError` so the user fixes their RPC rather than minting
+  //      a proof that would revert at settle. A throttled cross-check is
+  //      skipped (no false alarm). (General per-user reads already use
+  //      the wallet node; see PR #957.)
+  const { readProvider, readSource, rpcProvider } = useWallet();
+  // Derived in render so React state stays a single source of truth; the
+  // hydrate effect recomputes it locally too, so it needn't be a dep.
   const isLive = poolAddress !== ZERO_ADDRESS;
 
   // Tree is keyed on `poolAddress` — switching invalidates state.
@@ -194,10 +257,16 @@ export function CommitmentTreeProvider({
   const indexRef = useRef<Map<string, number>>(new Map());
   const [leafCount, setLeafCount] = useState(0);
   const [ready, setReady] = useState(!isLive);
-  // Bumped by `refresh()` to retrigger the hydrate effect — the rest
-  // of the deps (`poolAddress`, `rpcProvider`) are stable across a
-  // session, so this is the only mutable handle into the effect.
+  // Bumped by `refresh()` to retrigger the hydrate effect on demand,
+  // independent of changes to its context deps (poolAddress, providers, …).
   const [refreshNonce, setRefreshNonce] = useState(0);
+  // User-facing reason the last hydrate failed (rate limit, unreachable,
+  // bad/forked leaf set), or null when healthy. Exposed via
+  // `CommitmentTreeState.hydrationError` for UIs to surface.
+  const [hydrationError, setHydrationError] = useState<string | null>(null);
+  // Last tree root confirmed by the canonical-RPC cross-check. Re-hydrates
+  // that rebuild the same root skip the (throttled) public-RPC round-trip.
+  const lastVerifiedRootRef = useRef<bigint | null>(null);
   // Auto-rehydrate backoff. When a source stays broken (a dead/forked
   // RPC, an indexer outage), every failed proof calls `refresh()`, which
   // would otherwise re-run the effect immediately — rebuilding a
@@ -285,13 +354,13 @@ export function CommitmentTreeProvider({
       //      Requiring `t.nextIndex >= nextIndex()` rejects the lagging set so
       //      the caller falls back / retries instead of trusting a short tree.
       const [known, onchainCount] = await Promise.all([
-        isKnownPoolRoot(rpcProvider, poolAddress, t.root),
+        isKnownPoolRoot(readProvider, poolAddress, t.root),
         // Best-effort: a transient nextIndex() failure (rate limit / timeout)
         // must not reject hydration when isKnownRoot would otherwise pass.
         // Falling back to 0 simply skips the completeness gate for this
         // attempt — isKnownRoot still guards correctness, and a later
         // refresh re-checks completeness once the RPC recovers.
-        getPoolNextIndex(rpcProvider, poolAddress).catch(() => 0),
+        getPoolNextIndex(readProvider, poolAddress).catch(() => 0),
       ]);
       if (cancelled) return null;
       return known && t.nextIndex >= onchainCount ? { tree: t, index: idx } : null;
@@ -300,7 +369,7 @@ export function CommitmentTreeProvider({
     chain = chain.then(async () => {
       try {
         const fromGetLogs = () =>
-          loadCommitmentInsertedHistory(rpcProvider, poolAddress, { fromBlock });
+          loadCommitmentInsertedHistory(readProvider, poolAddress, { fromBlock });
 
         let built: { tree: IncrementalMerkleTree; index: Map<string, number> } | null = null;
 
@@ -312,7 +381,7 @@ export function CommitmentTreeProvider({
         const server = serverUrl?.trim();
         if (server) {
           try {
-            const chainId = (await rpcProvider.getNetwork()).chainId;
+            const chainId = (await readProvider.getNetwork()).chainId;
             if (cancelled) return;
             built = await buildVerified(() => fetchCommitmentLeaves(server, chainId));
             if (!built) {
@@ -331,9 +400,38 @@ export function CommitmentTreeProvider({
         if (!built) built = await buildVerified(fromGetLogs);
         if (cancelled) return;
         if (!built) {
-          throw new Error(
+          throw new HydrationUnverifiedError(
+            `${nodeLabel(readSource)} returned an incomplete or out-of-sync commitment set. It may still be syncing — wait a moment and retry, or switch to a healthier RPC.`,
             "[commitmentTree] hydrated root not recognised on-chain — incomplete or inconsistent commitment set; refusing to mark ready. Refresh to retry.",
           );
+        }
+
+        // Best-effort canonical cross-check, run only when the root is one
+        // we haven't already confirmed. The tree was built + gated against
+        // the wallet node; confirm its root is also recognised by the
+        // trusted public RPC (the node settlement trusts). A reachable
+        // canonical node that REJECTS the root means the wallet is on a
+        // different fork / stale chain — refuse rather than mint a proof
+        // that would revert at settle. `null` (throttled/unreachable) never
+        // blocks on the public RPC's availability — the very thing we moved
+        // off the hot path — and isn't cached, so it's re-checked next time.
+        // Caching by root keeps `refresh()`-driven re-hydrates of an
+        // unchanged tree from re-hitting the throttled public RPC. Skipped
+        // when `readProvider` already IS `rpcProvider` (disconnected).
+        if (readSource === "wallet" && built.tree.root !== lastVerifiedRootRef.current) {
+          const canonicalKnown = await isKnownPoolRoot(
+            rpcProvider,
+            poolAddress,
+            built.tree.root,
+          ).catch(() => null);
+          if (cancelled) return;
+          if (canonicalKnown === false) {
+            throw new HydrationUnverifiedError(
+              "Your wallet is connected to a stale or forked node — its commitment data doesn't match the canonical chain. Switch your wallet to a healthy RPC for this network, then retry.",
+              "[commitmentTree] wallet-node root rejected by canonical RPC — wallet may be on a stale fork or different chain",
+            );
+          }
+          if (canonicalKnown === true) lastVerifiedRootRef.current = built.tree.root;
         }
 
         // Publish the verified tree. Reassign the `let` bindings so the live
@@ -345,6 +443,7 @@ export function CommitmentTreeProvider({
         setLeafCount(tree.nextIndex);
         setReady(true);
         failStreakRef.current = 0;
+        setHydrationError(null);
       } catch (err) {
         if (cancelled) return;
         // Keep `ready=false` so spend flows don't use an empty tree as
@@ -352,10 +451,15 @@ export function CommitmentTreeProvider({
         // persistently-failing source can't spin the effect.
         failStreakRef.current += 1;
         console.error("[commitmentTree] history fetch failed:", err);
+        setHydrationError(
+          err instanceof HydrationUnverifiedError
+            ? err.userMessage
+            : describeHydrationError(err, readSource),
+        );
       }
     });
 
-    const unsubscribe = subscribeCommitmentInserted(rpcProvider, poolAddress, (row) => {
+    const unsubscribe = subscribeCommitmentInserted(readProvider, poolAddress, (row) => {
       if (cancelled) return;
       chain = chain.then(async () => {
         // Wrap the per-event work in try/catch so a single insert()
@@ -384,7 +488,7 @@ export function CommitmentTreeProvider({
       cancelled = true;
       unsubscribe();
     };
-  }, [poolAddress, fromBlock, serverUrl, rpcProvider, refreshNonce]);
+  }, [poolAddress, fromBlock, serverUrl, readProvider, readSource, rpcProvider, refreshNonce]);
 
   // Reset backoff and cancel any pending retry whenever the hydrate
   // context changes (or on unmount). A timer scheduled for the old
@@ -395,13 +499,21 @@ export function CommitmentTreeProvider({
   // streak, or the backoff could never grow.
   useEffect(() => {
     failStreakRef.current = 0;
+    // The new context starts clean: clear any banner left from the old
+    // pool/network and forget the previously-verified root, so the
+    // canonical cross-check actually runs against the new chain (a fresh
+    // tree that happens to share a root with the old one must NOT be
+    // skipped). The hydrate effect re-runs on these same deps and will
+    // repopulate both.
+    setHydrationError(null);
+    lastVerifiedRootRef.current = null;
     return () => {
       if (retryTimerRef.current != null) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
     };
-  }, [poolAddress, fromBlock, serverUrl, rpcProvider]);
+  }, [poolAddress, fromBlock, serverUrl, readProvider]);
 
   const refresh = useCallback(() => {
     // Exponential backoff keyed on the consecutive-failure streak (streak
@@ -449,8 +561,9 @@ export function CommitmentTreeProvider({
       findIndex,
       tryProofFor,
       refresh,
+      hydrationError,
     }),
-    [isLive, ready, leafCount, findIndex, tryProofFor, refresh],
+    [isLive, ready, leafCount, findIndex, tryProofFor, refresh, hydrationError],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
