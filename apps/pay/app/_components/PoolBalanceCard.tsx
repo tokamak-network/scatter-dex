@@ -33,11 +33,13 @@ interface TokenRow {
   lockedRaw: bigint;
   /** Not yet reconciled on-chain (leafIndex < 0). */
   pendingRaw: bigint;
-  /** Available numeric × USD price. NaN when the price is unknown.
-   *  Drives the spendable headline — locked/pending are deliberately
-   *  excluded so the number reflects what the operator can actually
-   *  pay out right now. */
+  /** Available / locked / pending numeric × USD price. NaN when the
+   *  price is unknown. `availableUsd` drives the spendable headline;
+   *  the other two feed the locked/pending totals shown beside it so
+   *  the operator can see at a glance what's parked outside spendable. */
   availableUsd: number;
+  lockedUsd: number;
+  pendingUsd: number;
   pinned: boolean;
   /** Per-commitment notes for this token, sorted Ready first then by
    *  leaf index. Drives the per-token drawer when the operator
@@ -143,9 +145,12 @@ export function PoolBalanceCard() {
     }
     const list: TokenRow[] = Object.values(LAUNCH_TOKENS).map((t) => {
       const b = bucketBySymbol.get(t.symbol) ?? { available: 0n, locked: 0n, pending: 0n };
-      const availNumeric = Number(ethers.formatUnits(b.available, t.decimals));
       const price = APPROX_USD_PRICE[t.symbol];
-      const availableUsd = price !== undefined ? availNumeric * price : NaN;
+      const toUsd = (raw: bigint) =>
+        price !== undefined ? Number(ethers.formatUnits(raw, t.decimals)) * price : NaN;
+      const availableUsd = toUsd(b.available);
+      const lockedUsd = toUsd(b.locked);
+      const pendingUsd = toUsd(b.pending);
       const tokenNotes = (notesBySymbol.get(t.symbol) ?? []).slice().sort((a, b) => {
         // Ready (leafIndex >= 0) before Pending; within a group, by
         // leafIndex ascending so the on-chain order matches what the
@@ -162,6 +167,8 @@ export function PoolBalanceCard() {
         lockedRaw: b.locked,
         pendingRaw: b.pending,
         availableUsd,
+        lockedUsd,
+        pendingUsd,
         pinned: PINNED_USD_SYMBOLS.has(t.symbol),
         notes: tokenNotes,
       };
@@ -188,9 +195,25 @@ export function PoolBalanceCard() {
       ),
     [rows],
   );
-  // Whether any token still has funds parked outside `available` —
-  // drives the "+ locked / pending" hint under the headline so a `0`
-  // available doesn't read as an empty pool.
+  // Aggregate USD parked outside `available`, shown beside the headline
+  // so a `0` available doesn't read as an empty pool and the operator
+  // sees how much is locked / still confirming across all tokens.
+  const lockedUsd = useMemo(
+    () =>
+      rows.reduce(
+        (sum, r) => (Number.isFinite(r.lockedUsd) ? sum + r.lockedUsd : sum),
+        0,
+      ),
+    [rows],
+  );
+  const pendingUsd = useMemo(
+    () =>
+      rows.reduce(
+        (sum, r) => (Number.isFinite(r.pendingUsd) ? sum + r.pendingUsd : sum),
+        0,
+      ),
+    [rows],
+  );
   const hasLocked = useMemo(() => rows.some((r) => r.lockedRaw > 0n), [rows]);
   const hasPendingFunds = useMemo(() => rows.some((r) => r.pendingRaw > 0n), [rows]);
   // True when at least one non-stable, balance-bearing token rolled
@@ -242,7 +265,7 @@ export function PoolBalanceCard() {
           <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
             Available balance (approximate USD)
           </div>
-          <div className="mt-2 flex items-baseline gap-2">
+          <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-2xl font-semibold">{formatUsd(availableUsd)}</span>
             {hasApprox && (
               <span
@@ -252,20 +275,26 @@ export function PoolBalanceCard() {
                 approx
               </span>
             )}
+            {hasPendingFunds && (
+              <span
+                title="Notes still awaiting on-chain confirmation — not yet spendable."
+                className="text-xs font-medium text-[var(--color-text-muted)]"
+              >
+                ⏳ {formatUsd(pendingUsd)} pending
+              </span>
+            )}
+            {hasLocked && (
+              <span
+                title="Notes funding open orders — not spendable until they settle or are cancelled."
+                className="text-xs font-medium text-[var(--color-warning)]"
+              >
+                🔒 {formatUsd(lockedUsd)} locked
+              </span>
+            )}
           </div>
           <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-            Spendable now across {rows.length} whitelisted tokens.
-            {(hasLocked || hasPendingFunds) && (
-              <>
-                {" "}
-                <span className="text-[var(--color-warning)]">
-                  Some funds are {hasLocked ? "locked in orders" : ""}
-                  {hasLocked && hasPendingFunds ? " / " : ""}
-                  {hasPendingFunds ? "pending confirmation" : ""}
-                </span>{" "}
-                — see the per-token breakdown.
-              </>
-            )}
+            Spendable now across {rows.length} whitelisted tokens. Click for
+            per-token breakdown.
           </div>
         </div>
         <div className="flex gap-2">
