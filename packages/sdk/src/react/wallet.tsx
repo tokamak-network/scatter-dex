@@ -59,27 +59,31 @@ export interface WalletState {
    *  fallback built from `network.rpcUrl`. Drop-in either way — pass it to
    *  `new Contract`.
    *
-   *  Do NOT use this for **correctness-critical, globally-identical** reads
-   *  (commitment tree, identity-gate verification, anything whose result
-   *  gates a proof or a tx) — use `rpcProvider`. The user's node can be a
-   *  chainId-spoofing fork or a broken/unauthorized endpoint that silently
-   *  serves stale or erroring data; those reads must come from the same
-   *  node settlement trusts. */
+   *  For **correctness-critical, globally-identical** reads the rule is
+   *  nuanced: the commitment tree DOES read here (to dodge the public
+   *  RPC's rate limits), but only because it independently re-verifies the
+   *  result on-chain (isKnownRoot + completeness gate) AND best-effort
+   *  cross-checks the root against `rpcProvider` — so a forked/stale wallet
+   *  node fails the gate or trips the cross-check instead of being trusted.
+   *  Reads WITHOUT such a guard (e.g. identity-gate verification) must
+   *  still use `rpcProvider`, since the user's node can be a chainId-
+   *  spoofing fork or a broken/unauthorized endpoint serving stale data. */
   readProvider: ethers.Provider;
   /** Which node the current `readProvider` reads from — `"wallet"` (the
-   *  user's connected node) or `"rpc"` (public fallback). Debug/status
-   *  indicator only — it does NOT describe where authoritative reads go
-   *  (those always use `rpcProvider`, regardless of this value). */
+   *  user's connected node) or `"rpc"` (public fallback). Consumers that
+   *  read through `readProvider` use this to decide whether a canonical
+   *  cross-check against `rpcProvider` is warranted (only when `"wallet"`). */
   readSource: "wallet" | "rpc";
   /** Always-public `JsonRpcProvider` built from `network.rpcUrl` — the
-   *  app's authoritative node. Two uses:
+   *  app's authoritative node. Uses:
    *    1. Write preflight (gas/fee estimation via `runWrite`) so a
    *       throttled wallet RPC can't gate the estimate; the tx still
    *       broadcasts through the connected wallet.
-   *    2. Correctness-critical, globally-identical reads (commitment tree,
-   *       identity gate) that must not trust a forked/broken wallet node.
-   *  Reading these here costs nothing per-user the wallet node would save,
-   *  and guarantees agreement with the settlement node. */
+   *    2. Unguarded correctness-critical reads (identity gate) that must
+   *       not trust a forked/broken wallet node.
+   *    3. The commitment tree's best-effort canonical root cross-check —
+   *       a guard ON TOP of its wallet-node reads, not the primary source.
+   *  Guarantees agreement with the node settlement trusts. */
   rpcProvider: ethers.JsonRpcProvider;
   /** Best-effort wallet vendor name; null when disconnected. */
   walletName: string | null;

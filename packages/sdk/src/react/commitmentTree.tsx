@@ -56,7 +56,7 @@ export interface CommitmentTreeState {
   /** Non-null when the last hydrate could not produce a trustworthy
    *  tree from the connected network — the node rate-limited us (HTTP
    *  429), was unreachable, returned a leaf set that fails the on-chain
-   *  root check, or looks like a different fork than canonical Sepolia.
+   *  root check, or looks like a different fork than the canonical chain.
    *  A user-facing string; UIs should surface it (e.g. a banner) so the
    *  user can fix their wallet's network instead of hitting an opaque
    *  `CommitmentProofUnavailableError` at spend time. Null when healthy. */
@@ -177,10 +177,14 @@ export function describeHydrationError(
 ): string {
   const msg = err instanceof Error ? err.message : String(err);
   const node = nodeLabel(source);
+  // Only wallet-sourced failures are fixable by the user (switch RPC); a
+  // public-RPC failure isn't tied to their wallet, so omit that advice.
+  const switchHint =
+    source === "wallet" ? " — or switch your wallet to a less-throttled RPC" : "";
   if (/429|too many requests|rate.?limit|throttl/i.test(msg)) {
-    return `${node} is rate-limiting requests (HTTP 429). Wait a moment and retry, or switch your wallet to a less-throttled Sepolia RPC.`;
+    return `${node} is rate-limiting requests (HTTP 429). Wait a moment and retry${switchHint}.`;
   }
-  return `Couldn't load the commitment tree from ${node}: ${msg}. Check your wallet's network connection and retry.`;
+  return `Couldn't load the commitment tree from ${node}: ${msg}. Check the network connection and retry${switchHint}.`;
 }
 
 const Ctx = createContext<CommitmentTreeState | null>(null);
@@ -423,7 +427,7 @@ export function CommitmentTreeProvider({
           if (cancelled) return;
           if (canonicalKnown === false) {
             throw new HydrationUnverifiedError(
-              "Your wallet is connected to a stale or forked node — its commitment data doesn't match Sepolia. Switch MetaMask to a healthy Sepolia RPC, then retry.",
+              "Your wallet is connected to a stale or forked node — its commitment data doesn't match the canonical chain. Switch your wallet to a healthy RPC for this network, then retry.",
               "[commitmentTree] wallet-node root rejected by canonical RPC — wallet may be on a stale fork or different chain",
             );
           }
@@ -495,6 +499,14 @@ export function CommitmentTreeProvider({
   // streak, or the backoff could never grow.
   useEffect(() => {
     failStreakRef.current = 0;
+    // The new context starts clean: clear any banner left from the old
+    // pool/network and forget the previously-verified root, so the
+    // canonical cross-check actually runs against the new chain (a fresh
+    // tree that happens to share a root with the old one must NOT be
+    // skipped). The hydrate effect re-runs on these same deps and will
+    // repopulate both.
+    setHydrationError(null);
+    lastVerifiedRootRef.current = null;
     return () => {
       if (retryTimerRef.current != null) {
         clearTimeout(retryTimerRef.current);
