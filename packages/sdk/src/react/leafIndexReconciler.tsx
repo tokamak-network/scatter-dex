@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CommitmentTreeState } from "./commitmentTree";
 import { useTimedRefresh } from "./useTimedRefresh";
 
@@ -100,19 +100,26 @@ export function useLeafIndexReconciler({
     .map((n) => n.id)
     .sort()
     .join("|");
-  const [pollAttempts, setPollAttempts] = useState(0);
+  // Attempt counter lives in a ref so ticking it doesn't re-render every 3s.
+  // Only the terminal "budget exhausted" transition flips state (once), which
+  // is all `enabled` needs to stop the poll.
+  const attemptsRef = useRef(0);
+  const [pollExhausted, setPollExhausted] = useState(false);
   useEffect(() => {
-    setPollAttempts(0);
+    // Pending set changed (a note reconciled / a fresh deposit) → fresh budget.
+    attemptsRef.current = 0;
+    setPollExhausted(false);
   }, [pendingKey]);
   useTimedRefresh({
     refresh: () => {
       tree.refresh();
-      setPollAttempts((n) => n + 1);
+      attemptsRef.current += 1;
+      if (attemptsRef.current >= SELF_HEAL_MAX_POLLS) setPollExhausted(true);
     },
     intervalMs: 3000,
     enabled:
       pendingKey.length > 0 &&
-      pollAttempts < SELF_HEAL_MAX_POLLS &&
+      !pollExhausted &&
       tree.ready &&
       tree.mode !== "demo",
   });
