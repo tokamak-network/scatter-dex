@@ -126,11 +126,12 @@ export async function submitClaim(opts: SubmitClaimOpts): Promise<SubmitClaimRes
     };
     // A gasless claim makes the relayer submit AND mine an on-chain
     // `privateClaim` tx before it responds — well past the client's 5s
-    // default. Give it room (60s) so a claim that's actually succeeding
-    // doesn't abort with "signal timed out" and surface as a false
-    // failure (the tx lands; the UI just gave up waiting). The page also
-    // re-probes the nullifier on error as a backstop.
-    const client = new RelayerClient(pkg.relayerUrl, { timeoutMs: 60_000 });
+    // default. Give it room (90s, matching Pay's claimSubmit) so a claim
+    // that's actually succeeding doesn't abort with "signal timed out"
+    // and surface as a false failure. This matters most for the inline
+    // "Claim now" / Claims-inbox flows that reuse submitClaim WITHOUT the
+    // /claim page's post-error nullifier backstop.
+    const client = new RelayerClient(pkg.relayerUrl, { timeoutMs: 90_000 });
     const resp = await client.submitClaim(body);
     return { txHash: resp.txHash, via: "gasless" };
   }
