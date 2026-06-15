@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
 import { loadCrossAppNoteStates } from "@zkscatter/sdk/storage";
 import type { CrossAppNoteStates } from "./noteStatus";
@@ -30,6 +30,7 @@ export function useCrossAppNoteStates(): {
   const { account, chainId } = useWallet();
   const [states, setStates] = useState<CrossAppNoteStates>(EMPTY);
   const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick((n) => n + 1), []);
   useEffect(() => {
     if (!account || chainId == null) {
       setStates(EMPTY);
@@ -40,12 +41,26 @@ export function useCrossAppNoteStates(): {
       .then((s) => {
         if (!cancelled) setStates(s);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.warn("[Pro] loadCrossAppNoteStates failed", err);
         if (!cancelled) setStates(EMPTY);
       });
     return () => {
       cancelled = true;
     };
   }, [account, chainId, tick]);
-  return { states, refresh: () => setTick((n) => n + 1) };
+  // While a cross-app lock/discard is in effect, re-read every 60s so an
+  // order that expires / cancels / settles in the OTHER product (which we
+  // can't observe live) stops pinning the note here without a manual
+  // reload — same cadence as Pay's pool-card refresh.
+  useEffect(() => {
+    if (states.lockedNoteIds.size === 0 && states.discardedNoteIds.size === 0) {
+      return;
+    }
+    const id = setInterval(refresh, 60_000);
+    return () => clearInterval(id);
+  }, [states, refresh]);
+  // `states` is a stable reference between fetches; `refresh` is stable via
+  // useCallback. Memoise the wrapper so consumers can put it in deps.
+  return useMemo(() => ({ states, refresh }), [states, refresh]);
 }
