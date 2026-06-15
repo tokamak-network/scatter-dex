@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import type { CommitmentTreeState } from "./commitmentTree";
+import { useTimedRefresh } from "./useTimedRefresh";
 
 /** Minimal note shape the reconciler needs: a stable id, the
  *  on-chain index it's waiting for, and the commitment to look up
@@ -22,7 +23,7 @@ export interface LeafIndexNote {
  *  provider doesn't drift this contract. */
 export type LeafIndexTree = Pick<
   CommitmentTreeState,
-  "ready" | "mode" | "leafCount" | "findIndex"
+  "ready" | "mode" | "leafCount" | "findIndex" | "refresh"
 >;
 
 export interface UseLeafIndexReconcilerArgs {
@@ -74,4 +75,21 @@ export function useLeafIndexReconciler({
       }
     }
   }, [notes, tree.ready, tree.mode, tree.leafCount, tree.findIndex, setLeafIndex, label]);
+
+  // The reconcile pass above only fires when `tree.leafCount` changes —
+  // it's reactive, not a poller. The tree's live subscription
+  // (`subscribeCommitmentInserted`) is best-effort ethers polling and
+  // CAN miss an insert, in which case `leafCount` never moves and a
+  // freshly-deposited note stays at `leafIndex < 0` (unspendable) until
+  // the user hard-refreshes. Self-heal: while any note is still pending,
+  // re-hydrate the tree on a timer so a missed event is recovered
+  // automatically; `tree.refresh()`'s own backoff coalesces bursts, and
+  // `useTimedRefresh` also re-fires when the tab regains focus (the
+  // "deposited in another tab" case). Stops once nothing is pending.
+  const hasPending = notes.some((n) => n.leafIndex < 0);
+  useTimedRefresh({
+    refresh: tree.refresh,
+    intervalMs: 3000,
+    enabled: hasPending && tree.ready && tree.mode !== "demo",
+  });
 }
