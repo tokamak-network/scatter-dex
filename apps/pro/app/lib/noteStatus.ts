@@ -172,8 +172,21 @@ export function deriveNoteStatus(
   note: VaultNote,
   orders: readonly OrderRecord[],
   nowMs: number = Date.now(),
+  crossApp?: CrossAppNoteStates,
 ): NoteStatusInfo {
-  return classifyAgainstIndex(note, buildOrderIndex(orders, nowMs));
+  return classifyAgainstIndex(note, buildOrderIndex(orders, nowMs), crossApp);
+}
+
+/** Locks/discards derived from OTHER products' order files (Pay, …) — see
+ *  the SDK's `loadCrossAppNoteStates`. Escrow notes are shared across
+ *  products, so a note funding an OPEN order in another product must read
+ *  as `locked` here too (spending it would strand that order), and the
+ *  phantom change note of another product's EXPIRED matching order reads
+ *  as `discarded`. Keyed by the content-addressed noteId, which is stable
+ *  across products. Optional — omit (Pro-only view) and nothing changes. */
+export interface CrossAppNoteStates {
+  lockedNoteIds: ReadonlySet<string>;
+  discardedNoteIds: ReadonlySet<string>;
 }
 
 /** Classify a single note against a pre-built order index. Exposed
@@ -189,6 +202,7 @@ export function deriveNoteStatus(
 function classifyAgainstIndex(
   note: VaultNote,
   index: OrderIndex,
+  crossApp?: CrossAppNoteStates,
 ): NoteStatusInfo {
   if (note.leafIndex < 0) {
     // Open-order residual — still inbound, treat as pending.
@@ -202,10 +216,16 @@ function classifyAgainstIndex(
     if (fromExpired) {
       return { status: "discarded", discardedFromOrder: fromExpired };
     }
+    // Phantom change note of ANOTHER product's expired matching order —
+    // same dead-commitment case, just sourced from a cross-app order file.
+    if (crossApp?.discardedNoteIds.has(note.id)) return { status: "discarded" };
     return { status: "pending" };
   }
   const lockedBy = index.byNoteId.get(note.id);
   if (lockedBy) return { status: "locked", lockedByOrder: lockedBy };
+  // Funds an OPEN order in another product — no local order detail to
+  // name, but spending it here would strand that order, so it's locked.
+  if (crossApp?.lockedNoteIds.has(note.id)) return { status: "locked" };
   if (index.recoverableNoteIds.has(note.id)) {
     return { status: "available", recoverableExpired: true };
   }
@@ -243,13 +263,14 @@ export function aggregateBySymbol(
   notes: readonly VaultNote[],
   orders: readonly OrderRecord[],
   nowMs: number = Date.now(),
+  crossApp?: CrossAppNoteStates,
 ): SymbolBuckets[] {
   const index = buildOrderIndex(orders, nowMs);
   const by = new Map<string, SymbolBuckets>();
   for (const n of notes) {
     const amt = Number(n.amount.replace(/,/g, ""));
     if (!Number.isFinite(amt)) continue;
-    const { status } = classifyAgainstIndex(n, index);
+    const { status } = classifyAgainstIndex(n, index, crossApp);
     // Phantom change notes from expired matching orders never
     // settle — leaving them in the running totals would show the
     // user a balance they can't spend. Skip them entirely; the
