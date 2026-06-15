@@ -4,9 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
 import { decodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
-import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
   addClaimInboxEntry,
@@ -17,6 +15,7 @@ import { buildExplorerTxUrl } from "@zkscatter/sdk/util";
 import { DEMO_NETWORK } from "../lib/network";
 import { formatLocalStampSec } from "../lib/format";
 import { submitClaim } from "../lib/claimSubmit";
+import { isClaimNullifierSpent } from "../lib/claimProbe";
 import { useFolder } from "../lib/folder";
 
 /** Pro counterpart of Pay's /claim. Port of `apps/pay/app/claim/page.tsx`
@@ -214,18 +213,12 @@ function ClaimInner() {
     let cancelled = false;
     (async () => {
       try {
-        const nullifier = await computeClaimNullifier(
-          BigInt(parsed.pkg.secret),
-          BigInt(parsed.pkg.leafIndex),
-        );
-        const settlement = new ethers.Contract(
-          parsed.pkg.settlementAddress,
-          PRIVATE_SETTLEMENT_ABI,
+        const spent = await isClaimNullifierSpent(
           readProvider,
+          parsed.pkg.settlementAddress,
+          BigInt(parsed.pkg.secret),
+          parsed.pkg.leafIndex,
         );
-        const spent = (await settlement.claimNullifiers(
-          toBytes32Hex(nullifier),
-        )) as boolean;
         if (!cancelled) setAlreadyClaimed(spent);
       } catch {
         if (!cancelled) setAlreadyClaimed(null);
@@ -304,18 +297,12 @@ function ClaimInner() {
       // state instead of a false error.
       try {
         if (readProvider) {
-          const nullifier = await computeClaimNullifier(
-            BigInt(parsed.pkg.secret),
-            BigInt(parsed.pkg.leafIndex),
-          );
-          const settlement = new ethers.Contract(
-            parsed.pkg.settlementAddress,
-            PRIVATE_SETTLEMENT_ABI,
+          const spent = await isClaimNullifierSpent(
             readProvider,
+            parsed.pkg.settlementAddress,
+            BigInt(parsed.pkg.secret),
+            parsed.pkg.leafIndex,
           );
-          const spent = (await settlement.claimNullifiers(
-            toBytes32Hex(nullifier),
-          )) as boolean;
           if (spent) {
             setAlreadyClaimed(true);
             setPhase({ kind: "idle" });

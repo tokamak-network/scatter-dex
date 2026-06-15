@@ -22,6 +22,7 @@ import { useFolder } from "../lib/folder";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { formatWhen } from "../lib/format";
 import { submitClaim } from "../lib/claimSubmit";
+import { isClaimNullifierSpent } from "../lib/claimProbe";
 
 /** Reconstruct the /claim URL from a stored entry. We always have the
  *  decoded package, so we re-encode it. The `id` query param is just a
@@ -295,6 +296,26 @@ export default function ClaimsPage() {
       await refresh();
       flashRow(e.id, `✓ Claimed (${txHash.slice(0, 8)}…)`);
     } catch (err) {
+      // Backstop: the relayer may have landed the claim on-chain even
+      // though its response errored/timed out. Re-probe the nullifier —
+      // if it's spent, show success instead of a false failure.
+      try {
+        if (
+          await isClaimNullifierSpent(
+            readProvider,
+            e.pkg.settlementAddress,
+            BigInt(e.pkg.secret),
+            e.pkg.leafIndex,
+          )
+        ) {
+          await markClaimInboxEntryClaimed(e.id).catch(() => {});
+          await refresh();
+          flashRow(e.id, "✓ Already claimed");
+          return;
+        }
+      } catch (probeErr) {
+        console.warn("[Pro] inbox claim post-failure probe failed", probeErr);
+      }
       setRowState((s) => ({
         ...s,
         [e.id]: {
