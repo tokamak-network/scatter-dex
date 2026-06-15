@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CommitmentTreeState } from "./commitmentTree";
 import { useTimedRefresh } from "./useTimedRefresh";
 
@@ -85,11 +85,47 @@ export function useLeafIndexReconciler({
   // re-hydrate the tree on a timer so a missed event is recovered
   // automatically; `tree.refresh()`'s own backoff coalesces bursts, and
   // `useTimedRefresh` also re-fires when the tab regains focus (the
-  // "deposited in another tab" case). Stops once nothing is pending.
-  const hasPending = notes.some((n) => n.leafIndex < 0);
+  // "deposited in another tab" case).
+  //
+  // BOUNDED: a note that will NEVER reconcile (e.g. a discarded phantom
+  // change note from an expired order — its `leafIndex` stays < 0 forever)
+  // would otherwise keep this poll hitting the RPC indefinitely. So cap the
+  // attempts and reset the budget whenever the pending SET changes (a note
+  // reconciled, or a fresh deposit appeared) — genuine pendings always get
+  // the full window, while a stuck phantom stops after it. If the event
+  // does eventually land, the reactive pass above still reconciles it off
+  // the subscription's own `leafCount` change.
+  const pendingKey = notes
+    .filter((n) => n.leafIndex < 0)
+    .map((n) => n.id)
+    .sort()
+    .join("|");
+  // Attempt counter lives in a ref so ticking it doesn't re-render every 3s.
+  // Only the terminal "budget exhausted" transition flips state (once), which
+  // is all `enabled` needs to stop the poll.
+  const attemptsRef = useRef(0);
+  const [pollExhausted, setPollExhausted] = useState(false);
+  useEffect(() => {
+    // Pending set changed (a note reconciled / a fresh deposit) → fresh budget.
+    attemptsRef.current = 0;
+    setPollExhausted(false);
+  }, [pendingKey]);
   useTimedRefresh({
-    refresh: tree.refresh,
+    refresh: () => {
+      tree.refresh();
+      attemptsRef.current += 1;
+      if (attemptsRef.current >= SELF_HEAL_MAX_POLLS) setPollExhausted(true);
+    },
     intervalMs: 3000,
-    enabled: hasPending && tree.ready && tree.mode !== "demo",
+    enabled:
+      pendingKey.length > 0 &&
+      !pollExhausted &&
+      tree.ready &&
+      tree.mode !== "demo",
   });
 }
+
+/** Cap on self-heal `tree.refresh` polls for an unchanged pending set —
+ *  ~100 × 3s ≈ 5 min, ample for a real deposit to reconcile (a Sepolia
+ *  block lands in ~12s) while bounding a phantom note's RPC churn. */
+const SELF_HEAL_MAX_POLLS = 100;
