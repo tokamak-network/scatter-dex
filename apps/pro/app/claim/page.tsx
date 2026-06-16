@@ -15,7 +15,7 @@ import { buildExplorerTxUrl } from "@zkscatter/sdk/util";
 import { DEMO_NETWORK } from "../lib/network";
 import { formatLocalStampSec } from "../lib/format";
 import { submitClaim } from "../lib/claimSubmit";
-import { isClaimNullifierSpent } from "../lib/claimProbe";
+import { isClaimNullifierSpent } from "@zkscatter/sdk/claim";
 import { useFolder } from "../lib/folder";
 
 /** Pro counterpart of Pay's /claim. Port of `apps/pay/app/claim/page.tsx`

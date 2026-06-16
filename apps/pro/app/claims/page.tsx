@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { formatTokenLabel, PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
+import { formatTokenLabel } from "@zkscatter/sdk";
 import { encodeClaimPackage } from "@zkscatter/sdk/notes";
 import {
   addClaimInboxEntry,
@@ -17,12 +17,11 @@ import {
   type ClaimInboxEntry,
   type ClaimInboxGroup,
 } from "@zkscatter/sdk/storage";
-import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { useFolder } from "../lib/folder";
 import { WorkspaceBar } from "../components/WorkspaceBar";
 import { formatWhen } from "../lib/format";
 import { submitClaim } from "../lib/claimSubmit";
-import { isClaimNullifierSpent } from "../lib/claimProbe";
+import { isClaimNullifierSpent } from "@zkscatter/sdk/claim";
 
 /** Reconstruct the /claim URL from a stored entry. We always have the
  *  decoded package, so we re-encode it. The `id` query param is just a
@@ -184,18 +183,12 @@ export default function ClaimsPage() {
       // without speeding anything up.
       const probes = await Promise.allSettled(
         pending.map(async (e) => {
-          const nullifier = await computeClaimNullifier(
-            BigInt(e.pkg.secret),
-            BigInt(e.pkg.leafIndex),
-          );
-          const settlement = new ethers.Contract(
-            e.pkg.settlementAddress,
-            PRIVATE_SETTLEMENT_ABI,
+          const spent = await isClaimNullifierSpent(
             readProvider,
+            e.pkg.settlementAddress,
+            BigInt(e.pkg.secret),
+            e.pkg.leafIndex,
           );
-          const spent = (await settlement.claimNullifiers(
-            toBytes32Hex(nullifier),
-          )) as boolean;
           return { id: e.id, spent };
         }),
       );
