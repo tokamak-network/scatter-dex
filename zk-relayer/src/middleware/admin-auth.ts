@@ -29,10 +29,9 @@ export function setSiweAuth(instance: AdminSiweAuth | null): void {
  *  later. */
 export function buildAdminAuth(siwe: AdminSiweAuth | null): RequestHandler {
   return function adminAuth(req: Request, res: Response, next: () => void) {
-    // Bearer-token path (SIWE) — only attempted when a SIWE instance
-    // is wired (i.e. `RELAYER_REGISTRY_ADDRESS` is set). Tried first
-    // because operators on the wallet flow get the cheaper path (one
-    // Map.get vs the timing-safe key compare).
+    // Bearer-token path (SIWE) — the operator-console flow. Tried first
+    // because it's the cheaper path (one Map.get vs the timing-safe key
+    // compare).
     const authHeader = req.headers.authorization;
     const hasBearer =
       siwe && typeof authHeader === "string" && authHeader.startsWith(BEARER_PREFIX);
