@@ -2,10 +2,12 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { randomUUID } from "crypto";
 import { PrivateOrderDB } from "../src/core/db.js";
 
-// os.tmpdir() over a hardcoded /tmp so the suite runs on non-POSIX CI too.
-const TEST_DB = path.join(os.tmpdir(), "zk-relayer-volume-buyleg-test.db");
+// os.tmpdir() over a hardcoded /tmp so the suite runs on non-POSIX CI too;
+// randomUUID() so parallel vitest workers can't collide on the same file.
+const TEST_DB = path.join(os.tmpdir(), `zk-relayer-volume-buyleg-${randomUUID()}.db`);
 const WETH = "0x" + "11".repeat(20);
 const USDC = "0x" + "22".repeat(20);
 

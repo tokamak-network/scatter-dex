@@ -425,7 +425,7 @@ export class AuthorizeSubmitter {
           sellToken: makerSellToken,
           sellAmount: BigInt(makerPs.sellAmount).toString(),
           // Record the buy leg too — the local dashboard's per-token volume
-          // UNION-s both legs (a WETH→USDC settle is WETH sell volume + USDC
+          // UNIONs both legs (a WETH→USDC settle is WETH sell volume + USDC
           // buy volume). Omitting these left buy_token NULL, so a token only
           // ever bought (e.g. USDC payouts) showed a fee but zero volume.
           buyToken: makerBuyToken,

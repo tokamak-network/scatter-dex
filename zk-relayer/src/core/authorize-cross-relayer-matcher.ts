@@ -148,11 +148,19 @@ export class AuthorizeCrossRelayerMatchService {
           this.db?.updateAuthorizeOrderStatus(nullifier, "settled", result.txHash);
           this.onSettled?.(nullifier, result.txHash);
 
-          // Record the counterparty side locally so the leaderboard
-          // reflects our participation. Sell-only: we record our
-          // taker's sell-leg (network-wide pairs with the peer's
-          // maker-leg row → exactly one row per side per trade, no
-          // double count). Fee is off-chain accounting: on-chain
+          // Record the counterparty side locally so OUR dashboard
+          // reflects our participation. We record BOTH legs of our
+          // taker's order (sell + buy) — symmetric with the submitter
+          // path (authorize-submitter.ts), because getVolumeTotals
+          // UNIONs both legs and a counterparty node would otherwise
+          // undercount the buy-leg token its own user received. This
+          // local row is per-node only (a given tx hits the submitter
+          // path on one node and this counterparty path on the other —
+          // never both on the same node — so no per-node double count);
+          // the canonical network-wide source remains the shared-OB
+          // indexer's single row, not a sum of local DBs, so the two
+          // legs aren't double-counted network-wide either. Fee is
+          // off-chain accounting: on-chain
           // the taker fee went to the submitter peer, but we record
           // it in our own fee_history so the relayer that brought
           // the taker order doesn't show Revenue: 0. Wrapped in
@@ -179,6 +187,8 @@ export class AuthorizeCrossRelayerMatchService {
               status: "confirmed",
               sellToken: publicSignalToAddress(ps.sellToken),
               sellAmount: BigInt(ps.sellAmount).toString(),
+              buyToken: publicSignalToAddress(ps.buyToken),
+              buyAmount: BigInt(ps.buyAmount).toString(),
               counterparty: true,
               fees: takerFees,
             });
