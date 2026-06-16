@@ -340,10 +340,21 @@ function ActiveExitPanel({
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-warning-soft)] p-6">
       <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Exit registry</h2>
       <p className="mb-3 text-sm text-[var(--color-text-muted)]">
-        Starts a {formatCooldown(cooldownSeconds)} cool-down on{" "}
-        <code className="font-mono">RelayerRegistry</code>. After the cool-down,
-        executing exit returns your full bond ({bondLabel(row)}) and removes
-        you from the active relayer set.
+        {cooldownSeconds === 0 ? (
+          <>
+            No exit cool-down is configured on{" "}
+            <code className="font-mono">RelayerRegistry</code> — executing exit
+            immediately returns your full bond ({bondLabel(row)}) and removes
+            you from the active relayer set.
+          </>
+        ) : (
+          <>
+            Starts a {formatCooldown(cooldownSeconds)} cool-down on{" "}
+            <code className="font-mono">RelayerRegistry</code>. After the
+            cool-down, executing exit returns your full bond ({bondLabel(row)})
+            and removes you from the active relayer set.
+          </>
+        )}
       </p>
 
       <ul className="mb-4 space-y-1.5 rounded-lg border border-[var(--color-warning)] bg-white px-4 py-3 text-xs text-[var(--color-text-muted)]">
@@ -525,7 +536,9 @@ function CooldownPanel({
 
 /** Compact phrasing for the exit cool-down copy ("Starts a … cool-down").
  *  Whole days → "N-day"; otherwise falls back to whole hours, then minutes,
- *  so a governance-shortened cool-down still reads correctly. */
+ *  so a governance-shortened cool-down still reads correctly. Expects a
+ *  positive duration — a zero cool-down (immediate withdraw) has its own
+ *  copy at the call site, since "0-day cool-down" would read wrong. */
 function formatCooldown(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
   if (s % 86400 === 0) return `${s / 86400}-day`;
