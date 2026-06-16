@@ -5,11 +5,14 @@ const BEARER_PREFIX = "Bearer ";
 
 /** Pull the token out of an `Authorization: Bearer <token>` header.
  *  Returns null when the header is absent or not a (non-empty) bearer, so
- *  callers handle "no token" and "some token" uniformly. Trims surrounding
- *  whitespace so a stray space can't slip past `verifySession`. */
+ *  callers handle "no token" and "some token" uniformly. Trims the whole
+ *  header first (so leading whitespace doesn't read as "missing") and the
+ *  token, so a stray space can't slip past `verifySession`. Mirrors
+ *  shared-orderbook's admin-auth helper. */
 export function extractBearerToken(authHeader: string | undefined): string | null {
-  if (typeof authHeader !== "string" || !authHeader.startsWith(BEARER_PREFIX)) return null;
-  const token = authHeader.slice(BEARER_PREFIX.length).trim();
+  const header = (authHeader ?? "").trim();
+  if (!header.startsWith(BEARER_PREFIX)) return null;
+  const token = header.slice(BEARER_PREFIX.length).trim();
   return token || null;
 }
 
