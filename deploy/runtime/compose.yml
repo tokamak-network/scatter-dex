@@ -108,7 +108,10 @@ services:
     environment:
       - DB_PATH=${SHARED_ORDERBOOK_DB_PATH:-/data/shared-orderbook.db}
       - RPC_URL=${RPC_URL}
-      - SETTLEMENT_ADDRESS=${SETTLEMENT_ADDRESS}
+      # Reuse the canonical settlement address rather than a second knob — the
+      # claim indexer reads SETTLEMENT_ADDRESS, the stack stores it as
+      # PRIVATE_SETTLEMENT_ADDRESS.
+      - SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
       - CLAIM_DEPLOY_BLOCK=${CLAIM_DEPLOY_BLOCK:-0}
       # Single-chain fallback chainId; CLAIM_CHAINS (JSON) overrides for
       # multi-network (one indexer loop per chain).
