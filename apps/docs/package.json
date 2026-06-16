@@ -4,7 +4,7 @@
   "private": true,
   "description": "Self-hosted developer docs site for @zkscatter/sdk. Nextra (Next.js) replacement for the Mintlify pipeline so we can serve docs from a private repo.",
   "scripts": {
-    "dev": "NODE_OPTIONS=--max-old-space-size=4096 next dev -p 4100",
+    "dev": "cross-env NODE_OPTIONS=--max-old-space-size=4096 next dev -p 4100",
     "build": "npm run api && next build",
     "start": "next start -p 4100",
     "lint": "next lint",
@@ -25,6 +25,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^7.0.3",
     "typedoc": "^0.28.19",
     "typedoc-plugin-markdown": "^4.11.0",
     "typescript": "^5"
