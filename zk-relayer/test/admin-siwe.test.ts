@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ethers } from "ethers";
-import { AdminSiweAuth } from "../src/core/admin-siwe.js";
+import { AdminSiweAuth, makeAdminSiweAuth } from "../src/core/admin-siwe.js";
 
 // Canned operator + attacker EOAs. The corresponding private keys are
 // publicly known anvil dev keys, used solely for in-process signing.
@@ -52,8 +52,8 @@ describe("AdminSiweAuth", () => {
     const signature = await attacker.signMessage(message);
     // buildAuth constructs the shared AdminSiweAuth with default options, so the
     // rejection carries the shared default wording. Production
-    // (makeAdminSiweAuthFromChain) overrides it with the registry-specific
-    // message; this test only asserts that a non-admin signer is rejected.
+    // (makeAdminSiweAuth) overrides it with the operator-specific message;
+    // this test only asserts that a non-admin signer is rejected.
     await expect(
       auth.createSession({ nonce, message, signature }),
     ).rejects.toThrow(/not an authorized admin/i);
@@ -104,5 +104,35 @@ describe("AdminSiweAuth", () => {
   it("verifySession returns null for an unknown token", () => {
     const auth = buildAuth(new Set([operator.address]));
     expect(auth.verifySession("ff".repeat(32))).toBeNull();
+  });
+});
+
+describe("makeAdminSiweAuth (operator self-auth)", () => {
+  it("admits the node's own operator wallet", async () => {
+    const auth = makeAdminSiweAuth(operator.address);
+    const { nonce, message } = auth.issueChallenge();
+    const signature = await operator.signMessage(message);
+    const session = await auth.createSession({ nonce, message, signature });
+    expect(session.address.toLowerCase()).toBe(operator.address.toLowerCase());
+    expect(auth.verifySession(session.token)).toBe(operator.address.toLowerCase());
+  });
+
+  it("rejects any other wallet — e.g. a different relayer's operator", async () => {
+    const auth = makeAdminSiweAuth(operator.address);
+    const { nonce, message } = auth.issueChallenge();
+    const signature = await attacker.signMessage(message);
+    await expect(
+      auth.createSession({ nonce, message, signature }),
+    ).rejects.toThrow(/not this relayer's operator/i);
+  });
+
+  it("matches the operator address case-insensitively", async () => {
+    // The node may pass a checksummed or upper-cased address; recovery
+    // yields a checksummed address — comparison must not depend on casing.
+    const auth = makeAdminSiweAuth(operator.address.toUpperCase());
+    const { nonce, message } = auth.issueChallenge();
+    const signature = await operator.signMessage(message);
+    const session = await auth.createSession({ nonce, message, signature });
+    expect(session.address.toLowerCase()).toBe(operator.address.toLowerCase());
   });
 });
