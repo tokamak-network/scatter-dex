@@ -74,7 +74,7 @@ export default function Onboarding() {
           />
           <Prereq
             title="Bond + gas balance"
-            body="On Sepolia testnet: at least 0.1 ETH bond plus a gas float (~0.05 ETH) on the operator wallet. Bond is recoverable on exit after a 7-day cooldown."
+            body="On Sepolia testnet: at least 0.1 ETH bond plus a gas float (~0.05 ETH) on the operator wallet. Bond is recoverable on exit after the registry's exit cool-down."
           />
           <Prereq
             title="EVM RPC endpoint"
@@ -207,7 +207,7 @@ curl -s https://YOUR_PUBLIC_URL/api/info | jq
         />
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <Concept term="Bond">
-            ETH you escrow in <span className="font-mono text-xs">RelayerRegistry</span> when registering. Acts as a registration deposit. Recoverable in full on exit after a 7-day cooldown — the current contract has no bond-slashing mechanism (a misbehaving relayer only loses gas on failed <code className="font-mono">settle()</code> attempts).
+            ETH you escrow in <span className="font-mono text-xs">RelayerRegistry</span> when registering. Acts as a registration deposit. Recoverable in full on exit after the registry's exit cool-down — the current contract has no bond-slashing mechanism (a misbehaving relayer only loses gas on failed <code className="font-mono">settle()</code> attempts).
           </Concept>
           <Concept term="Fee bps">
             Your per-trade fee in basis points (1 bp = 0.01%). Published on-chain at registration; updatable via <code className="font-mono">/profile</code>. Default reference: 30 bps (0.30%).
@@ -227,7 +227,7 @@ curl -s https://YOUR_PUBLIC_URL/api/info | jq
             <span className="font-medium">Operator-local</span>: a JSON file (or admin-API-managed) blocklist of <em>EdDSA pubkeys</em>. Rejects matching orders before they reach the chain.
           </Concept>
           <Concept term="Exit cooldown">
-            Time between <code className="font-mono">requestExit</code> and <code className="font-mono">executeExit</code> on the registry — 7 days. <code className="font-mono">isActiveRelayer</code> returns <code className="font-mono">false</code> as soon as <code className="font-mono">requestExit</code> is called, so settlement is blocked for the entire cooldown — plan to drain your queue before requesting exit.
+            Time between <code className="font-mono">requestExit</code> and <code className="font-mono">executeExit</code> on the registry, set by governance (7 days by default). <code className="font-mono">isActiveRelayer</code> returns <code className="font-mono">false</code> as soon as <code className="font-mono">requestExit</code> is called, so settlement is blocked for the entire cooldown — plan to drain your queue before requesting exit.
           </Concept>
           <Concept term="Slashing — not implemented">
             Despite the term being common in relayer designs, the current <code className="font-mono">RelayerRegistry</code> has no slashing path. If/when it ships, it will appear on <code className="font-mono">/profile</code>.

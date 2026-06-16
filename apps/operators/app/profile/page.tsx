@@ -8,6 +8,7 @@ import {
   approveBondToken,
   EXIT_COOLDOWN_SECONDS,
   executeRelayerExit,
+  loadExitCooldownSeconds,
   loadBondAllowance,
   loadForceRemoval,
   MAX_RELAYER_FEE_BPS,
@@ -264,9 +265,24 @@ function BondPanel({ operator }: { operator: OperatorState }) {
 }
 
 function ExitPanel({ operator }: { operator: OperatorState }) {
-  const { signer } = useWallet();
+  const { signer, readProvider } = useWallet();
   const { row, refresh, registryDeployed, account, loading } = operator;
   const write = useRegistryWrite({ onSuccess: refresh });
+
+  // The cool-down is governance-settable (admin `setExitCooldown`), so
+  // read it live rather than trusting the SDK's default constant — a
+  // shortened cool-down would otherwise make the countdown and the
+  // "withdrawable in …" estimate lie to the operator. Falls back to the
+  // 7-day default only until the read resolves.
+  const [cooldownSeconds, setCooldownSeconds] = useState(EXIT_COOLDOWN_SECONDS);
+  useEffect(() => {
+    if (!registryDeployed || !readProvider) return;
+    let cancelled = false;
+    loadExitCooldownSeconds(REGISTRY, readProvider)
+      .then((s) => { if (!cancelled) setCooldownSeconds(s); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [registryDeployed, readProvider]);
 
   // Render an explicit placeholder for each "can't act yet" state
   // instead of disappearing — same convention BondCard / FeeCard
@@ -276,7 +292,7 @@ function ExitPanel({ operator }: { operator: OperatorState }) {
   if (loading || !row) return <ExitHint>Reading registry…</ExitHint>;
 
   if (row.status === "active") {
-    return <ActiveExitPanel row={row} signer={signer} write={write} />;
+    return <ActiveExitPanel row={row} signer={signer} write={write} cooldownSeconds={cooldownSeconds} />;
   }
 
   if (row.status === "cooldown") {
@@ -285,6 +301,7 @@ function ExitPanel({ operator }: { operator: OperatorState }) {
         row={row}
         signer={signer}
         phase={write.phase}
+        cooldownSeconds={cooldownSeconds}
         onExecute={() => signer && write.run(() => executeRelayerExit(REGISTRY, signer))}
       />
     );
@@ -304,10 +321,12 @@ function ActiveExitPanel({
   row,
   signer,
   write,
+  cooldownSeconds,
 }: {
   row: NonNullable<OperatorState["row"]>;
   signer: ReturnType<typeof useWallet>["signer"];
   write: ReturnType<typeof useRegistryWrite>;
+  cooldownSeconds: number;
 }) {
   const [confirming, setConfirming] = useState(false);
   const submitting = write.phase.kind === "submitting";
@@ -321,10 +340,21 @@ function ActiveExitPanel({
     <section className="rounded-xl border border-[var(--color-border)] bg-[var(--color-warning-soft)] p-6">
       <h2 className="mb-2 font-semibold text-[var(--color-warning)]">Exit registry</h2>
       <p className="mb-3 text-sm text-[var(--color-text-muted)]">
-        Starts a {Math.round(EXIT_COOLDOWN_SECONDS / 86400)}-day cool-down on{" "}
-        <code className="font-mono">RelayerRegistry</code>. After the cool-down,
-        executing exit returns your full bond ({bondLabel(row)}) and removes
-        you from the active relayer set.
+        {cooldownSeconds === 0 ? (
+          <>
+            No exit cool-down is configured on{" "}
+            <code className="font-mono">RelayerRegistry</code> — executing exit
+            immediately returns your full bond ({bondLabel(row)}) and removes
+            you from the active relayer set.
+          </>
+        ) : (
+          <>
+            Starts a {formatCooldown(cooldownSeconds)} cool-down on{" "}
+            <code className="font-mono">RelayerRegistry</code>. After the
+            cool-down, executing exit returns your full bond ({bondLabel(row)})
+            and removes you from the active relayer set.
+          </>
+        )}
       </p>
 
       <ul className="mb-4 space-y-1.5 rounded-lg border border-[var(--color-warning)] bg-white px-4 py-3 text-xs text-[var(--color-text-muted)]">
@@ -392,14 +422,16 @@ function CooldownPanel({
   row,
   signer,
   phase,
+  cooldownSeconds,
   onExecute,
 }: {
   row: NonNullable<OperatorState["row"]>;
   signer: ReturnType<typeof useWallet>["signer"];
   phase: WritePhase;
+  cooldownSeconds: number;
   onExecute: () => void;
 }) {
-  const readyAtSeconds = row.exitRequestedAt + EXIT_COOLDOWN_SECONDS;
+  const readyAtSeconds = row.exitRequestedAt + cooldownSeconds;
   // `now` stays undefined on the SSR pass so we don't bake the
   // server's clock into the markup (Next would flag a hydration
   // mismatch). The effect populates it on mount and ticks once a
@@ -500,6 +532,19 @@ function CooldownPanel({
       <WriteResult phase={phase} />
     </section>
   );
+}
+
+/** Compact phrasing for the exit cool-down copy ("Starts a … cool-down").
+ *  Whole days → "N-day"; otherwise falls back to whole hours, then minutes,
+ *  so a governance-shortened cool-down still reads correctly. Expects a
+ *  positive duration — a zero cool-down (immediate withdraw) has its own
+ *  copy at the call site, since "0-day cool-down" would read wrong. */
+function formatCooldown(totalSeconds: number): string {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  if (s % 86400 === 0) return `${s / 86400}-day`;
+  if (s % 3600 === 0) return `${s / 3600}-hour`;
+  if (s % 60 === 0) return `${s / 60}-minute`;
+  return `${s}-second`;
 }
 
 function formatRemaining(totalSeconds: number): string {
