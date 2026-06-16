@@ -92,6 +92,38 @@ services:
       - orderbook-data:/data
     command: ["node", "dist/commitment-indexer.js", "--watch"]
 
+  # Claim-nullifier indexer — same image as shared-orderbook, different
+  # entrypoint. Scans PrivateClaim events from the settlement deploy block and
+  # writes the spent nullifiers to the shared DB so GET /api/claim-nullifiers
+  # can serve batch claim-spent lookups (clients resolve claim status without an
+  # eth_call per leaf — avoids public-node 429s). Shares orderbook-data because
+  # the DB is the rendezvous. Optional: omit if no settlement is configured.
+  claim-indexer:
+    image: ${SHARED_ORDERBOOK_IMAGE}:${IMAGE_TAG:-latest}
+    container_name: claim-indexer
+    restart: unless-stopped
+    depends_on:
+      shared-orderbook:
+        condition: service_healthy
+    environment:
+      - DB_PATH=${SHARED_ORDERBOOK_DB_PATH:-/data/shared-orderbook.db}
+      - RPC_URL=${RPC_URL}
+      # Reuse the canonical settlement address rather than a second knob — the
+      # claim indexer reads SETTLEMENT_ADDRESS, the stack stores it as
+      # PRIVATE_SETTLEMENT_ADDRESS.
+      - SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
+      - CLAIM_DEPLOY_BLOCK=${CLAIM_DEPLOY_BLOCK:-0}
+      # Single-chain fallback chainId; CLAIM_CHAINS (JSON) overrides for
+      # multi-network (one indexer loop per chain).
+      - CHAIN_ID=${CHAIN_ID:-11155111}
+      - CLAIM_CHAINS=${CLAIM_CHAINS:-}
+      - CLAIM_POLL_INTERVAL_SEC=${CLAIM_POLL_INTERVAL_SEC:-30}
+      - CLAIM_BLOCK_SAFETY_MARGIN=${CLAIM_BLOCK_SAFETY_MARGIN:-6}
+      - CLAIM_INDEX_BLOCK_RANGE=${CLAIM_INDEX_BLOCK_RANGE:-50000}
+    volumes:
+      - orderbook-data:/data
+    command: ["node", "dist/claim-indexer.js", "--watch"]
+
   # zk-relayer is run per-operator (each relayer operator hosts their own),
   # NOT on the central orderbook box. Behind the "relayer" compose profile so
   # the default `up` (orderbook + settlement-verifier) does not start it.
