@@ -1,0 +1,76 @@
+name: 🐛 Bug report
+description: Something broke or behaved unexpectedly while testing.
+title: "[bug] "
+labels: ["bug", "testnet"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Please fill in enough that we can reproduce it.
+        **Do not** open a public issue for security-sensitive findings
+        (fund loss, proof bypass, key/seed exposure) — email
+        **security@tokamak.network** privately instead.
+  - type: dropdown
+    id: app
+    attributes:
+      label: App
+      description: Which frontend were you using?
+      options:
+        - hub
+        - pay
+        - pro
+        - operators
+        - admin
+        - zk-X509 website
+        - relayer / orderbook (backend)
+        - other
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - Sepolia (live deployment)
+        - local (dev.sh / mock)
+    validations:
+      required: true
+  - type: input
+    id: relayer
+    attributes:
+      label: Selected relayer
+      description: Which relayer was selected in the UI (e.g. bot-1)? Leave blank if N/A.
+      placeholder: bot-1
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Connect wallet on Sepolia
+        2. Go to ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What did you expect, and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Tx hashes / console errors / screenshots
+      description: |
+        Tx hash(es) for any on-chain action, your wallet address (public is fine —
+        never paste a private key or seed), and any red errors from the browser
+        devtools console (note the failing request URL if it's a relayer/orderbook call).
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: "Output of: git rev-parse --short HEAD"
+      placeholder: e.g. 07b5918a
+    validations:
+      required: true
