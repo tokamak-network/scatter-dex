@@ -1,5 +1,9 @@
 import { ethers } from "ethers";
-import { claimNullifierHex, settlementReader } from "./claimProbe";
+import {
+  claimNullifierHex,
+  isClaimNullifierSpentOn,
+  settlementReader,
+} from "./claimProbe";
 import { fetchSpentClaimNullifiers } from "./claimIndexer";
 
 /** A claim leaf to resolve — the secret + its index in the order's claims
@@ -96,4 +100,97 @@ export async function probeSpentClaimLeaves(
     if (spentFlags[i]) out.add(e.leafIndex);
   });
   return out;
+}
+
+/** A heterogeneous claim to resolve — carries a caller key (e.g. an inbox
+ *  entry id) plus its own settlement, because a claims *inbox* mixes entries
+ *  from different orders/settlements where `leafIndex` is NOT unique. The
+ *  globally-unique key is the nullifier, so resolution is keyed on that, not
+ *  on `(settlement, leafIndex)`. */
+export interface ClaimEntryRef {
+  key: string;
+  secret: bigint;
+  leafIndex: number;
+  /** Used only by the per-entry RPC fallback (entries can span settlements). */
+  settlementAddress: string;
+}
+
+export interface ResolveSpentClaimEntriesOpts {
+  entries: ReadonlyArray<ClaimEntryRef>;
+  chainId: number | bigint;
+  /** RPC fallback (indexer unset / unreachable). Probes each entry against its
+   *  own settlement. */
+  provider?: ethers.Provider;
+  /** Indexer base URL. When set, queried first as ONE batch keyed by nullifier
+   *  hash — so entries spanning different settlements all resolve in a single
+   *  request (the indexer keys on chainId + nullifier, not settlement). */
+  sharedOrderbookUrl?: string;
+  fetchImpl?: typeof fetch;
+}
+
+/** Resolve which of `entries` are already spent (claimed) on-chain, returning
+ *  the caller keys of the confirmed-spent ones.
+ *
+ *  Indexer-first: compute each entry's nullifier hash, batch them into one
+ *  `/api/claim-nullifiers` POST, map the spent hashes back to keys. Falls back
+ *  to a per-entry `claimNullifiers` RPC probe (each against its own settlement)
+ *  only when the indexer is unset or the request fails — so a healthy indexer
+ *  means one round-trip, and an indexer outage degrades to the prior behavior.
+ *  A key absent from the result is "not confirmed spent" (caller keeps its
+ *  optimistic local state); nullifiers are monotonic so callers cache it. */
+export async function resolveSpentClaimEntries(
+  opts: ResolveSpentClaimEntriesOpts,
+): Promise<Set<string>> {
+  const { entries } = opts;
+  if (entries.length === 0) return new Set();
+
+  if (opts.sharedOrderbookUrl) {
+    try {
+      const withHex = await Promise.all(
+        entries.map(async (e) => ({ e, hex: await claimNullifierHex(e.secret, e.leafIndex) })),
+      );
+      const spentHex = await fetchSpentClaimNullifiers(
+        opts.sharedOrderbookUrl,
+        opts.chainId,
+        withHex.map((x) => x.hex),
+        { fetchImpl: opts.fetchImpl },
+      );
+      const out = new Set<string>();
+      for (const { e, hex } of withHex) {
+        if (spentHex.has(hex)) out.add(e.key);
+      }
+      return out;
+    } catch {
+      // Indexer down / malformed — fall through to the per-entry RPC probe.
+    }
+  }
+
+  if (opts.provider) {
+    const provider = opts.provider;
+    // Reuse one contract per distinct settlement across the batch.
+    const readers = new Map<string, ethers.Contract>();
+    const reader = (addr: string): ethers.Contract => {
+      // Key on the lowercased address — EVM addresses are case-insensitive, so
+      // checksummed vs lowercase would otherwise build duplicate contracts.
+      const key = addr.toLowerCase();
+      const cached = readers.get(key);
+      if (cached) return cached;
+      const c = settlementReader(provider, addr);
+      readers.set(key, c);
+      return c;
+    };
+    const results = await Promise.all(
+      entries.map(async (e) => {
+        try {
+          return (await isClaimNullifierSpentOn(reader(e.settlementAddress), e.secret, e.leafIndex))
+            ? e.key
+            : null;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return new Set(results.filter((k): k is string => k !== null));
+  }
+  return new Set();
 }
