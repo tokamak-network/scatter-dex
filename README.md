@@ -1,9 +1,11 @@
 # zkScatter
 
-**A privacy-preserving DEX with compliant identity gating.** Orders are matched
-off-chain by ZK relayers and settled on-chain with Groth16 proofs, so commitment
-pools hide trader identities and claim structure — while zk-X509 identity gating
-keeps the protocol regulatory-compliant.
+**A privacy-preserving settlement protocol with compliant identity gating.** One
+ZK stack powers private **OTC trading** (Pro) and **bulk payouts** (Pay).
+Settlement happens on-chain via Groth16 proofs over commitment pools, with
+relayers coordinating off-chain (matching orders for Pro, batching payouts for
+Pay) and relaying claims gaslessly — so identities and claim structure stay hidden
+on-chain, while zk-X509 identity gating keeps the protocol regulatory-compliant.
 
 ---
 
@@ -21,8 +23,8 @@ is **MetaMask on Sepolia with a little test ETH**.
 
 | app       | dev URL                 | what it is                        |
 |-----------|-------------------------|-----------------------------------|
-| pay       | http://localhost:4001   | simple payments UI                |
-| pro       | http://localhost:4003   | pro trading UI                    |
+| pay       | http://localhost:4001   | private bulk payouts              |
+| pro       | http://localhost:4003   | private OTC trading               |
 | operators | http://localhost:4004   | operator / KYC onboarding console |
 | admin     | http://localhost:4005   | protocol + KYC review console     |
 | hub       | http://localhost:4006   | navigation hub                    |
@@ -115,7 +117,7 @@ IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
 contracts/    Solidity contracts + Foundry tests (RelayerRegistry, IdentityGate,
               CommitmentPool, PrivateSettlement, IncrementalMerkleTree)
 circuits/     Circom ZK circuits + build scripts
-apps/         Next.js frontends — pay, pro, operators, admin, hub
+apps/         Next.js frontends — pro, pay, operators, admin, hub
 zk-relayer/   ZK order matching + gasless claim relay (orderbook, matcher, DB)
 scripts/      Dev, deploy, and E2E scripts
 docs/         Guides, design docs, operations runbooks
