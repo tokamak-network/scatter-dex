@@ -184,6 +184,13 @@ describe("computeClaimedUpdate", () => {
     expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "claimed" });
   });
 
+  it("never resurrects a non-claimable order — records leaves but keeps the status", () => {
+    // An order cancelled while a reconcile was in flight must not flip to
+    // claimed even when every leaf resolves spent.
+    const upd = computeClaimedUpdate(threeLeaf({ status: "cancelled" }), [0, 1, 2]);
+    expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "cancelled" });
+  });
+
   it("returns null when nothing new applies (all already recorded)", () => {
     expect(computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 1] }), [0, 1])).toBeNull();
   });

@@ -50,7 +50,7 @@ export function ClaimStatusReconciler(): null {
     let cancelled = false;
     let running = false;
     const tick = async (): Promise<void> => {
-      if (running) return; // don't overlap a slow pass
+      if (running || cancelled) return; // don't overlap a slow pass / run after teardown
       running = true;
       try {
         // Collect every not-yet-recorded leaf across all claimable orders into
@@ -77,7 +77,7 @@ export function ClaimStatusReconciler(): null {
             entries.push({ key, secret: c.secret, leafIndex: c.leafIndex, settlementAddress });
           }
         }
-        if (entries.length === 0) return;
+        if (entries.length === 0 || cancelled) return; // skip the request after teardown
 
         let spentKeys: Set<string>;
         try {
@@ -104,6 +104,10 @@ export function ClaimStatusReconciler(): null {
         }
         for (const [orderId, leaves] of byOrder) {
           if (cancelled) return;
+          // The order may have been cancelled / removed / already claimed while
+          // the batch was in flight — only record against a still-claimable one.
+          const cur = ordersRef.current.find((o) => o.id === orderId);
+          if (!cur || cur.status !== "claimable") continue;
           markRef.current(orderId, leaves);
         }
       } catch (err) {
