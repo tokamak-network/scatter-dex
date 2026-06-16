@@ -91,15 +91,7 @@ export async function adminFetch<T>(
     init.body = JSON.stringify(opts.body);
   }
   const res = await fetch(target, init);
-  const text = await res.text();
-  let parsed: unknown = null;
-  if (text) {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      parsed = text;
-    }
-  }
+  const { text, parsed } = await readBody(res);
   if (!res.ok) throw new Error(formatAdminError(res.status, text, parsed));
   return (parsed ?? ({} as unknown)) as T;
 }
@@ -115,6 +107,19 @@ function formatAdminError(status: number, text: string, parsed: unknown): string
     return typeof errField === "string" ? errField : JSON.stringify(errField);
   }
   return text ? text.slice(0, 120) : `HTTP ${status}`;
+}
+
+/** Read a response body once and return both its raw text and the
+ *  JSON-parsed form (falling back to the raw text when the body isn't
+ *  JSON). Centralises the parse dance every admin call shares so the
+ *  error formatter and the success path read the body exactly once. */
+async function readBody(res: Response): Promise<{ text: string; parsed: unknown }> {
+  const text = await res.text();
+  let parsed: unknown = null;
+  if (text) {
+    try { parsed = JSON.parse(text); } catch { parsed = text; }
+  }
+  return { text, parsed };
 }
 
 /** Download a binary admin response (CSV, etc.) and trigger a browser
@@ -136,14 +141,9 @@ export async function adminDownload(
   }
   const res = await fetch(target.toString(), { headers: authHeaders(auth) });
   if (!res.ok) {
-    // Mirror adminFetch's parse-and-extract: if the server returned
-    // `{error: ...}` JSON, surface just the message; otherwise the
-    // truncated body text.
-    const text = await res.text();
-    let parsed: unknown = null;
-    if (text) {
-      try { parsed = JSON.parse(text); } catch { parsed = text; }
-    }
+    // Same parse-and-extract as the JSON path: surface the server's
+    // `{error}` message when present, else the truncated body text.
+    const { text, parsed } = await readBody(res);
     throw new Error(formatAdminError(res.status, text, parsed));
   }
   const disposition = res.headers.get("content-disposition") ?? "";
@@ -265,8 +265,13 @@ export async function requestSiweChallenge(url: string): Promise<SiweChallenge> 
       "This relayer does not expose wallet auth. Use the admin key instead.",
     );
   }
-  if (!res.ok) throw new Error(`Challenge request failed (HTTP ${res.status}).`);
-  return (await res.json()) as SiweChallenge;
+  // Surface the server's `{error}` message verbatim (same as
+  // submitSiweSession) instead of a bare status code — a relayer with
+  // admin auth disabled returns 403 "Admin auth is not configured on
+  // this relayer", which tells the operator exactly what to fix.
+  const { text, parsed } = await readBody(res);
+  if (!res.ok) throw new Error(formatAdminError(res.status, text, parsed));
+  return parsed as SiweChallenge;
 }
 
 export interface SiweSession {
@@ -290,11 +295,7 @@ export async function submitSiweSession(
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const text = await res.text();
-  let parsed: unknown = null;
-  if (text) {
-    try { parsed = JSON.parse(text); } catch { parsed = text; }
-  }
+  const { text, parsed } = await readBody(res);
   if (!res.ok) throw new Error(formatAdminError(res.status, text, parsed));
   return parsed as SiweSession;
 }
