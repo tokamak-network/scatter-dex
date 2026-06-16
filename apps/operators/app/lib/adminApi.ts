@@ -244,7 +244,7 @@ export async function requestSiweChallenge(url: string): Promise<SiweChallenge> 
   const res = await fetch(target);
   if (res.status === 404) {
     throw new Error(
-      "This relayer does not expose wallet auth — it may be missing RELAYER_REGISTRY_ADDRESS. Contact the operator.",
+      "This relayer does not expose wallet auth — it may be running an older build. Ask the operator to update the relayer.",
     );
   }
   // Surface the server's `{error}` message verbatim (same as

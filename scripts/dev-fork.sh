@@ -448,7 +448,6 @@ echo "  shared-orderbook running on http://localhost:4000 (PID $last_pid)"
 # ── 4. Start Relayer A (primary, port 3002) ────────────────
 echo ""
 echo "[4/6] Starting Relayer A (port 3002)..."
-ADMIN_KEY="dev-admin-$(head -c 16 /dev/urandom | xxd -p)"
 # Capture the post-deploy block number so the relayer skips pre-fork history
 # when scanning commitment events (upstream RPCs reject large ranges).
 INDEX_FROM=$(cast block-number --rpc-url "$RPC_URL" 2>/dev/null || echo 0)
@@ -459,7 +458,6 @@ COMMITMENT_POOL_ADDRESS=$COMMITMENT_POOL
 PRIVATE_SETTLEMENT_ADDRESS=$PRIVATE_SETTLEMENT
 FEE_VAULT_ADDRESS=$FEE_VAULT
 TOKEN_LIST=$TOKEN_LIST
-ADMIN_API_KEY=$ADMIN_KEY
 RELAYER_FEE=$RELAYER_FEE_BPS
 PORT=3002
 INDEX_FROM_BLOCK=$INDEX_FROM
@@ -469,7 +467,6 @@ RELAYER_NAME=Relayer-A
 DB_PATH=$ROOT_DIR/zk-relayer/zk-relayer.db
 EOF
 echo "  INDEX_FROM_BLOCK:    $INDEX_FROM"
-echo "  Admin API key: $ADMIN_KEY"
 
 ensure_deps_installed "$ROOT_DIR/zk-relayer" "zk-relayer"
 ensure_sqlite_arch "$ROOT_DIR/zk-relayer"
@@ -500,7 +497,6 @@ COMMITMENT_POOL_ADDRESS="$COMMITMENT_POOL" \
 PRIVATE_SETTLEMENT_ADDRESS="$PRIVATE_SETTLEMENT" \
 FEE_VAULT_ADDRESS="$FEE_VAULT" \
 TOKEN_LIST="$TOKEN_LIST" \
-ADMIN_API_KEY="$ADMIN_KEY" \
 RELAYER_FEE=$RELAYER_FEE_BPS \
 PORT=3003 \
 INDEX_FROM_BLOCK="$INDEX_FROM" \

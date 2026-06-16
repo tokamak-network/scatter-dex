@@ -135,25 +135,22 @@ for svc in \
     else fail "$label" "HTTP $code"; fi
 done
 
-# ─── HTTP admin endpoints (require x-admin-key) ──────────────────
-# `/api/admin/*` is gated by `adminAuth` middleware. We send the
-# default mock key; the relayer rejects with 401 if `ADMIN_API_KEY`
-# is configured to a different value — that's a SKIP, not a FAIL.
-# Override the key with:  ADMIN_API_KEY=... ./scripts/e2e-live-check.sh
-section "HTTP · admin endpoints (auth required)"
-ADMIN_KEY="${ADMIN_API_KEY:-dev-admin-key}"
+# ─── HTTP admin endpoints (auth gate) ────────────────────────────
+# `/api/admin/*` is gated by `adminAuth` and authenticates the operator's
+# wallet signature (SIWE) — minting a session needs a wallet signature,
+# which we can't produce in a shell smoke test. Instead we assert the gate
+# is wired: an UNauthenticated request must be rejected with 401 (route
+# mounted + auth enforced). A 2xx would mean the gate is open (FAIL); a 404
+# means the route isn't mounted (FAIL).
+section "HTTP · admin endpoints (auth gate enforces 401)"
 for url in \
     "relayer A /api/admin/profile:http://localhost:3002/api/admin/profile" \
     "relayer B /api/admin/profile:http://localhost:3003/api/admin/profile"; do
     label="${url%%:*}"; target="${url#*:}"
-    code=$(curl -sS -H "x-admin-key: $ADMIN_KEY" -o /dev/null -w "%{http_code}" --max-time 5 "$target" 2>/dev/null)
+    code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 5 "$target" 2>/dev/null)
     code="${code:-000}"
-    if [[ "$code" =~ ^2 ]]; then pass "$label ($code)"
-    elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
-        skip "$label" "admin auth rejected (set ADMIN_API_KEY env to match the relayer's configured key)"
-    else
-        fail "$label" "HTTP $code"
-    fi
+    if [ "$code" = "401" ]; then pass "$label (gated, 401)"
+    else fail "$label" "expected 401 (auth gate), got HTTP $code"; fi
 done
 
 # ─── On-chain proxy admin slot ───────────────────────────────────

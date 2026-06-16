@@ -23,7 +23,7 @@ This document captures the gaps a real relayer operator would hit today and lays
 Notes:
 - The admin panel landed at `/runtime` rather than `/admin` to avoid the protocol-admin connotation — it's the operator's own runtime knobs. Backend keeps `/api/admin/*` for historical reasons; UI eyebrow tags map each section to the route.
 - All four Phase-1-#1 slices completed; the major operator pages (`/dashboard`, `/orders`, `/orders/detail`, `/treasury`) all read live data. The "stale stats helper" leftover (Status pulled from the retired `private_orders` table) is fixed — `db.getRelayerStats()` and `db.getSettledVolume()` now read from `settlement_history` so `/runtime` Status shows live counts/avg-settle-time instead of zeros.
-- Auth is `x-admin-key` paste-and-verify, persisted in tab `sessionStorage`. Wallet-signature auth (deferred from v1) was not pursued — the header model has held up fine for single-operator scope.
+- Auth is now wallet-signature (SIWE): the operator connects their wallet and signs a challenge, binding admin access to the node's on-chain operator (the `RELAYER_PRIVATE_KEY` wallet). The session bearer is persisted in tab `sessionStorage`. The legacy `x-admin-key` header path was removed — wallet signing is the only admin auth.
 
 ### Phase 2 — "stable operations" — ✅ COMPLETE
 
@@ -107,7 +107,7 @@ Originally proposed: a periodic worker that auto-calls `FeeVault.claim()` when a
 
 Originally proposed: replace `x-admin-key` paste with a wallet signature from the registered relayer owner.
 
-**Deferred indefinitely**. The header-key model has worked through Phase 1 + 2 with zero operator pain reports. Touching the auth path adds risk for marginal benefit on a single-operator surface; revisit if multi-operator (delegated keys) ever ships.
+**Shipped.** Admin auth is now SIWE: the operator signs a challenge with the node's operator wallet (the `RELAYER_PRIVATE_KEY` EOA, which is the address registered on-chain for this relayer), and the relayer mints a session bearer after verifying the recovered signer matches. The legacy `x-admin-key` path was removed entirely — no key to provision, and a leaked static key can no longer authenticate.
 
 ---
 
