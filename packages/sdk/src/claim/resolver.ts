@@ -128,21 +128,35 @@ export interface ResolveSpentClaimEntriesOpts {
   fetchImpl?: typeof fetch;
 }
 
+/** Result of {@link resolveSpentClaimEntries}.
+ *
+ *  `authoritative` is the key safety signal for callers that REMOVE state
+ *  (demote / drop a recorded leaf): it's `true` only when the indexer answered
+ *  the whole batch — a complete source where "absent from `spent`" reliably
+ *  means "not spent" (the indexer retains a spent nullifier monotonically). It
+ *  is `false` for the per-entry RPC fallback, where a transient per-leaf error
+ *  is swallowed as "not spent" — so absence there is "couldn't determine", and
+ *  a caller must NOT treat it as unspent (only add confirmed-spent, never
+ *  remove). */
+export interface ResolveSpentClaimEntriesResult {
+  spent: Set<string>;
+  authoritative: boolean;
+}
+
 /** Resolve which of `entries` are already spent (claimed) on-chain, returning
- *  the caller keys of the confirmed-spent ones.
+ *  the caller keys of the confirmed-spent ones plus whether the answer is
+ *  authoritative (see {@link ResolveSpentClaimEntriesResult}).
  *
  *  Indexer-first: compute each entry's nullifier hash, batch them into one
- *  `/api/claim-nullifiers` POST, map the spent hashes back to keys. Falls back
- *  to a per-entry `claimNullifiers` RPC probe (each against its own settlement)
- *  only when the indexer is unset or the request fails — so a healthy indexer
- *  means one round-trip, and an indexer outage degrades to the prior behavior.
- *  A key absent from the result is "not confirmed spent" (caller keeps its
- *  optimistic local state); nullifiers are monotonic so callers cache it. */
+ *  `/api/claim-nullifiers` POST, map the spent hashes back to keys
+ *  (`authoritative: true`). Falls back to a per-entry `claimNullifiers` RPC
+ *  probe (each against its own settlement, `authoritative: false`) only when
+ *  the indexer is unset or the request fails. */
 export async function resolveSpentClaimEntries(
   opts: ResolveSpentClaimEntriesOpts,
-): Promise<Set<string>> {
+): Promise<ResolveSpentClaimEntriesResult> {
   const { entries } = opts;
-  if (entries.length === 0) return new Set();
+  if (entries.length === 0) return { spent: new Set(), authoritative: true };
 
   if (opts.sharedOrderbookUrl) {
     try {
@@ -159,7 +173,7 @@ export async function resolveSpentClaimEntries(
       for (const { e, hex } of withHex) {
         if (spentHex.has(hex)) out.add(e.key);
       }
-      return out;
+      return { spent: out, authoritative: true };
     } catch {
       // Indexer down / malformed — fall through to the per-entry RPC probe.
     }
@@ -190,7 +204,9 @@ export async function resolveSpentClaimEntries(
         }
       }),
     );
-    return new Set(results.filter((k): k is string => k !== null));
+    // RPC fallback: per-entry failures are swallowed, so the absent set isn't a
+    // reliable "unspent" — not authoritative for removals.
+    return { spent: new Set(results.filter((k): k is string => k !== null)), authoritative: false };
   }
-  return new Set();
+  return { spent: new Set(), authoritative: false };
 }

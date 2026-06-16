@@ -137,24 +137,29 @@ export interface OrderRecord {
   signedBuyWei?: bigint;
 }
 
-/** Pure core of `reconcileClaimedLeaves`: given the set of leaves the chain has
- *  confirmed spent for an order, recompute its `claimedLeafIndexes` and status
- *  **authoritatively**. Returns the changed fields, or `null` when nothing
- *  changes (so the caller can skip the persistence + state write).
+/** Pure core of `reconcileClaimedLeaves`: given the leaves the chain has
+ *  confirmed spent for an order, recompute its `claimedLeafIndexes` and status.
+ *  Returns the changed fields, or `null` when nothing changes (so the caller
+ *  can skip the persistence + state write).
  *
- *  Authoritative (set, not merge) so it SELF-HEALS: `claimedLeafIndexes`
- *  becomes exactly the confirmed-spent leaves intersected with the order's
- *  valid leaves — newly-confirmed leaves are added AND a stale/wrong entry that
- *  isn't actually spent is dropped. (The previous add-only logic could never
- *  remove a leaf that an older build had wrongly recorded.)
+ *  `authoritative` decides whether removals are allowed:
+ *  - **true** (the indexer answered the whole batch — a complete source):
+ *    `claimedLeafIndexes` becomes EXACTLY the confirmed-spent leaves (∩ valid).
+ *    This SELF-HEALS — it adds newly-confirmed leaves AND drops a stale/wrong
+ *    entry that isn't actually spent (which the old add-only logic could never
+ *    remove), demoting a falsely-`claimed` order back to `claimable`.
+ *  - **false** (RPC fallback / indexer down — a lossy source where a failed
+ *    per-leaf probe looks "unspent"): MERGE only. Confirmed-spent leaves are
+ *    added but nothing is dropped, so a transient failure can't demote a
+ *    genuinely-claimed order.
  *
  *  - Only leaves in the order's claims list count; out-of-range is ignored.
- *  - Status only moves within `claimable`↔`claimed` (every valid leaf spent →
- *    `claimed`, else `claimable`); `matching` / `cancelled` are left untouched,
- *    so an in-flight cancel can't be resurrected. */
+ *  - Status only moves within `claimable`↔`claimed`; `matching` / `cancelled`
+ *    are left untouched, so an in-flight cancel can't be resurrected. */
 export function computeClaimedFromSpent(
   order: Pick<OrderRecord, "claims" | "claim" | "claimedLeafIndexes" | "status">,
   spentLeafIndexes: readonly number[],
+  authoritative: boolean,
 ): { claimedLeafIndexes: number[]; status: OrderStatus } | null {
   const claimLeafIdxs = (
     order.claims && order.claims.length > 0
@@ -165,26 +170,30 @@ export function computeClaimedFromSpent(
   ).map((c) => c.leafIndex);
   if (claimLeafIdxs.length === 0) return null;
   const valid = new Set(claimLeafIdxs);
-  // The claimed set is EXACTLY the confirmed-spent leaves (∩ valid), deduped +
-  // sorted — this is what makes it self-healing.
-  const claimedLeafIndexes = [...new Set(spentLeafIndexes.filter((li) => valid.has(li)))].sort(
-    (a, b) => a - b,
-  );
+  const confirmed = spentLeafIndexes.filter((li) => valid.has(li));
+  // Authoritative → the claimed set IS the confirmed-spent set (can shrink).
+  // Non-authoritative → merge with the prior valid leaves (add-only, can't drop
+  // a recorded leaf on a partial/failed resolve).
+  const merged = authoritative
+    ? confirmed
+    : [...(order.claimedLeafIndexes ?? []).filter((li) => valid.has(li)), ...confirmed];
+  const claimedLeafIndexes = [...new Set(merged)].sort((a, b) => a - b);
   const claimedSet = new Set(claimedLeafIndexes);
   const allDone = claimLeafIdxs.every((i) => claimedSet.has(i));
-  const status =
-    order.status === "claimable" || order.status === "claimed"
-      ? allDone
-        ? "claimed"
-        : "claimable"
-      : order.status;
-  // No-op when neither the (normalised) leaf set nor the status changes.
-  const priorNorm = [...new Set((order.claimedLeafIndexes ?? []).filter((li) => valid.has(li)))].sort(
-    (a, b) => a - b,
-  );
+  // Promote claimable→claimed whenever every leaf is recorded (safe in both
+  // modes — recorded leaves were confirmed spent). Demote claimed→claimable
+  // ONLY when authoritative — a non-authoritative !allDone may just be a failed
+  // probe, not a genuinely-unclaimed leaf, so we must not demote a real claim.
+  let status = order.status;
+  if (order.status === "claimable" && allDone) status = "claimed";
+  else if (order.status === "claimed" && authoritative && !allDone) status = "claimable";
+  // No-op only when the PERSISTED array (raw) already equals the new one and
+  // the status is unchanged — so a dirty persisted array (dups / out-of-range /
+  // unsorted) still triggers a cleaning write.
+  const prior = order.claimedLeafIndexes ?? [];
   const sameLeaves =
-    priorNorm.length === claimedLeafIndexes.length &&
-    priorNorm.every((v, i) => v === claimedLeafIndexes[i]);
+    prior.length === claimedLeafIndexes.length &&
+    prior.every((v, i) => v === claimedLeafIndexes[i]);
   if (sameLeaves && status === order.status) return null;
   return { claimedLeafIndexes, status };
 }
@@ -203,13 +212,18 @@ interface OrdersState {
   ): OrderRecord;
   /** Mark an order as claimed. Idempotent. */
   markClaimed(id: string): void;
-  /** Reconcile an order's claim state to the chain's authoritative
-   *  confirmed-spent leaf set: `claimedLeafIndexes` becomes exactly those
-   *  leaves (∩ the order's valid leaves), and the status moves within
-   *  `claimable`↔`claimed` (all spent → `claimed`, else `claimable`). This
-   *  ADDS newly-confirmed leaves AND REMOVES any stale/wrong entry that isn't
-   *  actually spent — so it self-heals. Used by the claim-status reconciler. */
-  reconcileClaimedLeaves(id: string, spentLeafIndexes: readonly number[]): void;
+  /** Reconcile an order's claim state to the chain's confirmed-spent leaves.
+   *  When `authoritative` (the indexer answered — a complete source), sets
+   *  `claimedLeafIndexes` to exactly those leaves (∩ valid), self-healing by
+   *  dropping a stale/wrong entry and demoting a falsely-`claimed` order. When
+   *  not authoritative (RPC fallback), MERGES (add-only) so a partial failure
+   *  can't drop a real claim. Status moves only within `claimable`↔`claimed`.
+   *  Used by the claim-status reconciler. */
+  reconcileClaimedLeaves(
+    id: string,
+    spentLeafIndexes: readonly number[],
+    authoritative: boolean,
+  ): void;
   /** Promote a matching order to `claimable` once we've observed
    *  the on-chain `PrivateSettledAuth` (or its relayer-side
    *  reflection). Idempotent; only valid against `matching`. Stamps
@@ -706,10 +720,10 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   // `ordersRef.current` (only refreshed on the next render), so the whole set
   // must be applied at once — never looped per leaf.
   const reconcileClaimedLeaves = useCallback(
-    (id: string, spentLeafIndexes: readonly number[]) => {
+    (id: string, spentLeafIndexes: readonly number[], authoritative: boolean) => {
       const target = ordersRef.current.find((o) => o.id === id);
       if (!target) return;
-      const update = computeClaimedFromSpent(target, spentLeafIndexes);
+      const update = computeClaimedFromSpent(target, spentLeafIndexes, authoritative);
       if (!update) return; // no change → skip the persistence write + churn
       const next: OrderRecord = { ...target, ...update };
       // Persist before the in-memory commit so a folder-write failure surfaces

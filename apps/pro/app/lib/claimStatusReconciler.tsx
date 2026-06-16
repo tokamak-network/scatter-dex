@@ -82,14 +82,15 @@ export function ClaimStatusReconciler(): null {
         }
         if (entries.length === 0 || cancelled) return; // skip the request after teardown
 
-        let spentKeys: Set<string>;
+        let spent: Set<string>;
+        let authoritative: boolean;
         try {
-          spentKeys = await resolveSpentClaimEntries({
+          ({ spent, authoritative } = await resolveSpentClaimEntries({
             entries,
             chainId,
             provider: readProvider ?? undefined,
             sharedOrderbookUrl,
-          });
+          }));
         } catch {
           return; // transient resolve failure → leave it for the next tick
         }
@@ -97,23 +98,24 @@ export function ClaimStatusReconciler(): null {
 
         // Group the confirmed-spent leaves back by order.
         const spentByOrder = new Map<string, number[]>();
-        for (const key of spentKeys) {
+        for (const key of spent) {
           const ref = keyMap.get(key);
           if (!ref) continue;
           const list = spentByOrder.get(ref.orderId);
           if (list) list.push(ref.leafIndex);
           else spentByOrder.set(ref.orderId, [ref.leafIndex]);
         }
-        // Reconcile EVERY processed order to its authoritative spent set —
-        // including those that resolved to zero (so a falsely-"claimed" order
-        // with nothing actually spent is healed back to claimable). The order
-        // may have been cancelled/removed while in flight, so re-check it's
-        // still reconcilable before writing.
+        // Reconcile EVERY processed order to its spent set — including those
+        // that resolved to zero. When `authoritative` (indexer answered) this
+        // can drop a stale leaf and heal a falsely-"claimed" order back to
+        // claimable; otherwise (RPC fallback) it's add-only so a partial
+        // failure can't demote a real claim. The order may have been
+        // cancelled/removed while in flight, so re-check before writing.
         for (const orderId of processedOrders) {
           if (cancelled) return;
           const cur = ordersRef.current.find((o) => o.id === orderId);
           if (!cur || (cur.status !== "claimable" && cur.status !== "claimed")) continue;
-          reconcileRef.current(orderId, spentByOrder.get(orderId) ?? []);
+          reconcileRef.current(orderId, spentByOrder.get(orderId) ?? [], authoritative);
         }
       } catch (err) {
         // Belt-and-suspenders: the batched resolve is already try/caught, but a

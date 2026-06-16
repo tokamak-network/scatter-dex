@@ -149,7 +149,10 @@ export default function ClaimInbox() {
         // RPC probe only if the indexer is unset/unreachable — i.e. only when
         // the indexer has a problem do we do it the old way. Writes stay
         // serial because the inbox file is withLock-serialized in the helper.
-        const spentIds = await resolveSpentClaimEntries({
+        // The inbox only ever flips entries TO claimed (monotonic — it never
+        // un-claims), so it just uses the confirmed-spent `spent` set; the
+        // `authoritative` flag (which guards removals) is irrelevant here.
+        const { spent: spentIds } = await resolveSpentClaimEntries({
           entries: pending.map((e) => ({
             key: e.id,
             secret: BigInt(e.pkg.secret),

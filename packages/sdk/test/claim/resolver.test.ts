@@ -229,11 +229,12 @@ describe("resolveSpentClaimEntries (inbox — nullifier-hash keyed, heterogeneou
       sharedOrderbookUrl: "http://idx",
       fetchImpl,
     });
-    expect([...out].sort()).toEqual(["entry-A", "entry-C"]);
+    expect([...out.spent].sort()).toEqual(["entry-A", "entry-C"]);
+    expect(out.authoritative).toBe(true); // indexer answered → safe to remove
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it("falls back to per-entry RPC routed to each entry's own settlement when no indexer URL", async () => {
+  it("falls back to per-entry RPC routed to each entry's own settlement when no indexer URL (not authoritative)", async () => {
     const hs = await inboxHexes();
     // entry-B's nullifier is spent ONLY at SETTLEMENT_B — so this only resolves
     // to "entry-B" if its probe is sent to SETTLEMENT_B (not SETTLEMENT_A).
@@ -241,10 +242,11 @@ describe("resolveSpentClaimEntries (inbox — nullifier-hash keyed, heterogeneou
       new Map([[SETTLEMENT_B.toLowerCase(), new Set([hs[1]])]]),
     );
     const out = await resolveSpentClaimEntries({ entries: inbox, chainId: CHAIN, provider });
-    expect([...out]).toEqual(["entry-B"]);
+    expect([...out.spent]).toEqual(["entry-B"]);
+    expect(out.authoritative).toBe(false); // RPC fallback → callers must not remove
   });
 
-  it("falls back to RPC when the indexer request fails", async () => {
+  it("falls back to RPC when the indexer request fails (not authoritative)", async () => {
     const hs = await inboxHexes();
     const fetchImpl = (async () => new Response("boom", { status: 500 })) as unknown as typeof fetch;
     const out = await resolveSpentClaimEntries({
@@ -254,11 +256,16 @@ describe("resolveSpentClaimEntries (inbox — nullifier-hash keyed, heterogeneou
       sharedOrderbookUrl: "http://idx",
       fetchImpl,
     });
-    expect([...out]).toEqual(["entry-A"]);
+    expect([...out.spent]).toEqual(["entry-A"]);
+    expect(out.authoritative).toBe(false);
   });
 
-  it("returns empty for no entries, and when neither indexer nor provider can answer", async () => {
-    expect((await resolveSpentClaimEntries({ entries: [], chainId: CHAIN })).size).toBe(0);
-    expect((await resolveSpentClaimEntries({ entries: inbox, chainId: CHAIN })).size).toBe(0);
+  it("returns empty for no entries (authoritative), and empty when nothing can answer (not authoritative)", async () => {
+    const none = await resolveSpentClaimEntries({ entries: [], chainId: CHAIN });
+    expect(none.spent.size).toBe(0);
+    expect(none.authoritative).toBe(true); // trivially complete
+    const noSource = await resolveSpentClaimEntries({ entries: inbox, chainId: CHAIN });
+    expect(noSource.spent.size).toBe(0);
+    expect(noSource.authoritative).toBe(false); // couldn't determine → not safe to remove
   });
 });
