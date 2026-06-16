@@ -424,6 +424,12 @@ export class AuthorizeSubmitter {
           gasCostEth: gasCheck.gasCostEth,
           sellToken: makerSellToken,
           sellAmount: BigInt(makerPs.sellAmount).toString(),
+          // Record the buy leg too — the local dashboard's per-token volume
+          // UNIONs both legs (a WETH→USDC settle is WETH sell volume + USDC
+          // buy volume). Omitting these left buy_token NULL, so a token only
+          // ever bought (e.g. USDC payouts) showed a fee but zero volume.
+          buyToken: makerBuyToken,
+          buyAmount: BigInt(makerPs.buyAmount).toString(),
           durationMs: Date.now() - authSettleStart,
           // Cross-relayer: only maker fee accrues to this submitter
           // (the counterparty peer records its own taker fee in its
