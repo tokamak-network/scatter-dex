@@ -85,7 +85,7 @@ zk-relayer + frontend. Open http://localhost:3000.
 
 > First run builds the ZK circuit artifacts (Powers-of-Tau, a few minutes); later
 > runs reuse the cached `.ptau`. Needs [Foundry](https://book.getfoundry.sh/getting-started/installation),
-> Node.js ≥ 18, and [circom](https://docs.circom.io/getting-started/installation/) 2.x
+> Node.js ≥ 20, and [circom](https://docs.circom.io/getting-started/installation/) 2.x
 > (`cd circuits && npm install` once). See
 > [docs/operations/local-setup.md](docs/operations/local-setup.md).
 
@@ -102,9 +102,9 @@ IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
 ### Run tests
 
 ```bash
-cd contracts && forge test                          # contract tests
-cd zk-relayer && npm test                           # relayer unit tests
-cd zk-relayer && npx tsx test/e2e-private-flow.ts   # full E2E (needs dev.sh --mock)
+(cd contracts && forge test)                         # contract tests
+(cd zk-relayer && npm test)                          # relayer unit tests
+(cd zk-relayer && npx tsx test/e2e-private-flow.ts)  # full E2E (needs ./scripts/dev.sh --mock)
 ```
 
 ---
@@ -148,5 +148,7 @@ Found a security-sensitive issue? **Do not open a public issue** — email
 
 ## License
 
-Licensing terms are being finalized. For any use or licensing questions, please
-contact **Tokamak Network** (legal@tokamak.network).
+zkScatterDEX is provided under the [Business Source License 1.1](LICENSE):
+non-production use (research, auditing, contributions) is permitted; production
+use requires a separate commercial license. For any licensing questions, contact
+**Tokamak Network** (legal@tokamak.network).

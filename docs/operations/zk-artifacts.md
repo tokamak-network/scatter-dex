@@ -2,7 +2,7 @@
 
 How the Groth16 zkeys, WASMs, and on-chain verifiers stay in sync on **deployed**
 networks (Sepolia, etc.). For the **local anvil** build rationale (why artifacts
-are gitignored and rebuilt with every `dev.sh`), see
+are gitignored and rebuilt with every `./scripts/dev.sh` run), see
 [local-setup.md](./local-setup.md#prerequisite-zk-circuit-artifacts).
 
 ## The rule: do NOT rebuild to "refresh" a deployed network
@@ -58,7 +58,7 @@ the distribution so everyone gets the new bytes:
 #    rotation page or setXVerifier), and record the new address in the ledger:
 #      contracts/deployments/<chainId>.json
 # 2. with the new circuits/build/ in place, upload + repin (needs gcloud auth):
-scripts/upload-zk-artifacts.sh            # uploads new sha256 objects, regenerates the manifest
+./scripts/upload-zk-artifacts.sh          # uploads new sha256 objects, regenerates the manifest
 # 3. commit the new pins AND the updated ledger so consumers + the guard agree:
 git add circuits/zk-manifest.json contracts/deployments/<chainId>.json
 git commit -m "chore(zk): rotate <circuit> — repin + re-pointed verifier"
