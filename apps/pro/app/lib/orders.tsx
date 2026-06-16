@@ -174,7 +174,11 @@ export function computeClaimedUpdate(
   const claimedLeafIndexes = [...kept, ...additions].sort((a, b) => a - b);
   const claimedSet = new Set(claimedLeafIndexes);
   const allDone = claimLeafIdxs.every((i) => claimedSet.has(i));
-  return { claimedLeafIndexes, status: allDone ? "claimed" : order.status };
+  // Only a still-`claimable` order promotes to `claimed`. A status that raced
+  // in while a reconcile was in flight (e.g. `cancelled`) must never be
+  // resurrected — record the leaves but leave the status as-is.
+  const status = allDone && order.status === "claimable" ? "claimed" : order.status;
+  return { claimedLeafIndexes, status };
 }
 
 interface OrdersState {

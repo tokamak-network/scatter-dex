@@ -52,6 +52,10 @@ COMMITMENT_POOL_ADDRESS=$(mget commitment-pool-address)
 # metadata key from the ledger's "deployBlock".
 COMMITMENT_DEPLOY_BLOCK=$(mget commitment-deploy-block 0)
 PRIVATE_SETTLEMENT_ADDRESS=$(mget private-settlement-address)
+# Settlement deploy block for the claim indexer (so it doesn't scan from
+# genesis for PrivateClaim events). Defaults to 0 if unset — set the
+# `claim-deploy-block` metadata key from the ledger's settlement "deployBlock".
+CLAIM_DEPLOY_BLOCK=$(mget claim-deploy-block 0)
 # RelayerRegistry contract — enables the relayer's wallet/SIWE admin auth
 # (connecting wallet must be isActiveRelayer()). Public address, so metadata.
 # Empty → relayer admin SIWE stays off.
@@ -195,6 +199,7 @@ CHAIN_ID=${CHAIN_ID}
 COMMITMENT_POOL_ADDRESS=${COMMITMENT_POOL_ADDRESS}
 COMMITMENT_DEPLOY_BLOCK=${COMMITMENT_DEPLOY_BLOCK}
 PRIVATE_SETTLEMENT_ADDRESS=${PRIVATE_SETTLEMENT_ADDRESS}
+CLAIM_DEPLOY_BLOCK=${CLAIM_DEPLOY_BLOCK}
 RELAYER_REGISTRY_ADDRESS=${RELAYER_REGISTRY_ADDRESS}
 ADMIN_API_KEY=${ADMIN_API_KEY}
 CORS_ORIGINS=${CORS_ORIGINS}

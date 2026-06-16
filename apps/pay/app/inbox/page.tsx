@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { formatTokenLabel } from "@zkscatter/sdk";
-import { isClaimNullifierSpent } from "@zkscatter/sdk/claim";
+import { resolveSpentClaimEntries } from "@zkscatter/sdk/claim";
 import { encodeClaimPackage } from "@zkscatter/sdk/notes";
 import {
   addClaimInboxEntry,
@@ -19,6 +19,7 @@ import {
   type ClaimInboxGroup,
 } from "@zkscatter/sdk/storage";
 import { useFolderStorage } from "../_lib/folderStorage";
+import { getNetworkConfig } from "../_lib/network";
 import { formatLocalStampSec } from "../_lib/format";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
 import { submitClaim } from "../_lib/claimSubmit";
@@ -129,44 +130,44 @@ export default function ClaimInbox() {
   // "claim happened in a different session / wallet" case where
   // nothing local ever fired `markClaimInboxEntryClaimed`.
   useEffect(() => {
-    if (!readProvider || entries.length === 0) return;
+    if (entries.length === 0) return;
     const pending = entries.filter((e) => e.status !== "claimed");
     if (pending.length === 0) return;
+    const cfg = getNetworkConfig();
+    // Need either the indexer or a wallet provider to resolve anything.
+    if (!cfg.sharedOrderbookUrl && !readProvider) return;
     let cancelled = false;
     (async () => {
       // Catch + log on the IIFE body so a stray rejection in
       // `markClaimInboxEntryClaimed` / `refresh` can't surface as
       // an unhandled promise rejection. Gemini review feedback.
       try {
-      // Parallel probe: `Promise.all` fires all eth_calls in the
-      // same microtask; ethers v6's JsonRpcProvider auto-batches
-      // them into a single HTTP POST (defaults: batchStallTime=10ms,
-      // batchMaxCount=100) so a 20-entry reconciliation costs 1 RPC
-      // round-trip, not 20. Equivalent to a Multicall3 aggregation
-      // at the network level without the on-chain helper contract.
-      // Writes stay serial — see the matching note in Pro /claims
-      // for why parallelising the fs writes wouldn't help.
-      const probes = await Promise.allSettled(
-        pending.map(async (e) => {
-          const spent = await isClaimNullifierSpent(
-            readProvider,
-            e.pkg.settlementAddress,
-            BigInt(e.pkg.secret),
-            e.pkg.leafIndex,
-          );
-          return { id: e.id, spent };
-        }),
-      );
-      if (cancelled) return;
-      let flipped = 0;
-      for (const r of probes) {
+        // Indexer-first: one batched /api/claim-nullifiers POST, keyed by
+        // nullifier hash, covers every pending entry regardless of which
+        // settlement it belongs to (the inbox mixes orders/settlements where
+        // leafIndex isn't unique). Falls back to a per-entry claimNullifiers
+        // RPC probe only if the indexer is unset/unreachable — i.e. only when
+        // the indexer has a problem do we do it the old way. Writes stay
+        // serial because the inbox file is withLock-serialized in the helper.
+        const spentIds = await resolveSpentClaimEntries({
+          entries: pending.map((e) => ({
+            key: e.id,
+            secret: BigInt(e.pkg.secret),
+            leafIndex: e.pkg.leafIndex,
+            settlementAddress: e.pkg.settlementAddress,
+          })),
+          chainId: cfg.chainId,
+          provider: readProvider ?? undefined,
+          sharedOrderbookUrl: cfg.sharedOrderbookUrl,
+        });
         if (cancelled) return;
-        if (r.status === "fulfilled" && r.value.spent) {
-          await markClaimInboxEntryClaimed(r.value.id);
+        let flipped = 0;
+        for (const id of spentIds) {
+          if (cancelled) return;
+          await markClaimInboxEntryClaimed(id);
           flipped += 1;
         }
-      }
-      if (!cancelled && flipped > 0) await refresh();
+        if (!cancelled && flipped > 0) await refresh();
       } catch (err) {
         console.warn("[Pay] inbox reconcile failed", err);
       }
