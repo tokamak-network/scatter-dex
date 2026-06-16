@@ -2,8 +2,9 @@
 
 Run the zkScatter frontends and the zk-X509 management website against the
 **live Sepolia (chainId 11155111)** deployment, so the whole team sees the same
-contracts. You clone the repo, supply only **your own RPC key**, and the launch
-scripts wire everything else from the committed address ledgers.
+contracts. You clone the repo and run a launch script — it wires everything from
+the committed address ledgers. **All you need is a browser wallet on Sepolia**;
+no RPC key or other config required.
 
 > zk-X509 core (circuits / contracts / lib) is never modified — these scripts
 > only generate gitignored `.env.local` config and start dev servers.
@@ -17,19 +18,9 @@ scripts wire everything else from the committed address ledgers.
 2. Clone this repo and `git pull` so you have the latest `contracts/deployments/`
    ledgers.
 
-3. **(Optional) Your own Sepolia RPC key.** Both launch scripts ship a keyless
-   public-node default (`ethereum-sepolia.publicnode.com`), so you can skip this.
-   Set your own key only for extra reliability (the scatter apps use it as a
-   *read* endpoint — see [RPC: read-only & optional](#rpc-read-only--optional)).
-   It's injected into `NEXT_PUBLIC_*` and **exposed in the browser**, so use your
-   *own* key, never a shared one:
-
-   ```bash
-   export SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
-   ```
-
-   (Alchemy, Infura, or your own node all work.) Add it to your shell profile so
-   it persists.
+That's it — **no Sepolia RPC URL is required.** The launch scripts ship a keyless
+public-node default and your transactions go through your wallet. (Setting your
+own key is purely optional — see [RPC: read-only & optional](#rpc-read-only--optional).)
 
 ## Get test tokens (TON / USDC / USDT)
 
@@ -135,14 +126,15 @@ automatically.
 | service              | URL                                          | shared?                              |
 |----------------------|----------------------------------------------|--------------------------------------|
 | Shared orderbook     | `http://136.115.115.93:4000` (`/health`)     | **yes** — one central bulletin board |
-| Relayer **bot-1**    | `http://136.115.115.93:3002` (`/api/info`)   | no — just the one relayer we run     |
+| Relayer **bot-1**    | `http://136.115.115.93:3002` (`/api/info`)   | no — run by an individual operator   |
 
 The **orderbook is the single central service** everyone shares (a GCP
 `e2-micro` on a static-reserved IP). The **relayer is not** shared infrastructure
-in the same sense — relayers are **operator-hosted and per-operator**; `bot-1`
-just happens to be co-located on the same box so there's at least one live
-relayer to trade against. Anyone can run more (next section), and the apps will
-discover them.
+in the same sense — relayers are **operator-hosted and per-operator**. `bot-1` is
+run by an **individual operator** (it just happens to be co-located on the same
+box so there's at least one live relayer to trade against) — it is **not** project
+infrastructure. **Anyone can register a relayer** (next section); once it's
+registered on-chain it appears in everyone's selector automatically.
 
 > These are plain **`http://`** endpoints, reachable from frontends served over
 > `http://localhost` (the dev setup here). A frontend served over `https://`
@@ -176,7 +168,13 @@ scatter apps the public-node default (`ethereum-sepolia.publicnode.com`) is used
 only as a *read* endpoint: (a) showing on-chain data **before** you connect a
 wallet, (b) falling back when your wallet is on the **wrong network**, and (c) the
 write **gas pre-flight** (kept off MetaMask's throttled node — see PR #957). So
-`SEPOLIA_RPC_URL` is optional; set it only for your own keyed endpoint.
+`SEPOLIA_RPC_URL` is optional; set it only for a more reliable keyed read
+endpoint. It's injected into `NEXT_PUBLIC_*` and **exposed in the browser**, so
+use your *own* key, never a shared one:
+
+```bash
+export SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
+```
 
 ## Run the zk-X509 management website
 
@@ -217,8 +215,8 @@ Flags:
 
 ### Backend & prover topology (important)
 
-- **Frontend works against the chain with just a wallet + RPC.** Browsing
-  registries, the dashboard, and **`addCA`** all work with **no backend**.
+- **Frontend works against the chain with just a wallet** (no RPC key needed).
+  Browsing registries, the dashboard, and **`addCA`** all work with **no backend**.
 - **Backend** is an offline **metadata/CMS** (display names, notices, CA guide,
   GitHub PR submission). It is a **central** service — a per-developer localhost
   copy would not share metadata. So `run-zkx509-web.sh` does **not** start it
@@ -253,9 +251,10 @@ automatically. No hand-editing of any `.env.local`.
 
 ## Troubleshooting
 
-- **`$SEPOLIA_RPC_URL is not set`** — only the *scatter* apps require this. The
-  zk-X509 website does **not**: `run-zkx509-web.sh` falls back to a keyless public
-  node since the frontend reads via your wallet.
+- **No RPC key set?** Not an error — `SEPOLIA_RPC_URL` is optional everywhere.
+  Both the scatter apps and the zk-X509 website fall back to a keyless public node
+  (both launch scripts just print a `NOTE`) and route your transactions through
+  your wallet.
 - **`ledger not found`** — `git pull` to get `contracts/deployments/`.
 - **`zk-X509 frontend not found`** — set `ZK_X509_REPO` to your checkout path.
 - **Notices / CA-guide panel empty** — expected until `ZKX509_BACKEND_URL`
