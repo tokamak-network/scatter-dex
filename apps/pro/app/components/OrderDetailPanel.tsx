@@ -8,7 +8,7 @@ import {
   addClaimInboxEntry,
   markClaimInboxEntryClaimed,
 } from "@zkscatter/sdk/storage";
-import type { OrderClaim, OrderRecord } from "../lib/orders";
+import { useOrders, type OrderClaim, type OrderRecord } from "../lib/orders";
 import { StatusBadge } from "./StatusBadge";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useVault } from "../lib/vault";
@@ -976,6 +976,7 @@ function ShareActions({
   // resolved by address; env addresses may be unset).
   const { tokens: liveTokens } = useCuratedNetworkTokens(network);
   const { account, readProvider, signer } = useWallet();
+  const { reconcileClaimedLeaves } = useOrders();
   const toast = useToast();
   const [busy, setBusy] = useState<null | "copy" | "email" | "save" | "claim">(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1211,6 +1212,14 @@ function ShareActions({
         readProvider,
         signer: signer ?? undefined,
       });
+      // Optimistic immediate reflection: the claim just landed on-chain, so
+      // record THIS leaf in the order's claimed set right away. Add-only
+      // (authoritative=false) — we're only ever adding the one leaf we just
+      // confirmed spent, never dropping others on partial info. Without this
+      // the My-orders list/drawer stay "Ready" until the ≤60s reconciler poll
+      // (+ indexer lag) catches up; this promotes the order to "claimed"
+      // instantly once it's the last open leaf.
+      reconcileClaimedLeaves(order.id, [target.leafIndex], false);
       // Best-effort inbox stash + mark-claimed so the /claims
       // page reflects the result on next visit. Wrap in try so a
       // folder-storage hiccup doesn't surface as a claim failure
@@ -1242,6 +1251,9 @@ function ShareActions({
             target.leafIndex,
           ))
         ) {
+          // Same optimistic reflection as the happy path — the probe just
+          // confirmed this leaf is spent on-chain, so record it now.
+          reconcileClaimedLeaves(order.id, [target.leafIndex], false);
           try {
             const pkg = await buildPkg();
             const rawInput = buildClaimLink(window.location.origin, order, pkg);
