@@ -259,7 +259,34 @@ export default function Orders() {
                       Expired
                     </span>
                   ) : (
-                    <StatusBadge status={o.status} />
+                    <div className="flex flex-col gap-0.5">
+                      <StatusBadge status={o.status} />
+                      {(() => {
+                        // Per-recipient progress for a multi-recipient order
+                        // that's partway claimed. `claimedLeafIndexes` is kept
+                        // in sync by ClaimStatusReconciler; once every leaf is
+                        // recorded the order flips to `claimed` (Claimed tab),
+                        // so this only shows on a partial `claimable` order.
+                        const claimLeaves = (
+                          o.claims && o.claims.length > 0 ? o.claims : o.claim ? [o.claim] : []
+                        ).map((c) => c.leafIndex);
+                        const total = claimLeaves.length;
+                        if (o.status !== "claimable" || total <= 1) return null;
+                        // Count via intersection with the actual claim leaves so
+                        // a stray duplicate / out-of-range entry can't render an
+                        // impossible "4/3 claimed".
+                        const leafSet = new Set(claimLeaves);
+                        const done = new Set(
+                          (o.claimedLeafIndexes ?? []).filter((li) => leafSet.has(li)),
+                        ).size;
+                        if (done === 0) return null;
+                        return (
+                          <span className="text-[10px] text-[var(--color-text-muted)]">
+                            {done}/{total} claimed
+                          </span>
+                        );
+                      })()}
+                    </div>
                   )}
                 </td>
                 <td className="px-5 py-3">

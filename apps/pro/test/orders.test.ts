@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { serialize, deserialize, type OrderRecord } from "../app/lib/orders";
+import { serialize, deserialize, computeClaimedUpdate, type OrderRecord } from "../app/lib/orders";
 
 function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
   const claim = {
@@ -157,5 +157,61 @@ describe("orders serialize/deserialize", () => {
     const order = fixture({ claimedLeafIndexes: undefined });
     const restored = deserialize(serialize(order));
     expect(restored.claimedLeafIndexes).toBeUndefined();
+  });
+});
+
+describe("computeClaimedUpdate", () => {
+  function threeLeaf(overrides: Partial<OrderRecord> = {}): OrderRecord {
+    return fixture({
+      status: "claimable",
+      claims: [
+        { secret: 1n, recipient: "0xaa", token: "0xbb", amount: 100n, releaseTime: 1000n, leafIndex: 0, claimsRoot: "0xcc" },
+        { secret: 2n, recipient: "0xdd", token: "0xbb", amount: 100n, releaseTime: 1000n, leafIndex: 1, claimsRoot: "0xcc" },
+        { secret: 3n, recipient: "0xee", token: "0xbb", amount: 100n, releaseTime: 1000n, leafIndex: 2, claimsRoot: "0xcc" },
+      ],
+      claimedLeafIndexes: undefined,
+      ...overrides,
+    });
+  }
+
+  it("folds a batch of new leaves, deduped + sorted, staying claimable when partial", () => {
+    const upd = computeClaimedUpdate(threeLeaf(), [2, 0]);
+    expect(upd).toEqual({ claimedLeafIndexes: [0, 2], status: "claimable" });
+  });
+
+  it("merges with already-recorded leaves and promotes to claimed once all are in", () => {
+    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0] }), [1, 2]);
+    expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "claimed" });
+  });
+
+  it("returns null when nothing new applies (all already recorded)", () => {
+    expect(computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 1] }), [0, 1])).toBeNull();
+  });
+
+  it("ignores leaf indices outside the claims list (no dead state, no false promote)", () => {
+    // 7 isn't a real leaf; recording leaves 0,1,2 promotes, the stray 7 is dropped.
+    const upd = computeClaimedUpdate(threeLeaf(), [0, 1, 2, 7]);
+    expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "claimed" });
+  });
+
+  it("dedups duplicates within a single batch", () => {
+    const upd = computeClaimedUpdate(threeLeaf(), [1, 1]);
+    expect(upd).toEqual({ claimedLeafIndexes: [1], status: "claimable" });
+  });
+
+  it("drops stale out-of-range entries from the existing list (no dead state)", () => {
+    // 9 isn't a real leaf; recording nothing new still rewrites the list to
+    // shed it, and the order stays claimable (only leaf 0 is real-and-recorded).
+    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 9] }), []);
+    expect(upd).toEqual({ claimedLeafIndexes: [0], status: "claimable" });
+  });
+
+  it("collapses a duplicate already-persisted entry on the next update", () => {
+    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 0] }), []);
+    expect(upd).toEqual({ claimedLeafIndexes: [0], status: "claimable" });
+  });
+
+  it("returns null for an order with no claims", () => {
+    expect(computeClaimedUpdate(fixture({ claim: undefined, claims: [] }), [0])).toBeNull();
   });
 });
