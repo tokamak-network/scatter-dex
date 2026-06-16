@@ -129,9 +129,10 @@ export interface ResolveSpentClaimEntriesOpts {
    *  indexer-first path, even when `sharedOrderbookUrl` is set. The indexer
    *  trails head by a confirmation margin + poll interval, so a caller that
    *  needs a *just-made* claim reflected immediately (e.g. a manual "Refresh")
-   *  sets this. Ignored when no `provider` is given (nothing to probe → falls
-   *  back to the indexer). Keep passing the real `sharedOrderbookUrl` so that
-   *  fallback still works. */
+   *  sets this. When honored (a `provider` is present) the indexer is NOT
+   *  consulted — there is no RPC→indexer fallback. It only matters that you
+   *  still pass the real `sharedOrderbookUrl` for the *other* case: with no
+   *  provider this flag is ignored and resolution falls back to the indexer. */
   preferProvider?: boolean;
   fetchImpl?: typeof fetch;
 }

@@ -271,7 +271,7 @@ export default function Orders() {
                       {(() => {
                         // Per-recipient progress for a multi-recipient
                         // claimable order. `claimedLeafIndexes` is kept in sync
-                        // by ClaimStatusReconciler; once every leaf is recorded
+                        // by ClaimStatusRefreshProvider; once every leaf is recorded
                         // the order flips to `claimed` (Claimed tab), so this
                         // only shows while the order is still `claimable`. Shown
                         // from "0/N" so the recipient count is visible even

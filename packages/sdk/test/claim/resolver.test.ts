@@ -246,6 +246,48 @@ describe("resolveSpentClaimEntries (inbox — nullifier-hash keyed, heterogeneou
     expect(out.authoritative).toBe(false); // RPC fallback → callers must not remove
   });
 
+  it("preferProvider forces the RPC path even with an indexer URL set (not authoritative)", async () => {
+    const hs = await inboxHexes();
+    // Indexer URL IS provided, but preferProvider must skip it entirely — the
+    // fetch tripwire throws if the indexer is consulted. Resolution comes from
+    // the per-settlement RPC probe (entry-B spent only at SETTLEMENT_B).
+    const fetchImpl = vi.fn(() => {
+      throw new Error("indexer must not be consulted when preferProvider is set");
+    }) as unknown as typeof fetch;
+    const provider = routedSettlementProvider(
+      new Map([[SETTLEMENT_B.toLowerCase(), new Set([hs[1]])]]),
+    );
+    const out = await resolveSpentClaimEntries({
+      entries: inbox,
+      chainId: CHAIN,
+      provider,
+      sharedOrderbookUrl: "http://idx",
+      preferProvider: true,
+      fetchImpl,
+    });
+    expect([...out.spent]).toEqual(["entry-B"]);
+    expect(out.authoritative).toBe(false); // RPC probe → callers must not remove
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("preferProvider is ignored when no provider is given → still uses the indexer", async () => {
+    const hs = await inboxHexes();
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ spent: [hs[0]] }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const out = await resolveSpentClaimEntries({
+      entries: inbox,
+      chainId: CHAIN,
+      // no provider → nothing to probe, so the flag can't take effect
+      sharedOrderbookUrl: "http://idx",
+      preferProvider: true,
+      fetchImpl,
+    });
+    expect([...out.spent]).toEqual(["entry-A"]);
+    expect(out.authoritative).toBe(true); // indexer answered
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
   it("falls back to RPC when the indexer request fails (not authoritative)", async () => {
     const hs = await inboxHexes();
     const fetchImpl = (async () => new Response("boom", { status: 500 })) as unknown as typeof fetch;

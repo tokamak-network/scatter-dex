@@ -67,10 +67,18 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
   ordersRef.current = orders;
   const reconcileRef = useRef(reconcileClaimedLeaves);
   reconcileRef.current = reconcileClaimedLeaves;
-  // Shared between the poll and a manual refresh: never overlap two passes, and
-  // abandon writes once the provider has unmounted.
+  // `runningRef` serializes BACKGROUND passes only (two polls never overlap); a
+  // manual refresh is allowed to run alongside a poll so it's never a silent
+  // no-op while a slow indexer pass is in flight. `manualRunningRef` debounces
+  // double-clicks of Refresh. `passSeqRef` is a monotonically-increasing pass
+  // id: a pass abandons its writes if a newer pass has since started, so a slow
+  // background (indexer) pass can't finish last and clobber a fast manual (RPC)
+  // pass's fresh result — the newest read always wins. `cancelledRef` abandons
+  // writes once the provider has unmounted.
   const runningRef = useRef(false);
+  const manualRunningRef = useRef(false);
   const cancelledRef = useRef(false);
+  const passSeqRef = useRef(0);
   const [refreshing, setRefreshing] = useState(false);
 
   // `direct` forces a chain RPC probe instead of the indexer. The 60s poll
@@ -82,12 +90,14 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
   // is add-only (it can promote a just-claimed leaf but never demote on a
   // transient read failure) — exactly right for a manual "did my claim land?".
   const runPass = useCallback(async (direct = false): Promise<void> => {
-    if (runningRef.current || cancelledRef.current) return; // don't overlap / run after teardown
+    if (cancelledRef.current) return; // never run after teardown
+    if (!direct && runningRef.current) return; // serialize background polls only
     // Nothing to resolve against without a settlement, and nothing can answer
     // without either an indexer or a provider.
     if (!isConfiguredAddress(settlementAddress)) return;
     if (!sharedOrderbookUrl && !readProvider) return;
-    runningRef.current = true;
+    const seq = ++passSeqRef.current; // this pass's id; bail if a newer one starts
+    if (!direct) runningRef.current = true;
     try {
       // Collect EVERY leaf of every non-terminal order with claims into ONE
       // batch (not just uncached — re-querying is how stale data is detected
@@ -113,7 +123,9 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
           entries.push({ key, secret: c.secret, leafIndex: c.leafIndex, settlementAddress });
         }
       }
-      if (entries.length === 0 || cancelledRef.current) return; // skip the request after teardown
+      // Skip after teardown, when there's nothing to resolve, or once a newer
+      // pass has superseded this one.
+      if (entries.length === 0 || cancelledRef.current || seq < passSeqRef.current) return;
 
       let spent: Set<string>;
       let authoritative: boolean;
@@ -130,7 +142,10 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
       } catch {
         return; // transient resolve failure → leave it for the next pass
       }
-      if (cancelledRef.current) return;
+      // A newer pass started while this one's request was in flight — discard
+      // this (now possibly stale) result so a slow indexer pass can't clobber a
+      // fast manual RPC pass that already wrote the fresh truth.
+      if (cancelledRef.current || seq < passSeqRef.current) return;
 
       // Group the confirmed-spent leaves back by order.
       const spentByOrder = new Map<string, number[]>();
@@ -148,7 +163,7 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
       // failure can't demote a real claim. The order may have been
       // cancelled/removed while in flight, so re-check before writing.
       for (const orderId of processedOrders) {
-        if (cancelledRef.current) return;
+        if (cancelledRef.current || seq < passSeqRef.current) return;
         const cur = ordersRef.current.find((o) => o.id === orderId);
         if (!cur || (cur.status !== "claimable" && cur.status !== "claimed")) continue;
         reconcileRef.current(orderId, spentByOrder.get(orderId) ?? [], authoritative);
@@ -157,18 +172,22 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
       // Belt-and-suspenders: the batched resolve is already try/caught, but a
       // stray throw elsewhere in the pass (e.g. a reconcileClaimedLeaves write)
       // must not surface as an unhandled rejection from the `void runPass()`.
-      console.warn("[ClaimStatusReconciler] reconcile pass failed", err);
+      console.warn("[ClaimStatusRefreshProvider] reconcile pass failed", err);
     } finally {
-      runningRef.current = false;
+      if (!direct) runningRef.current = false;
     }
   }, [settlementAddress, chainId, sharedOrderbookUrl, readProvider]);
 
   const refresh = useCallback(async (): Promise<void> => {
+    if (manualRunningRef.current) return; // debounce double-clicks
+    manualRunningRef.current = true;
     setRefreshing(true);
     try {
       await runPass(true); // direct chain probe — don't wait on the indexer
     } finally {
-      setRefreshing(false);
+      manualRunningRef.current = false;
+      // Don't touch state if the provider unmounted mid-refresh.
+      if (!cancelledRef.current) setRefreshing(false);
     }
   }, [runPass]);
 
