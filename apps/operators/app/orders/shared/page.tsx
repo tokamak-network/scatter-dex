@@ -12,7 +12,8 @@ import { shortAddr } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "../../lib/network";
 import { SectionHeader } from "../../components/SectionHeader";
 import { formatRelative } from "../../lib/format";
-import { formatAmount, tokenInfo } from "../../lib/tokenRegistry";
+import { formatAmount } from "../../lib/tokenRegistry";
+import { useTokenResolver } from "../../lib/useTokenResolver";
 
 /** Build `<base>/api/orders` through the URL API so a base with a
  *  trailing slash or an unexpected scheme can't slip into the
@@ -55,6 +56,9 @@ const BACKEND_BUCKETS: ReadonlySet<Bucket> = new Set([
 
 export default function SharedOrdersPage() {
   const url = process.env.NEXT_PUBLIC_SHARED_ORDERBOOK_URL ?? "";
+  // On-chain-backed token resolver so amounts show real symbol +
+  // decimals for tokens absent from NEXT_PUBLIC_TOKENS.
+  const resolveToken = useTokenResolver();
   const [bucket, setBucket] = useState<Bucket>("open");
   const [state, setState] = useState<{
     loading: boolean;
@@ -254,8 +258,8 @@ export default function SharedOrdersPage() {
                 {state.orders.map((o) => {
                   const expiryMs = o.expiry * 1000;
                   const expired = expiryMs < Date.now();
-                  const sellInfo = tokenInfo(o.sellToken);
-                  const buyInfo = tokenInfo(o.buyToken);
+                  const sellInfo = resolveToken(o.sellToken);
+                  const buyInfo = resolveToken(o.buyToken);
                   const displayName = nameMap.get(o.relayer.toLowerCase());
                   return (
                     <tr key={o.id} className="border-t border-[var(--color-border)]">

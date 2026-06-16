@@ -38,7 +38,12 @@ import { SectionHeader } from "../components/SectionHeader";
 import { DEMO_NETWORK } from "../lib/network";
 import { formatIsoDate } from "../lib/format";
 import { safeOperatorUrl } from "../lib/operatorDisplay";
-import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import { formatAmount } from "../lib/tokenRegistry";
+import {
+  TokenResolverProvider,
+  useResolveToken,
+  useTokenResolver,
+} from "../lib/useTokenResolver";
 
 const REGISTRY = DEMO_NETWORK.contracts.relayerRegistry;
 // Shared-OB indexer URL — when set, the detail page sources
@@ -95,6 +100,10 @@ function RelayerDetailBody() {
   // "no relayer selected" notice instead of erroring.
   const targetAddress = (search?.get("address") ?? "").trim();
   const { readProvider } = useWallet();
+  // On-chain-backed token resolver, published to the page so the
+  // per-token totals render real symbol + decimals for tokens absent
+  // from NEXT_PUBLIC_TOKENS.
+  const resolveToken = useTokenResolver();
   const registryDeployed = isConfiguredAddress(REGISTRY);
   const [state, setState] = useState<PageState>(INITIAL_STATE);
 
@@ -197,6 +206,7 @@ function RelayerDetailBody() {
     (row ? "Relayer" : "Relayer detail");
 
   return (
+    <TokenResolverProvider value={resolveToken}>
     <div className="space-y-10">
       <header className="flex items-end justify-between">
         <div>
@@ -399,6 +409,7 @@ function RelayerDetailBody() {
         </>
       )}
     </div>
+    </TokenResolverProvider>
   );
 }
 
@@ -537,6 +548,7 @@ function TokenTotalsCard({
    *  fee_history row count is not 1:1 with fills. */
   countLabel: string;
 }) {
+  const resolveToken = useResolveToken();
   // Pre-parse amounts to BigInt once so the comparator below is a
   // consistent preorder. Wrapping `BigInt()` inside `.sort` and
   // returning `0` on throw breaks transitivity: an entry that
@@ -572,7 +584,7 @@ function TokenTotalsCard({
       ) : (
         <ul className="mt-2 space-y-1.5">
           {top.map((e) => {
-            const info = tokenInfo(e.token);
+            const info = resolveToken(e.token);
             return (
               <li
                 key={e.token}
