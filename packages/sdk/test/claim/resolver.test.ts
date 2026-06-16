@@ -38,6 +38,24 @@ function settlementProvider(spent: Set<string>, tripwire = false): ethers.Provid
   } as unknown as ethers.Provider;
 }
 
+/** Like `settlementProvider`, but answers per-settlement: a nullifier is only
+ *  reported spent when the call is routed to the settlement it's keyed under.
+ *  Lets a test assert each RPC probe hits the entry's OWN `settlementAddress`
+ *  (a regression sending every probe to one settlement would then fail). */
+function routedSettlementProvider(
+  spentBySettlement: Map<string, Set<string>>,
+): ethers.Provider {
+  const fn = PRIVATE_SETTLEMENT_IFACE.getFunction("claimNullifiers")!;
+  return {
+    call: async (tx: { to?: string; data?: string }) => {
+      const to = (tx.to ?? "").toLowerCase();
+      const [nullifier] = PRIVATE_SETTLEMENT_IFACE.decodeFunctionData(fn, tx.data ?? "0x");
+      const isSpent = spentBySettlement.get(to)?.has(String(nullifier).toLowerCase()) ?? false;
+      return PRIVATE_SETTLEMENT_IFACE.encodeFunctionResult(fn, [isSpent]);
+    },
+  } as unknown as ethers.Provider;
+}
+
 async function hexes(): Promise<string[]> {
   return Promise.all(entries.map((e) => claimNullifierHex(e.secret, e.leafIndex)));
 }
@@ -48,7 +66,8 @@ describe("fetchSpentClaimNullifiers", () => {
       const body = JSON.parse(String(init?.body));
       expect(init?.method).toBe("POST");
       expect(body.chainId).toBe(CHAIN);
-      expect(body.nullifiers).toEqual(["0xAA", "0xBB"]);
+      // Sent lowercased (canonical form used for dedup + the indexer's key).
+      expect(body.nullifiers).toEqual(["0xaa", "0xbb"]);
       return new Response(JSON.stringify({ spent: ["0xAA"] }), { status: 200 });
     }) as unknown as typeof fetch;
     const spent = await fetchSpentClaimNullifiers("http://idx/", CHAIN, ["0xAA", "0xBB"], { fetchImpl });
@@ -61,6 +80,33 @@ describe("fetchSpentClaimNullifiers", () => {
     const spent = await fetchSpentClaimNullifiers("http://idx", CHAIN, [], { fetchImpl });
     expect(spent.size).toBe(0);
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("pages large lists under the endpoint cap and unions the results", async () => {
+    // 1100 unique nullifiers → 3 requests of <=500; each request must stay
+    // within the cap, and the union covers spent hits from different pages.
+    const many = Array.from({ length: 1100 }, (_, i) => "0x" + i.toString(16).padStart(64, "0"));
+    const calls: number[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const chunk = JSON.parse(String(init?.body)).nullifiers as string[];
+      calls.push(chunk.length);
+      // Mark the first nullifier of each chunk spent so the union spans pages.
+      return new Response(JSON.stringify({ spent: [chunk[0]] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const spent = await fetchSpentClaimNullifiers("http://idx", CHAIN, many, { fetchImpl });
+    expect(calls).toEqual([500, 500, 100]);
+    expect(calls.every((n) => n <= 512)).toBe(true);
+    expect(spent.size).toBe(3); // one spent per page
+  });
+
+  it("dedupes repeated nullifiers before sending", async () => {
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const chunk = JSON.parse(String(init?.body)).nullifiers as string[];
+      expect(chunk).toEqual(["0xaa"]); // deduped + lowercased
+      return new Response(JSON.stringify({ spent: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await fetchSpentClaimNullifiers("http://idx", CHAIN, ["0xAA", "0xaa", "0xAA"], { fetchImpl });
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it("throws on a non-2xx response", async () => {
@@ -187,13 +233,14 @@ describe("resolveSpentClaimEntries (inbox — nullifier-hash keyed, heterogeneou
     expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
-  it("falls back to per-entry RPC (each against its own settlement) when no indexer URL", async () => {
+  it("falls back to per-entry RPC routed to each entry's own settlement when no indexer URL", async () => {
     const hs = await inboxHexes();
-    const out = await resolveSpentClaimEntries({
-      entries: inbox,
-      chainId: CHAIN,
-      provider: settlementProvider(new Set([hs[1]])), // entry-B spent
-    });
+    // entry-B's nullifier is spent ONLY at SETTLEMENT_B — so this only resolves
+    // to "entry-B" if its probe is sent to SETTLEMENT_B (not SETTLEMENT_A).
+    const provider = routedSettlementProvider(
+      new Map([[SETTLEMENT_B.toLowerCase(), new Set([hs[1]])]]),
+    );
+    const out = await resolveSpentClaimEntries({ entries: inbox, chainId: CHAIN, provider });
     expect([...out]).toEqual(["entry-B"]);
   });
 

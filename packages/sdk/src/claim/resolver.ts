@@ -170,10 +170,13 @@ export async function resolveSpentClaimEntries(
     // Reuse one contract per distinct settlement across the batch.
     const readers = new Map<string, ethers.Contract>();
     const reader = (addr: string): ethers.Contract => {
-      const cached = readers.get(addr);
+      // Key on the lowercased address — EVM addresses are case-insensitive, so
+      // checksummed vs lowercase would otherwise build duplicate contracts.
+      const key = addr.toLowerCase();
+      const cached = readers.get(key);
       if (cached) return cached;
       const c = settlementReader(provider, addr);
-      readers.set(addr, c);
+      readers.set(key, c);
       return c;
     };
     const results = await Promise.all(
