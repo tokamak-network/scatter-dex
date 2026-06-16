@@ -5,8 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { ethers } from "ethers";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
 import { decodeClaimPackage, type ClaimPackage } from "@zkscatter/sdk/notes";
-import { PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
-import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
+import { isClaimNullifierSpent } from "@zkscatter/sdk/claim";
 import { RelayerClient } from "@zkscatter/sdk/relayer";
 import {
   addClaimInboxEntry,
@@ -228,18 +227,12 @@ function ClaimInner() {
     let cancelled = false;
     (async () => {
       try {
-        const nullifier = await computeClaimNullifier(
-          BigInt(parsed.pkg.secret),
-          BigInt(parsed.pkg.leafIndex),
-        );
-        const settlement = new ethers.Contract(
-          parsed.pkg.settlementAddress,
-          PRIVATE_SETTLEMENT_ABI,
+        const spent = await isClaimNullifierSpent(
           readProvider,
+          parsed.pkg.settlementAddress,
+          BigInt(parsed.pkg.secret),
+          parsed.pkg.leafIndex,
         );
-        const spent = (await settlement.claimNullifiers(
-          toBytes32Hex(nullifier),
-        )) as boolean;
         if (!cancelled) setAlreadyClaimed(spent);
       } catch {
         if (!cancelled) setAlreadyClaimed(null);

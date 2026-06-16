@@ -15,7 +15,7 @@ import { useVault } from "../lib/vault";
 import { formatClaimAmount, formatField, formatLocalStampSec, formatWhen } from "../lib/format";
 import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPackage";
 import { submitClaim } from "../lib/claimSubmit";
-import { isClaimNullifierSpent } from "../lib/claimProbe";
+import { isClaimNullifierSpent } from "@zkscatter/sdk/claim";
 import { useOnChainClaimedLeaves } from "../lib/useOnChainClaimedLeaves";
 
 interface Props {

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ethers } from "ethers";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useWallet, shortAddr } from "@zkscatter/sdk/react";
-import { formatTokenLabel, PRIVATE_SETTLEMENT_ABI } from "@zkscatter/sdk";
+import { formatTokenLabel } from "@zkscatter/sdk";
+import { isClaimNullifierSpent } from "@zkscatter/sdk/claim";
 import { encodeClaimPackage } from "@zkscatter/sdk/notes";
 import {
   addClaimInboxEntry,
@@ -17,7 +18,6 @@ import {
   type ClaimInboxEntry,
   type ClaimInboxGroup,
 } from "@zkscatter/sdk/storage";
-import { computeClaimNullifier, toBytes32Hex } from "@zkscatter/sdk/zk";
 import { useFolderStorage } from "../_lib/folderStorage";
 import { formatLocalStampSec } from "../_lib/format";
 import { WorkspaceBar } from "../_components/WorkspaceBar";
@@ -148,18 +148,12 @@ export default function ClaimInbox() {
       // for why parallelising the fs writes wouldn't help.
       const probes = await Promise.allSettled(
         pending.map(async (e) => {
-          const nullifier = await computeClaimNullifier(
-            BigInt(e.pkg.secret),
-            BigInt(e.pkg.leafIndex),
-          );
-          const settlement = new ethers.Contract(
-            e.pkg.settlementAddress,
-            PRIVATE_SETTLEMENT_ABI,
+          const spent = await isClaimNullifierSpent(
             readProvider,
+            e.pkg.settlementAddress,
+            BigInt(e.pkg.secret),
+            e.pkg.leafIndex,
           );
-          const spent = (await settlement.claimNullifiers(
-            toBytes32Hex(nullifier),
-          )) as boolean;
           return { id: e.id, spent };
         }),
       );
