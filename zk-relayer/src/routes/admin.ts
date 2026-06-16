@@ -1,7 +1,8 @@
 /**
  * [R-7] Admin API — runtime relayer management endpoints.
- * All endpoints require x-admin-key header (timing-safe comparison).
- * See individual route handlers below for the full endpoint list.
+ * All endpoints require a SIWE session bearer (Authorization: Bearer …),
+ * minted by the operator signing a challenge with this relayer's operator
+ * wallet. See individual route handlers below for the full endpoint list.
  */
 
 import { Router, Request, Response, RequestHandler } from "express";
@@ -307,7 +308,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
 
   // Persisted settlement history. Mounted under /api/admin so this
   // (and the per-token fee accrual at /history/fees below) inherit
-  // the x-admin-key gate — both expose operator-private revenue
+  // the SIWE auth gate — both expose operator-private revenue
   // information that other relayers shouldn't be able to scrape.
   // Query params: ?limit=50&offset=0&type=...&status=...
   router.get("/history", (req: Request, res: Response) => {

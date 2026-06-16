@@ -1,12 +1,10 @@
 import { describe, it, expect, afterEach } from "vitest";
 import request from "supertest";
+import { ethers } from "ethers";
 import { createAdminRoutes } from "../../src/routes/admin.js";
 import { clearSanctionedPubKeys } from "../../src/core/sanctions-list.js";
 import { config, updateRelayerFee } from "../../src/config.js";
-import { mountRouter, makeSubmitterStub, makeDbStub } from "./helpers.js";
-
-const ADMIN_KEY = process.env.ADMIN_API_KEY;
-if (!ADMIN_KEY) throw new Error("ADMIN_API_KEY must be set (see test/setup-env.ts)");
+import { mountRouter, makeSubmitterStub, makeDbStub, siweLogin } from "./helpers.js";
 
 function buildApp(opts: {
   db?: ReturnType<typeof makeDbStub>;
@@ -22,43 +20,60 @@ function buildApp(opts: {
   return mountRouter("/api/admin", router);
 }
 
-describe("/api/admin — auth", () => {
-  it("rejects request without x-admin-key with 401", async () => {
+// Build an admin app and mint an operator SIWE bearer against it. Login
+// must follow this app's build — `createAdminRoutes` publishes its SIWE
+// handle as the process singleton, so the most-recently-built app owns the
+// active session store.
+async function buildAuthedApp(opts: Parameters<typeof buildApp>[0] = {}) {
+  const app = buildApp(opts);
+  const auth = await siweLogin(app);
+  return { app, auth };
+}
+
+describe("/api/admin — auth (SIWE)", () => {
+  it("rejects a request with no Authorization header with 401", async () => {
     const res = await request(buildApp()).get("/api/admin/status");
     expect(res.status).toBe(401);
-    expect(res.body.error).toMatch(/admin/i);
+    expect(res.body.error).toMatch(/bearer/i);
   });
 
-  it("rejects wrong key length with 401 (timing-safe guard)", async () => {
+  it("rejects a malformed / unknown bearer token with 401", async () => {
     const res = await request(buildApp())
       .get("/api/admin/status")
-      .set("x-admin-key", "short");
+      .set("Authorization", "Bearer " + "ff".repeat(32));
     expect(res.status).toBe(401);
   });
 
-  it("rejects matching length but wrong value with 401", async () => {
-    const wrong = "x".repeat(ADMIN_KEY.length);
-    const res = await request(buildApp())
-      .get("/api/admin/status")
-      .set("x-admin-key", wrong);
-    expect(res.status).toBe(401);
+  it("rejects a session signed by a non-operator wallet with 401", async () => {
+    // The challenge is public, but only the node's operator wallet can mint
+    // a session — a different signer is rejected at /session.
+    const app = buildApp();
+    const ch = await request(app).get("/api/admin/challenge");
+    const stranger = ethers.Wallet.createRandom();
+    const signature = await stranger.signMessage(ch.body.message);
+    const sess = await request(app)
+      .post("/api/admin/session")
+      .send({ nonce: ch.body.nonce, message: ch.body.message, signature });
+    expect(sess.status).toBe(401);
+    expect(sess.body.error).toMatch(/operator/i);
   });
 
-  it("accepts correct key and returns 200", async () => {
-    const res = await request(buildApp())
-      .get("/api/admin/status")
-      .set("x-admin-key", ADMIN_KEY);
+  it("accepts a valid operator SIWE session and returns 200", async () => {
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app).get("/api/admin/status").set("Authorization", auth);
     expect(res.status).toBe(200);
   });
 });
 
 describe("/api/admin/status + /balance", () => {
   it("GET /status includes relayer config + paused state + authorizeOrders", async () => {
-    const res = await request(buildApp({
+    const app = buildApp({
       getAuthorizeOrderStats: () => ({ pending: 5, matched: 2, total: 7 }),
-    }))
+    });
+    const auth = await siweLogin(app);
+    const res = await request(app)
       .get("/api/admin/status")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.body.paused).toBe(false);
     expect(res.body.authorizeOrders).toEqual({ pending: 5, matched: 2, total: 7 });
@@ -67,9 +82,10 @@ describe("/api/admin/status + /balance", () => {
   });
 
   it("GET /balance returns wallet + chainId", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .get("/api/admin/balance")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.body.address).toMatch(/^0x/);
     expect(res.body.chainId).toBe(31337);
@@ -83,25 +99,28 @@ describe("/api/admin/fee", () => {
   afterEach(() => { updateRelayerFee(originalFee); });
 
   it("rejects non-integer with 400", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .put("/api/admin/fee")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ feeBps: 12.5 });
     expect(res.status).toBe(400);
   });
 
   it("rejects out-of-range (>10000) with 400", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .put("/api/admin/fee")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ feeBps: 10001 });
     expect(res.status).toBe(400);
   });
 
   it("rejects negative with 400", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .put("/api/admin/fee")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ feeBps: -1 });
     expect(res.status).toBe(400);
   });
@@ -109,9 +128,10 @@ describe("/api/admin/fee", () => {
   it("accepts valid feeBps and persists via db.setMeta", async () => {
     const setMetaCalls: Array<[string, string]> = [];
     const db = makeDbStub({ setMeta: (k: string, v: string) => { setMetaCalls.push([k, v]); } });
-    const res = await request(buildApp({ db }))
+    const { app, auth } = await buildAuthedApp({ db });
+    const res = await request(app)
       .put("/api/admin/fee")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ feeBps: 55 });
     expect(res.status).toBe(200);
     expect(res.body.newFeeBps).toBe(55);
@@ -121,29 +141,28 @@ describe("/api/admin/fee", () => {
 
 describe("/api/admin/pause + /resume", () => {
   it("pause → resume is a valid cycle; double-pause / double-resume return 409", async () => {
-    const app = buildApp();
-    let res = await request(app).post("/api/admin/pause").set("x-admin-key", ADMIN_KEY);
+    const { app, auth } = await buildAuthedApp();
+    let res = await request(app).post("/api/admin/pause").set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("paused");
 
-    res = await request(app).post("/api/admin/pause").set("x-admin-key", ADMIN_KEY);
+    res = await request(app).post("/api/admin/pause").set("Authorization", auth);
     expect(res.status).toBe(409);
 
-    res = await request(app).post("/api/admin/resume").set("x-admin-key", ADMIN_KEY);
+    res = await request(app).post("/api/admin/resume").set("Authorization", auth);
     expect(res.status).toBe(200);
 
-    res = await request(app).post("/api/admin/resume").set("x-admin-key", ADMIN_KEY);
+    res = await request(app).post("/api/admin/resume").set("Authorization", auth);
     expect(res.status).toBe(409);
   });
 });
 
 describe("/api/admin/drain", () => {
   it("returns count from authorize drain", async () => {
-    const res = await request(buildApp({
-      drainAuthorizeOrders: () => 7,
-    }))
+    const { app, auth } = await buildAuthedApp({ drainAuthorizeOrders: () => 7 });
+    const res = await request(app)
       .post("/api/admin/drain")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.body.authorizeOrdersCancelled).toBe(7);
     expect(res.body.privateOrdersCancelled).toBeUndefined();
@@ -154,26 +173,28 @@ describe("/api/admin/sanctions", () => {
   afterEach(clearSanctionedPubKeys);
 
   it("GET returns empty list by default", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .get("/api/admin/sanctions")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ count: 0, entries: [] });
   });
 
   it("POST with empty body.entries returns 400", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .post("/api/admin/sanctions")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ entries: [] });
     expect(res.status).toBe(400);
   });
 
   it("POST with malformed entry returns 400 with invalidIndices (no 500)", async () => {
-    const app = buildApp();
+    const { app, auth } = await buildAuthedApp();
     const res = await request(app)
       .post("/api/admin/sanctions")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ entries: [
         { pubKeyAx: "1", pubKeyAy: "2" },
         { pubKeyAx: "not-a-bigint", pubKeyAy: "2" },
@@ -183,15 +204,15 @@ describe("/api/admin/sanctions", () => {
     // Up-front validation: a single malformed entry must leave the list untouched.
     const list = await request(app)
       .get("/api/admin/sanctions")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(list.body.count).toBe(0);
   });
 
   it("POST valid entries, then GET returns them, then DELETE removes them", async () => {
-    const app = buildApp();
+    const { app, auth } = await buildAuthedApp();
     const addRes = await request(app)
       .post("/api/admin/sanctions")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ entries: [
         { pubKeyAx: "007", pubKeyAy: "010" },
         { pubKeyAx: "1", pubKeyAy: "2" },
@@ -200,21 +221,22 @@ describe("/api/admin/sanctions", () => {
     expect(addRes.status).toBe(200);
     expect(addRes.body.added).toBe(2);
 
-    const list = await request(app).get("/api/admin/sanctions").set("x-admin-key", ADMIN_KEY);
+    const list = await request(app).get("/api/admin/sanctions").set("Authorization", auth);
     expect(list.body.count).toBe(2);
 
     const delRes = await request(app)
       .delete("/api/admin/sanctions")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ entries: [{ pubKeyAx: "1", pubKeyAy: "2" }] });
     expect(delRes.status).toBe(200);
     expect(delRes.body.removed).toBe(1);
   });
 
   it("DELETE with malformed entry returns 400 (no 500)", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .delete("/api/admin/sanctions")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ entries: [{ pubKeyAx: "xyz", pubKeyAy: "1" }] });
     expect(res.status).toBe(400);
     expect(res.body.invalidIndices).toEqual([0]);
@@ -223,18 +245,19 @@ describe("/api/admin/sanctions", () => {
 
 describe("/api/admin/profile", () => {
   it("GET returns {} by default", async () => {
-    const res = await request(buildApp()).get("/api/admin/profile").set("x-admin-key", ADMIN_KEY);
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app).get("/api/admin/profile").set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.body).toEqual({});
   });
 
   it("PATCH persists fields + sets updatedAt + subsequent GET returns them", async () => {
     const db = makeDbStub();
-    const app = buildApp({ db });
+    const { app, auth } = await buildAuthedApp({ db });
 
     const patchRes = await request(app)
       .patch("/api/admin/profile")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ name: "Acme Relayer", website: "https://acme.example" });
 
     expect(patchRes.status).toBe(200);
@@ -242,30 +265,31 @@ describe("/api/admin/profile", () => {
     expect(patchRes.body.website).toBe("https://acme.example");
     expect(typeof patchRes.body.updatedAt).toBe("number");
 
-    const getRes = await request(app).get("/api/admin/profile").set("x-admin-key", ADMIN_KEY);
+    const getRes = await request(app).get("/api/admin/profile").set("Authorization", auth);
     expect(getRes.body.name).toBe("Acme Relayer");
     expect(getRes.body.website).toBe("https://acme.example");
   });
 
   it("PATCH merges — absent fields preserve, empty string clears", async () => {
     const db = makeDbStub();
-    const app = buildApp({ db });
+    const { app, auth } = await buildAuthedApp({ db });
 
-    await request(app).patch("/api/admin/profile").set("x-admin-key", ADMIN_KEY)
+    await request(app).patch("/api/admin/profile").set("Authorization", auth)
       .send({ name: "First", description: "Desc" });
 
-    await request(app).patch("/api/admin/profile").set("x-admin-key", ADMIN_KEY)
+    await request(app).patch("/api/admin/profile").set("Authorization", auth)
       .send({ description: "" }); // clear description only
 
-    const res = await request(app).get("/api/admin/profile").set("x-admin-key", ADMIN_KEY);
+    const res = await request(app).get("/api/admin/profile").set("Authorization", auth);
     expect(res.body.name).toBe("First");
     expect(res.body.description).toBeUndefined();
   });
 
   it("PATCH rejects non-string fields with 400", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .patch("/api/admin/profile")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ name: 123 });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/string/i);
@@ -273,27 +297,30 @@ describe("/api/admin/profile", () => {
 
   it("PATCH rejects over-length field with 400", async () => {
     const longName = "x".repeat(100);
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .patch("/api/admin/profile")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ name: longName });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/exceeds/);
   });
 
   it("PATCH rejects logoUrl with disallowed scheme", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .patch("/api/admin/profile")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ logoUrl: "javascript:alert(1)" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/scheme|URL/i);
   });
 
   it("PATCH accepts ipfs:// logoUrl", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .patch("/api/admin/profile")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({ logoUrl: "ipfs://bafy.../logo.png" });
     expect(res.status).toBe(200);
     expect(res.body.logoUrl).toBe("ipfs://bafy.../logo.png");
@@ -309,9 +336,10 @@ describe("/api/admin/profile", () => {
 
 describe("/api/admin/webhook", () => {
   it("GET returns configured flag + health + balance + settlement-failure streak + recent", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .get("/api/admin/webhook")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(typeof res.body.configured).toBe("boolean");
     expect(res.body.health).toHaveProperty("state");
@@ -334,9 +362,10 @@ describe("/api/admin/webhook", () => {
 
   it("POST /webhook/test returns 409 when no URL configured", async () => {
     // Test setup has no WEBHOOK_URL — the test endpoint short-circuits.
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .post("/api/admin/webhook/test")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", auth)
       .send({});
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/WEBHOOK_URL/);
@@ -358,7 +387,7 @@ describe("/api/admin/history.csv", () => {
     created_at: 1_700_000_000_000,
   };
 
-  it("rejects missing admin key", async () => {
+  it("rejects missing admin auth", async () => {
     const res = await request(buildApp()).get("/api/admin/history.csv");
     expect(res.status).toBe(401);
   });
@@ -371,9 +400,10 @@ describe("/api/admin/history.csv", () => {
         return [sampleRow];
       },
     });
-    const res = await request(buildApp({ db }))
+    const { app, auth } = await buildAuthedApp({ db });
+    const res = await request(app)
       .get("/api/admin/history.csv?since=0&until=1700000001000")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
     expect(res.headers["content-disposition"]).toMatch(/attachment; filename=".*\.csv"/);
@@ -396,9 +426,10 @@ describe("/api/admin/history.csv", () => {
     const db = makeDbStub({
       iterateSettlementHistoryRange: (opts) => { calls.push(opts); return []; },
     });
-    await request(buildApp({ db }))
+    const { app, auth } = await buildAuthedApp({ db });
+    await request(app)
       .get("/api/admin/history.csv?type=settleAuth&status=failed")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(calls[0]).toMatchObject({ type: "settleAuth", status: "failed" });
   });
 
@@ -407,25 +438,28 @@ describe("/api/admin/history.csv", () => {
     const db = makeDbStub({
       iterateSettlementHistoryRange: (opts) => { calls.push(opts); return []; },
     });
-    await request(buildApp({ db }))
+    const { app, auth } = await buildAuthedApp({ db });
+    await request(app)
       .get("/api/admin/history.csv?type=BOGUS&status=alsobogus")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(calls[0].type).toBeUndefined();
     expect(calls[0].status).toBeUndefined();
   });
 
   it("returns 400 when until < since", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .get("/api/admin/history.csv?since=2000&until=1000")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/until/);
   });
 
   it("emits header + zero rows when window is empty", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .get("/api/admin/history.csv")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.text.trim().split("\n")).toHaveLength(1);
   });
@@ -436,23 +470,24 @@ describe("/api/admin/orders/by-tx/:txHash/proof", () => {
   const decoyCalldata = "0xdeadbeef" + "00".repeat(32);
 
   it("rejects malformed txHash with 400", async () => {
-    const res = await request(buildApp())
+    const { app, auth } = await buildAuthedApp();
+    const res = await request(app)
       .get("/api/admin/orders/by-tx/not-a-hash/proof")
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(400);
   });
 
   it("returns 404 when the provider has no record of the tx", async () => {
-    const submitter = makeSubmitterStub();
     const router = createAdminRoutes({
-      submitter, db: makeDbStub(),
+      submitter: makeSubmitterStub(), db: makeDbStub(),
       drainAuthorizeOrders: () => 0,
       getAuthorizeOrderStats: () => ({ pending: 0, matched: 0, total: 0 }),
     });
     const app = mountRouter("/api/admin", router);
+    const auth = await siweLogin(app);
     const res = await request(app)
       .get(`/api/admin/orders/by-tx/${validHash}/proof`)
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(404);
   });
 
@@ -469,9 +504,10 @@ describe("/api/admin/orders/by-tx/:txHash/proof", () => {
       getAuthorizeOrderStats: () => ({ pending: 0, matched: 0, total: 0 }),
     });
     const app = mountRouter("/api/admin", router);
+    const auth = await siweLogin(app);
     const res = await request(app)
       .get(`/api/admin/orders/by-tx/${validHash}/proof`)
-      .set("x-admin-key", ADMIN_KEY);
+      .set("Authorization", auth);
     expect(res.status).toBe(200);
     expect(res.body.decoded).toBeNull();
     expect(res.body.calldata).toBe(decoyCalldata);

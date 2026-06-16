@@ -1,4 +1,6 @@
 import express, { Express, Router } from "express";
+import request from "supertest";
+import { ethers } from "ethers";
 import type { PrivateSubmitter } from "../../src/core/private-submitter.js";
 import type { PrivateOrderDB } from "../../src/core/db.js";
 
@@ -7,6 +9,33 @@ export function mountRouter(basePath: string, router: Router): Express {
   app.use(express.json());
   app.use(basePath, router);
   return app;
+}
+
+// Canned operator wallet (a publicly-known anvil dev key, in-process
+// signing only). `makeSubmitterStub` reports this as the node's operator
+// address, so a SIWE challenge signed by `TEST_OPERATOR` authenticates —
+// mirroring production, where admin == the node's own operator wallet.
+export const TEST_OPERATOR_PK =
+  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+export const TEST_OPERATOR = new ethers.Wallet(TEST_OPERATOR_PK);
+
+/** Mint a SIWE session bearer against a freshly-built admin app, signing
+ *  the challenge with the node's operator wallet. Returns the
+ *  `Authorization` header value (`Bearer <token>`). Must be called on the
+ *  same app instance the test then hits — `createAdminRoutes` publishes its
+ *  SIWE handle as the process singleton on build, so the most-recently-built
+ *  app owns the active session store. */
+export async function siweLogin(app: Express, basePath = "/api/admin"): Promise<string> {
+  const ch = await request(app).get(`${basePath}/challenge`);
+  const { nonce, message } = ch.body as { nonce: string; message: string };
+  const signature = await TEST_OPERATOR.signMessage(message);
+  const sess = await request(app)
+    .post(`${basePath}/session`)
+    .send({ nonce, message, signature });
+  if (!sess.body?.token) {
+    throw new Error(`siweLogin failed (${sess.status}): ${JSON.stringify(sess.body)}`);
+  }
+  return `Bearer ${sess.body.token}`;
 }
 
 // Minimal shape of each stub — a typed `overrides` catches key typos that a
@@ -30,7 +59,7 @@ export function makeSubmitterStub(overrides: Partial<SubmitterStub> = {}): Priva
     getNetwork: async () => ({ chainId: 31337n }),
     getTransaction: async (_hash: string) => null,
   };
-  const wallet = { address: "0x" + "9".repeat(40), provider };
+  const wallet = { address: TEST_OPERATOR.address, provider };
   const stub: SubmitterStub = {
     getProvider: () => provider,
     getWallet: () => wallet,
