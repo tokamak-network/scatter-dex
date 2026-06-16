@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "next dev -p 4004",
+    "dev": "NODE_OPTIONS=--max-old-space-size=4096 next dev -p 4004",
     "build": "next build",
     "start": "next start -p 4004",
     "lint": "next lint",

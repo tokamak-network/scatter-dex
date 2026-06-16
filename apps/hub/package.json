@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 4006",
+    "dev": "NODE_OPTIONS=--max-old-space-size=4096 next dev -p 4006",
     "build": "next build",
     "start": "next start -p 4006",
     "lint": "next lint"
