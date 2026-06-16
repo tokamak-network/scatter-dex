@@ -6,7 +6,9 @@ import {
   fetchSpentClaimNullifiers,
   probeSpentClaimLeaves,
   resolveSpentClaimLeaves,
+  resolveSpentClaimEntries,
   type ClaimLeafRef,
+  type ClaimEntryRef,
 } from "../../src/claim";
 
 const SETTLEMENT = "0x" + "55".repeat(20);
@@ -149,5 +151,67 @@ describe("resolveSpentClaimLeaves", () => {
   it("returns empty for no entries, and when neither indexer nor provider can answer", async () => {
     expect((await resolveSpentClaimLeaves({ entries: [], chainId: CHAIN, settlementAddress: SETTLEMENT })).size).toBe(0);
     expect((await resolveSpentClaimLeaves({ entries, chainId: CHAIN, settlementAddress: SETTLEMENT })).size).toBe(0);
+  });
+});
+
+describe("resolveSpentClaimEntries (inbox — nullifier-hash keyed, heterogeneous settlements)", () => {
+  // Two entries that share leafIndex 0 but live under DIFFERENT settlements —
+  // exactly the case leafIndex-keying can't disambiguate, so we key on the
+  // nullifier instead.
+  const SETTLEMENT_A = "0x" + "aa".repeat(20);
+  const SETTLEMENT_B = "0x" + "bb".repeat(20);
+  const inbox: ClaimEntryRef[] = [
+    { key: "entry-A", secret: 0x1111n, leafIndex: 0, settlementAddress: SETTLEMENT_A },
+    { key: "entry-B", secret: 0x2222n, leafIndex: 0, settlementAddress: SETTLEMENT_B },
+    { key: "entry-C", secret: 0x3333n, leafIndex: 1, settlementAddress: SETTLEMENT_A },
+  ];
+  const inboxHexes = (): Promise<string[]> =>
+    Promise.all(inbox.map((e) => claimNullifierHex(e.secret, e.leafIndex)));
+
+  it("batches all entries into one indexer call and maps spent hashes back to keys", async () => {
+    const hs = await inboxHexes();
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      // All three entries' nullifiers go in one request, regardless of settlement.
+      expect(body.nullifiers.sort()).toEqual([...hs].sort());
+      return new Response(JSON.stringify({ spent: [hs[0], hs[2]] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const out = await resolveSpentClaimEntries({
+      entries: inbox,
+      chainId: CHAIN,
+      provider: settlementProvider(new Set(), true), // tripwire — RPC must not run
+      sharedOrderbookUrl: "http://idx",
+      fetchImpl,
+    });
+    expect([...out].sort()).toEqual(["entry-A", "entry-C"]);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+
+  it("falls back to per-entry RPC (each against its own settlement) when no indexer URL", async () => {
+    const hs = await inboxHexes();
+    const out = await resolveSpentClaimEntries({
+      entries: inbox,
+      chainId: CHAIN,
+      provider: settlementProvider(new Set([hs[1]])), // entry-B spent
+    });
+    expect([...out]).toEqual(["entry-B"]);
+  });
+
+  it("falls back to RPC when the indexer request fails", async () => {
+    const hs = await inboxHexes();
+    const fetchImpl = (async () => new Response("boom", { status: 500 })) as unknown as typeof fetch;
+    const out = await resolveSpentClaimEntries({
+      entries: inbox,
+      chainId: CHAIN,
+      provider: settlementProvider(new Set([hs[0]])),
+      sharedOrderbookUrl: "http://idx",
+      fetchImpl,
+    });
+    expect([...out]).toEqual(["entry-A"]);
+  });
+
+  it("returns empty for no entries, and when neither indexer nor provider can answer", async () => {
+    expect((await resolveSpentClaimEntries({ entries: [], chainId: CHAIN })).size).toBe(0);
+    expect((await resolveSpentClaimEntries({ entries: inbox, chainId: CHAIN })).size).toBe(0);
   });
 });
