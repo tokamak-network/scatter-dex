@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useWallet } from "@zkscatter/sdk/react";
+import { isConfiguredAddress } from "@zkscatter/sdk";
 import type { OrderClaim } from "./orders";
 import { isClaimNullifierSpentOn, settlementReader } from "./claimProbe";
 
@@ -28,6 +29,13 @@ export function useOnChainClaimedLeaves(
   const { readProvider } = useWallet();
   const [spent, setSpent] = useState<Map<number, boolean>>(() => new Map());
 
+  // Read the latest `claims` from a ref inside the effect rather than
+  // depending on the array itself — callers pass an unmemoized array, so
+  // listing it as a dep would re-fire the sweep on every render. The
+  // `probeKey` string below is what actually gates re-probing.
+  const claimsRef = useRef(claims);
+  claimsRef.current = claims;
+
   // Stable identity for the probe inputs so a re-render that doesn't
   // change the claims/settlement (e.g. the table's 30s clock tick)
   // doesn't re-fire the RPC sweep.
@@ -39,7 +47,19 @@ export function useOnChainClaimedLeaves(
   );
 
   useEffect(() => {
-    if (!readProvider || !settlementAddress || !claims || claims.length === 0) {
+    // Clear any prior order's result first: while the new probe is in
+    // flight the caller must fall back to *this* order's optimistic local
+    // state, not show the previous order's spent leaves (leaf indices like
+    // 0/1 collide across orders). Also covers wallet disconnect / network
+    // switch / unconfigured settlement, where there's nothing to probe.
+    setSpent(new Map());
+    const currentClaims = claimsRef.current;
+    if (
+      !readProvider ||
+      !isConfiguredAddress(settlementAddress) ||
+      !currentClaims ||
+      currentClaims.length === 0
+    ) {
       return;
     }
     let cancelled = false;
@@ -48,7 +68,7 @@ export function useOnChainClaimedLeaves(
       // into a single RPC round-trip under ethers' auto-batching.
       const settlement = settlementReader(readProvider, settlementAddress);
       const results = await Promise.all(
-        claims.map(async (c) => {
+        currentClaims.map(async (c) => {
           try {
             const isSpent = await isClaimNullifierSpentOn(
               settlement,
@@ -70,8 +90,9 @@ export function useOnChainClaimedLeaves(
     return () => {
       cancelled = true;
     };
-    // probeKey captures claims + settlementAddress; readProvider is the
-    // other input. Listing the raw arrays would re-run on every render.
+    // probeKey captures claims + settlementAddress (read via claimsRef);
+    // readProvider is the other input. Listing the raw array would re-run
+    // on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [probeKey, readProvider]);
 
