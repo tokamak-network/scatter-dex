@@ -153,7 +153,8 @@ services:
       - INDEX_FROM_BLOCK=${INDEX_FROM_BLOCK:-0}
       # Admin auth (operator console) needs no config: the relayer
       # authenticates admin actions via the operator's wallet signature
-      # (SIWE), bound to the wallet behind RELAYER_PRIVATE_KEY.
+      # (SIWE), bound to the relayer's own signing key (provided here via
+      # RELAYER_PRIVATE_KEY_FILE / the relayer_key secret).
     secrets:
       - relayer_key
     volumes:

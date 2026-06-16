@@ -87,10 +87,10 @@ Shows: instance health, settlement rate, gas spent, throughput, per-relayer brea
 
 ## Admin API
 
-This section covers the endpoints under `/api/admin/*` plus the operator-only `/api/vault/claim` (see [Vault Claim](#claim-vault-fees-vault-route) subsection — same auth, different route prefix). They authenticate via the relayer **operator's wallet signature (SIWE)** — the wallet behind `RELAYER_PRIVATE_KEY`, i.e. this node's on-chain operator. No key to configure. The operator console (web UI) does this for you; for raw `curl`, mint a short-lived session bearer first (needs foundry's `cast` + `jq`):
+This section covers the endpoints under `/api/admin/*` plus the operator-only `/api/vault/claim` (see [Vault Claim](#claim-vault-fees-vault-route) subsection — same auth, different route prefix). They authenticate via the relayer **operator's wallet signature (SIWE)** — the relayer's own signing key (its `RELAYER_PRIVATE_KEY`, or whatever `RELAYER_PRIVATE_KEY_FILE` points at), i.e. this node's on-chain operator. No key to configure. The operator console (web UI) does this for you; for raw `curl`, mint a short-lived session bearer first (needs foundry's `cast` + `jq`):
 
 ```bash
-export OPERATOR_PK=0x...          # operator EOA key (== RELAYER_PRIVATE_KEY)
+export OPERATOR_PK=0x...          # the relayer's signing key (RELAYER_PRIVATE_KEY / _FILE)
 R=http://localhost:3002
 CH=$(curl -s "$R/api/admin/challenge")
 MSG=$(echo "$CH" | jq -r .message); NONCE=$(echo "$CH" | jq -r .nonce)
