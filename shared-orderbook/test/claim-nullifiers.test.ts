@@ -168,6 +168,7 @@ describe("GET /api/claim-nullifiers", () => {
     db = new OrderbookDB(TEST_DB);
     db.upsertClaimNullifiers(CHAIN, [row(0), row(2)]);
     const app = express();
+    app.use(express.json());
     app.use("/api/claim-nullifiers", createClaimNullifierRoutes(db, noopLimiter));
     server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(PORT, resolve));
@@ -200,6 +201,35 @@ describe("GET /api/claim-nullifiers", () => {
 
   it("400s on an invalid chainId", async () => {
     const res = await fetch(`http://localhost:${PORT}/api/claim-nullifiers?chainId=abc&nullifiers=${nul(0)}`);
+    expect(res.status).toBe(400);
+  });
+
+  it("POST returns the spent subset for a JSON array (batch path)", async () => {
+    const res = await fetch(`http://localhost:${PORT}/api/claim-nullifiers`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chainId: CHAIN, nullifiers: [nul(0), nul(1), nul(2), nul(3)] }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.spent.sort()).toEqual([nul(0), nul(2)].sort());
+  });
+
+  it("POST 400s when nullifiers is not an array", async () => {
+    const res = await fetch(`http://localhost:${PORT}/api/claim-nullifiers`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chainId: CHAIN, nullifiers: nul(0) }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST 400s on a malformed nullifier in the array", async () => {
+    const res = await fetch(`http://localhost:${PORT}/api/claim-nullifiers`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chainId: CHAIN, nullifiers: [nul(0), "0xdeadbeef"] }),
+    });
     expect(res.status).toBe(400);
   });
 });

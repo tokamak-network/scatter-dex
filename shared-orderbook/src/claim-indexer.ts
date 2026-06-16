@@ -142,26 +142,37 @@ async function main(): Promise<void> {
     // error rather than throwing), instead of a misleading exit 0.
     let failed = false;
     for (const c of chains) {
-      const provider = new JsonRpcProvider(c.rpcUrl);
-      const fetcher = makeClaimNullifierFetcher({
-        rpcUrl: c.rpcUrl,
-        settlementAddress: c.settlementAddress,
-        provider,
-      });
-      const latest = await provider.getBlockNumber();
-      const toBlock = Math.max(0, latest - safety);
-      const s = await runClaimIndexPass(db, fetcher, {
-        chainId: c.chainId,
-        settlementAddress: c.settlementAddress,
-        deployBlock: c.deployBlock,
-        toBlock,
-        chunkSize,
-      });
-      if (s.error) failed = true;
-      console.log(
-        `[claim-indexer] one-shot chain=${c.chainId}: indexed=${s.indexed} ` +
-          `range=[${s.fromBlock},${s.toBlock}]${s.error ? ` error=${s.error}` : ""}`,
-      );
+      // Isolate each chain: a thrown getBlockNumber (RPC hiccup / 429) on one
+      // chain must not abort the remaining chains' passes. Record the failure
+      // so the process still exits non-zero.
+      try {
+        const provider = new JsonRpcProvider(c.rpcUrl);
+        const fetcher = makeClaimNullifierFetcher({
+          rpcUrl: c.rpcUrl,
+          settlementAddress: c.settlementAddress,
+          provider,
+        });
+        const latest = await provider.getBlockNumber();
+        const toBlock = Math.max(0, latest - safety);
+        const s = await runClaimIndexPass(db, fetcher, {
+          chainId: c.chainId,
+          settlementAddress: c.settlementAddress,
+          deployBlock: c.deployBlock,
+          toBlock,
+          chunkSize,
+        });
+        if (s.error) failed = true;
+        console.log(
+          `[claim-indexer] one-shot chain=${c.chainId}: indexed=${s.indexed} ` +
+            `range=[${s.fromBlock},${s.toBlock}]${s.error ? ` error=${s.error}` : ""}`,
+        );
+      } catch (err) {
+        failed = true;
+        console.error(
+          `[claim-indexer] one-shot chain=${c.chainId} failed:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
     }
     db.close();
     if (failed) process.exit(1);
