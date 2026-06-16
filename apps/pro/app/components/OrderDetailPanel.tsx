@@ -17,6 +17,7 @@ import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPacka
 import { submitClaim } from "../lib/claimSubmit";
 import { isClaimNullifierSpent } from "@zkscatter/sdk/claim";
 import { useOnChainClaimedLeaves } from "../lib/useOnChainClaimedLeaves";
+import { ClaimStatusRefreshButton } from "./ClaimStatusRefreshButton";
 
 interface Props {
   order: OrderRecord;
@@ -72,6 +73,10 @@ export function OrderDetailPanel({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {/* Manual claim-status refresh — re-checks this (and every other)
+              order's claims on-chain so a claim made elsewhere reflects now
+              instead of waiting up to 60s for the reconciler poll. */}
+          <ClaimStatusRefreshButton />
           <button
             type="button"
             onClick={() => setShowTechnical((v) => !v)}
@@ -498,8 +503,9 @@ function LifecycleTimeline({
         })}
       </ol>
       <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-        Status transitions are driven by on-chain events — this panel
-        updates live; no refresh needed.
+        Status transitions follow on-chain events. Claim status is resolved
+        via an indexer that can trail the chain by a minute or two — use
+        Refresh to re-check immediately.
       </p>
     </div>
   );
@@ -842,10 +848,10 @@ function RawFieldsSection({
         <RawRow k="Status" v={order.status} />
         <RawRow k="Created" v={formatWhen(order.createdAt)} />
         <p className="text-[10px] text-[var(--color-text-subtle)]">
-          Status transitions are driven by on-chain events
+          Status transitions follow on-chain events
           (PrivateClaim → claimable / claimed, cancelPrivate →
-          cancelled). The watcher updates this panel live; no
-          refresh needed.
+          cancelled). The watcher updates this panel automatically;
+          Refresh forces an immediate on-chain re-check.
         </p>
       </RawSection>
     </div>
