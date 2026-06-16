@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "predev": "node ../../scripts/fetch-zk-assets.mjs pay",
-    "dev": "next dev -p 4001",
+    "dev": "cross-env NODE_OPTIONS=--max-old-space-size=4096 next dev -p 4001",
     "prebuild": "node ../../scripts/fetch-zk-assets.mjs pay",
     "build": "next build",
     "start": "next start -p 4001",
@@ -34,6 +34,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",

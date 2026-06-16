@@ -6,7 +6,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "next dev -p 4004",
+    "dev": "cross-env NODE_OPTIONS=--max-old-space-size=4096 next dev -p 4004",
     "build": "next build",
     "start": "next start -p 4004",
     "lint": "next lint",
@@ -30,6 +30,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "cross-env": "^7.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
