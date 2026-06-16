@@ -23,6 +23,7 @@ import type {
 } from "../types/kyc.js";
 import type { AuditEntry, AuditEntryInsert, AuditListFilter } from "../types/audit.js";
 import type { CommitmentLeaf } from "../types/commitment.js";
+import type { ClaimNullifierRow } from "../types/claim.js";
 
 export class OrderbookDB {
   private db: Database.Database;
@@ -58,6 +59,9 @@ export class OrderbookDB {
   private stmtMaxCommitmentLeaf!: Database.Statement;
   private stmtGetCommitmentCursor!: Database.Statement;
   private stmtSetCommitmentCursor!: Database.Statement;
+  private stmtUpsertClaimNullifier!: Database.Statement;
+  private stmtGetClaimCursor!: Database.Statement;
+  private stmtSetClaimCursor!: Database.Statement;
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -238,6 +242,25 @@ export class OrderbookDB {
       -- One row per chain: how far the indexer has scanned. Lets a restart
       -- resume from the cursor instead of re-backfilling from the deploy block.
       CREATE TABLE IF NOT EXISTS commitment_cursor (
+        chain_id        INTEGER PRIMARY KEY,
+        last_scan_block INTEGER NOT NULL
+      );
+
+      -- Spent claim nullifiers from PrivateClaim events, written by the claim
+      -- indexer (src/claim-indexer.ts) and read by GET /api/claim-nullifiers
+      -- so clients resolve "is this claim spent?" with a batch lookup instead
+      -- of an eth_call per leaf. PK (chain_id, nullifier) gives idempotent
+      -- upserts — a re-scanned window overwrites identical rows — and serves
+      -- the WHERE chain_id=? AND nullifier IN (...) batch query directly.
+      CREATE TABLE IF NOT EXISTS claim_nullifiers (
+        chain_id     INTEGER NOT NULL,
+        nullifier    TEXT NOT NULL,
+        block_number INTEGER NOT NULL,
+        PRIMARY KEY (chain_id, nullifier)
+      );
+
+      -- Per-chain scan cursor for the claim indexer (mirrors commitment_cursor).
+      CREATE TABLE IF NOT EXISTS claim_cursor (
         chain_id        INTEGER PRIMARY KEY,
         last_scan_block INTEGER NOT NULL
       );
@@ -438,6 +461,22 @@ export class OrderbookDB {
       VALUES (?, ?)
       ON CONFLICT(chain_id) DO UPDATE SET last_scan_block = excluded.last_scan_block
     `);
+    // Idempotent upsert keyed on (chain_id, nullifier): a re-scanned window
+    // overwrites the identical row instead of duplicating.
+    this.stmtUpsertClaimNullifier = this.db.prepare(`
+      INSERT INTO claim_nullifiers (chain_id, nullifier, block_number)
+      VALUES (?, ?, ?)
+      ON CONFLICT(chain_id, nullifier) DO UPDATE SET
+        block_number = excluded.block_number
+    `);
+    this.stmtGetClaimCursor = this.db.prepare(
+      `SELECT last_scan_block FROM claim_cursor WHERE chain_id = ?`,
+    );
+    this.stmtSetClaimCursor = this.db.prepare(`
+      INSERT INTO claim_cursor (chain_id, last_scan_block)
+      VALUES (?, ?)
+      ON CONFLICT(chain_id) DO UPDATE SET last_scan_block = excluded.last_scan_block
+    `);
   }
 
   // ── Commitment-tree leaves (indexer write path + API read path) ──────────
@@ -485,6 +524,49 @@ export class OrderbookDB {
 
   setCommitmentCursor(chainId: number, lastScanBlock: number): void {
     this.stmtSetCommitmentCursor.run(chainId, lastScanBlock);
+  }
+
+  // ── Spent claim nullifiers (indexer write path + API read path) ──────────
+
+  /** Idempotently store a batch of spent nullifiers in one transaction.
+   *  Re-indexing a window overwrites identical rows (PK = chain_id, nullifier). */
+  upsertClaimNullifiers(chainId: number, rows: ClaimNullifierRow[]): void {
+    const txn = this.db.transaction((items: ClaimNullifierRow[]) => {
+      for (const r of items) {
+        this.stmtUpsertClaimNullifier.run(chainId, r.nullifier.toLowerCase(), r.blockNumber);
+      }
+    });
+    txn(rows);
+  }
+
+  /** Of the given nullifiers, return the subset that are spent (present) for a
+   *  chain. The query is built with N placeholders rather than a prepared
+   *  statement because the IN-list length varies per request; the caller caps
+   *  N (see the route) so the SQL stays bounded. Input is lowercased to match
+   *  the stored canonical form; an empty input short-circuits to no query. */
+  getSpentClaimNullifiers(chainId: number, nullifiers: string[]): string[] {
+    if (nullifiers.length === 0) return [];
+    const lowered = nullifiers.map((n) => n.toLowerCase());
+    const placeholders = lowered.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT nullifier FROM claim_nullifiers
+         WHERE chain_id = ? AND nullifier IN (${placeholders})`,
+      )
+      .all(chainId, ...lowered) as Array<{ nullifier: string }>;
+    return rows.map((r) => r.nullifier);
+  }
+
+  /** Last block the claim indexer scanned for a chain, or null if never. */
+  getClaimCursor(chainId: number): number | null {
+    const row = this.stmtGetClaimCursor.get(chainId) as
+      | { last_scan_block: number }
+      | undefined;
+    return row ? row.last_scan_block : null;
+  }
+
+  setClaimCursor(chainId: number, lastScanBlock: number): void {
+    this.stmtSetClaimCursor.run(chainId, lastScanBlock);
   }
 
   insertOrder(o: OrderSummary): void {
