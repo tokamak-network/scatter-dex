@@ -87,37 +87,45 @@ Shows: instance health, settlement rate, gas spent, throughput, per-relayer brea
 
 ## Admin API
 
-This section covers the 5 endpoints under `/api/admin/*` plus the admin-key-protected `/api/vault/claim` (see [Vault Claim](#claim-vault-fees-vault-route) subsection — same auth, different route prefix). All require the `x-admin-key` header. Generate a key:
+This section covers the endpoints under `/api/admin/*` plus the operator-only `/api/vault/claim` (see [Vault Claim](#claim-vault-fees-vault-route) subsection — same auth, different route prefix). They authenticate via the relayer **operator's wallet signature (SIWE)** — the wallet behind `RELAYER_PRIVATE_KEY`, i.e. this node's on-chain operator. No key to configure. The operator console (web UI) does this for you; for raw `curl`, mint a short-lived session bearer first (needs foundry's `cast` + `jq`):
 
 ```bash
-export ADMIN_KEY=$(openssl rand -hex 32)
-# Set ADMIN_API_KEY=$ADMIN_KEY in .env
+export OPERATOR_PK=0x...          # operator EOA key (== RELAYER_PRIVATE_KEY)
+R=http://localhost:3002
+CH=$(curl -s "$R/api/admin/challenge")
+MSG=$(echo "$CH" | jq -r .message); NONCE=$(echo "$CH" | jq -r .nonce)
+SIG=$(cast wallet sign --private-key "$OPERATOR_PK" "$MSG")
+export TOKEN=$(curl -s -X POST "$R/api/admin/session" -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg n "$NONCE" --arg m "$MSG" --arg s "$SIG" '{nonce:$n,message:$m,signature:$s}')" \
+  | jq -r .token)
 ```
+
+Then pass `-H "Authorization: Bearer $TOKEN"` on the calls below. The session expires — re-mint when a call returns 401 "Invalid or expired session".
 
 ### Status Overview
 
 ```bash
-curl -H "x-admin-key: $ADMIN_KEY" http://localhost:3002/api/admin/status
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3002/api/admin/status
 ```
 
 ### ETH Balance
 
 ```bash
-curl -H "x-admin-key: $ADMIN_KEY" http://localhost:3002/api/admin/balance
+curl -H "Authorization: Bearer $TOKEN" http://localhost:3002/api/admin/balance
 # {"address":"0x...","ethBalance":"1500000000000000000","chainId":1}
 ```
 
 `ethBalance` is a **wei**-denominated string (from `provider.getBalance().toString()`). Convert to ETH for display:
 
 ```bash
-curl -sH "x-admin-key: $ADMIN_KEY" http://localhost:3002/api/admin/balance \
+curl -sH "Authorization: Bearer $TOKEN" http://localhost:3002/api/admin/balance \
   | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const b=BigInt(JSON.parse(s).ethBalance);console.log(Number(b)/1e18,"ETH")})'
 ```
 
 ### Change Fee
 
 ```bash
-curl -X PUT -H "x-admin-key: $ADMIN_KEY" \
+curl -X PUT -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"feeBps": 50}' \
   http://localhost:3002/api/admin/fee
@@ -130,11 +138,11 @@ Fee is persisted to DB and survives restarts.
 
 ```bash
 # Pause — new POST orders return 503
-curl -X POST -H "x-admin-key: $ADMIN_KEY" \
+curl -X POST -H "Authorization: Bearer $TOKEN" \
   http://localhost:3002/api/admin/pause
 
 # Resume
-curl -X POST -H "x-admin-key: $ADMIN_KEY" \
+curl -X POST -H "Authorization: Bearer $TOKEN" \
   http://localhost:3002/api/admin/resume
 ```
 
@@ -143,7 +151,7 @@ Pause state is persisted to DB. Useful before maintenance or when gas prices spi
 ### Drain All Orders
 
 ```bash
-curl -X POST -H "x-admin-key: $ADMIN_KEY" \
+curl -X POST -H "Authorization: Bearer $TOKEN" \
   http://localhost:3002/api/admin/drain
 # {"status":"drained","privateOrdersCancelled":5,"authorizeOrdersCancelled":12}
 ```
@@ -152,10 +160,10 @@ Cancels all pending orders immediately. Use before shutdown or emergency mainten
 
 ### Claim Vault Fees (vault route)
 
-> Note: unlike the endpoints above, this lives under `/api/vault/*` rather than `/api/admin/*`, but uses the same `x-admin-key` auth.
+> Note: unlike the endpoints above, this lives under `/api/vault/*` rather than `/api/admin/*`, but uses the same SIWE bearer auth.
 
 ```bash
-curl -X POST -H "x-admin-key: $ADMIN_KEY" \
+curl -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"token": "0xTokenAddress"}' \
   http://localhost:3002/api/vault/claim
@@ -185,7 +193,6 @@ curl -X POST -H "x-admin-key: $ADMIN_KEY" \
 | `RELAYER_FEE` | `30` | Fee in basis points (0.3%) |
 | `DB_PATH` | `./zk-relayer.db` | SQLite database path |
 | `MAX_GAS_PRICE_GWEI` | `100` | Gas price ceiling |
-| `ADMIN_API_KEY` | — | Admin API authentication (min 32 bytes) |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:3002,http://localhost:3003` | Comma-separated allowed origins |
 | `RPC_URLS_FALLBACK` | — | Comma-separated fallback RPC endpoints |
 | `SHARED_ORDERBOOK_URL` | — | Cross-relayer matching (optional) |
@@ -214,14 +221,14 @@ RELAYER_PRIVATE_KEY_FILE=/run/secrets/relayer-key
 
 ```bash
 # 1. Pause new orders
-curl -X POST -H "x-admin-key: $ADMIN_KEY" localhost:3002/api/admin/pause
+curl -X POST -H "Authorization: Bearer $TOKEN" localhost:3002/api/admin/pause
 
 # 2. Wait for pending settlements to complete (check status)
-curl -H "x-admin-key: $ADMIN_KEY" localhost:3002/api/admin/status
+curl -H "Authorization: Bearer $TOKEN" localhost:3002/api/admin/status
 # Check: pendingTxs == 0, privateOrders.pending == 0
 
 # 3. Drain remaining orders if needed
-curl -X POST -H "x-admin-key: $ADMIN_KEY" localhost:3002/api/admin/drain
+curl -X POST -H "Authorization: Bearer $TOKEN" localhost:3002/api/admin/drain
 
 # 4. Stop the service
 docker compose stop zk-relayer
@@ -238,10 +245,10 @@ docker compose up -d zk-relayer
 
 ```bash
 # Pause to stop settling at high gas prices
-curl -X POST -H "x-admin-key: $ADMIN_KEY" localhost:3002/api/admin/pause
+curl -X POST -H "Authorization: Bearer $TOKEN" localhost:3002/api/admin/pause
 
 # Monitor gas prices, then resume
-curl -X POST -H "x-admin-key: $ADMIN_KEY" localhost:3002/api/admin/resume
+curl -X POST -H "Authorization: Bearer $TOKEN" localhost:3002/api/admin/resume
 ```
 
 The `MAX_GAS_PRICE_GWEI` config also auto-rejects settlements above the threshold.
@@ -250,7 +257,7 @@ The `MAX_GAS_PRICE_GWEI` config also auto-rejects settlements above the threshol
 
 ```bash
 # Check balance
-curl -H "x-admin-key: $ADMIN_KEY" localhost:3002/api/admin/balance
+curl -H "Authorization: Bearer $TOKEN" localhost:3002/api/admin/balance
 
 # If low, send ETH to relayer address, or pause until refilled
 ```
@@ -351,7 +358,7 @@ No manual cleanup needed for normal operation.
 ## Security Checklist
 
 - [ ] `RELAYER_PRIVATE_KEY_FILE` used instead of env var
-- [ ] `ADMIN_API_KEY` set (32+ bytes, `openssl rand -hex 32`)
+- [ ] Admin auth verified — connect the operator wallet via the console (admin endpoints reject unauthenticated requests with 401)
 - [ ] HTTPS enabled on all public endpoints (reverse proxy)
 - [ ] `CORS_ORIGINS` restricted to your frontend domain
 - [ ] Database file permissions are 0600 (auto-set on startup)

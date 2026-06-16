@@ -151,13 +151,9 @@ services:
       - RELAYER_PUBLIC_URL=${RELAYER_PUBLIC_URL:-}
       - FEE_VAULT_ADDRESS=${FEE_VAULT_ADDRESS:-}
       - INDEX_FROM_BLOCK=${INDEX_FROM_BLOCK:-0}
-      # Admin auth (operator console). Both optional — when BOTH are empty the
-      # relayer's admin routes fail closed (403 "Admin auth is not configured").
-      #   RELAYER_REGISTRY_ADDRESS → wallet/SIWE auth: the connecting wallet must
-      #     be isActiveRelayer() on this registry.
-      #   ADMIN_API_KEY (>=32 bytes) → static-key fallback (x-admin-key header).
-      - RELAYER_REGISTRY_ADDRESS=${RELAYER_REGISTRY_ADDRESS:-}
-      - ADMIN_API_KEY=${ADMIN_API_KEY:-}
+      # Admin auth (operator console) needs no config: the relayer
+      # authenticates admin actions via the operator's wallet signature
+      # (SIWE), bound to the wallet behind RELAYER_PRIVATE_KEY.
     secrets:
       - relayer_key
     volumes:

@@ -123,7 +123,7 @@ Identical surface per instance.
 |---|---|---|---|
 | relayer-1 | `GET /api/info` | 🌐 curl (`feature-check --live`) | metadata + orderCount |
 | relayer-2 | `GET /health` | 🌐 curl | liveness probe (mounted at `/health`, not `/api/health`) |
-| relayer-3 | `GET /api/admin/profile` | 🌐 curl | requires `x-admin-key` header (set `ADMIN_API_KEY` env or use mock default); SKIPs on 401/403 |
+| relayer-3 | `GET /api/admin/profile` | 🌐 curl | SIWE-gated; an unauthenticated request must return 401 (the live check asserts the gate, since signing needs the operator key) |
 | relayer-4 | `PATCH /api/admin/profile` | 🧪 test (`admin.test.ts`) | merge semantics |
 | relayer-5 | `POST /api/admin/drain` | 🧪 test | one-shot order drain |
 | relayer-6 | `POST /api/admin/sanctions` | 🧪 test | add sanctioned pubKeys |
