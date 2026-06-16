@@ -62,7 +62,7 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   const router = Router();
   const wl = writeLimiter ? [writeLimiter] : [];
 
-  // Wallet-signature (SIWE) auth — the only admin auth path. An operator
+  // Wallet-signature (SIWE) auth, bound to the node's operator. An operator
   // manages *their own* node, and the node already knows its operator
   // address (the `RELAYER_PRIVATE_KEY` wallet, == the address registered
   // on-chain for this relayer). So auth needs no external config: always

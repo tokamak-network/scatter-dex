@@ -113,7 +113,9 @@ describe("makeAdminSiweAuth (operator self-auth)", () => {
     const { nonce, message } = auth.issueChallenge();
     const signature = await operator.signMessage(message);
     const session = await auth.createSession({ nonce, message, signature });
-    expect(session.address.toLowerCase()).toBe(operator.address.toLowerCase());
+    // The auth layer normalises to lowercase — assert the raw value, not a
+    // re-lowercased copy, so a regression in normalisation is caught.
+    expect(session.address).toBe(operator.address.toLowerCase());
     expect(auth.verifySession(session.token)).toBe(operator.address.toLowerCase());
   });
 
@@ -133,6 +135,8 @@ describe("makeAdminSiweAuth (operator self-auth)", () => {
     const { nonce, message } = auth.issueChallenge();
     const signature = await operator.signMessage(message);
     const session = await auth.createSession({ nonce, message, signature });
-    expect(session.address.toLowerCase()).toBe(operator.address.toLowerCase());
+    // Returned address is normalised to lowercase regardless of the casing
+    // the operator address was registered with.
+    expect(session.address).toBe(operator.address.toLowerCase());
   });
 });
