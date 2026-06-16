@@ -40,8 +40,8 @@ export default function RuntimePage() {
           Operate <em>your own</em> relayer process — pause/resume, fee
           updates, drain queue, sanctions list, profile metadata. Hits the
           relayer&apos;s <code className="font-mono">/api/admin/*</code>{" "}
-          endpoints (the backend keeps that naming). Your admin key and URL
-          stay in <code className="font-mono">sessionStorage</code> for this
+          endpoints (the backend keeps that naming). Your wallet session and
+          URL stay in <code className="font-mono">sessionStorage</code> for this
           tab only; requests go directly from your browser to the relayer.
         </p>
       </header>
@@ -52,8 +52,8 @@ export default function RuntimePage() {
         <ConnectedSections auth={auth} />
       ) : (
         <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
-          Enter your relayer URL and admin key above to load the runtime
-          sections. Nothing is persisted to disk.
+          Enter your relayer URL and connect your wallet above to load the
+          runtime sections. Nothing is persisted to disk.
         </div>
       )}
     </div>
@@ -67,13 +67,13 @@ function ConnectedSections({ auth }: { auth: NonNullable<AuthState> }) {
   // Track current pause state for the palette label — flips between
   // "Pause" and "Resume" so the command surfaces the next-useful
   // action rather than always offering both. Reset to null on every
-  // auth change so a relayer switch (URL or key↔token mode) doesn't
-  // leave the palette claiming the *previous* relayer's pause state
-  // until the next /status fetch settles.
+  // auth change so a relayer switch doesn't leave the palette claiming
+  // the *previous* relayer's pause state until the next /status fetch
+  // settles.
   const [paused, setPaused] = useState<boolean | null>(null);
   useEffect(() => {
     setPaused(null);
-  }, [auth.url, auth.key, auth.token]);
+  }, [auth.url, auth.token]);
   // Palette closes optimistically on Enter, so a failed mutation
   // needs somewhere to surface. This banner sits above the section
   // list and clears either on Dismiss or on the next refresh tick.
@@ -239,7 +239,7 @@ function StatusSection({
   const fetcher = useCallback(
     (signal: AbortSignal) =>
       adminGet<StatusBody>(auth, "/api/admin/status", signal),
-    [auth.url, auth.key, auth.token],
+    [auth.url, auth.token],
   );
   const { data, error, loading } = useAdmin(fetcher, [refreshTick]);
   useEffect(() => {
@@ -349,7 +349,7 @@ function FeeSection({
       adminGet<{ feeBps: number }>(auth, "/api/admin/status", signal).then((s) => ({
         feeBps: s.feeBps,
       })),
-    [auth.url, auth.key, auth.token],
+    [auth.url, auth.token],
   );
   const { data } = useAdmin(fetcher, [refreshTick]);
   const [draft, setDraft] = useState("");
@@ -523,7 +523,7 @@ const PROFILE_FIELDS: Array<{
 function ProfileSection({ auth }: { auth: NonNullable<AuthState> }) {
   const fetcher = useCallback(
     (signal: AbortSignal) => adminGet<ProfileBody>(auth, "/api/admin/profile", signal),
-    [auth.url, auth.key, auth.token],
+    [auth.url, auth.token],
   );
   const { data, error: loadError } = useAdmin(fetcher, []);
   const [draft, setDraft] = useState<ProfileBody>({});
@@ -594,7 +594,7 @@ function SanctionsSection({ auth }: { auth: NonNullable<AuthState> }) {
   const [tick, setTick] = useState(0);
   const fetcher = useCallback(
     (signal: AbortSignal) => adminGet<SanctionsBody>(auth, "/api/admin/sanctions", signal),
-    [auth.url, auth.key, auth.token],
+    [auth.url, auth.token],
   );
   const { data, error: loadError } = useAdmin(fetcher, [tick]);
   const [ax, setAx] = useState("");
@@ -768,7 +768,7 @@ function WebhookSection({ auth }: { auth: NonNullable<AuthState> }) {
   const fetcher = useCallback(
     (signal: AbortSignal) =>
       adminGet<WebhookStatusBody>(auth, "/api/admin/webhook", signal),
-    [auth.url, auth.key, auth.token],
+    [auth.url, auth.token],
   );
   const { data, error, loading } = useAdmin(fetcher, [tick]);
   const [testing, setTesting] = useState(false);
@@ -1098,7 +1098,7 @@ function LogsSection({ auth }: { auth: NonNullable<AuthState> }) {
         signal,
       );
     },
-    [auth.url, auth.key, auth.token, levelFilter, modFilter],
+    [auth.url, auth.token, levelFilter, modFilter],
   );
   const { data, error, loading } = useAdmin(fetcher, [tick]);
 
@@ -1236,7 +1236,7 @@ function ClaimThresholdsSection({ auth }: { auth: NonNullable<AuthState> }) {
   const fetcher = useCallback(
     (signal: AbortSignal) =>
       adminGet<ClaimThresholdsBody>(auth, "/api/admin/claim-thresholds", signal),
-    [auth.url, auth.key, auth.token],
+    [auth.url, auth.token],
   );
   const { data, error, loading } = useAdmin(fetcher, [tick]);
   // Pending edits — keyed by lowercase token. Cleared on save success.

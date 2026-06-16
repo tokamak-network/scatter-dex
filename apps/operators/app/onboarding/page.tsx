@@ -256,8 +256,8 @@ curl -s https://YOUR_PUBLIC_URL/api/info | jq
             a="Check the relayer's stdout for [gas-guard] or [tx-recovery] lines. If gas-guard rejected the settlement (gasPrice above MAX_GAS_PRICE_GWEI), the SettlementWorker classifies the failure as 'unknown' and does not auto-retry — the order will likely be picked up by another relayer. Raise the cap in .env (then restart) or accept that some flow will route around you during fee spikes."
           />
           <FAQ
-            q="I rotated my admin key — old shells are still authorised"
-            a="The admin key is read at process start; restart the relayer for the new value to take effect. Until then, the in-memory key is still valid."
+            q="Connecting my wallet fails with 'Admin auth is not configured'"
+            a="The relayer enables wallet (SIWE) auth only when RELAYER_REGISTRY_ADDRESS is set in its .env — that's what binds admin access to your on-chain relayer record. Set it (then restart) and the wallet connect flow will issue a session."
           />
           <FAQ
             q="My public URL on-chain does not match my running service"

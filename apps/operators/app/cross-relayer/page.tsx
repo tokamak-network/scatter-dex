@@ -78,8 +78,8 @@ export default function CrossRelayerPage() {
         <CrossRelayerPanel auth={auth} />
       ) : (
         <div className="rounded-xl border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] p-8 text-center text-sm text-[var(--color-text-muted)]">
-          Enter your relayer URL and admin key above to load peer stats
-          and recent trade offers.
+          Enter your relayer URL and connect your wallet above to load peer
+          stats and recent trade offers.
         </div>
       )}
     </div>
@@ -92,33 +92,33 @@ function CrossRelayerPanel({ auth }: { auth: NonNullable<Auth> }) {
   // arrays can stay exhaustive without an eslint suppression —
   // `auth` itself is a fresh object reference on every render even
   // when its fields are stable, and depending on it would re-fire
-  // the fetch every tick. Pulling `url`/`key` out also makes the
+  // the fetch every tick. Pulling `url`/`token` out also makes the
   // intent obvious to a future reader: only these two fields drive
   // the request.
-  const { url, key } = auth;
+  const { url, token } = auth;
 
   const peersFetcher = useCallback(
     (signal: AbortSignal) => {
       const since = Date.now() - PEER_STATS_WINDOW_MS;
       const qs = new URLSearchParams({ since: String(since) });
       return adminGet<{ peers: PeerStatRow[] }>(
-        { url, key },
+        { url, token },
         `/api/admin/peer-stats?${qs.toString()}`,
         signal,
       );
     },
-    [url, key],
+    [url, token],
   );
   const offersFetcher = useCallback(
     (signal: AbortSignal) => {
       const qs = new URLSearchParams({ limit: "20" });
       return adminGet<{ rows: TradeOfferRow[] }>(
-        { url, key },
+        { url, token },
         `/api/admin/trade-offers?${qs.toString()}`,
         signal,
       );
     },
-    [url, key],
+    [url, token],
   );
 
   const peersState = useAdmin(peersFetcher, [tick]);
