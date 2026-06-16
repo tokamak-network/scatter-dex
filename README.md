@@ -1,125 +1,25 @@
 # zkScatter
 
-A privacy-preserving DEX with compliant identity gating. Trades are executed off-chain via ZK relayers; settlements use **ZK Private Settlement** — Groth16 proofs with commitment pools hide trader identities and claim structure on-chain, while zk-X509 identity gating ensures regulatory compliance.
+**A privacy-preserving DEX with compliant identity gating.** Orders are matched
+off-chain by ZK relayers and settled on-chain with Groth16 proofs, so commitment
+pools hide trader identities and claim structure — while zk-X509 identity gating
+keeps the protocol regulatory-compliant.
 
-> Privacy + Compliance — see [docs/research/PAPER.md](docs/research/PAPER.md) for the full research paper.
+---
 
-## Architecture
+## Try it on Sepolia (no build — just a wallet)
 
-```
-Frontend (Next.js)  →  ZK Relayer (Node.js)   →  Contracts (Solidity / Foundry)
-     ↕                      ↕                            ↕
-  MetaMask            Order matching             PrivateSettlement (ZK)
-  EdDSA keys          ZK proof generation        CommitmentPool (incremental Merkle tree)
-                      Gasless claims             RelayerRegistry
-                                                 IdentityGate (multi-CA)
-
-Circuits (Circom)
-  authorize.circom   ~15K constraints — Half-proof per-side settlement authorization
-  cancel.circom      ~8K  constraints — private order cancel
-  claim.circom       ~1.5K constraints — claim with Merkle inclusion proof
-  withdraw.circom    ~6K constraints — withdrawal from commitment pool
-  deposit.circom     ~4K constraints — private deposit into commitment pool
-```
-
-## Project Structure
-
-```
-contracts/       Solidity contracts + Foundry tests
-  src/             RelayerRegistry, IdentityGate (multi-CA)
-  src/zk/          CommitmentPool, PrivateSettlement, IncrementalMerkleTree
-  test/            Unit + E2E tests
-  script/          DeployLocal
-circuits/        Circom ZK circuits (settle, claim, withdraw)
-  build/           Generated artifacts (WASM + zkeys, produced by scripts/build.sh)
-frontend/        Next.js app (Secret Trade, Relayer dashboard, Identity verification)
-  app/lib/zk/      EdDSA, commitment, incremental tree
-zk-relayer/      ZK order matching + gasless claim relay
-  src/core/        Orderbook, matcher, private-submitter, DB
-  test/            E2E integration tests
-scripts/         Dev & E2E test scripts
-docs/            Research paper, design docs
-```
-
-## Quick Start
-
-### Prerequisites
-
-- [Foundry](https://book.getfoundry.sh/getting-started/installation) (forge, anvil, cast)
-- Node.js >= 18
-- [circom](https://docs.circom.io/getting-started/installation/) 2.x (for building ZK circuit artifacts — see below)
-
-### ZK circuit artifacts
-
-Generated zkeys, WASMs, and the six Groth16 `*Verifier.sol` files are not tracked in git — each phase-2 setup uses a fresh random beacon, so the only way to keep the on-chain Verifier consistent with the frontend's zkey is to build them together. Both `./scripts/dev.sh` and `./scripts/dev-fork.sh` run `npm run build` in `circuits/` before deploying contracts. First run is slow (Powers-of-Tau generation, several minutes); subsequent runs reuse `circuits/build/pot*_final.ptau`.
-
-First-time setup (one-off `npm install` for circom toolchain):
-
-```bash
-cd circuits && npm install
-```
-
-Set `SKIP_CIRCUIT_BUILD=1` on the deploy script when you know nothing changed since the last build. See [docs/operations/local-setup.md](docs/operations/local-setup.md#prerequisite-zk-circuit-artifacts) for the full rationale and troubleshooting.
-
-#### Deployed networks (Sepolia) — pinned artifacts, do NOT rebuild
-
-The "build them together" rule above is for **local anvil only**. On a **deployed** network the Groth16 verifiers are already on-chain, each locked to one specific zkey build. **Never `npm run build` the circuits to "refresh" Sepolia assets** — a rebuild draws a fresh phase-2 beacon, producing a zkey that no longer pairs with the deployed verifier, so every proof reverts with `InvalidProof()` (custom-error selector `0x09bde339`).
-
-The **canonical** set is pinned by the committed `circuits/zk-manifest.json` (sha256 per artifact), verified to pair with all Sepolia verifiers. The bytes themselves are **not** in git — `circuits/build` is generated/gitignored — because zkeys are large (~256 MB) and non-reproducible. They are distributed as fixed bytes via a public GCS bucket (`gs://zkscatter-zk-artifacts`, content-addressed by sha256). Frontends serve the prover assets from `apps/<app>/public/zk/` (gitignored; the browser fetches `/zk/<circuit>.wasm` + `/zk/<circuit>_final.zkey` at runtime); a fetch step (`predev`/`prebuild`/CI, `scripts/fetch-zk-assets.mjs`) downloads + checksum-verifies the manifest-pinned bytes into `public/zk`, so these always match the on-chain verifiers.
-
-**Troubleshooting `InvalidProof()` (`execution reverted (unknown custom error) data=0x09bde339`):** the served zkey does not pair with the on-chain verifier. Either the frontend serves a stale zkey (re-fetch the canonical asset) **or** the on-chain verifier is stale (redeploy it from the canonical zkey and re-point via the admin **Verifier rotation** page, `/protocol/settlement`). Confirm pairing with `node scripts/check-zk-pairing.mjs` (exports the zkey's vkey and checks its `alpha`/`IC` G1 constants appear in the verifier's on-chain bytecode via `eth_getCode`).
-
-**Rotating circuits (rebuild + verifier redeploy).** When a circuit's zkey is regenerated and its on-chain verifier redeployed, refresh the distribution so everyone gets the new bytes:
-
-```bash
-# 1. redeploy each rotated circuit's verifier, re-point it (admin Verifier
-#    rotation page or setXVerifier), and record the new address in the ledger:
-#      contracts/deployments/<chainId>.json
-# 2. with the new circuits/build/ in place, upload + repin (needs gcloud auth):
-scripts/upload-zk-artifacts.sh            # uploads new sha256 objects, regenerates the manifest
-# 3. commit the new pins AND the updated ledger so consumers + the guard agree:
-git add circuits/zk-manifest.json contracts/deployments/<chainId>.json
-git commit -m "chore(zk): rotate <circuit> — repin + re-pointed verifier"
-# 4. sanity-check the canonical set pairs with the (now updated) deployed verifiers:
-node scripts/check-zk-pairing.mjs         # all N verifiers pair ✓
-```
-
-The ledger update in step 1/3 is essential: `check-zk-pairing.mjs` reads verifier addresses from `contracts/deployments/<chainId>.json`, so a stale ledger makes the guard check the wrong (old) verifier. Objects are content-addressed (`gs://zkscatter-zk-artifacts/zk/<sha256>`), so a rotation only *adds* objects — old builds stay reachable and nothing is overwritten.
-
-### Full Local Dev (with zk-X509)
-
-zkScatter requires a **zk-X509 Identity Registry** for user verification (Dual-CA: User CA + Relayer CA). For the full setup with both systems on a shared anvil, see **[docs/operations/local-setup.md](docs/operations/local-setup.md)**.
-
-```bash
-# After zk-X509 is deployed on anvil:
-IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
-```
-
-### Quick Start (mock mode)
-
-For rapid development without zk-X509 (identity verification bypassed):
-
-```bash
-./scripts/dev.sh --mock
-```
-
-Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches zk-relayer + frontend. Open http://localhost:3000.
-
-### Run against Sepolia (live testnet)
-
-Run the frontends **locally** against the shared **Sepolia (chainId 11155111)**
-deployment so the whole team hits the same contracts, relayer, and orderbook.
-Every address comes from the committed ledger `contracts/deployments/11155111.json`
-— you configure nothing. **All you need is a browser wallet (MetaMask) on Sepolia
-with a little test ETH.**
-
-**1. Scatter frontends** — launch any app:
+The fastest way to see it working. You run the frontends locally against the
+**shared Sepolia deployment**, so the whole team hits the same contracts,
+relayer, and orderbook. Every address comes from the committed ledger
+(`contracts/deployments/11155111.json`) — **you configure nothing**. All you need
+is **MetaMask on Sepolia with a little test ETH**.
 
 ```bash
 ./scripts/run-scatter-web.sh <app> sepolia   # app = hub | pay | pro | operators | admin
 ```
 
-| app       | dev URL                 | purpose                           |
+| app       | dev URL                 | what it is                        |
 |-----------|-------------------------|-----------------------------------|
 | pay       | http://localhost:4001   | simple payments UI                |
 | pro       | http://localhost:4003   | pro trading UI                    |
@@ -127,57 +27,126 @@ with a little test ETH.**
 | admin     | http://localhost:4005   | protocol + KYC review console     |
 | hub       | http://localhost:4006   | navigation hub                    |
 
-**2. zk-X509 identity website** — a **separate repo**; clone it once, then launch:
+Get test tokens (TON / USDC / USDT) from the
+[Tokamak faucet](https://docs.tokamak.network/home/service-guide/faucet-testnet),
+then trade. The identity website (zk-X509) lives in a
+[separate repo](https://github.com/tokamak-network/zk-X509).
 
-```bash
-git clone https://github.com/tokamak-network/zk-X509.git "$HOME/src/zk-X509"
-export ZK_X509_REPO="$HOME/src/zk-X509"     # default: ../zk-X509
-./scripts/run-zkx509-web.sh sepolia         # → http://localhost:3000
+> 📖 **Team testing guide → [docs/operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md)**
+> — step-by-step setup, getting test tokens, the relayer model, shared-infra URLs,
+> and **how to report bugs / file issues**. Start here.
+
+---
+
+## How it works
+
+```
+Frontend (Next.js)  →  ZK Relayer (Node.js)   →  Contracts (Solidity / Foundry)
+     ↕                      ↕                            ↕
+  MetaMask            Order matching             PrivateSettlement (ZK)
+  EdDSA keys          ZK proof generation        CommitmentPool (incremental Merkle tree)
+                      Gasless claims             RelayerRegistry · IdentityGate (multi-CA)
 ```
 
-No RPC key is needed for either: the scripts ship a keyless public-node default
-and reads/writes go through your wallet. (Optionally set `SEPOLIA_RPC_URL` to your
-own keyed endpoint — it's browser-exposed via `NEXT_PUBLIC_*`, so never share a
-key.)
+- **Private settlement** — Groth16 proofs + commitment pools hide who traded and
+  the claim structure on-chain.
+- **Compliant by design** — zk-X509 identity gating (Dual-CA: User CA + Relayer
+  CA) gates participation without doxxing traders.
+- **Off-chain matching, gasless claims** — relayers match orders and relay
+  claims so users don't pay gas to collect.
 
-> 📖 **Full guide:** [docs/operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md)
-> — shared infra URLs, optional overrides, the backend/prover topology, and
-> troubleshooting.
+<details>
+<summary>ZK circuits (Circom)</summary>
 
-### Run Tests
+| circuit             | constraints | role                                            |
+|---------------------|-------------|-------------------------------------------------|
+| `authorize.circom`  | ~15K        | Half-proof per-side settlement authorization    |
+| `cancel.circom`     | ~8K         | private order cancel                            |
+| `claim.circom`      | ~1.5K       | claim with Merkle inclusion proof               |
+| `withdraw.circom`   | ~6K         | withdrawal from commitment pool                 |
+| `deposit.circom`    | ~4K         | private deposit into commitment pool            |
+
+</details>
+
+---
+
+## Run locally (development)
+
+### Quick start (mock mode — no zk-X509)
+
+Fastest local loop; identity verification is bypassed.
 
 ```bash
-cd contracts && forge test          # Contract tests
-cd zk-relayer && npm test           # ZK relayer unit tests
-cd zk-relayer && npx tsx test/e2e-private-flow.ts  # Full E2E (requires dev.sh --mock)
+./scripts/dev.sh --mock
 ```
 
-### Docker (ZK Relayer)
+Starts its own anvil with `MockIdentityRegistry`, deploys contracts, launches the
+zk-relayer + frontend. Open http://localhost:3000.
+
+> First run builds the ZK circuit artifacts (Powers-of-Tau, a few minutes); later
+> runs reuse the cached `.ptau`. Needs [Foundry](https://book.getfoundry.sh/getting-started/installation),
+> Node.js ≥ 18, and [circom](https://docs.circom.io/getting-started/installation/) 2.x
+> (`cd circuits && npm install` once). See
+> [docs/operations/local-setup.md](docs/operations/local-setup.md).
+
+### Full local stack (with zk-X509)
+
+zkScatter requires a zk-X509 Identity Registry for user verification. For the full
+setup with both systems on a shared anvil, see
+[docs/operations/local-setup.md](docs/operations/local-setup.md):
 
 ```bash
-cd zk-relayer
-PORT=3002 \
-RPC_URL=https://your-rpc.example.com \
-COMMITMENT_POOL_ADDRESS=0x... \
-PRIVATE_SETTLEMENT_ADDRESS=0x... \
-RELAYER_KEY_FILE=./relayer.key \
-docker compose up -d
+IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
 ```
 
-## Test Accounts (anvil defaults)
+### Run tests
 
-| Account | Address | Balance |
-|---------|---------|---------|
-| Alice | `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` | 1000 WETH, 1M USDC |
-| Bob | `0x70997970C51812dc3A010C7d01b50e0d17dc79C8` | 1000 WETH, 1M USDC |
+```bash
+cd contracts && forge test                          # contract tests
+cd zk-relayer && npm test                           # relayer unit tests
+cd zk-relayer && npx tsx test/e2e-private-flow.ts   # full E2E (needs dev.sh --mock)
+```
 
-## Security & audit
+---
 
-External auditors: start at [`docs/security/AUDIT.md`](docs/security/AUDIT.md)
-for scope, in/out boundaries, and copy-pasteable reproduction commands. The
-deeper *why* behind each safety-net layer lives in
+## Repository structure
+
+```
+contracts/    Solidity contracts + Foundry tests (RelayerRegistry, IdentityGate,
+              CommitmentPool, PrivateSettlement, IncrementalMerkleTree)
+circuits/     Circom ZK circuits + build scripts
+apps/         Next.js frontends — pay, pro, operators, admin, hub
+zk-relayer/   ZK order matching + gasless claim relay (orderbook, matcher, DB)
+scripts/      Dev, deploy, and E2E scripts
+docs/         Guides, design docs, operations runbooks
+```
+
+---
+
+## Documentation
+
+| Topic | Doc |
+|-------|-----|
+| **Team testing on Sepolia** | [operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md) |
+| Local development setup | [operations/local-setup.md](docs/operations/local-setup.md) |
+| Running a relayer | [operations/running-a-relayer.md](docs/operations/running-a-relayer.md) |
+| Registering a relayer (KYC) | [operations/registering-a-relayer.md](docs/operations/registering-a-relayer.md) |
+| ZK artifacts on deployed networks | [operations/zk-artifacts.md](docs/operations/zk-artifacts.md) |
+| Security & audit | [security/AUDIT.md](docs/security/AUDIT.md) · [security/HARDENING.md](docs/security/HARDENING.md) |
+
+---
+
+## Security
+
+External auditors: start at [`docs/security/AUDIT.md`](docs/security/AUDIT.md) for
+scope, in/out boundaries, and copy-pasteable reproduction commands. The deeper
+*why* behind each safety-net layer lives in
 [`docs/security/HARDENING.md`](docs/security/HARDENING.md).
+
+Found a security-sensitive issue? **Do not open a public issue** — email
+**security@tokamak.network** privately.
 
 ## License
 
-This project is provided under the [Business Source License 1.1](LICENSE) with additional patent provisions. Non-production use (research, auditing, contributions) is permitted. Production use requires a commercial license from Tokamak Network Pte. Ltd. Converts to GPLv2+ on the Change Date specified in LICENSE. See the LICENSE file for full terms. Contact legal@tokamak.network for licensing.
+Licensing terms are being finalized. For any use or licensing questions, please
+contact **Tokamak Network** (legal@tokamak.network).
