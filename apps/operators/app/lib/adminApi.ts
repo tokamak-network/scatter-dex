@@ -2,18 +2,14 @@
  * Browser-side client for the relayer's `/api/admin/*` endpoints.
  *
  * All operator pages that hit admin endpoints (/runtime, /dashboard,
- * /orders, /orders/detail, /treasury) read the same auth pair out of
- * sessionStorage and route through this module. Auth shape is a
- * union: a SIWE session (`token` + `address` + `expiresAt`) or the
- * legacy admin API key (`key`); the request header is picked per
- * call by `authHeaders`. Sibling pages depend on `auth.token` *and*
- * `auth.key` in their `useCallback` arrays so a mode switch (key →
- * wallet or vice versa) re-fires their fetchers.
+ * /orders, /orders/detail, /treasury) read the same SIWE session out of
+ * sessionStorage and route through this module. The relayer authenticates
+ * admin calls solely via a wallet-signed session (`token` + `address` +
+ * `expiresAt`); `authHeaders` sends it as `Authorization: Bearer`.
  */
 
 export const ADMIN_SS_URL = "operators-admin-url";
-export const ADMIN_SS_KEY = "operators-admin-key";
-// SIWE mode persistence keys. The session token is the bearer used for
+// SIWE session persistence keys. The session token is the bearer used for
 // every subsequent request; `address` is display-only ("Connected as
 // 0x…"); `expiresAt` lets the UI warn before a 401 hits a real action.
 export const ADMIN_SS_TOKEN = "operators-admin-session-token";
@@ -22,11 +18,6 @@ export const ADMIN_SS_EXPIRES = "operators-admin-session-expires";
 
 export interface AdminAuth {
   url: string;
-  /** Legacy admin API key — sent as `x-admin-key`. Mutually
-   *  exclusive with `token`; both shapes coexist so deploys can
-   *  migrate operators to the wallet flow without breaking CI
-   *  scripts that still POST with a static key. */
-  key?: string;
   /** SIWE session token — sent as `Authorization: Bearer`. */
   token?: string;
   /** Operator EOA bound to the session — display only. */
@@ -165,17 +156,13 @@ export async function adminDownload(
   }
 }
 
-/** Build the auth header for one request. Picks the SIWE bearer when
- *  the session token is present, falling back to the legacy key
- *  header otherwise — never sends both. Returning a fresh object
- *  per call keeps the typed `Record<string,string>` immutable for
- *  the caller to spread. */
+/** Build the auth header for one request — the SIWE bearer when a
+ *  session token is present. Returning a fresh object per call keeps
+ *  the typed `Record<string,string>` immutable for the caller to
+ *  spread. No token → empty headers, so the server returns 401 and the
+ *  UI routes the user back to AdminConnectBar. */
 function authHeaders(auth: AdminAuth): Record<string, string> {
   if (auth.token) return { Authorization: `Bearer ${auth.token}` };
-  if (auth.key) return { "x-admin-key": auth.key };
-  // No credential at all — let the server return 401 with its
-  // configured error message. The UI will route the user back to
-  // AdminConnectBar.
   return {};
 }
 
@@ -188,10 +175,8 @@ export function readPersistedAdminUrl(): string | null {
   return sessionStorage.getItem(ADMIN_SS_URL);
 }
 
-/** Read the cached auth from sessionStorage. Prefers the SIWE
- *  session pair when present (the user explicitly chose the wallet
- *  flow); falls back to the legacy URL + key pair. Returns `null`
- *  when no usable credential is stored — `readPersistedAdminUrl`
+/** Read the cached SIWE session from sessionStorage. Returns `null`
+ *  when no live session is stored (none, or expired) — `readPersistedAdminUrl`
  *  is the right call when you only need the URL to pre-fill the
  *  connect bar after a stale session. */
 export function readAdminAuth(): AdminAuth | null {
@@ -199,32 +184,30 @@ export function readAdminAuth(): AdminAuth | null {
   const url = sessionStorage.getItem(ADMIN_SS_URL);
   if (!url) return null;
   const token = sessionStorage.getItem(ADMIN_SS_TOKEN);
-  if (token) {
-    const expiresRaw = sessionStorage.getItem(ADMIN_SS_EXPIRES);
-    const expiresAt = expiresRaw ? Number(expiresRaw) : undefined;
-    // Expired token → treat as logged-out so the user re-signs
-    // instead of blasting through a request that 401s. The URL
-    // stays in sessionStorage so `readPersistedAdminUrl` can still
-    // pre-fill the connect bar without forcing a retype.
-    if (expiresAt !== undefined && expiresAt <= Date.now()) return null;
-    const address = sessionStorage.getItem(ADMIN_SS_ADDRESS) ?? undefined;
-    return { url, token, address, expiresAt };
+  if (!token) return null;
+  const expiresRaw = sessionStorage.getItem(ADMIN_SS_EXPIRES);
+  const expiresAt = expiresRaw ? Number(expiresRaw) : undefined;
+  // Expired token → treat as logged-out so the user re-signs instead of
+  // blasting through a request that 401s. A non-finite value (tampered or
+  // garbage sessionStorage) is treated the same way rather than read as
+  // "never expires". The URL stays in sessionStorage so
+  // `readPersistedAdminUrl` can still pre-fill the connect bar.
+  if (expiresAt !== undefined && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+    return null;
   }
-  const key = sessionStorage.getItem(ADMIN_SS_KEY);
-  if (!key) return null;
-  return { url, key };
+  const address = sessionStorage.getItem(ADMIN_SS_ADDRESS) ?? undefined;
+  return { url, token, address, expiresAt };
 }
 
-/** Persist an auth pair to sessionStorage (or clear everything when
- *  `auth` is null). Writes the SIWE keys for token-mode auth and the
- *  legacy keys for key-mode auth, removing the unused triplet either
- *  way — without that wipe a session left over from a previous mode
- *  would shadow the new credentials on the next `readAdminAuth`. */
+/** Persist the SIWE session to sessionStorage (or clear everything when
+ *  `auth` is null). */
 export function writeAdminAuth(auth: AdminAuth | null): void {
   if (typeof sessionStorage === "undefined") return;
+  // One-time cleanup: purge the retired admin-key slot on every write so a
+  // key persisted before the SIWE-only migration can't linger for the tab.
+  sessionStorage.removeItem("operators-admin-key");
   if (!auth) {
     sessionStorage.removeItem(ADMIN_SS_URL);
-    sessionStorage.removeItem(ADMIN_SS_KEY);
     sessionStorage.removeItem(ADMIN_SS_TOKEN);
     sessionStorage.removeItem(ADMIN_SS_ADDRESS);
     sessionStorage.removeItem(ADMIN_SS_EXPIRES);
@@ -233,16 +216,15 @@ export function writeAdminAuth(auth: AdminAuth | null): void {
   sessionStorage.setItem(ADMIN_SS_URL, auth.url);
   if (auth.token) {
     sessionStorage.setItem(ADMIN_SS_TOKEN, auth.token);
+    // Set-or-remove address/expires so a session written without them
+    // can't inherit a previous session's stale values.
     if (auth.address) sessionStorage.setItem(ADMIN_SS_ADDRESS, auth.address);
+    else sessionStorage.removeItem(ADMIN_SS_ADDRESS);
     if (auth.expiresAt !== undefined) {
       sessionStorage.setItem(ADMIN_SS_EXPIRES, String(auth.expiresAt));
+    } else {
+      sessionStorage.removeItem(ADMIN_SS_EXPIRES);
     }
-    sessionStorage.removeItem(ADMIN_SS_KEY);
-  } else if (auth.key) {
-    sessionStorage.setItem(ADMIN_SS_KEY, auth.key);
-    sessionStorage.removeItem(ADMIN_SS_TOKEN);
-    sessionStorage.removeItem(ADMIN_SS_ADDRESS);
-    sessionStorage.removeItem(ADMIN_SS_EXPIRES);
   }
 }
 
@@ -262,7 +244,7 @@ export async function requestSiweChallenge(url: string): Promise<SiweChallenge> 
   const res = await fetch(target);
   if (res.status === 404) {
     throw new Error(
-      "This relayer does not expose wallet auth. Use the admin key instead.",
+      "This relayer does not expose wallet auth — it may be missing RELAYER_REGISTRY_ADDRESS. Contact the operator.",
     );
   }
   // Surface the server's `{error}` message verbatim (same as
