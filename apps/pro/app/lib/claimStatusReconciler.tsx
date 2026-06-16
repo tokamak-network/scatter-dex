@@ -76,6 +76,11 @@ export function ClaimStatusReconciler(): null {
           if (cancelled) return;
           if (spent.size > 0) markRef.current(o.id, [...spent]);
         }
+      } catch (err) {
+        // Belt-and-suspenders: the per-order resolve is already try/caught, but
+        // a stray throw elsewhere in the pass (e.g. a markLeavesClaimed write)
+        // must not surface as an unhandled rejection from the `void tick()`.
+        console.warn("[ClaimStatusReconciler] reconcile pass failed", err);
       } finally {
         running = false;
       }
