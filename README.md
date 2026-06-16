@@ -1,11 +1,10 @@
 # zkScatter
 
 **A privacy-preserving settlement protocol with compliant identity gating.** One
-ZK stack powers private **OTC trading** (Pro), **bulk payouts** (Pay), and
-**Sybil-resistant airdrops** (Drop). Orders are matched off-chain by ZK relayers
-and settled on-chain with Groth16 proofs, so commitment pools hide trader
-identities and claim structure — while zk-X509 identity gating keeps the protocol
-regulatory-compliant.
+ZK stack powers private **OTC trading** (Pro) and **bulk payouts** (Pay). Orders
+are matched off-chain by ZK relayers and settled on-chain with Groth16 proofs, so
+commitment pools hide trader identities and claim structure — while zk-X509
+identity gating keeps the protocol regulatory-compliant.
 
 ---
 
@@ -117,7 +116,7 @@ IDENTITY_REGISTRY=0x... RELAYER_IDENTITY_REGISTRY=0x... ./scripts/dev.sh
 contracts/    Solidity contracts + Foundry tests (RelayerRegistry, IdentityGate,
               CommitmentPool, PrivateSettlement, IncrementalMerkleTree)
 circuits/     Circom ZK circuits + build scripts
-apps/         Next.js frontends — pro, pay, drop, operators, admin, hub
+apps/         Next.js frontends — pro, pay, operators, admin, hub
 zk-relayer/   ZK order matching + gasless claim relay (orderbook, matcher, DB)
 scripts/      Dev, deploy, and E2E scripts
 docs/         Guides, design docs, operations runbooks
