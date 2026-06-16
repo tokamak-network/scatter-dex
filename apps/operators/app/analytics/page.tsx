@@ -8,6 +8,7 @@ import { AdminConnectBar } from "../components/AdminConnectBar";
 import { Stat } from "../components/Stat";
 import { adminDownload, adminGet, readAdminAuth, type AdminAuth } from "../lib/adminApi";
 import { RevenueCard, VolumeCard } from "../components/PerTokenCards";
+import { TokenResolverProvider, useTokenResolver } from "../lib/useTokenResolver";
 import { usePlatformFeeBps } from "../lib/usePlatformFeeBps";
 
 type Auth = AdminAuth | null;
@@ -95,6 +96,9 @@ export default function AnalyticsPage() {
 
 function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
   const { bps: platformFeeBps } = usePlatformFeeBps();
+  // On-chain-backed token resolver for the per-token cards so amounts
+  // show real symbol + decimals for tokens absent from NEXT_PUBLIC_TOKENS.
+  const resolveToken = useTokenResolver();
   const [period, setPeriod] = useState<PeriodId>("7d");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [fees, setFees] = useState<FeeTotal[] | null>(null);
@@ -202,7 +206,7 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
   }, [auth, window.since, window.until]);
 
   return (
-    <>
+    <TokenResolverProvider value={resolveToken}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-1">
           {PERIODS.map((p) => {
@@ -300,7 +304,7 @@ function AnalyticsBody({ auth }: { auth: NonNullable<Auth> }) {
           Export settlements CSV →
         </button>
       </section>
-    </>
+    </TokenResolverProvider>
   );
 }
 

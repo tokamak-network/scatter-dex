@@ -21,7 +21,12 @@ import {
   type FeeTotal,
   type VolumeTotal,
 } from "../components/PerTokenCards";
-import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import { formatAmount } from "../lib/tokenRegistry";
+import {
+  TokenResolverProvider,
+  useResolveToken,
+  useTokenResolver,
+} from "../lib/useTokenResolver";
 import { usePlatformFeeBps, netAfterPlatformFee } from "../lib/usePlatformFeeBps";
 
 type Auth = AdminAuth | null;
@@ -222,6 +227,10 @@ const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
   const { bps: platformFeeBps } = usePlatformFeeBps();
+  // On-chain-backed token resolver, published to the section so the
+  // per-token cards and recent-settlement rows render real symbol +
+  // decimals for tokens absent from NEXT_PUBLIC_TOKENS.
+  const resolveToken = useTokenResolver();
   const [status, setStatus] = useState<StatusBody | null>(null);
   const [recent, setRecent] = useState<SettlementRow[] | null>(null);
   const [feeTotals, setFeeTotals] = useState<FeeTotals | null>(null);
@@ -303,7 +312,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
   const newest = recent?.[0];
 
   return (
-    <>
+    <TokenResolverProvider value={resolveToken}>
       <div className="flex items-center justify-end gap-3 text-xs text-[var(--color-text-muted)]">
         {refreshedAt && (
           <span>Refreshed {formatRelative(refreshedAt)}</span>
@@ -417,7 +426,7 @@ function LiveSections({ auth }: { auth: NonNullable<Auth> }) {
           </div>
         )}
       </section>
-    </>
+    </TokenResolverProvider>
   );
 }
 
@@ -718,7 +727,8 @@ function HealthCard({
  *  and gas + timing. Volume falls back to "—" for pre-migration rows
  *  and shared-OB back-filled rows that have NULL amounts. */
 function RecentSettlementRow({ row, platformFeeBps }: { row: SettlementRow; platformFeeBps: number | null }) {
-  const sellInfo = row.sell_token ? tokenInfo(row.sell_token) : null;
+  const resolveToken = useResolveToken();
+  const sellInfo = row.sell_token ? resolveToken(row.sell_token) : null;
   return (
     <div className="grid grid-cols-12 items-center gap-3 border-b border-[var(--color-border)] px-5 py-4 last:border-b-0">
       <div className="col-span-5 min-w-0">
@@ -755,7 +765,7 @@ function RecentSettlementRow({ row, platformFeeBps }: { row: SettlementRow; plat
             ? "—"
             : (row.fees ?? [])
                 .map((f) => {
-                  const fi = tokenInfo(f.token);
+                  const fi = resolveToken(f.token);
                   return `${formatAmount(f.amountWei, fi.decimals)} ${fi.symbol}`;
                 })
                 .join(" + ")}
@@ -768,7 +778,7 @@ function RecentSettlementRow({ row, platformFeeBps }: { row: SettlementRow; plat
             net{" "}
             {(row.fees ?? [])
               .map((f) => {
-                const fi = tokenInfo(f.token);
+                const fi = resolveToken(f.token);
                 const netWei = netAfterPlatformFee(f.amountWei, platformFeeBps);
                 return netWei !== null
                   ? `${formatAmount(netWei, fi.decimals)} ${fi.symbol}`

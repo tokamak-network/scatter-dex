@@ -36,7 +36,12 @@ import { OperatorIdentityBar } from "../components/OperatorIdentityBar";
 import { adminGet, type AdminAuth, readAdminAuth } from "../lib/adminApi";
 import { useOperator } from "../lib/useOperator";
 import { formatRelative } from "../lib/format";
-import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import { formatAmount } from "../lib/tokenRegistry";
+import {
+  TokenResolverProvider,
+  useResolveToken,
+  useTokenResolver,
+} from "../lib/useTokenResolver";
 import type { SettlementRow } from "../lib/adminTypes";
 
 /** Re-fetch interval for both data sources. 30s keeps the table
@@ -132,6 +137,10 @@ export default function OrdersPage() {
 
 function OrdersBody({ auth }: { auth: Auth }) {
   const { account } = useOperator();
+  // On-chain-backed token resolver so amounts render with real
+  // symbol + decimals even for tokens absent from NEXT_PUBLIC_TOKENS
+  // (otherwise they fall back to raw wei against a truncated address).
+  const resolveToken = useTokenResolver();
   const [filter, setFilter] = useState<"all" | UnifiedStatus>("all");
   // `nowMs` stays at 0 until the component mounts. Both the
   // "expired" classifier and the relative-time cells branch on this
@@ -296,7 +305,7 @@ function OrdersBody({ auth }: { auth: Auth }) {
   const loading = loadingShared || loadingHistory;
 
   return (
-    <>
+    <TokenResolverProvider value={resolveToken}>
       {!auth && (
         <div className="rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-surface)] px-4 py-3 text-xs text-[var(--color-text-muted)]">
           Settled / failed counts need an admin session. Connect your
@@ -351,8 +360,8 @@ function OrdersBody({ auth }: { auth: Auth }) {
           </thead>
           <tbody>
             {visible.map((r) => {
-              const sellInfo = r.sellToken ? tokenInfo(r.sellToken) : null;
-              const buyInfo = r.buyToken ? tokenInfo(r.buyToken) : null;
+              const sellInfo = r.sellToken ? resolveToken(r.sellToken) : null;
+              const buyInfo = r.buyToken ? resolveToken(r.buyToken) : null;
               return (
               <tr
                 key={r.key}
@@ -466,7 +475,7 @@ function OrdersBody({ auth }: { auth: Auth }) {
         auth={auth}
         onClose={() => setDrawerRow(null)}
       />
-    </>
+    </TokenResolverProvider>
   );
 }
 
@@ -618,9 +627,10 @@ function OrderDetailDrawer({
       cancelled = true;
     };
   }, [auth, row, txHash, fullId]);
+  const resolveToken = useResolveToken();
   if (!row) return null;
-  const sellInfo = row.sellToken ? tokenInfo(row.sellToken) : null;
-  const buyInfo = row.buyToken ? tokenInfo(row.buyToken) : null;
+  const sellInfo = row.sellToken ? resolveToken(row.sellToken) : null;
+  const buyInfo = row.buyToken ? resolveToken(row.buyToken) : null;
   const headline =
     sellInfo && buyInfo && row.sellAmount && row.buyAmount
       ? `${row.status === "settled" ? "Settled" : "Order"} ${formatAmount(
@@ -937,6 +947,7 @@ function ClaimedRecipientsTable({
 }: {
   claims: ClaimsByTxResponse;
 }) {
+  const resolveToken = useResolveToken();
   return (
     <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
       <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-4 py-2">
@@ -958,7 +969,7 @@ function ClaimedRecipientsTable({
         </thead>
         <tbody>
           {claims.claims.map((c, i) => {
-            const info = tokenInfo(c.token);
+            const info = resolveToken(c.token);
             return (
               <tr key={c.nullifier} className="border-t border-[var(--color-border)]">
                 <td className="px-4 py-2 font-mono">{i + 1}</td>
@@ -995,6 +1006,7 @@ function FeeAccrualsTable({
 }: {
   fees: SettlementDetail["fees"];
 }) {
+  const resolveToken = useResolveToken();
   return (
     <div className="mx-5 mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
       <div className="flex items-baseline justify-between border-b border-[var(--color-border)] px-4 py-2">
@@ -1015,7 +1027,7 @@ function FeeAccrualsTable({
         </thead>
         <tbody>
           {fees.map((f) => {
-            const info = tokenInfo(f.token);
+            const info = resolveToken(f.token);
             return (
               <tr
                 key={f.id}

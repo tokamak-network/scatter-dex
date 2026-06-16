@@ -7,7 +7,8 @@
 
 "use client";
 
-import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
+import { formatAmount } from "../lib/tokenRegistry";
+import { useResolveToken } from "../lib/useTokenResolver";
 import { netAfterPlatformFee } from "../lib/usePlatformFeeBps";
 
 export interface FeeTotal {
@@ -29,6 +30,7 @@ export interface VolumeTotal {
  *  (two different units in one row) so we collapse to the sell leg
  *  only — what THIS relayer's users brought into settlement. */
 export function VolumeCard({ volume }: { volume: { totals: VolumeTotal[] } | null }) {
+  const resolveToken = useResolveToken();
   if (!volume) return <CardPlaceholder title="Volume" />;
   // Drop tokens that only appeared on the buy leg in this window. A
   // pure-buy token has no sell-leg notional, so rendering it here
@@ -52,7 +54,7 @@ export function VolumeCard({ volume }: { volume: { totals: VolumeTotal[] } | nul
       subtitle={`sell-leg notional · ${tokenCountLabel(rows.length)}${settles > 0 ? ` · ${settles} settle${settles === 1 ? "" : "s"}` : ""}`}
       emptyMsg="No settlements in this window."
       rows={rows.map((r) => {
-        const info = tokenInfo(r.token);
+        const info = resolveToken(r.token);
         return {
           key: r.token,
           token: r.token,
@@ -77,6 +79,7 @@ export function RevenueCard({
   fees: { totals: FeeTotal[] } | null;
   platformFeeBps?: number | null;
 }) {
+  const resolveToken = useResolveToken();
   if (!fees) return <CardPlaceholder title="Fee" />;
   const rows = [...fees.totals].sort((a, b) => {
     const ai = safeBig(a.totalWei);
@@ -94,7 +97,7 @@ export function RevenueCard({
       subtitle={`fee earned · ${tokenCountLabel(rows.length)}${feeRows > 0 ? ` · ${feeRows} fee row${feeRows === 1 ? "" : "s"}` : ""}${cutLabel}`}
       emptyMsg="No fees in this window."
       rows={rows.map((r) => {
-        const info = tokenInfo(r.token);
+        const info = resolveToken(r.token);
         const netWei = netAfterPlatformFee(r.totalWei, platformFeeBps);
         return {
           key: r.token,

@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type MouseEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent, type KeyboardEvent } from "react";
 import { ethers } from "ethers";
 import { isConfiguredAddress } from "@zkscatter/sdk";
-import { LiveFreshness, shortAddr, useTimedRefresh, useWallet, useWhitelistedTokens } from "@zkscatter/sdk/react";
+import { LiveFreshness, shortAddr, useTimedRefresh, useWallet } from "@zkscatter/sdk/react";
 import {
   loadRelayersWithApiInfo,
   loadRelayersWithSharedOrderbookStats,
@@ -17,16 +17,13 @@ import { Stat } from "../components/Stat";
 import { SectionHeader } from "../components/SectionHeader";
 import { DEMO_NETWORK } from "../lib/network";
 import { relayerStatsCellStatus, type StatsCellStatus } from "../lib/relayerStatus";
-import { formatAmount, tokenInfo } from "../lib/tokenRegistry";
-
-/** Token symbol+decimals resolver. The per-token breakdown reads symbols and
- *  decimals from the **on-chain token whitelist** (#928/#929) — the env
- *  `NEXT_PUBLIC_TOKENS` registry is only a fallback for the initial render or
- *  when no provider is available. Provided at the page level via
- *  `useWhitelistedTokens`; defaults to the env registry so unwrapped renders
- *  still work. */
-type TokenResolver = (addr: string | null | undefined) => { symbol: string; decimals: number };
-const TokenResolveContext = createContext<TokenResolver>(tokenInfo);
+import { formatAmount } from "../lib/tokenRegistry";
+import {
+  TokenResolverProvider,
+  useResolveToken,
+  useTokenResolver,
+  type TokenResolver,
+} from "../lib/useTokenResolver";
 
 /** Local USD price oracle — hardcoded for the dev environment so
  *  cross-token Volume/Revenue can collapse to a single comparable
@@ -55,7 +52,7 @@ function tokenUsd(wei: string, decimals: number, symbol: string): number | null 
 }
 function sumUsd(
   rows: Array<{ token?: string; sellToken?: string; totalWei?: string; totalVolume?: string }>,
-  resolver: TokenResolver = tokenInfo,
+  resolver: TokenResolver,
 ): { total: number; missing: number } {
   let total = 0;
   let missing = 0;
@@ -187,7 +184,7 @@ const RANK_CRITERIA: RankCriterion[] = [
 // undefined as worse than any defined value via compareNullable).
 function usdTotal(
   rows: Array<{ token?: string; sellToken?: string; totalWei?: string; totalVolume?: string }> | undefined,
-  resolver: TokenResolver = tokenInfo,
+  resolver: TokenResolver,
 ): number | undefined {
   if (!rows || rows.length === 0) return undefined;
   return sumUsd(rows, resolver).total;
@@ -305,18 +302,7 @@ export default function LeaderboardPage() {
   // Volume/Fee cells, network totals, the share bar) and the per-token
   // breakdown, so on-chain tokens resolve to their real symbol + decimals
   // instead of address + raw wei (which read as $0/unpriced).
-  const { tokens: whitelistTokens } = useWhitelistedTokens({
-    provider: readProvider,
-    poolAddress: DEMO_NETWORK.contracts.commitmentPool,
-    settlementAddress: DEMO_NETWORK.contracts.privateSettlement,
-    fallback: [],
-  });
-  const resolveToken = useMemo<TokenResolver>(() => {
-    const byAddr = new Map(
-      whitelistTokens.map((t) => [t.address.toLowerCase(), { symbol: t.symbol, decimals: t.decimals }]),
-    );
-    return (addr) => (addr ? byAddr.get(addr.toLowerCase()) ?? tokenInfo(addr) : tokenInfo(addr));
-  }, [whitelistTokens]);
+  const resolveToken = useTokenResolver();
 
   const ranked = useMemo(
     () => rankRelayers(applySegment(state.rows, segment), criterion, resolveToken),
@@ -327,7 +313,7 @@ export default function LeaderboardPage() {
   const medianFeeBps = ranked.length > 0 ? medianBps(ranked.map((r) => r.fee)) : null;
 
   return (
-    <TokenResolveContext.Provider value={resolveToken}>
+    <TokenResolverProvider value={resolveToken}>
     <div className="space-y-10">
       <header className="flex items-end justify-between">
         <div>
@@ -417,7 +403,7 @@ export default function LeaderboardPage() {
         </p>
       </section>
     </div>
-    </TokenResolveContext.Provider>
+    </TokenResolverProvider>
   );
 }
 
@@ -541,7 +527,7 @@ interface RankedRelayer extends RelayerInfo {
 function rankRelayers(
   rows: RelayerInfo[],
   criterion: RankCriterion,
-  resolver: TokenResolver = tokenInfo,
+  resolver: TokenResolver,
 ): RankedRelayer[] {
   // Decorate-sort-undecorate: project the per-row metadata + the
   // USD sort keys ONCE before the sort, so the comparator never
@@ -869,7 +855,7 @@ function RelayerRow({
  *  cell stays one number. Peers without a `settledVolume` field
  *  (older builds / pre-migration rows) render the offline `—`. */
 function VolumeCell({ row, segment }: { row: RankedRelayer; segment: Segment }) {
-  const resolveTok = useContext(TokenResolveContext);
+  const resolveTok = useResolveToken();
   const volumes = row.stats?.settledVolume ?? [];
   const status = relayerStatsCellStatus(row, volumes.length > 0 ? 1 : undefined);
   if (volumes.length === 0) {
@@ -911,7 +897,7 @@ function PayProMixBar({
   byApp: { pay: RelayerStatsByApp; pro: RelayerStatsByApp };
   metric: "volume" | "fee";
 }) {
-  const resolveTok = useContext(TokenResolveContext);
+  const resolveTok = useResolveToken();
   const pickRows = (sub: RelayerStatsByApp) =>
     metric === "volume" ? sub.settledVolume ?? [] : sub.feeTotals ?? [];
   const payUsd = sumUsd(pickRows(byApp.pay), resolveTok).total;
@@ -982,7 +968,7 @@ function NetworkTotalsStrip({
   ranked: RankedRelayer[];
   segment: Segment;
 }) {
-  const resolveTok = useContext(TokenResolveContext);
+  const resolveTok = useResolveToken();
   const vols = ranked.flatMap((r) => r.stats?.settledVolume ?? []);
   const fees = ranked.flatMap((r) => r.stats?.feeTotals ?? []);
   if (vols.length === 0 && fees.length === 0) return null;
@@ -1052,7 +1038,7 @@ function safeBigInt(s: string): bigint {
  *  "what did it earn" columns line up token-by-token. Falls back to
  *  the same offline `—` shape when the peer doesn't expose feeTotals. */
 function RevenueCell({ row, segment }: { row: RankedRelayer; segment: Segment }) {
-  const resolveTok = useContext(TokenResolveContext);
+  const resolveTok = useResolveToken();
   const totals = row.stats?.feeTotals ?? [];
   const status = relayerStatsCellStatus(row, totals.length > 0 ? 1 : undefined);
   if (totals.length === 0) {
@@ -1109,7 +1095,7 @@ function normAddr(s: unknown): string | null {
  *  operator can't read causation that isn't there. */
 function RelayerDetailRow({ row }: { row: RankedRelayer }) {
   // Symbols + decimals from the on-chain whitelist (env registry fallback).
-  const resolveTok = useContext(TokenResolveContext);
+  const resolveTok = useResolveToken();
   const volumes = row.stats?.settledVolume ?? [];
   const fees = row.stats?.feeTotals ?? [];
   // Sort by USD desc instead of raw wei — 1 WETH and 1 USDC have very
