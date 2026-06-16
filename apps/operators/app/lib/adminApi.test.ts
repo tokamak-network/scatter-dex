@@ -46,4 +46,11 @@ describe("requestSiweChallenge", () => {
     mockFetch(500, "");
     await expect(requestSiweChallenge(URL_BASE)).rejects.toThrow(/500/);
   });
+
+  it("rejects a 2xx with an empty / non-object body instead of resolving", async () => {
+    // readBody swallows parse errors, so a 200 with no JSON body must not
+    // resolve to null and crash the caller on `challenge.message`.
+    mockFetch(200, "");
+    await expect(requestSiweChallenge(URL_BASE)).rejects.toThrow(/invalid challenge response/i);
+  });
 });

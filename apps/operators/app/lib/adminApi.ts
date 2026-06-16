@@ -271,6 +271,12 @@ export async function requestSiweChallenge(url: string): Promise<SiweChallenge> 
   // this relayer", which tells the operator exactly what to fix.
   const { text, parsed } = await readBody(res);
   if (!res.ok) throw new Error(formatAdminError(res.status, text, parsed));
+  // A 2xx with an empty / non-JSON / non-object body would otherwise
+  // resolve and crash the caller on `challenge.message`. `readBody`
+  // swallows parse errors, so guard the success path explicitly.
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Relayer returned an invalid challenge response.");
+  }
   return parsed as SiweChallenge;
 }
 
@@ -297,5 +303,8 @@ export async function submitSiweSession(
   });
   const { text, parsed } = await readBody(res);
   if (!res.ok) throw new Error(formatAdminError(res.status, text, parsed));
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Relayer returned an invalid session response.");
+  }
   return parsed as SiweSession;
 }
