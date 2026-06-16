@@ -16,6 +16,7 @@ import { formatClaimAmount, formatField, formatLocalStampSec, formatWhen } from 
 import { buildClaimLink, buildClaimPackageFromOrder } from "../lib/proClaimPackage";
 import { submitClaim } from "../lib/claimSubmit";
 import { isClaimNullifierSpent } from "../lib/claimProbe";
+import { useOnChainClaimedLeaves } from "../lib/useOnChainClaimedLeaves";
 
 interface Props {
   order: OrderRecord;
@@ -567,6 +568,21 @@ function RecipientsTable({
 }) {
   const list = claims ?? [];
   const claimedSet = new Set(order.claimedLeafIndexes ?? []);
+  // On-chain truth for each leaf's nullifier — the same source the
+  // /claim page trusts. Local `claimedLeafIndexes` is never reconciled
+  // with the chain (the gasless claim + /claim page only write the
+  // Claims inbox), so without this probe the per-row badge drifts from
+  // the /claim page in both directions. `onChainSpent` wins per leaf
+  // once resolved; until then we fall back to the optimistic local set.
+  const { network } = useActiveNetwork();
+  const onChainSpent = useOnChainClaimedLeaves(
+    list,
+    network.contracts.privateSettlement,
+  );
+  // On-chain result wins per leaf; `false` (confirmed unspent) passes
+  // through and only `undefined` (probe in flight) falls back to local.
+  const leafIsClaimed = (leafIndex: number): boolean =>
+    onChainSpent.get(leafIndex) ?? claimedSet.has(leafIndex);
   // Ticking wall clock for the per-row release gate. Effect-initialised
   // (null on the server + first client render) so SSR and hydration agree;
   // a 30s interval then re-evaluates so a row flips Locked → Ready when its
@@ -588,7 +604,7 @@ function RecipientsTable({
   const rowStatus = (c: NonNullable<OrderRecord["claims"]>[number]) =>
     order.status === "cancelled"
       ? { label: "Cancelled", tone: "muted" as const }
-      : claimedSet.has(c.leafIndex)
+      : leafIsClaimed(c.leafIndex)
         ? { label: "Claimed", tone: "success" as const }
         : order.status === "claimable" || order.status === "claimed"
           ? nowSec !== null && nowSec < Number(c.releaseTime)
@@ -659,7 +675,12 @@ function RecipientsTable({
                 })()}
               </td>
               <td className="px-4 py-2 text-right">
-                <ShareActions order={order} target={c} enabled={shareEnabled} />
+                <ShareActions
+                  order={order}
+                  target={c}
+                  enabled={shareEnabled}
+                  claimedOnChain={onChainSpent.get(c.leafIndex)}
+                />
               </td>
               {showTechnical && (
                 <td className="px-4 py-2 text-right font-mono">#{c.leafIndex}</td>
@@ -939,10 +960,16 @@ function ShareActions({
   order,
   target,
   enabled,
+  claimedOnChain,
 }: {
   order: OrderRecord;
   target: OrderClaim;
   enabled: boolean;
+  /** On-chain nullifier state for this row's leaf, probed once by the
+   *  parent table. Authoritative when defined; `undefined` while the
+   *  probe is in flight (or unavailable), in which case the gates fall
+   *  back to the order's optimistic local `claimedLeafIndexes`. */
+  claimedOnChain?: boolean;
 }) {
   const { network } = useActiveNetwork();
   // On-chain whitelist tokens for claim-amount labels (decimals are
@@ -1087,7 +1114,7 @@ function ShareActions({
       // the same status-aware copy Pay's payouts/detail uses; keeps
       // the two apps' recipient emails consistent.
       const claimedSet = new Set(order.claimedLeafIndexes ?? []);
-      const isClaimed = claimedSet.has(target.leafIndex);
+      const isClaimed = claimedOnChain ?? claimedSet.has(target.leafIndex);
       const releaseUnix = Number(target.releaseTime);
       const nowUnix = Math.floor(Date.now() / 1000);
       const isLocked = !isClaimed && nowUnix < releaseUnix;
@@ -1257,7 +1284,10 @@ function ShareActions({
     () => new Set(order.claimedLeafIndexes ?? []),
     [order.claimedLeafIndexes],
   );
-  const leafClaimed = claimedLeavesSet.has(target.leafIndex);
+  // On-chain nullifier wins when the parent's probe has resolved this
+  // leaf; otherwise fall back to the optimistic local set. Keeps the
+  // gate consistent with the row's "Claimed/Ready" badge.
+  const leafClaimed = claimedOnChain ?? claimedLeavesSet.has(target.leafIndex);
   const leafLocked =
     !leafClaimed &&
     Math.floor(Date.now() / 1000) < Number(target.releaseTime);
