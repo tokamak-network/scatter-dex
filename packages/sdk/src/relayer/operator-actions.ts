@@ -2,11 +2,26 @@ import { ethers } from "ethers";
 import { RELAYER_REGISTRY_IFACE } from "../core/contracts";
 import { MAX_RELAYER_FEE_BPS, NATIVE_BOND_TOKEN } from "./register";
 
-/** Mirrors `RelayerRegistry.EXIT_COOLDOWN`. The contract exposes
- *  it as a public constant; we mirror the value here so callers
- *  can render the cool-down countdown without an extra RPC read.
- *  Keep in sync if governance ever rewrites the constant. */
+/** The registry's *default* exit cool-down (7 days). The live value
+ *  is governance-settable via `setExitCooldown` and read back from
+ *  `exitCooldown()`, so this is only a fallback for the brief window
+ *  before the live read resolves — UIs that render the countdown or
+ *  compute the withdrawable time MUST prefer `loadExitCooldownSeconds`
+ *  and not bake this constant into either calculation. */
 export const EXIT_COOLDOWN_SECONDS = 7 * 24 * 60 * 60;
+
+/** Read the live exit cool-down (in seconds) from the registry's
+ *  `exitCooldown()` getter. Governance can rewrite it via
+ *  `setExitCooldown`, so the displayed cool-down and the bond
+ *  withdrawable time must both derive from this value rather than the
+ *  `EXIT_COOLDOWN_SECONDS` fallback. Pure read. */
+export async function loadExitCooldownSeconds(
+  registryAddress: string,
+  provider: ethers.Provider,
+): Promise<number> {
+  const registry = new ethers.Contract(registryAddress, RELAYER_REGISTRY_IFACE, provider);
+  return Number((await registry.exitCooldown()) as bigint);
+}
 
 export interface UpdateRelayerInfoParams {
   url: string;

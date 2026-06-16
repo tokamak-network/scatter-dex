@@ -4,7 +4,7 @@ import { RELAYER_REGISTRY_IFACE } from "../core/contracts";
 /** UI-friendly status derived from the on-chain `relayers()` row.
  *  - `unregistered`: never registered on this registry
  *  - `active`: registered, not in the exit cool-down
- *  - `cooldown`: requested exit, waiting out the 7-day cool-down
+ *  - `cooldown`: requested exit, waiting out the exit cool-down
  *  - `offline`: registered + exit executed (the row's `active` flag
  *    is false but `registeredAt` is non-zero) */
 export type OperatorStatus = "active" | "cooldown" | "offline" | "unregistered";

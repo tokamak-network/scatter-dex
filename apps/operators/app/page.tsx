@@ -18,8 +18,8 @@ export default function Landing() {
         <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
           You don&apos;t see amounts. You don&apos;t sandwich. You don&apos;t get gated.
           You earn deterministic on-chain bps per fill, fund the protocol
-          treasury at the rate governance set, and exit with your bond on
-          7 days notice.
+          treasury at the rate governance set, and exit with your bond after
+          the registry's cool-down.
         </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link
@@ -88,7 +88,7 @@ export default function Landing() {
           <PersonaCard
             badge="No vendor lock-in"
             title="Endpoint, fee, exit are yours"
-            body="Your URL and fee are your on-chain config. You change either with one tx. Exit the registry and after a 7-day cool-down your bond returns — no foundation handshake to leave."
+            body="Your URL and fee are your on-chain config. You change either with one tx. Exit the registry and after the exit cool-down your bond returns — no foundation handshake to leave."
           />
           <PersonaCard
             badge="No opaque take-rate"
