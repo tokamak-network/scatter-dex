@@ -31,6 +31,34 @@ scripts wire everything else from the committed address ledgers.
    (Alchemy, Infura, or your own node all work.) Add it to your shell profile so
    it persists.
 
+## Get test tokens (TON / USDC / USDT)
+
+To trade you need the deployment's whitelisted tokens, not just ETH. **TON,
+USDC, and USDT** come from the **Tokamak testnet faucet** — and it dispenses the
+exact same token contracts this deployment whitelists (verified on-chain), so
+they show up and are usable in the apps right away.
+
+1. Open the faucet guide:
+   <https://docs.tokamak.network/home/service-guide/faucet-testnet>
+2. It points at the faucet contract on Sepolia Etherscan — connect your testnet
+   wallet on the **Write Contract** tab and call **`requestTokens`**:
+   <https://sepolia.etherscan.io/address/0xd655762c601b9cac8f6644c4841e47e4734d0444#writeContract>
+3. One call sends you **1200 TON, 100 USDC, 100 USDT**. Limit: **one request per
+   24h per account**. (Leftover tokens/ETH can be sent back to the faucet
+   contract.)
+
+| token | Sepolia address                              | decimals | where to get it                     |
+|-------|----------------------------------------------|----------|-------------------------------------|
+| TON   | `0xa30fe40285B8f5c0457DbC3B7C8A280373c40044` | 18       | Tokamak faucet (above)              |
+| USDC  | `0x693a591A27750eED2A0e14BC73bB1F313116a1cb` | 6        | Tokamak faucet (above)              |
+| USDT  | `0x42d3b260c761cD5da022dB56Fe2F89c4A909b04A` | 6        | Tokamak faucet (above)              |
+| WETH  | `0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9` | 18       | wrap Sepolia ETH (canonical WETH9)  |
+
+> **ETH** (for gas, and to wrap into WETH) is **not** from the Tokamak faucet —
+> use any public Sepolia ETH faucet (e.g. a faucet tied to your RPC provider).
+> The addresses above are the live on-chain whitelist; add them to MetaMask as
+> custom tokens if they don't show up automatically.
+
 ## Run a scatter frontend
 
 ```bash
