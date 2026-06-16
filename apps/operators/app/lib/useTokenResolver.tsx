@@ -10,11 +10,18 @@
  */
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
+import type { TokenInfo as WhitelistToken } from "@zkscatter/sdk/core";
 import { useWallet, useWhitelistedTokens } from "@zkscatter/sdk/react";
 import { DEMO_NETWORK } from "./network";
 import { tokenInfo, type TokenInfo } from "./tokenRegistry";
 
 export type TokenResolver = (addr: string | null | undefined) => TokenInfo;
+
+// Stable empty fallback so the hook passes the same array reference on
+// every render. `useWhitelistedTokens` already reads `fallback` through a
+// ref so identity doesn't drive its fetch, but a module constant keeps a
+// fresh `[]` from being allocated per render regardless.
+const EMPTY_FALLBACK: WhitelistToken[] = [];
 
 /** Build a resolver backed by the on-chain whitelist with the env
  *  registry as fallback. Self-contained — reads the active read provider
@@ -25,7 +32,7 @@ export function useTokenResolver(): TokenResolver {
     provider: readProvider,
     poolAddress: DEMO_NETWORK.contracts.commitmentPool,
     settlementAddress: DEMO_NETWORK.contracts.privateSettlement,
-    fallback: [],
+    fallback: EMPTY_FALLBACK,
   });
   return useMemo<TokenResolver>(() => {
     const byAddr = new Map(
