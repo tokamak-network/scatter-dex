@@ -187,11 +187,14 @@ export function readAdminAuth(): AdminAuth | null {
   if (!token) return null;
   const expiresRaw = sessionStorage.getItem(ADMIN_SS_EXPIRES);
   const expiresAt = expiresRaw ? Number(expiresRaw) : undefined;
-  // Expired token → treat as logged-out so the user re-signs
-  // instead of blasting through a request that 401s. The URL
-  // stays in sessionStorage so `readPersistedAdminUrl` can still
-  // pre-fill the connect bar without forcing a retype.
-  if (expiresAt !== undefined && expiresAt <= Date.now()) return null;
+  // Expired token → treat as logged-out so the user re-signs instead of
+  // blasting through a request that 401s. A non-finite value (tampered or
+  // garbage sessionStorage) is treated the same way rather than read as
+  // "never expires". The URL stays in sessionStorage so
+  // `readPersistedAdminUrl` can still pre-fill the connect bar.
+  if (expiresAt !== undefined && (!Number.isFinite(expiresAt) || expiresAt <= Date.now())) {
+    return null;
+  }
   const address = sessionStorage.getItem(ADMIN_SS_ADDRESS) ?? undefined;
   return { url, token, address, expiresAt };
 }
@@ -200,6 +203,9 @@ export function readAdminAuth(): AdminAuth | null {
  *  `auth` is null). */
 export function writeAdminAuth(auth: AdminAuth | null): void {
   if (typeof sessionStorage === "undefined") return;
+  // One-time cleanup: purge the retired admin-key slot on every write so a
+  // key persisted before the SIWE-only migration can't linger for the tab.
+  sessionStorage.removeItem("operators-admin-key");
   if (!auth) {
     sessionStorage.removeItem(ADMIN_SS_URL);
     sessionStorage.removeItem(ADMIN_SS_TOKEN);
@@ -210,9 +216,14 @@ export function writeAdminAuth(auth: AdminAuth | null): void {
   sessionStorage.setItem(ADMIN_SS_URL, auth.url);
   if (auth.token) {
     sessionStorage.setItem(ADMIN_SS_TOKEN, auth.token);
+    // Set-or-remove address/expires so a session written without them
+    // can't inherit a previous session's stale values.
     if (auth.address) sessionStorage.setItem(ADMIN_SS_ADDRESS, auth.address);
+    else sessionStorage.removeItem(ADMIN_SS_ADDRESS);
     if (auth.expiresAt !== undefined) {
       sessionStorage.setItem(ADMIN_SS_EXPIRES, String(auth.expiresAt));
+    } else {
+      sessionStorage.removeItem(ADMIN_SS_EXPIRES);
     }
   }
 }
