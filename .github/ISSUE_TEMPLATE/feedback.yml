@@ -1,0 +1,31 @@
+name: 💡 Feedback / idea
+description: A UX suggestion, confusing flow, or feature idea from testing.
+title: "[feedback] "
+labels: ["feedback", "testnet"]
+body:
+  - type: dropdown
+    id: app
+    attributes:
+      label: App
+      options:
+        - hub
+        - pay
+        - pro
+        - operators
+        - admin
+        - zk-X509 website
+        - general / cross-app
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: What's the suggestion?
+      description: What was confusing or missing, and what would make it better?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Where you ran into it (screen, step), screenshots, anything else useful.

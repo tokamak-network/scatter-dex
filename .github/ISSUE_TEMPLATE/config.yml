@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 🔐 Security-sensitive finding
+    url: https://github.com/tokamak-network/scatter-dex/blob/main/docs/operations/sepolia-team-setup.md#reporting-bugs--filing-issues
+    about: Do NOT file a public issue for fund loss / proof bypass / key exposure. Flag the team privately first.
+  - name: 📖 Team testing guide
+    url: https://github.com/tokamak-network/scatter-dex/blob/main/docs/operations/sepolia-team-setup.md
+    about: How to run the apps against the live Sepolia deployment.

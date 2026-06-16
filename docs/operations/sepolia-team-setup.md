@@ -74,32 +74,72 @@ The generated `.env.local`:
 
 Optional overrides (export before running):
 
-| variable                 | purpose                          | default                     |
-|--------------------------|----------------------------------|-----------------------------|
-| `SCATTER_ORDERBOOK_URL`  | central shared orderbook         | `http://136.115.115.93:4000`|
-| `ZKX509_WEB_URL`         | zk-X509 CA-registration website  | `http://localhost:3000`     |
-| `ZK_RELAYER_URL`         | a relayer endpoint               | `http://localhost:3002`     |
+| variable                 | purpose                                  | default                     |
+|--------------------------|------------------------------------------|-----------------------------|
+| `SCATTER_ORDERBOOK_URL`  | central shared orderbook                 | `http://136.115.115.93:4000`|
+| `ZKX509_WEB_URL`         | zk-X509 CA-registration website          | `http://localhost:3000`     |
+| `ZK_RELAYER_URL`         | dev **seed/fallback** relayer (see below)| `http://localhost:3002`     |
 
-To use the live relayer instead of localhost:
+### Relayers are discovered, not hard-coded
 
-```bash
-export ZK_RELAYER_URL="http://136.115.115.93:3002"   # bot-1 relayer
-```
+You do **not** pick a relayer with an env var. The apps load the list of live
+relayers at runtime from the **on-chain `RelayerRegistry`** (each registered
+relayer's `url` + `name`), probe each one's `/api/info` for liveness, and show
+them in a **relayer selector** in the UI. The first online relayer is
+auto-selected; you can switch in the dropdown. Order submission and gasless
+claims then go to **the relayer you selected** — not to a fixed URL.
+
+- `ZK_RELAYER_URL` / `NEXT_PUBLIC_ZK_RELAYER_URL` is only a **dev seed/fallback**
+  (used by the local stack and as a last resort if discovery returns nothing).
+  Leave it at the default for Sepolia — discovery takes over.
+- Implementation: `packages/sdk/src/react/relayersProvider.tsx` (registry load +
+  auto-select), `apps/pro/app/lib/relayers.tsx` (selector wired to
+  `relayerRegistry`), `shared-orderbook` `GET /api/relayers` (display list).
+
+So which relayers you see depends on **who has registered on-chain** — not on a
+URL in this doc. Right now exactly one relayer is registered (**bot-1**, below),
+so it's the only choice; as teammates stand up their own (see [Run your own
+relayer](#run-your-own-relayer-optional)) they appear in the selector
+automatically.
 
 ### Live shared infrastructure
 
-A single GCP `e2-micro` (static-reserved IP) hosts both, co-located:
+| service              | URL                                          | shared?                              |
+|----------------------|----------------------------------------------|--------------------------------------|
+| Shared orderbook     | `http://136.115.115.93:4000` (`/health`)     | **yes** — one central bulletin board |
+| Relayer **bot-1**    | `http://136.115.115.93:3002` (`/api/info`)   | no — just the one relayer we run     |
 
-| service              | URL                                          |
-|----------------------|----------------------------------------------|
-| Shared orderbook     | `http://136.115.115.93:4000`                 |
-| Relayer **bot-1**    | `http://136.115.115.93:3002` (`/api/info`)   |
+The **orderbook is the single central service** everyone shares (a GCP
+`e2-micro` on a static-reserved IP). The **relayer is not** shared infrastructure
+in the same sense — relayers are **operator-hosted and per-operator**; `bot-1`
+just happens to be co-located on the same box so there's at least one live
+relayer to trade against. Anyone can run more (next section), and the apps will
+discover them.
 
 > These are plain **`http://`** endpoints, reachable from frontends served over
 > `http://localhost` (the dev setup here). A frontend served over `https://`
 > (Vercel, Netlify, an ngrok tunnel) would have the browser block them as **mixed
 > content** — front it with a TLS reverse proxy (the box ships a Caddy/Let's
 > Encrypt overlay, see `deploy/runtime`) and use the `https://` host instead.
+
+### Run your own relayer (optional)
+
+You don't need your own relayer to test — selecting **bot-1** in the UI is
+enough. But the protocol is designed for **anyone to run one**, and a relayer you
+register on-chain shows up in everyone's selector. To do it on Sepolia:
+
+1. Get approved: zk-X509 relayer cert (`identityRegistry.isVerified`) and, if the
+   KYC gate is enabled, admin approval (`issuanceApprovalRegistry.isApproved`).
+   Full flow: [Registering a Relayer](./registering-a-relayer.md).
+2. Stand up the relayer process and call `RelayerRegistry.register(url, name,
+   fee, bondAmount)` from the **same approved wallet**: [Running a
+   Relayer](./running-a-relayer.md). The bond is whatever the admin set via
+   `setMinBond` (currently **0** on this deployment).
+
+Once it's running with `SHARED_ORDERBOOK_URL` + `RELAYER_PUBLIC_URL` set, it
+auto-registers and heartbeats with the shared orderbook, and — because it's in
+the on-chain `RelayerRegistry` — appears in the apps' relayer selector for the
+whole team.
 
 ### RPC: read-only & optional
 
@@ -193,3 +233,30 @@ automatically. No hand-editing of any `.env.local`.
 - **Notices / CA-guide panel empty** — expected until `ZKX509_BACKEND_URL`
   points at the central backend; on-chain features are unaffected.
 - **Wallet `verify` fails** — expected; the prover is not deployed yet.
+
+## Reporting bugs & filing issues
+
+Hit something broken or surprising while testing? **File a GitHub issue** so it's
+tracked — don't just report it in chat.
+
+- **Open an issue:** <https://github.com/tokamak-network/scatter-dex/issues/new/choose>
+  and pick **🐛 Bug report** (or **💡 Feedback / idea** for UX/suggestions).
+- Or from the CLI in this repo:
+
+  ```bash
+  gh issue create --repo tokamak-network/scatter-dex
+  ```
+
+Please include, so it's reproducible:
+
+- **App + network** — e.g. `pro` on Sepolia, the dev URL (`localhost:4003`).
+- **Which relayer** you had selected in the UI (e.g. `bot-1`), if relevant.
+- **Steps to reproduce**, what you expected, what actually happened.
+- **Tx hash(es)** for any on-chain action, and your wallet address (public is
+  fine — never paste a private key or seed phrase).
+- **Console / network errors** — open the browser devtools console and copy any
+  red errors; note the failing request URL if it's a relayer/orderbook call.
+- **Your commit:** `git rev-parse --short HEAD` (so we know which build you ran).
+
+> Security-sensitive findings (fund loss, proof bypass, key exposure) — do **not**
+> open a public issue. Flag them privately to the team first.
