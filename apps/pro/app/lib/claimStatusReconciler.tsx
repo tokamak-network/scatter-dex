@@ -18,9 +18,10 @@ const POLL_INTERVAL_MS = 60_000;
  *  recorded (`resolveSpentClaimLeaves`, indexer-first / RPC fallback) and
  *  records the confirmed-spent ones via `markLeavesClaimed`. Because that
  *  promotes the order to `claimed` once every leaf is recorded, this is what
- *  drives the list/tab transition. Claimed leaves are cached, so a fully- or
- *  partially-recorded order is skipped — a leaf is never re-queried once
- *  confirmed, keeping the public RPC / indexer load minimal.
+ *  drives the list/tab transition. Already-recorded leaves are skipped each
+ *  pass, and an order with every leaf recorded is skipped entirely, so a
+ *  confirmed leaf is never re-queried — keeping the public RPC / indexer load
+ *  minimal.
  *
  *  Mounted app-wide (next to `ClaimReconciler`); renders nothing. */
 export function ClaimStatusReconciler(): null {

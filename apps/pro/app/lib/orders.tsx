@@ -161,10 +161,17 @@ export function computeClaimedUpdate(
   ).map((c) => c.leafIndex);
   if (claimLeafIdxs.length === 0) return null;
   const valid = new Set(claimLeafIdxs);
-  const already = new Set(order.claimedLeafIndexes ?? []);
-  const additions = newLeafIndexes.filter((li) => valid.has(li) && !already.has(li));
-  if (additions.length === 0) return null;
-  const claimedLeafIndexes = [...already, ...additions].sort((a, b) => a - b);
+  // Normalise the existing list to the valid leaf set, deduped — drops any
+  // stale duplicate / out-of-range leftovers (e.g. from an older schema) so
+  // they don't persist as dead state or skew the x/y progress count.
+  const prior = order.claimedLeafIndexes ?? [];
+  const kept = [...new Set(prior.filter((li) => valid.has(li)))];
+  const already = new Set(kept);
+  // Dedup the incoming batch, then keep only new valid leaves.
+  const additions = [...new Set(newLeafIndexes)].filter((li) => valid.has(li) && !already.has(li));
+  // No new leaves AND the existing list was already clean → nothing to write.
+  if (additions.length === 0 && kept.length === prior.length) return null;
+  const claimedLeafIndexes = [...kept, ...additions].sort((a, b) => a - b);
   const claimedSet = new Set(claimedLeafIndexes);
   const allDone = claimLeafIdxs.every((i) => claimedSet.has(i));
   return { claimedLeafIndexes, status: allDone ? "claimed" : order.status };

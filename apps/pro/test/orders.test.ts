@@ -194,6 +194,23 @@ describe("computeClaimedUpdate", () => {
     expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "claimed" });
   });
 
+  it("dedups duplicates within a single batch", () => {
+    const upd = computeClaimedUpdate(threeLeaf(), [1, 1]);
+    expect(upd).toEqual({ claimedLeafIndexes: [1], status: "claimable" });
+  });
+
+  it("drops stale out-of-range entries from the existing list (no dead state)", () => {
+    // 9 isn't a real leaf; recording nothing new still rewrites the list to
+    // shed it, and the order stays claimable (only leaf 0 is real-and-recorded).
+    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 9] }), []);
+    expect(upd).toEqual({ claimedLeafIndexes: [0], status: "claimable" });
+  });
+
+  it("collapses a duplicate already-persisted entry on the next update", () => {
+    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 0] }), []);
+    expect(upd).toEqual({ claimedLeafIndexes: [0], status: "claimable" });
+  });
+
   it("returns null for an order with no claims", () => {
     expect(computeClaimedUpdate(fixture({ claim: undefined, claims: [] }), [0])).toBeNull();
   });
