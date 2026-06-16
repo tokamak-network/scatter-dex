@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import request from "supertest";
-import { mountRouter, makeSubmitterStub } from "./helpers.js";
+import { mountRouter, makeSubmitterStub, TEST_OPERATOR } from "./helpers.js";
 
 // Mock ethers.Contract before vault.ts is imported. Override both the
 // top-level export and the `ethers` namespace-scoped one since vault.ts
 // uses `import { ethers } from "ethers"` then `new ethers.Contract(...)`.
+// Only `Contract` is replaced — `Wallet` / `verifyMessage` stay real so the
+// SIWE auth (signing + recovery) below still works.
 vi.mock("ethers", async () => {
   const actual = await vi.importActual<typeof import("ethers")>("ethers");
   const MockContract = vi.fn().mockImplementation(() => ({
@@ -15,19 +17,30 @@ vi.mock("ethers", async () => {
   return { ...actual, Contract: MockContract, ethers: { ...actual.ethers, Contract: MockContract } };
 });
 
-const ADMIN_KEY = process.env.ADMIN_API_KEY;
-if (!ADMIN_KEY) throw new Error("ADMIN_API_KEY must be set (see test/setup-env.ts)");
-
 // vault.ts parses TOKEN_LIST at module load, so control it via
 // resetModules + dynamic import. This keeps the test hermetic regardless
 // of any `.env` TOKEN_LIST value.
 const TOKEN_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 let createVaultRoutes: typeof import("../../src/routes/vault.js").createVaultRoutes;
+// Bearer for the node's operator. The vault router relies on the shared
+// `adminAuth` singleton but doesn't expose challenge/session endpoints, so
+// we register a SIWE instance + mint a session directly. Both the register
+// and the vault import happen AFTER resetModules, so they share one
+// admin-auth module instance (a static import would be a different copy).
+let AUTH: string;
 
 beforeAll(async () => {
   vi.resetModules();
   process.env.TOKEN_LIST = `${TOKEN_ADDR}:USDT:6`;
   ({ createVaultRoutes } = await import("../../src/routes/vault.js"));
+  const { setSiweAuth } = await import("../../src/middleware/admin-auth.js");
+  const { makeAdminSiweAuth } = await import("../../src/core/admin-siwe.js");
+  const siwe = makeAdminSiweAuth(TEST_OPERATOR.address);
+  setSiweAuth(siwe);
+  const { nonce, message } = siwe.issueChallenge();
+  const signature = await TEST_OPERATOR.signMessage(message);
+  const { token } = await siwe.createSession({ nonce, message, signature });
+  AUTH = `Bearer ${token}`;
 });
 
 function buildApp(submitter = makeSubmitterStub()) {
@@ -48,7 +61,7 @@ describe("GET /api/vault", () => {
 });
 
 describe("POST /api/vault/claim", () => {
-  it("rejects request without x-admin-key with 401", async () => {
+  it("rejects request without auth with 401", async () => {
     const res = await request(buildApp()).post("/api/vault/claim").send({ token: "0x" + "a".repeat(40) });
     expect(res.status).toBe(401);
   });
@@ -56,7 +69,7 @@ describe("POST /api/vault/claim", () => {
   it("rejects invalid token address with 400", async () => {
     const res = await request(buildApp())
       .post("/api/vault/claim")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", AUTH)
       .send({ token: "not-an-address" });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/token/i);
@@ -65,7 +78,7 @@ describe("POST /api/vault/claim", () => {
   it("rejects missing token with 400", async () => {
     const res = await request(buildApp())
       .post("/api/vault/claim")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", AUTH)
       .send({});
     expect(res.status).toBe(400);
   });
@@ -76,7 +89,7 @@ describe("POST /api/vault/claim", () => {
     });
     const res = await request(buildApp(submitter))
       .post("/api/vault/claim")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", AUTH)
       .send({ token: "0x" + "a".repeat(40) });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("claimed");
@@ -89,7 +102,7 @@ describe("POST /api/vault/claim", () => {
     });
     const res = await request(buildApp(submitter))
       .post("/api/vault/claim")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", AUTH)
       .send({ token: "0x" + "a".repeat(40) });
     expect(res.status).toBe(400);
   });
@@ -100,7 +113,7 @@ describe("POST /api/vault/claim", () => {
     });
     const res = await request(buildApp(submitter))
       .post("/api/vault/claim")
-      .set("x-admin-key", ADMIN_KEY)
+      .set("Authorization", AUTH)
       .send({ token: "0x" + "a".repeat(40) });
     expect(res.status).toBe(500);
   });

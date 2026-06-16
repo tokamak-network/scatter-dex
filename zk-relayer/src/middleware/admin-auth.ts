@@ -1,9 +1,20 @@
 import { Request, Response, RequestHandler } from "express";
-import { timingSafeEqual } from "crypto";
-import { config } from "../config.js";
 import type { AdminSiweAuth } from "../core/admin-siwe.js";
 
 const BEARER_PREFIX = "Bearer ";
+
+/** Pull the token out of an `Authorization: Bearer <token>` header.
+ *  Returns null when the header is absent or not a (non-empty) bearer, so
+ *  callers handle "no token" and "some token" uniformly. Trims the whole
+ *  header first (so leading whitespace doesn't read as "missing") and the
+ *  token, so a stray space can't slip past `verifySession`. Mirrors
+ *  shared-orderbook's admin-auth helper. */
+export function extractBearerToken(authHeader: string | undefined): string | null {
+  const header = (authHeader ?? "").trim();
+  if (!header.startsWith(BEARER_PREFIX)) return null;
+  const token = header.slice(BEARER_PREFIX.length).trim();
+  return token || null;
+}
 
 // Process-wide SIWE handle, published by the admin route module at
 // boot. Lives at module scope so sibling route files (vault, etc.)
@@ -18,57 +29,29 @@ export function setSiweAuth(instance: AdminSiweAuth | null): void {
   registeredSiwe = instance;
 }
 
-/** Build an admin-endpoint gate that accepts either:
- *
- *   - `Authorization: Bearer <session-token>` (SIWE path), or
- *   - `x-admin-key: <ADMIN_API_KEY>` header (legacy / CI path)
- *
- *  At least one mechanism must be configured at boot; routes mounted
- *  under this middleware with neither path enabled would 403 every
- *  request, surfacing the misconfiguration immediately rather than
- *  later. */
+/** Build an admin-endpoint gate that accepts a SIWE session token via
+ *  `Authorization: Bearer <session-token>`. The token is minted by
+ *  `POST /api/admin/session` after the operator signs a challenge with
+ *  the wallet registered as this relayer's operator (see admin-siwe.ts).
+ *  `siwe` is null only in defensive/test paths — a real relayer always
+ *  wires it at boot, so a null here fails closed with a 403. */
 export function buildAdminAuth(siwe: AdminSiweAuth | null): RequestHandler {
   return function adminAuth(req: Request, res: Response, next: () => void) {
-    // Bearer-token path (SIWE) — the operator-console flow. Tried first
-    // because it's the cheaper path (one Map.get vs the timing-safe key
-    // compare).
-    const authHeader = req.headers.authorization;
-    const hasBearer =
-      siwe && typeof authHeader === "string" && authHeader.startsWith(BEARER_PREFIX);
-    if (hasBearer) {
-      const token = authHeader.slice(BEARER_PREFIX.length).trim();
-      if (token && siwe.verifySession(token) !== null) {
-        next();
-        return;
-      }
-      // Bearer was offered but it didn't verify. If the client also
-      // sent an `x-admin-key`, fall through and let the key path
-      // decide; otherwise surface a Bearer-specific 401 so the UI
-      // distinguishes "session expired" from "invalid key".
-      if (typeof req.headers["x-admin-key"] !== "string") {
-        res.status(401).json({ error: "Session expired — sign in again" });
-        return;
-      }
+    // No SIWE wired (defensive/misconfiguration) — fail closed so a
+    // missing auth surface can't accidentally expose admin endpoints.
+    if (!siwe) {
+      res.status(403).json({ error: "Admin auth is not configured on this relayer" });
+      return;
     }
-
-    const key = config.adminApiKey;
-    if (!key) {
-      // Neither path admissible — fail closed.
-      if (!siwe) {
-        res.status(403).json({ error: "Admin auth is not configured on this relayer" });
-        return;
-      }
+    const token = extractBearerToken(req.headers.authorization);
+    // Distinguish "no credential" from "stale/invalid one" so the client
+    // (and a human with curl) can tell apart "sign in" from "re-sign in".
+    if (token === null) {
       res.status(401).json({ error: "Bearer session token required" });
       return;
     }
-    const provided = req.headers["x-admin-key"];
-    if (typeof provided !== "string" || Buffer.byteLength(provided) !== key.length) {
-      res.status(401).json({ error: "Invalid admin API key" });
-      return;
-    }
-    const providedBuf = Buffer.from(provided);
-    if (!timingSafeEqual(providedBuf, key)) {
-      res.status(401).json({ error: "Invalid admin API key" });
+    if (siwe.verifySession(token) === null) {
+      res.status(401).json({ error: "Invalid or expired session — sign in again" });
       return;
     }
     next();
