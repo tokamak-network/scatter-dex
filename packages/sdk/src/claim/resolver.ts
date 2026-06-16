@@ -125,6 +125,15 @@ export interface ResolveSpentClaimEntriesOpts {
    *  hash — so entries spanning different settlements all resolve in a single
    *  request (the indexer keys on chainId + nullifier, not settlement). */
   sharedOrderbookUrl?: string;
+  /** Force the per-entry RPC probe (chain ground truth) instead of the
+   *  indexer-first path, even when `sharedOrderbookUrl` is set. The indexer
+   *  trails head by a confirmation margin + poll interval, so a caller that
+   *  needs a *just-made* claim reflected immediately (e.g. a manual "Refresh")
+   *  sets this. When honored (a `provider` is present) the indexer is NOT
+   *  consulted — there is no RPC→indexer fallback. It only matters that you
+   *  still pass the real `sharedOrderbookUrl` for the *other* case: with no
+   *  provider this flag is ignored and resolution falls back to the indexer. */
+  preferProvider?: boolean;
   fetchImpl?: typeof fetch;
 }
 
@@ -158,7 +167,12 @@ export async function resolveSpentClaimEntries(
   const { entries } = opts;
   if (entries.length === 0) return { spent: new Set(), authoritative: true };
 
-  if (opts.sharedOrderbookUrl) {
+  // `preferProvider` (manual refresh wanting chain ground truth) skips the
+  // indexer-first path so a just-made claim — not yet behind the indexer's
+  // confirmation margin — still resolves. Only honored when a provider exists.
+  const useIndexerFirst = !(opts.preferProvider && opts.provider);
+
+  if (opts.sharedOrderbookUrl && useIndexerFirst) {
     try {
       const withHex = await Promise.all(
         entries.map(async (e) => ({ e, hex: await claimNullifierHex(e.secret, e.leafIndex) })),

@@ -8,6 +8,7 @@ import { CancelOrderModal } from "../components/CancelOrderModal";
 import { StatusBadge } from "../components/StatusBadge";
 import { OrderDetailDrawer } from "../components/OrderDetailDrawer";
 import { WorkspaceBar } from "../components/WorkspaceBar";
+import { ClaimStatusRefreshButton } from "../components/ClaimStatusRefreshButton";
 import { formatWhen } from "../lib/format";
 import { parseUnits } from "../lib/parseUnits";
 import { DEMO_NETWORK } from "../lib/network";
@@ -190,7 +191,13 @@ export default function Orders() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">My orders</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">My orders</h1>
+        {/* Manual claim-status refresh — a claim made elsewhere (a
+            recipient's link) only lands in the local record on the next
+            reconciler pass, so this avoids the up-to-60s wait. */}
+        <ClaimStatusRefreshButton size="md" />
+      </div>
 
       {/* Title above, workspace context just under it — matches the
           address-book / wallet pages so the layout stays uniform
@@ -262,11 +269,13 @@ export default function Orders() {
                     <div className="flex flex-col gap-0.5">
                       <StatusBadge status={o.status} />
                       {(() => {
-                        // Per-recipient progress for a multi-recipient order
-                        // that's partway claimed. `claimedLeafIndexes` is kept
-                        // in sync by ClaimStatusReconciler; once every leaf is
-                        // recorded the order flips to `claimed` (Claimed tab),
-                        // so this only shows on a partial `claimable` order.
+                        // Per-recipient progress for a multi-recipient
+                        // claimable order. `claimedLeafIndexes` is kept in sync
+                        // by ClaimStatusRefreshProvider; once every leaf is recorded
+                        // the order flips to `claimed` (Claimed tab), so this
+                        // only shows while the order is still `claimable`. Shown
+                        // from "0/N" so the recipient count is visible even
+                        // before anyone has claimed.
                         const claimLeaves = (
                           o.claims && o.claims.length > 0 ? o.claims : o.claim ? [o.claim] : []
                         ).map((c) => c.leafIndex);
@@ -279,7 +288,6 @@ export default function Orders() {
                         const done = new Set(
                           (o.claimedLeafIndexes ?? []).filter((li) => leafSet.has(li)),
                         ).size;
-                        if (done === 0) return null;
                         return (
                           <span className="text-[10px] text-[var(--color-text-muted)]">
                             {done}/{total} claimed

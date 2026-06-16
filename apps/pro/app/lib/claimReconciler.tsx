@@ -90,7 +90,7 @@ export function ClaimReconciler() {
       if (o.status === "claimed" || o.status === "cancelled") continue;
       if (!o.claim?.claimsRoot) continue;
       // Multi-recipient orders are reconciled per-leaf by
-      // `ClaimStatusReconciler`, which promotes to `claimed` only once EVERY
+      // `ClaimStatusRefreshProvider`, which promotes to `claimed` only once EVERY
       // recipient is spent. This watcher keys on `o.claim` (the first
       // recipient) and fires `markClaimed` (whole-order), so watching a
       // multi-recipient order here would prematurely close it on the first
