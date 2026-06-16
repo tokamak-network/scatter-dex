@@ -1,10 +1,11 @@
 # zkScatter
 
 **A privacy-preserving settlement protocol with compliant identity gating.** One
-ZK stack powers private **OTC trading** (Pro) and **bulk payouts** (Pay). Orders
-are matched off-chain by ZK relayers and settled on-chain with Groth16 proofs, so
-commitment pools hide trader identities and claim structure — while zk-X509
-identity gating keeps the protocol regulatory-compliant.
+ZK stack powers private **OTC trading** (Pro) and **bulk payouts** (Pay).
+Settlement happens on-chain via Groth16 proofs over commitment pools, with
+relayers coordinating off-chain (matching orders for Pro, batching payouts for
+Pay) and relaying claims gaslessly — so identities and claim structure stay hidden
+on-chain, while zk-X509 identity gating keeps the protocol regulatory-compliant.
 
 ---
 
