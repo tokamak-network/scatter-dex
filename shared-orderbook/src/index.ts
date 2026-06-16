@@ -12,6 +12,7 @@ import { createStatsRoutes } from "./routes/stats.js";
 import { createPeerRoutes } from "./routes/peer.js";
 import { createSettlementRoutes, createSettlementStatsRoutes } from "./routes/settlements.js";
 import { createCommitmentRoutes } from "./routes/commitments.js";
+import { createClaimNullifierRoutes } from "./routes/claim-nullifiers.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createKycRoutes } from "./routes/kyc.js";
 import { VerifyMonitor } from "./core/verify-runtime.js";
@@ -91,6 +92,10 @@ async function main() {
   // Commitment-tree leaves (public read). Written by the standalone
   // commitment indexer (`src/commitment-indexer.ts`); this server only reads.
   app.use("/api/commitments", createCommitmentRoutes(db, readLimiter));
+  // Spent claim nullifiers (public read). Written by the standalone claim
+  // indexer (`src/claim-indexer.ts`); this server only reads. Lets clients
+  // resolve claim-spent status in one batch instead of an RPC call per leaf.
+  app.use("/api/claim-nullifiers", createClaimNullifierRoutes(db, readLimiter));
 
   // Admin auth — a single SIWE handle + a shared gate accepting a SIWE
   // session token or the static ADMIN_TOKEN. Both /api/admin and the KYC

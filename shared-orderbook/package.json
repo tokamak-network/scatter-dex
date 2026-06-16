@@ -13,6 +13,9 @@
     "index:commitments": "node dist/commitment-indexer.js",
     "index:commitments:dev": "tsx src/commitment-indexer.ts",
     "index:commitments:watch": "node dist/commitment-indexer.js --watch",
+    "index:claims": "node dist/claim-indexer.js",
+    "index:claims:dev": "tsx src/claim-indexer.ts",
+    "index:claims:watch": "node dist/claim-indexer.js --watch",
     "test": "vitest run",
     "test:watch": "vitest"
   },
