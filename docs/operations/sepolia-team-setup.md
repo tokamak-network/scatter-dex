@@ -262,7 +262,7 @@ automatically. No hand-editing of any `.env.local`.
   points at the central backend; on-chain features are unaffected.
 - **Wallet `verify` fails** — expected; the prover is not deployed yet.
 
-## Reporting bugs & filing issues
+## Reporting bugs and filing issues
 
 Hit something broken or surprising while testing? **File a GitHub issue** so it's
 tracked — don't just report it in chat.
@@ -287,4 +287,5 @@ Please include, so it's reproducible:
 - **Your commit:** `git rev-parse --short HEAD` (so we know which build you ran).
 
 > Security-sensitive findings (fund loss, proof bypass, key exposure) — do **not**
-> open a public issue. Flag them privately to the team first.
+> open a public issue. Email **security@tokamak.network** privately instead (a
+> PGP key is available; see `docs/cex-compliance/SECURITY-AND-AUDIT.md`).
