@@ -253,7 +253,7 @@ automatically. No hand-editing of any `.env.local`.
 
 - **No RPC key set?** Not an error — `SEPOLIA_RPC_URL` is optional everywhere.
   Both the scatter apps and the zk-X509 website fall back to a keyless public node
-  (the scatter script just prints a `NOTE`) and route your transactions through
+  (both launch scripts just print a `NOTE`) and route your transactions through
   your wallet.
 - **`ledger not found`** — `git pull` to get `contracts/deployments/`.
 - **`zk-X509 frontend not found`** — set `ZK_X509_REPO` to your checkout path.
