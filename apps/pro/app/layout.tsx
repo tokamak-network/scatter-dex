@@ -18,6 +18,7 @@ import { VaultProvider } from "./lib/vault";
 import { VaultReconciler } from "./lib/vaultReconciler";
 import { OrdersProvider } from "./lib/orders";
 import { ClaimReconciler } from "./lib/claimReconciler";
+import { ClaimStatusReconciler } from "./lib/claimStatusReconciler";
 import { SettleReconciler } from "./lib/settleReconciler";
 import { EdDSAKeyProvider } from "@zkscatter/sdk/react";
 import { ChunkReloadGuard } from "@zkscatter/sdk/react";
@@ -59,6 +60,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                       <VaultReconciler />
                       <OrdersProvider>
                         <ClaimReconciler />
+                        <ClaimStatusReconciler />
                         <SettleReconciler />
                         <TradeFormProvider>
                           <ToastProvider>

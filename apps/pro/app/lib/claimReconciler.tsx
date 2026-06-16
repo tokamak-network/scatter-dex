@@ -89,6 +89,13 @@ export function ClaimReconciler() {
       // matching its old material would be spoofed/replayed).
       if (o.status === "claimed" || o.status === "cancelled") continue;
       if (!o.claim?.claimsRoot) continue;
+      // Multi-recipient orders are reconciled per-leaf by
+      // `ClaimStatusReconciler`, which promotes to `claimed` only once EVERY
+      // recipient is spent. This watcher keys on `o.claim` (the first
+      // recipient) and fires `markClaimed` (whole-order), so watching a
+      // multi-recipient order here would prematurely close it on the first
+      // recipient's PrivateClaim. Only single-recipient orders flip wholesale.
+      if (o.claims && o.claims.length > 1) continue;
       out.push({
         rowKey: o.id,
         secret: o.claim.secret,
