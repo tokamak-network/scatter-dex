@@ -18,9 +18,11 @@ import { useActiveNetwork } from "./activeNetwork";
  *  falling back to a direct `claimNullifiers` RPC probe otherwise. That keeps
  *  this off the public RPC's per-leaf path (429s) when the indexer is live.
  *
- *  One-shot per (claims, settlement, chain, indexer). Once resolved, every
- *  probed leaf carries an authoritative true/false; until then the map is empty
- *  and callers fall back to their optimistic local state. */
+ *  One-shot per (claims, settlement, chain, indexer). The map holds only the
+ *  confirmed-spent leaves (`true`); a leaf absent from the map is "not confirmed
+ *  spent" — genuinely unclaimed, or the indexer is behind head / unavailable —
+ *  so callers fall back to their optimistic local state via `get(...) ?? local`.
+ *  Synthesising `false` for absent leaves would wrongly override that fallback. */
 export function useOnChainClaimedLeaves(
   claims: ReadonlyArray<OrderClaim> | undefined,
   settlementAddress: string | undefined,
@@ -75,8 +77,11 @@ export function useOnChainClaimedLeaves(
         sharedOrderbookUrl,
       });
       if (cancelled) return;
-      // Resolved → every probed leaf has an authoritative answer.
-      setSpent(new Map(currentClaims.map((c) => [c.leafIndex, spentSet.has(c.leafIndex)])));
+      // Map the confirmed-spent leaves to `true` only. Absent leaves stay
+      // absent so the consumer's `get(...) ?? local` falls back to optimistic
+      // local state — the resolver can't assert "unspent" (an absent leaf may
+      // just be behind the indexer, or unresolved when no provider answered).
+      setSpent(new Map([...spentSet].map((leafIndex) => [leafIndex, true as const])));
     })();
     return () => {
       cancelled = true;
