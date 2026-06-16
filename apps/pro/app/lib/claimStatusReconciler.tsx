@@ -10,23 +10,26 @@ import { useActiveNetwork } from "./activeNetwork";
 /** How often to reconcile claim status against the chain/indexer. */
 const POLL_INTERVAL_MS = 60_000;
 
-/** Reconciles each claimable order's on-chain claim status into the local
- *  record so the My-orders list/tabs flip to "Claimed" without opening the
- *  drawer.
+/** Reconciles each order's on-chain claim status into the local record so the
+ *  My-orders list/tabs reflect reality without opening the drawer.
  *
- *  It collects the recipient leaves NOT already recorded across ALL claimable
- *  orders and resolves them in one batch (`resolveSpentClaimEntries`,
- *  indexer-first / RPC fallback), then records the confirmed-spent ones per
- *  order via `markLeavesClaimed`. Because that
- *  promotes the order to `claimed` once every leaf is recorded, this is what
- *  drives the list/tab transition. Already-recorded leaves are skipped each
- *  pass, and an order with every leaf recorded is skipped entirely, so a
- *  confirmed leaf is never re-queried — keeping the public RPC / indexer load
- *  minimal.
+ *  Each pass collects EVERY recipient leaf of every non-terminal order with
+ *  claims (status `claimable` or `claimed`) and resolves them in one batch
+ *  (`resolveSpentClaimEntries`, indexer-first / RPC fallback). It then
+ *  reconciles each order to the chain's authoritative confirmed-spent set via
+ *  `reconcileClaimedLeaves` — which both promotes an order to `claimed` once
+ *  every leaf is spent AND self-heals a stale/wrong `claimedLeafIndexes` (a
+ *  leaf an older build wrongly recorded gets dropped, demoting a falsely
+ *  "claimed" order back to `claimable`).
+ *
+ *  It re-queries all leaves each pass (not just uncached) precisely so it can
+ *  detect-and-correct stale data; the indexer answers the whole set in one
+ *  batched request, so the load stays low. `matching` (pre-settle) and
+ *  `cancelled` orders are skipped entirely.
  *
  *  Mounted app-wide (next to `ClaimReconciler`); renders nothing. */
 export function ClaimStatusReconciler(): null {
-  const { orders, markLeavesClaimed } = useOrders();
+  const { orders, reconcileClaimedLeaves } = useOrders();
   const { readProvider } = useWallet();
   const { network } = useActiveNetwork();
   const settlementAddress = network.contracts.privateSettlement;
@@ -38,8 +41,8 @@ export function ClaimStatusReconciler(): null {
   // interval and re-fire a pass on each local edit).
   const ordersRef = useRef<OrderRecord[]>(orders);
   ordersRef.current = orders;
-  const markRef = useRef(markLeavesClaimed);
-  markRef.current = markLeavesClaimed;
+  const reconcileRef = useRef(reconcileClaimedLeaves);
+  reconcileRef.current = reconcileClaimedLeaves;
 
   useEffect(() => {
     // Nothing to resolve against without a settlement, and nothing can answer
@@ -53,10 +56,10 @@ export function ClaimStatusReconciler(): null {
       if (running || cancelled) return; // don't overlap a slow pass / run after teardown
       running = true;
       try {
-        // Collect every not-yet-recorded leaf across all claimable orders into
-        // ONE batch, so the indexer resolves the whole set in a single (paged)
-        // request instead of one per order. An opaque key maps each entry back
-        // to its (order, leaf).
+        // Collect EVERY leaf of every non-terminal order with claims into ONE
+        // batch (not just uncached — re-querying is how stale data is detected
+        // and healed). The indexer answers the whole set in one paged request.
+        // An opaque key maps each entry back to its (order, leaf).
         const entries: {
           key: string;
           secret: bigint;
@@ -64,14 +67,14 @@ export function ClaimStatusReconciler(): null {
           settlementAddress: string;
         }[] = [];
         const keyMap = new Map<string, { orderId: string; leafIndex: number }>();
+        const processedOrders = new Set<string>();
         for (const o of ordersRef.current) {
-          if (o.status !== "claimable") continue;
+          if (o.status !== "claimable" && o.status !== "claimed") continue;
           const claims =
             o.claims && o.claims.length > 0 ? o.claims : o.claim ? [o.claim] : [];
           if (claims.length === 0) continue;
-          const cached = new Set(o.claimedLeafIndexes ?? []);
+          processedOrders.add(o.id);
           for (const c of claims) {
-            if (cached.has(c.leafIndex)) continue; // already recorded → never re-query
             const key = String(entries.length);
             keyMap.set(key, { orderId: o.id, leafIndex: c.leafIndex });
             entries.push({ key, secret: c.secret, leafIndex: c.leafIndex, settlementAddress });
@@ -90,29 +93,31 @@ export function ClaimStatusReconciler(): null {
         } catch {
           return; // transient resolve failure → leave it for the next tick
         }
-        if (cancelled || spentKeys.size === 0) return;
+        if (cancelled) return;
 
-        // Group the confirmed-spent leaves back by order, then record each
-        // order once (markLeavesClaimed promotes to `claimed` when all are in).
-        const byOrder = new Map<string, number[]>();
+        // Group the confirmed-spent leaves back by order.
+        const spentByOrder = new Map<string, number[]>();
         for (const key of spentKeys) {
           const ref = keyMap.get(key);
           if (!ref) continue;
-          const list = byOrder.get(ref.orderId);
+          const list = spentByOrder.get(ref.orderId);
           if (list) list.push(ref.leafIndex);
-          else byOrder.set(ref.orderId, [ref.leafIndex]);
+          else spentByOrder.set(ref.orderId, [ref.leafIndex]);
         }
-        for (const [orderId, leaves] of byOrder) {
+        // Reconcile EVERY processed order to its authoritative spent set —
+        // including those that resolved to zero (so a falsely-"claimed" order
+        // with nothing actually spent is healed back to claimable). The order
+        // may have been cancelled/removed while in flight, so re-check it's
+        // still reconcilable before writing.
+        for (const orderId of processedOrders) {
           if (cancelled) return;
-          // The order may have been cancelled / removed / already claimed while
-          // the batch was in flight — only record against a still-claimable one.
           const cur = ordersRef.current.find((o) => o.id === orderId);
-          if (!cur || cur.status !== "claimable") continue;
-          markRef.current(orderId, leaves);
+          if (!cur || (cur.status !== "claimable" && cur.status !== "claimed")) continue;
+          reconcileRef.current(orderId, spentByOrder.get(orderId) ?? []);
         }
       } catch (err) {
         // Belt-and-suspenders: the batched resolve is already try/caught, but a
-        // stray throw elsewhere in the pass (e.g. a markLeavesClaimed write)
+        // stray throw elsewhere in the pass (e.g. a reconcileClaimedLeaves write)
         // must not surface as an unhandled rejection from the `void tick()`.
         console.warn("[ClaimStatusReconciler] reconcile pass failed", err);
       } finally {

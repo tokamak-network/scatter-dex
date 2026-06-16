@@ -137,20 +137,24 @@ export interface OrderRecord {
   signedBuyWei?: bigint;
 }
 
-/** Pure core of `markLeafClaimed` / `markLeavesClaimed`: fold a batch of
- *  newly-confirmed leaf indices into an order's `claimedLeafIndexes` and
- *  recompute its status. Returns the changed fields, or `null` when nothing
- *  new applies (so the caller can skip the persistence + state write).
+/** Pure core of `reconcileClaimedLeaves`: given the set of leaves the chain has
+ *  confirmed spent for an order, recompute its `claimedLeafIndexes` and status
+ *  **authoritatively**. Returns the changed fields, or `null` when nothing
+ *  changes (so the caller can skip the persistence + state write).
  *
- *  - Only leaves that exist in the order's claims list count; an out-of-range
- *    index is ignored rather than persisted as dead state.
- *  - Already-recorded leaves are deduped, so a re-confirm is a no-op.
- *  - Promotion to `claimed` is intersection-based (every claims-list leaf is
- *    recorded), not length-based, so a stale out-of-range entry can't
- *    false-positive the order to claimed. */
-export function computeClaimedUpdate(
+ *  Authoritative (set, not merge) so it SELF-HEALS: `claimedLeafIndexes`
+ *  becomes exactly the confirmed-spent leaves intersected with the order's
+ *  valid leaves — newly-confirmed leaves are added AND a stale/wrong entry that
+ *  isn't actually spent is dropped. (The previous add-only logic could never
+ *  remove a leaf that an older build had wrongly recorded.)
+ *
+ *  - Only leaves in the order's claims list count; out-of-range is ignored.
+ *  - Status only moves within `claimable`↔`claimed` (every valid leaf spent →
+ *    `claimed`, else `claimable`); `matching` / `cancelled` are left untouched,
+ *    so an in-flight cancel can't be resurrected. */
+export function computeClaimedFromSpent(
   order: Pick<OrderRecord, "claims" | "claim" | "claimedLeafIndexes" | "status">,
-  newLeafIndexes: readonly number[],
+  spentLeafIndexes: readonly number[],
 ): { claimedLeafIndexes: number[]; status: OrderStatus } | null {
   const claimLeafIdxs = (
     order.claims && order.claims.length > 0
@@ -161,23 +165,27 @@ export function computeClaimedUpdate(
   ).map((c) => c.leafIndex);
   if (claimLeafIdxs.length === 0) return null;
   const valid = new Set(claimLeafIdxs);
-  // Normalise the existing list to the valid leaf set, deduped — drops any
-  // stale duplicate / out-of-range leftovers (e.g. from an older schema) so
-  // they don't persist as dead state or skew the x/y progress count.
-  const prior = order.claimedLeafIndexes ?? [];
-  const kept = [...new Set(prior.filter((li) => valid.has(li)))];
-  const already = new Set(kept);
-  // Dedup the incoming batch, then keep only new valid leaves.
-  const additions = [...new Set(newLeafIndexes)].filter((li) => valid.has(li) && !already.has(li));
-  // No new leaves AND the existing list was already clean → nothing to write.
-  if (additions.length === 0 && kept.length === prior.length) return null;
-  const claimedLeafIndexes = [...kept, ...additions].sort((a, b) => a - b);
+  // The claimed set is EXACTLY the confirmed-spent leaves (∩ valid), deduped +
+  // sorted — this is what makes it self-healing.
+  const claimedLeafIndexes = [...new Set(spentLeafIndexes.filter((li) => valid.has(li)))].sort(
+    (a, b) => a - b,
+  );
   const claimedSet = new Set(claimedLeafIndexes);
   const allDone = claimLeafIdxs.every((i) => claimedSet.has(i));
-  // Only a still-`claimable` order promotes to `claimed`. A status that raced
-  // in while a reconcile was in flight (e.g. `cancelled`) must never be
-  // resurrected — record the leaves but leave the status as-is.
-  const status = allDone && order.status === "claimable" ? "claimed" : order.status;
+  const status =
+    order.status === "claimable" || order.status === "claimed"
+      ? allDone
+        ? "claimed"
+        : "claimable"
+      : order.status;
+  // No-op when neither the (normalised) leaf set nor the status changes.
+  const priorNorm = [...new Set((order.claimedLeafIndexes ?? []).filter((li) => valid.has(li)))].sort(
+    (a, b) => a - b,
+  );
+  const sameLeaves =
+    priorNorm.length === claimedLeafIndexes.length &&
+    priorNorm.every((v, i) => v === claimedLeafIndexes[i]);
+  if (sameLeaves && status === order.status) return null;
   return { claimedLeafIndexes, status };
 }
 
@@ -195,17 +203,13 @@ interface OrdersState {
   ): OrderRecord;
   /** Mark an order as claimed. Idempotent. */
   markClaimed(id: string): void;
-  /** Record one recipient's leaf as claimed. Appends to
-   *  `claimedLeafIndexes` (deduped). When every leaf in `claims`
-   *  has been recorded, the order's `status` also promotes to
-   *  `claimed`. Used by the multi-recipient claim drawer so per-
-   *  row progress survives reloads. */
-  markLeafClaimed(id: string, leafIndex: number): void;
-  /** Record a batch of recipient leaves as claimed in one update. Same
-   *  semantics as {@link markLeafClaimed} but safe to call with several leaves
-   *  at once (the single-leaf variant can't be looped — see its note). Used by
-   *  the claim-status reconciler. */
-  markLeavesClaimed(id: string, leafIndexes: readonly number[]): void;
+  /** Reconcile an order's claim state to the chain's authoritative
+   *  confirmed-spent leaf set: `claimedLeafIndexes` becomes exactly those
+   *  leaves (∩ the order's valid leaves), and the status moves within
+   *  `claimable`↔`claimed` (all spent → `claimed`, else `claimable`). This
+   *  ADDS newly-confirmed leaves AND REMOVES any stale/wrong entry that isn't
+   *  actually spent — so it self-heals. Used by the claim-status reconciler. */
+  reconcileClaimedLeaves(id: string, spentLeafIndexes: readonly number[]): void;
   /** Promote a matching order to `claimable` once we've observed
    *  the on-chain `PrivateSettledAuth` (or its relayer-side
    *  reflection). Idempotent; only valid against `matching`. Stamps
@@ -696,33 +700,27 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
     [adapter],
   );
 
-  // Batch core: record a set of newly-confirmed leaves on an order in ONE
-  // update. Calling the single-leaf variant in a loop would be unsafe — each
-  // call reads `ordersRef.current`, which only refreshes on the next render,
-  // so successive synchronous calls would each start from the stale list and
-  // clobber one another. `computeClaimedUpdate` folds the whole batch at once
-  // and promotes to `claimed` when every leaf is recorded.
-  const markLeavesClaimed = useCallback(
-    (id: string, leafIndexes: readonly number[]) => {
+  // Authoritative reconcile: set an order's claimed leaves to exactly the
+  // chain-confirmed spent set (`computeClaimedFromSpent` adds newly-confirmed
+  // AND drops stale/wrong entries, self-healing) in ONE update. Reads
+  // `ordersRef.current` (only refreshed on the next render), so the whole set
+  // must be applied at once — never looped per leaf.
+  const reconcileClaimedLeaves = useCallback(
+    (id: string, spentLeafIndexes: readonly number[]) => {
       const target = ordersRef.current.find((o) => o.id === id);
       if (!target) return;
-      const update = computeClaimedUpdate(target, leafIndexes);
-      if (!update) return; // nothing new → skip the persistence write + churn
+      const update = computeClaimedFromSpent(target, spentLeafIndexes);
+      if (!update) return; // no change → skip the persistence write + churn
       const next: OrderRecord = { ...target, ...update };
       // Persist before the in-memory commit so a folder-write failure surfaces
       // in the console (and gets observed in tests) rather than silently
       // leaving disk behind UI (Gemini review #845).
       adapter.put(next).catch((err) => {
-        console.warn(`[orders.markLeavesClaimed] adapter.put(${id}) failed`, err);
+        console.warn(`[orders.reconcileClaimedLeaves] adapter.put(${id}) failed`, err);
       });
       setOrders((prev) => prev.map((o) => (o.id === id ? next : o)));
     },
     [adapter],
-  );
-
-  const markLeafClaimed = useCallback(
-    (id: string, leafIndex: number) => markLeavesClaimed(id, [leafIndex]),
-    [markLeavesClaimed],
   );
 
   const markCancelled = useCallback(
@@ -779,8 +777,8 @@ export function OrdersProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<OrdersState>(
-    () => ({ orders, loaded, add, markClaimed, markLeafClaimed, markLeavesClaimed, markClaimable, markCancelled, remove }),
-    [orders, loaded, add, markClaimed, markLeafClaimed, markLeavesClaimed, markClaimable, markCancelled, remove],
+    () => ({ orders, loaded, add, markClaimed, reconcileClaimedLeaves, markClaimable, markCancelled, remove }),
+    [orders, loaded, add, markClaimed, reconcileClaimedLeaves, markClaimable, markCancelled, remove],
   );
 
   return <OrdersCtx.Provider value={value}>{children}</OrdersCtx.Provider>;

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from "vitest";
-import { serialize, deserialize, computeClaimedUpdate, type OrderRecord } from "../app/lib/orders";
+import { serialize, deserialize, computeClaimedFromSpent, type OrderRecord } from "../app/lib/orders";
 
 function fixture(overrides: Partial<OrderRecord> = {}): OrderRecord {
   const claim = {
@@ -160,7 +160,7 @@ describe("orders serialize/deserialize", () => {
   });
 });
 
-describe("computeClaimedUpdate", () => {
+describe("computeClaimedFromSpent (authoritative reconcile)", () => {
   function threeLeaf(overrides: Partial<OrderRecord> = {}): OrderRecord {
     return fixture({
       status: "claimable",
@@ -174,51 +174,64 @@ describe("computeClaimedUpdate", () => {
     });
   }
 
-  it("folds a batch of new leaves, deduped + sorted, staying claimable when partial", () => {
-    const upd = computeClaimedUpdate(threeLeaf(), [2, 0]);
+  it("sets the claimed set to the confirmed-spent leaves, deduped + sorted, partial → claimable", () => {
+    const upd = computeClaimedFromSpent(threeLeaf(), [2, 0]);
     expect(upd).toEqual({ claimedLeafIndexes: [0, 2], status: "claimable" });
   });
 
-  it("merges with already-recorded leaves and promotes to claimed once all are in", () => {
-    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0] }), [1, 2]);
+  it("promotes to claimed once every leaf is spent", () => {
+    const upd = computeClaimedFromSpent(threeLeaf({ claimedLeafIndexes: [0] }), [0, 1, 2]);
     expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "claimed" });
   });
 
-  it("never resurrects a non-claimable order — records leaves but keeps the status", () => {
-    // An order cancelled while a reconcile was in flight must not flip to
-    // claimed even when every leaf resolves spent.
-    const upd = computeClaimedUpdate(threeLeaf({ status: "cancelled" }), [0, 1, 2]);
-    expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "cancelled" });
-  });
-
-  it("returns null when nothing new applies (all already recorded)", () => {
-    expect(computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 1] }), [0, 1])).toBeNull();
-  });
-
-  it("ignores leaf indices outside the claims list (no dead state, no false promote)", () => {
-    // 7 isn't a real leaf; recording leaves 0,1,2 promotes, the stray 7 is dropped.
-    const upd = computeClaimedUpdate(threeLeaf(), [0, 1, 2, 7]);
-    expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "claimed" });
-  });
-
-  it("dedups duplicates within a single batch", () => {
-    const upd = computeClaimedUpdate(threeLeaf(), [1, 1]);
+  it("SELF-HEALS: drops a stale leaf the chain doesn't confirm, demoting a falsely-claimed order", () => {
+    // The bug case: an older build wrongly recorded leaf 0 and the order got
+    // promoted to `claimed`, but the chain only confirms leaf 1 spent.
+    const upd = computeClaimedFromSpent(
+      threeLeaf({ status: "claimed", claimedLeafIndexes: [0, 1] }),
+      [1],
+    );
     expect(upd).toEqual({ claimedLeafIndexes: [1], status: "claimable" });
   });
 
-  it("drops stale out-of-range entries from the existing list (no dead state)", () => {
-    // 9 isn't a real leaf; recording nothing new still rewrites the list to
-    // shed it, and the order stays claimable (only leaf 0 is real-and-recorded).
-    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 9] }), []);
-    expect(upd).toEqual({ claimedLeafIndexes: [0], status: "claimable" });
+  it("never touches a non-reconcilable order (matching / cancelled)", () => {
+    // Even if leaves resolve spent, a matching/cancelled order's status is left
+    // as-is (claimed leaves are still recorded for display).
+    expect(computeClaimedFromSpent(threeLeaf({ status: "cancelled" }), [0, 1, 2])).toEqual({
+      claimedLeafIndexes: [0, 1, 2],
+      status: "cancelled",
+    });
+    expect(computeClaimedFromSpent(threeLeaf({ status: "matching" }), [0])).toEqual({
+      claimedLeafIndexes: [0],
+      status: "matching",
+    });
   });
 
-  it("collapses a duplicate already-persisted entry on the next update", () => {
-    const upd = computeClaimedUpdate(threeLeaf({ claimedLeafIndexes: [0, 0] }), []);
-    expect(upd).toEqual({ claimedLeafIndexes: [0], status: "claimable" });
+  it("returns null when the authoritative set + status are unchanged", () => {
+    expect(computeClaimedFromSpent(threeLeaf({ claimedLeafIndexes: [0, 1] }), [0, 1])).toBeNull();
+  });
+
+  it("ignores spent leaves outside the claims list", () => {
+    // 7 isn't a real leaf; only 0,1,2 count → all spent → claimed.
+    const upd = computeClaimedFromSpent(threeLeaf(), [0, 1, 2, 7]);
+    expect(upd).toEqual({ claimedLeafIndexes: [0, 1, 2], status: "claimed" });
+  });
+
+  it("dedups repeated spent leaves", () => {
+    expect(computeClaimedFromSpent(threeLeaf(), [1, 1])).toEqual({
+      claimedLeafIndexes: [1],
+      status: "claimable",
+    });
+  });
+
+  it("normalises away a stale out-of-range / duplicate existing entry", () => {
+    // prior [0,9] with confirmed [0] → 9 (out of range) gone, stays [0].
+    expect(computeClaimedFromSpent(threeLeaf({ claimedLeafIndexes: [0, 9] }), [0])).toBeNull();
+    // prior [0,0] with confirmed [0] → already normalises to [0], no change.
+    expect(computeClaimedFromSpent(threeLeaf({ claimedLeafIndexes: [0, 0] }), [0])).toBeNull();
   });
 
   it("returns null for an order with no claims", () => {
-    expect(computeClaimedUpdate(fixture({ claim: undefined, claims: [] }), [0])).toBeNull();
+    expect(computeClaimedFromSpent(fixture({ claim: undefined, claims: [] }), [0])).toBeNull();
   });
 });
