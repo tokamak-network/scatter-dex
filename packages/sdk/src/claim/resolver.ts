@@ -1,9 +1,5 @@
 import { ethers } from "ethers";
-import {
-  claimNullifierHex,
-  isClaimNullifierSpentOn,
-  settlementReader,
-} from "./claimProbe";
+import { claimNullifierHex, settlementReader } from "./claimProbe";
 import { fetchSpentClaimNullifiers } from "./claimIndexer";
 
 /** A claim leaf to resolve — the secret + its index in the order's claims
@@ -70,26 +66,34 @@ export async function resolveSpentClaimLeaves(
   return new Set();
 }
 
-/** RPC fallback: probe `claimNullifiers` per leaf against one shared contract
- *  (the calls batch into a single round-trip under ethers' auto-batching).
- *  A per-leaf failure is omitted rather than thrown, so a flaky leaf doesn't
- *  sink the whole batch. */
+/** RPC fallback: probe `claimNullifiers` per leaf against one shared contract.
+ *  Computes every nullifier first, then fires the reads together so a
+ *  multicall-batching provider (Pro/Pay pass an `InjectedMulticallProvider`)
+ *  — or ethers' own auto-batching — collapses them into a single round-trip
+ *  instead of staggering each read behind its Poseidon hash. A per-leaf
+ *  failure is treated as "not confirmed spent" so a flaky leaf doesn't sink
+ *  the batch. */
 export async function probeSpentClaimLeaves(
   provider: ethers.Provider,
   settlementAddress: string,
   entries: ReadonlyArray<ClaimLeafRef>,
 ): Promise<Set<number>> {
   const settlement = settlementReader(provider, settlementAddress);
-  const results = await Promise.all(
-    entries.map(async (e) => {
+  const hexes = await Promise.all(
+    entries.map((e) => claimNullifierHex(e.secret, e.leafIndex)),
+  );
+  const spentFlags = await Promise.all(
+    hexes.map(async (h) => {
       try {
-        return (await isClaimNullifierSpentOn(settlement, e.secret, e.leafIndex))
-          ? e.leafIndex
-          : null;
+        return (await settlement.claimNullifiers(h)) as boolean;
       } catch {
-        return null;
+        return false;
       }
     }),
   );
-  return new Set(results.filter((x): x is number => x !== null));
+  const out = new Set<number>();
+  entries.forEach((e, i) => {
+    if (spentFlags[i]) out.add(e.leafIndex);
+  });
+  return out;
 }

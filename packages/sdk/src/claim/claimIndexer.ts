@@ -33,9 +33,20 @@ export async function fetchSpentClaimNullifiers(
     body: JSON.stringify({ chainId: Number(chainId), nullifiers }),
   });
   if (!res.ok) throw new Error(`claim-nullifiers endpoint returned ${res.status}`);
-  const body = (await res.json()) as { spent?: unknown };
+  const body = (await res.json()) as { chainId?: unknown; spent?: unknown };
+  // Guard against a misrouted/cached response for a different chain mixing
+  // spent state across networks. The endpoint echoes the request chainId.
+  if (body.chainId !== undefined && Number(body.chainId) !== Number(chainId)) {
+    throw new Error(
+      `claim-nullifiers endpoint: chainId mismatch (got ${String(body.chainId)}, want ${chainId})`,
+    );
+  }
   if (!Array.isArray(body.spent)) {
     throw new Error("claim-nullifiers endpoint: malformed payload");
   }
-  return new Set((body.spent as string[]).map((n) => n.toLowerCase()));
+  // Defensively keep only string elements before lowercasing — a stray
+  // non-string (schema drift / DB anomaly) would otherwise throw a TypeError.
+  return new Set(
+    body.spent.filter((n): n is string => typeof n === "string").map((n) => n.toLowerCase()),
+  );
 }

@@ -4,8 +4,13 @@ import { computeClaimNullifier, toBytes32Hex } from "../zk/commitment";
 
 /** Canonical claim nullifier hex (0x + 32 bytes, lowercase) for a leaf — the
  *  key both the on-chain `claimNullifiers` mapping and the indexer's
- *  `/api/claim-nullifiers` endpoint are keyed on. */
+ *  `/api/claim-nullifiers` endpoint are keyed on. Validates `leafIndex` up
+ *  front: a negative/fractional index hashes to a nullifier that can never
+ *  match a real leaf, which would read as a silent false negative downstream. */
 export async function claimNullifierHex(secret: bigint, leafIndex: number): Promise<string> {
+  if (!Number.isSafeInteger(leafIndex) || leafIndex < 0) {
+    throw new RangeError(`leafIndex must be a non-negative integer: ${leafIndex}`);
+  }
   return toBytes32Hex(await computeClaimNullifier(secret, BigInt(leafIndex))).toLowerCase();
 }
 
@@ -28,8 +33,9 @@ export async function isClaimNullifierSpentOn(
   secret: bigint,
   leafIndex: number,
 ): Promise<boolean> {
-  const nullifier = await computeClaimNullifier(secret, BigInt(leafIndex));
-  return (await settlement.claimNullifiers(toBytes32Hex(nullifier))) as boolean;
+  // Reuse `claimNullifierHex` so the RPC and indexer paths derive the key
+  // identically (same leafIndex guard + canonical lowercasing).
+  return (await settlement.claimNullifiers(await claimNullifierHex(secret, leafIndex))) as boolean;
 }
 
 /** True when this claim's nullifier is already spent on-chain — i.e. the claim

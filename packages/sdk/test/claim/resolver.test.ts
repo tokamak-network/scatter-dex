@@ -70,6 +70,28 @@ describe("fetchSpentClaimNullifiers", () => {
     const fetchImpl = (async () => new Response(JSON.stringify({ nope: 1 }), { status: 200 })) as unknown as typeof fetch;
     await expect(fetchSpentClaimNullifiers("http://idx", CHAIN, ["0xAA"], { fetchImpl })).rejects.toThrow();
   });
+
+  it("throws when the response echoes a different chainId (misroute guard)", async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ chainId: 1, spent: ["0xAA"] }), { status: 200 })) as unknown as typeof fetch;
+    await expect(fetchSpentClaimNullifiers("http://idx", CHAIN, ["0xAA"], { fetchImpl })).rejects.toThrow(/chainId/);
+  });
+
+  it("drops non-string elements from spent before lowercasing", async () => {
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify({ spent: ["0xAA", 42, null] }), { status: 200 })) as unknown as typeof fetch;
+    const spent = await fetchSpentClaimNullifiers("http://idx", CHAIN, ["0xAA"], { fetchImpl });
+    expect([...spent]).toEqual(["0xaa"]);
+  });
+});
+
+describe("claimNullifierHex guard", () => {
+  it("rejects a negative leafIndex", async () => {
+    await expect(claimNullifierHex(0x1n, -1)).rejects.toThrow(/non-negative/);
+  });
+  it("rejects a fractional leafIndex", async () => {
+    await expect(claimNullifierHex(0x1n, 1.5)).rejects.toThrow(/non-negative/);
+  });
 });
 
 describe("probeSpentClaimLeaves (RPC fallback)", () => {
