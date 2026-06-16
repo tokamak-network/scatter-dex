@@ -1,14 +1,15 @@
 /**
  * [R-7] Admin API — runtime relayer management endpoints.
- * All endpoints require a SIWE session bearer (Authorization: Bearer …),
- * minted by the operator signing a challenge with this relayer's operator
- * wallet. See individual route handlers below for the full endpoint list.
+ * Management endpoints require a SIWE session bearer (Authorization:
+ * Bearer …), minted by the operator signing a challenge with this relayer's
+ * operator wallet. The `/challenge` + `/session` routes are public by
+ * necessity (they bootstrap the bearer). See the handlers below.
  */
 
 import { Router, Request, Response, RequestHandler } from "express";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { adminAuth, setSiweAuth } from "../middleware/admin-auth.js";
+import { adminAuth, setSiweAuth, extractBearerToken } from "../middleware/admin-auth.js";
 import { makeAdminSiweAuth } from "../core/admin-siwe.js";
 import { config, updateRelayerFee } from "../config.js";
 import { getSanctionedPubKeys, getSanctionedCount, addSanctionedPubKey, removeSanctionedPubKey } from "../core/sanctions-list.js";
@@ -114,10 +115,8 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
   // global `adminAuth` so it can read the bearer token directly
   // from the header rather than going through the middleware twice.
   router.post("/session/revoke", (req: Request, res: Response) => {
-    const auth = req.headers.authorization;
-    if (auth?.startsWith("Bearer ")) {
-      siwe.revokeSession(auth.slice("Bearer ".length).trim());
-    }
+    const token = extractBearerToken(req.headers.authorization);
+    if (token) siwe.revokeSession(token);
     res.status(204).end();
   });
 

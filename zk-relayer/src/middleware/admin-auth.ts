@@ -3,6 +3,16 @@ import type { AdminSiweAuth } from "../core/admin-siwe.js";
 
 const BEARER_PREFIX = "Bearer ";
 
+/** Pull the token out of an `Authorization: Bearer <token>` header.
+ *  Returns null when the header is absent or not a (non-empty) bearer, so
+ *  callers handle "no token" and "some token" uniformly. Trims surrounding
+ *  whitespace so a stray space can't slip past `verifySession`. */
+export function extractBearerToken(authHeader: string | undefined): string | null {
+  if (typeof authHeader !== "string" || !authHeader.startsWith(BEARER_PREFIX)) return null;
+  const token = authHeader.slice(BEARER_PREFIX.length).trim();
+  return token || null;
+}
+
 // Process-wide SIWE handle, published by the admin route module at
 // boot. Lives at module scope so sibling route files (vault, etc.)
 // can share the same auth surface via the default `adminAuth` export
@@ -30,17 +40,18 @@ export function buildAdminAuth(siwe: AdminSiweAuth | null): RequestHandler {
       res.status(403).json({ error: "Admin auth is not configured on this relayer" });
       return;
     }
-    const authHeader = req.headers.authorization;
-    if (typeof authHeader === "string" && authHeader.startsWith(BEARER_PREFIX)) {
-      const token = authHeader.slice(BEARER_PREFIX.length).trim();
-      if (token && siwe.verifySession(token) !== null) {
-        next();
-        return;
-      }
+    const token = extractBearerToken(req.headers.authorization);
+    // Distinguish "no credential" from "stale/invalid one" so the client
+    // (and a human with curl) can tell apart "sign in" from "re-sign in".
+    if (token === null) {
+      res.status(401).json({ error: "Bearer session token required" });
+      return;
     }
-    // No valid bearer — the only accepted credential. The UI routes the
-    // operator back to AdminConnectBar to (re-)sign in.
-    res.status(401).json({ error: "Bearer session token required" });
+    if (siwe.verifySession(token) === null) {
+      res.status(401).json({ error: "Invalid or expired session — sign in again" });
+      return;
+    }
+    next();
   };
 }
 

@@ -27,6 +27,9 @@ export const TEST_OPERATOR = new ethers.Wallet(TEST_OPERATOR_PK);
  *  app owns the active session store. */
 export async function siweLogin(app: Express, basePath = "/api/admin"): Promise<string> {
   const ch = await request(app).get(`${basePath}/challenge`);
+  if (ch.status !== 200) {
+    throw new Error(`GET ${basePath}/challenge failed (${ch.status}): ${JSON.stringify(ch.body)}`);
+  }
   const { nonce, message } = ch.body as { nonce: string; message: string };
   const signature = await TEST_OPERATOR.signMessage(message);
   const sess = await request(app)
