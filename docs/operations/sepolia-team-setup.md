@@ -21,9 +21,6 @@ or other config is required.
 2. Clone this repo and `git pull` so you have the latest `contracts/deployments/`
    ledgers.
 
-That's it — **no Sepolia RPC URL is required.** The launch scripts ship a keyless
-public-node default and your transactions go through your wallet.
-
 ## Get test tokens (TON / USDC / USDT)
 
 To trade you need the deployment's whitelisted tokens, not just ETH. **TON,
