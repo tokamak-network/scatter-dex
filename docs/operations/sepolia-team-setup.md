@@ -18,8 +18,18 @@ config is required.
    are signed and sent through your wallet. Depositing and trading also need a
    [zk-X509 verification](#verify-your-wallet-zk-x509).
 
-2. Clone this repo and `git pull` so you have the latest `contracts/deployments/`
-   ledgers.
+2. **Clone this repo** (it's private — use an account with access) and keep it
+   current with `git pull` so you have the latest `contracts/deployments/`
+   ledgers:
+
+   ```bash
+   gh repo clone tokamak-network/scatter-dex   # or: git clone git@github.com:tokamak-network/scatter-dex.git
+   cd scatter-dex
+   ```
+
+3. **Node.js 20+** — check with `node -v`; if it's missing or older, install from
+   <https://nodejs.org> (or via [nvm](https://github.com/nvm-sh/nvm)). The launch
+   scripts install each app's npm dependencies for you, but not Node itself.
 
 ## Get test tokens (TON / USDC / USDT)
 
