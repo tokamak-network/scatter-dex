@@ -249,9 +249,6 @@ automatically. No hand-editing of any `.env.local`.
 
 ## Troubleshooting
 
-- **No RPC key set?** Not an error — both the scatter apps and the zk-X509
-  website fall back to a keyless public node (both launch scripts just print a
-  `NOTE`) and route your transactions through your wallet.
 - **`ledger not found`** — `git pull` to get `contracts/deployments/`.
 - **`zk-X509 frontend not found`** — set `ZK_X509_REPO` to your checkout path.
 - **Notices / CA-guide panel empty** — expected until `ZKX509_BACKEND_URL`
