@@ -77,6 +77,8 @@ machine** — this deployment's Users registry uses local proving
    website](#run-the-zk-x509-management-website)):
 
    ```bash
+   # run from the scatter-dex repo root — run-zkx509-web.sh is a scatter-dex
+   # script; the clone path is absolute, so it doesn't change your directory
    git clone https://github.com/tokamak-network/zk-X509.git "$HOME/src/zk-X509"
    export ZK_X509_REPO="$HOME/src/zk-X509"   # if not at ../zk-X509
    ./scripts/run-zkx509-web.sh sepolia        # → http://localhost:3000
@@ -193,7 +195,9 @@ whole team.
 ## Run the zk-X509 management website
 
 The zk-X509 frontend lives in a **separate repo**. Clone it once, then point the
-launcher at your checkout (`ZK_X509_REPO`, default `../zk-X509`):
+launcher at your checkout (`ZK_X509_REPO`, default `../zk-X509`). Run these
+**from the scatter-dex repo root** — `run-zkx509-web.sh` is a scatter-dex script,
+and the clone path is absolute so it doesn't change your current directory:
 
 ```bash
 git clone https://github.com/tokamak-network/zk-X509.git "$HOME/src/zk-X509"
