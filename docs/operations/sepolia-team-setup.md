@@ -109,10 +109,6 @@ Examples:
 ./scripts/run-scatter-web.sh operators sepolia  # operator / KYC console
 ```
 
-Flags:
-
-- `--no-start` — write `.env.local` only, don't launch the dev server.
-
 The generated `.env.local`:
 
 - **Contract addresses** come from the committed ledger — never hand-edit them.
