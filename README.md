@@ -37,6 +37,9 @@ then trade. The identity website (zk-X509) lives in a
 > 📖 **Team testing guide → [docs/operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md)**
 > — step-by-step setup, getting test tokens, the relayer model, shared-infra URLs,
 > and **how to report bugs / file issues**. Start here.
+>
+> 🗺️ **System architecture & diagram → [docs/operations/sepolia-architecture.md](docs/operations/sepolia-architecture.md)**
+> — how the Sepolia deployment is wired (frontends, VM services, on-chain contracts, external infra).
 
 ---
 
@@ -130,6 +133,7 @@ docs/         Guides, design docs, operations runbooks
 | Topic | Doc |
 |-------|-----|
 | **Team testing on Sepolia** | [operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md) |
+| Sepolia system architecture & diagram | [operations/sepolia-architecture.md](docs/operations/sepolia-architecture.md) |
 | Local development setup | [operations/local-setup.md](docs/operations/local-setup.md) |
 | Running a relayer | [operations/running-a-relayer.md](docs/operations/running-a-relayer.md) |
 | Registering a relayer (KYC) | [operations/registering-a-relayer.md](docs/operations/registering-a-relayer.md) |
