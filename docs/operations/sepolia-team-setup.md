@@ -290,6 +290,6 @@ Please include, so it's reproducible:
   red errors; note the failing request URL if it's a relayer/orderbook call.
 - **Your commit:** `git rev-parse --short HEAD` (so we know which build you ran).
 
-> Security-sensitive findings (fund loss, proof bypass, key exposure) — do **not**
-> open a public issue. Email **security@tokamak.network** privately instead (a
-> PGP key is available; see `docs/cex-compliance/SECURITY-AND-AUDIT.md`).
+> While the repo is private, file everything — including security-sensitive
+> findings (fund loss, proof bypass, key exposure) — as a normal issue; flag it
+> as security in the title so it's triaged first.
