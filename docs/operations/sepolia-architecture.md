@@ -26,12 +26,13 @@ flowchart TB
     IDX2["settlement-verifier<br/>(watches PrivateSettledAuth)"]
     IDX3["claim-indexer<br/>(scans PrivateClaim)"]
     REL["zk-relayer :3002 (per-operator, optional)<br/>Express + SQLite · holds operator key<br/>async SettlementWorker · SIWE admin"]
-    DB[("SQLite<br/>shared-orderbook.db / zk-relayer.db")]
+    DB_OB[("SQLite<br/>shared-orderbook.db")]
+    DB_REL[("SQLite<br/>zk-relayer.db")]
   end
 
   subgraph Chain["⛓️ Sepolia contracts (deploy block 11008264)"]
     CP["CommitmentPool"]
-    PS["PrivateSettlement<br/>(authorize / claimGasless)"]
+    PS["PrivateSettlement<br/>(settleAuth / claimWithProof)"]
     IG["IdentityGate (zk-X509 dual-CA)"]
     REG["RelayerRegistry / FeeVault / Treasury"]
     VER["Groth16 verifiers<br/>(deposit/withdraw/claim/authorize/cancel)"]
@@ -47,8 +48,8 @@ flowchart TB
   Client -->|public RPC eth_call fallback| EXT
   Client -->|fetch .wasm/.zkey| EXT
   OB --- IDX1 & IDX2 & IDX3
-  OB --- DB
-  REL --- DB
+  OB --- DB_OB
+  REL --- DB_REL
   REL -->|shared orderbook match| OB
   IDX1 & IDX2 & IDX3 -->|event scan| EXT
   REL -->|submit tx| EXT
@@ -78,10 +79,10 @@ flowchart TB
         │  zk-relayer :3002 (per-operator, optional)                    │   └─────────┬─────────┘
         │   Express+SQLite · operator key · async SettlementWorker · SIWE│             │ event scan
         └───────────────────────────────┬───────────────────────────────┘             │ + submit tx
-                              submit tx  │  <───── relayer match ─────                  │
-                                         v                                              v
+                              submit tx  │   (zk-relayer matches against orderbook, both │
+                                         v    inside the VM)                            v
         ┌──────────────────────── SEPOLIA contracts (deploy block 11008264) ───────────────────┐
-        │ CommitmentPool · PrivateSettlement(authorize/claimGasless) · IdentityGate(zk-X509)    │
+        │ CommitmentPool · PrivateSettlement(settleAuth/claimWithProof) · IdentityGate(zk-X509) │
         │ RelayerRegistry/FeeVault/Treasury · Groth16 verifiers · zk-X509 registries (User/Relayer-CA)│
         │ Token whitelist: ETH/WETH · USDC · USDT · TON                                          │
         └───────────────────────────────────────────────────────────────────────────────────────┘
@@ -95,12 +96,13 @@ flowchart TB
 
 | App | Port | Stack | Purpose |
 |-----|------|-------|---------|
-| hub | 4006 | Next.js (Node ≥20) | Navigation hub linking all apps |
+| hub | 4006 | Next.js | Navigation hub linking all apps |
 | pay | 4001 | Next.js | Private bulk payouts (companies/DAOs) |
 | pro | 4003 | Next.js | Private OTC trading (limit orders) |
 | operators | 4004 | Next.js | Relayer-operator dashboard |
 | admin | 4005 | Next.js | Protocol admin console |
 
+- **Runtime**: all apps need Node.js 20+ (see the team setup [prerequisites](./sepolia-team-setup.md#one-time-prerequisites)).
 - **Proving**: Groth16 in-browser via `.wasm` + `.zkey` fetched from the GCS manifest (sha256-verified).
 - **Config**: `.env.local` generated from `contracts/deployments/11155111.json`; reads via public RPC by default.
 
@@ -109,9 +111,9 @@ flowchart TB
 | Service | Port | Stack | Storage | Notes |
 |---------|------|-------|---------|-------|
 | shared-orderbook | 4000 | Node 20-slim · Express 4 · ethers 6 · better-sqlite3 · express-rate-limit | SQLite `shared-orderbook.db` | Canonical order/settlement ledger + indexer hub; SIWE admin |
-| commitment-indexer | — | same image (alt entrypoint) | shared DB | Scans `CommitmentInserted` → serves `/api/commitments` |
+| commitment-indexer | — | same image (alt entrypoint) | shared DB | Scans `CommitmentInserted` → shared DB (served by shared-orderbook as `/api/commitments`) |
 | settlement-verifier | — | same image | shared DB | Watches `PrivateSettledAuth`, flips `verified=1` |
-| claim-indexer | — | same image | shared DB | Scans `PrivateClaim` → serves `/api/claim-nullifiers` |
+| claim-indexer | — | same image | shared DB | Scans `PrivateClaim` → shared DB (served by shared-orderbook as `/api/claim-nullifiers`) |
 | zk-relayer | 3002 | Node 20-slim · Express 4 · ethers 6 · better-sqlite3 | SQLite `zk-relayer.db` | Per-operator, optional (relayer compose profile); holds operator key; async `SettlementWorker` (202 Accepted → settle later); SIWE admin bound to operator wallet |
 
 - **Live Sepolia box**: `http://136.115.115.93:4000` (shared-orderbook).
