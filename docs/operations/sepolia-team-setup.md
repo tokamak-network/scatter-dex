@@ -83,6 +83,11 @@ machine** — this deployment's Users registry uses local proving
 5. **Confirm** — once the tx is mined, `IdentityRegistry.isVerified(yourWallet)`
    is `true`. You can now deposit and trade in the scatter apps.
 
+> **If registration fails because your certificate's CA isn't registered:** the
+> registry only accepts certificates whose issuing CA has been added to it (via
+> `addCA`). If your CA isn't registered yet, verification is rejected — **ask in
+> the team channel to have your issuing CA registered**, then retry step 4.
+
 ## Run a scatter frontend
 
 ```bash
@@ -257,7 +262,9 @@ automatically. No hand-editing of any `.env.local`.
   verified yet. Complete [Verify your wallet](#verify-your-wallet-zk-x509) first.
 - **Wallet `verify` fails** — run the verify flow from the zk-X509 **desktop
   app** (the web page alone doesn't generate proofs) and from the **same wallet**
-  you trade with. See [Verify your wallet](#verify-your-wallet-zk-x509).
+  you trade with. If it's rejected because your certificate's **CA isn't
+  registered**, ask in the team channel to have it added (`addCA`), then retry.
+  See [Verify your wallet](#verify-your-wallet-zk-x509).
 
 ## Reporting bugs and filing issues
 
