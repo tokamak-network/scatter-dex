@@ -4,9 +4,9 @@ Run the zkScatter frontends and the zk-X509 management website against the
 **live Sepolia (chainId 11155111)** deployment, so the whole team sees the same
 contracts. You clone the repo and run a launch script — it wires everything from
 the committed address ledgers. **You need a browser wallet on Sepolia and a
-one-time zk-X509 identity verification** — this deployment gates deposits and
-trades on it (see [Verify your wallet](#verify-your-wallet-zk-x509)). No RPC key
-or other config is required.
+zk-X509 identity verification** — this deployment gates deposits and trades on it
+(see [Verify your wallet](#verify-your-wallet-zk-x509)). No RPC key or other
+config is required.
 
 > zk-X509 core (circuits / contracts / lib) is never modified — these scripts
 > only generate gitignored `.env.local` config and start dev servers.
@@ -16,7 +16,7 @@ or other config is required.
 1. **A browser wallet** (MetaMask etc.) on the Sepolia network with a little test
    ETH for any on-chain action (deposits, `addCA`, registration) — transactions
    are signed and sent through your wallet. Depositing and trading also need a
-   one-time [zk-X509 verification](#verify-your-wallet-zk-x509).
+   [zk-X509 verification](#verify-your-wallet-zk-x509).
 
 2. Clone this repo and `git pull` so you have the latest `contracts/deployments/`
    ledgers.
@@ -51,11 +51,13 @@ they show up and are usable in the apps right away.
 
 ## Verify your wallet (zk-X509)
 
-**Do this once before depositing or trading.** This deployment gates deposits and
-trades on a zk-X509 identity check: `CommitmentPool` and `PrivateSettlement` only
-accept actions from a wallet that is `isVerified` in the on-chain
-`IdentityRegistry`. Until you verify, a deposit reverts with
-`NotIdentityVerified`.
+**Do this before depositing or trading** (and again if your certificate expires —
+`isVerified` reflects *current*, non-expired status). This deployment gates
+deposits and trades on a zk-X509 identity check against the on-chain
+`IdentityRegistry`: the acting wallet must be `isVerified`, **and so must the
+recipient** of a withdrawal or private claim (`CommitmentPool` checks both caller
+and recipient; `PrivateSettlement` checks the claim recipient). Until you verify,
+a deposit reverts with `NotIdentityVerified`.
 
 Verification is **self-service** and the ZK proof is generated **locally on your
 machine** — this deployment's Users registry uses local proving
