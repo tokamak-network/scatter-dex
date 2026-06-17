@@ -3,8 +3,10 @@
 Run the zkScatter frontends and the zk-X509 management website against the
 **live Sepolia (chainId 11155111)** deployment, so the whole team sees the same
 contracts. You clone the repo and run a launch script — it wires everything from
-the committed address ledgers. **All you need is a browser wallet on Sepolia**;
-no RPC key or other config required.
+the committed address ledgers. **You need a browser wallet on Sepolia and a
+zk-X509 identity verification** — this deployment gates deposits and trades on it
+(see [Verify your wallet](#verify-your-wallet-zk-x509)). No RPC key or other
+config is required.
 
 > zk-X509 core (circuits / contracts / lib) is never modified — these scripts
 > only generate gitignored `.env.local` config and start dev servers.
@@ -12,15 +14,12 @@ no RPC key or other config required.
 ## One-time prerequisites
 
 1. **A browser wallet** (MetaMask etc.) on the Sepolia network with a little test
-   ETH for any on-chain action (deposits, `addCA`, registration). **This is the
-   only hard requirement** — transactions are signed and sent through your wallet.
+   ETH for any on-chain action (deposits, `addCA`, registration) — transactions
+   are signed and sent through your wallet. Depositing and trading also need a
+   [zk-X509 verification](#verify-your-wallet-zk-x509).
 
 2. Clone this repo and `git pull` so you have the latest `contracts/deployments/`
    ledgers.
-
-That's it — **no Sepolia RPC URL is required.** The launch scripts ship a keyless
-public-node default and your transactions go through your wallet. (Setting your
-own key is purely optional — see [RPC: read-only & optional](#rpc-read-only--optional).)
 
 ## Get test tokens (TON / USDC / USDT)
 
@@ -50,6 +49,47 @@ they show up and are usable in the apps right away.
 > The addresses above are the live on-chain whitelist; add them to MetaMask as
 > custom tokens if they don't show up automatically.
 
+## Verify your wallet (zk-X509)
+
+**Do this before depositing or trading** (and again if your certificate expires —
+`isVerified` reflects *current*, non-expired status). This deployment gates
+deposits and trades on a zk-X509 identity check against the on-chain
+`IdentityRegistry`: the acting wallet must be `isVerified`, **and so must the
+recipient** of a withdrawal or private claim (`CommitmentPool` checks both caller
+and recipient; `PrivateSettlement` checks the claim recipient). Until you verify,
+a deposit reverts with `NotIdentityVerified`.
+
+Verification is **self-service** and the ZK proof is generated **locally on your
+machine** — this deployment's Users registry uses local proving
+(`delegatedProvingRequired = false`), so no server-side prover is involved.
+
+1. **Start the zk-X509 website** (full details in [Run the zk-X509 management
+   website](#run-the-zk-x509-management-website)):
+
+   ```bash
+   git clone https://github.com/tokamak-network/zk-X509.git "$HOME/src/zk-X509"
+   export ZK_X509_REPO="$HOME/src/zk-X509"   # if not at ../zk-X509
+   ./scripts/run-zkx509-web.sh sepolia        # → http://localhost:3000
+   ```
+
+2. **Install the desktop app** — open the site's **Download** page and install
+   the zk-X509 app (macOS `.dmg` / Windows). Signed installers are pending Apple
+   notarization, so a build-from-source fallback is documented there too.
+
+3. **Issue your certificate** in the desktop app.
+
+4. **Register** — on the website open the **Users** registry → **Register** tab
+   and follow the steps. The desktop app builds the ZK proof locally and submits
+   it to the `IdentityRegistry` from your wallet.
+
+5. **Confirm** — once the tx is mined, `IdentityRegistry.isVerified(yourWallet)`
+   is `true`. You can now deposit and trade in the scatter apps.
+
+> **If registration fails because your certificate's CA isn't registered:** the
+> registry only accepts certificates whose issuing CA has been added to it (via
+> `addCA`). If your CA isn't registered yet, verification is rejected — **ask in
+> the team channel to have your issuing CA registered**, then retry step 4.
+
 ## Run a scatter frontend
 
 ```bash
@@ -76,15 +116,11 @@ Examples:
 ./scripts/run-scatter-web.sh operators sepolia  # operator / KYC console
 ```
 
-Flags:
-
-- `--no-start` — write `.env.local` only, don't launch the dev server.
-
 The generated `.env.local`:
 
 - **Contract addresses** come from the committed ledger — never hand-edit them.
-- **`NEXT_PUBLIC_RPC_URL`** is your `SEPOLIA_RPC_URL` if set, else the keyless
-  public-node default.
+- **`NEXT_PUBLIC_RPC_URL`** is a keyless public-node default, used for reads
+  only — your transactions always go through your wallet.
 - **Shared orderbook** defaults to the live central box
   `http://136.115.115.93:4000` (static-reserved IP). Override with
   `SCATTER_ORDERBOOK_URL` if needed.
@@ -97,29 +133,12 @@ Optional overrides (export before running):
 |--------------------------|------------------------------------------|-----------------------------|
 | `SCATTER_ORDERBOOK_URL`  | central shared orderbook                 | `http://136.115.115.93:4000`|
 | `ZKX509_WEB_URL`         | zk-X509 CA-registration website          | `http://localhost:3000`     |
-| `ZK_RELAYER_URL`         | dev **seed/fallback** relayer (see below)| `http://localhost:3002`     |
 
-### Relayers are discovered, not hard-coded
-
-You do **not** pick a relayer with an env var. The apps load the list of live
-relayers at runtime from the **on-chain `RelayerRegistry`** (each registered
-relayer's `url` + `name`), probe each one's `/api/info` for liveness, and show
-them in a **relayer selector** in the UI. The first online relayer is
-auto-selected; you can switch in the dropdown. Order submission and gasless
-claims then go to **the relayer you selected** — not to a fixed URL.
-
-- `ZK_RELAYER_URL` / `NEXT_PUBLIC_ZK_RELAYER_URL` is only a **dev seed/fallback**
-  (used by the local stack and as a last resort if discovery returns nothing).
-  Leave it at the default for Sepolia — discovery takes over.
-- Implementation: `packages/sdk/src/react/relayersProvider.tsx` (registry load +
-  auto-select), `apps/pro/app/lib/relayers.tsx` (selector wired to
-  `relayerRegistry`), `shared-orderbook` `GET /api/relayers` (display list).
-
-So which relayers you see depends on **who has registered on-chain** — not on a
-URL in this doc. Right now exactly one relayer is registered (**bot-1**, below),
-so it's the only choice; as teammates stand up their own (see [Run your own
-relayer](#run-your-own-relayer-optional)) they appear in the selector
-automatically.
+The apps show a **relayer selector** in the UI, populated from the on-chain
+`RelayerRegistry`; the first online relayer is auto-selected and you can switch in
+the dropdown. Right now exactly one relayer is registered (**bot-1**, below), so
+it's the only choice — teammates who [run their own](#run-your-own-relayer-optional)
+appear automatically.
 
 ### Live shared infrastructure
 
@@ -161,21 +180,6 @@ auto-registers and heartbeats with the shared orderbook, and — because it's in
 the on-chain `RelayerRegistry` — appears in the apps' relayer selector for the
 whole team.
 
-### RPC: read-only & optional
-
-Your transactions are always signed and sent through **MetaMask**. For the
-scatter apps the public-node default (`ethereum-sepolia.publicnode.com`) is used
-only as a *read* endpoint: (a) showing on-chain data **before** you connect a
-wallet, (b) falling back when your wallet is on the **wrong network**, and (c) the
-write **gas pre-flight** (kept off MetaMask's throttled node — see PR #957). So
-`SEPOLIA_RPC_URL` is optional; set it only for a more reliable keyed read
-endpoint. It's injected into `NEXT_PUBLIC_*` and **exposed in the browser**, so
-use your *own* key, never a shared one:
-
-```bash
-export SEPOLIA_RPC_URL="https://eth-sepolia.g.alchemy.com/v2/<your-key>"
-```
-
 ## Run the zk-X509 management website
 
 The zk-X509 frontend lives in a **separate repo**. Clone it once, then point the
@@ -194,10 +198,8 @@ It reads the zk-X509 repo's own ledger
 
 **No RPC key needed here.** Unlike the scatter apps, the zk-X509 frontend routes
 **all** node access — reads *and* writes — through your connected wallet
-(`lib/useReadProvider.ts`); it never uses `NEXT_PUBLIC_RPC_URL` to talk to the
-chain. So `SEPOLIA_RPC_URL` is **optional** for this script: leave it unset and a
-keyless public-node default is written for display/reference only. Set your own
-key only if you want it shown on the dashboard.
+(`lib/useReadProvider.ts`); it never uses a configured RPC endpoint to talk to
+the chain.
 
 On the dashboard you should see the two registries created through our
 RegistryFactory (Users + Relayers). Their addresses live in the zk-X509 repo
@@ -223,9 +225,12 @@ Flags:
   unless you pass `--with-local-backend`. Set `ZKX509_BACKEND_URL` to point at
   the central host once it's live; until then only the notices / CA-guide panels
   are affected.
-- **Prover is not deployed.** Wallet **`verify`** (zk-proof submission) is
-  therefore unavailable. On-chain read/write (browse, `addCA`) still works with
-  a wallet.
+- **Identity proofs are generated locally, not by a server.** The Users registry
+  uses local proving (`delegatedProvingRequired = false`), so the **zk-X509
+  desktop app** builds the ZK proof on your machine — no server-side prover is
+  deployed or needed. The web frontend itself doesn't generate proofs; it
+  orchestrates browse / `addCA` / registration. To verify your wallet, follow
+  [Verify your wallet](#verify-your-wallet-zk-x509).
 
 ## Sepolia addresses
 
@@ -251,15 +256,17 @@ automatically. No hand-editing of any `.env.local`.
 
 ## Troubleshooting
 
-- **No RPC key set?** Not an error — `SEPOLIA_RPC_URL` is optional everywhere.
-  Both the scatter apps and the zk-X509 website fall back to a keyless public node
-  (both launch scripts just print a `NOTE`) and route your transactions through
-  your wallet.
 - **`ledger not found`** — `git pull` to get `contracts/deployments/`.
 - **`zk-X509 frontend not found`** — set `ZK_X509_REPO` to your checkout path.
 - **Notices / CA-guide panel empty** — expected until `ZKX509_BACKEND_URL`
   points at the central backend; on-chain features are unaffected.
-- **Wallet `verify` fails** — expected; the prover is not deployed yet.
+- **Deposit reverts with `NotIdentityVerified`** — your wallet isn't zk-X509
+  verified yet. Complete [Verify your wallet](#verify-your-wallet-zk-x509) first.
+- **Wallet `verify` fails** — run the verify flow from the zk-X509 **desktop
+  app** (the web page alone doesn't generate proofs) and from the **same wallet**
+  you trade with. If it's rejected because your certificate's **CA isn't
+  registered**, ask in the team channel to have it added (`addCA`), then retry.
+  See [Verify your wallet](#verify-your-wallet-zk-x509).
 
 ## Reporting bugs and filing issues
 
@@ -285,6 +292,6 @@ Please include, so it's reproducible:
   red errors; note the failing request URL if it's a relayer/orderbook call.
 - **Your commit:** `git rev-parse --short HEAD` (so we know which build you ran).
 
-> Security-sensitive findings (fund loss, proof bypass, key exposure) — do **not**
-> open a public issue. Email **security@tokamak.network** privately instead (a
-> PGP key is available; see `docs/cex-compliance/SECURITY-AND-AUDIT.md`).
+> While the repo is private, file everything — including security-sensitive
+> findings (fund loss, proof bypass, key exposure) — as a normal issue; flag it
+> as security in the title so it's triaged first.
