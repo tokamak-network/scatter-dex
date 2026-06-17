@@ -21,6 +21,12 @@ config is required.
 2. Clone this repo and `git pull` so you have the latest `contracts/deployments/`
    ledgers.
 
+3. **Node.js 20+** installed. The launch scripts auto-install each app's npm
+   dependencies on first run (no `npm install` or build step needed), but they do
+   **not** install Node itself. On Apple Silicon use a **native arm64** build
+   (`nvm install 22 && nvm use 22` works) — an x64 Node under Rosetta crashes
+   Next.js/Turbopack.
+
 ## Get test tokens (TON / USDC / USDT)
 
 To trade you need the deployment's whitelisted tokens, not just ETH. **TON,
