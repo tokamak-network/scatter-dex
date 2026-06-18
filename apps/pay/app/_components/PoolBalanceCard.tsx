@@ -134,6 +134,10 @@ export function PoolBalanceCard() {
         // nor real pending. Drop it entirely, mirroring Pro's hidden
         // `discarded` notes.
         if (discardedNoteIds.has(n.id)) continue;
+        // Phantom deposit (its tx reverted → commitment never inserted).
+        // No funds escrowed and it can never reconcile, so drop it
+        // instead of showing it as Pending forever.
+        if (n.status === "failed") continue;
         // `n.symbol` is the source of truth in the vault; the
         // whitelist key matches it for tokens we care about.
         let b = bucketBySymbol.get(n.symbol);

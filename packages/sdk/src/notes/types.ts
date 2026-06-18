@@ -25,6 +25,17 @@ export interface StoredNote {
   /** On-chain leaf index. `-1` when the deposit's
    *  `CommitmentInserted` event hasn't been reconciled yet. */
   leafIndex: number;
+  /** Set to `"failed"` once the deposit transaction is proven to have
+   *  NOT landed on-chain — i.e. its receipt reverted (`status === 0`).
+   *  Such a note's commitment was never inserted, so it can never
+   *  reconcile to a leaf and no funds were escrowed for it; the UI
+   *  filters it out instead of showing it as Pending forever. Only set
+   *  on a *reverted* receipt — a merely-not-yet-mined or successfully-
+   *  mined-but-unindexed deposit is left untouched (deleting those
+   *  could strand a real, recoverable note). */
+  status?: "failed";
+  /** When `status` was set (ms epoch). */
+  failedAt?: number;
   /** Deposit transaction hash, when known. */
   txHash?: string;
   /** Chain id this note belongs to — apps should only show notes for

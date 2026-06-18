@@ -33,6 +33,13 @@ export interface VaultState {
    *  IDB writes and no re-render; otherwise persists via
    *  `adapter.put` and triggers one re-render of vault consumers. */
   setLeafIndex(id: string, leafIndex: number): Promise<void>;
+  /** Flag a note as a failed/phantom deposit (its tx reverted, so the
+   *  commitment was never inserted). Persisted so the verdict survives
+   *  reloads; the UI then filters it out instead of showing it as
+   *  Pending forever. Idempotent: a note already `"failed"` is a no-op.
+   *  Like `setLeafIndex`, guarded against the removed/chain-switch
+   *  races so a stale write can't resurrect or cross-write a note. */
+  markFailed(id: string): Promise<void>;
 }
 
 export interface CreateVaultProviderOpts {
@@ -256,9 +263,32 @@ export function createVaultProvider(
       [adapter],
     );
 
+    const markFailed = useCallback(
+      async (id: string) => {
+        const startGen = generationRef.current;
+        if (removedIdsRef.current.has(id)) return;
+        const target = notesRef.current.find((n) => n.id === id);
+        if (!target || target.status === "failed") return;
+        const next: VaultNote = { ...target, status: "failed", failedAt: Date.now() };
+        await adapter.put(next);
+        if (generationRef.current !== startGen) return;
+        if (
+          removedIdsRef.current.has(id) ||
+          !notesRef.current.some((n) => n.id === id)
+        ) {
+          await adapter.remove(id);
+          return;
+        }
+        setNotes((prev) =>
+          prev.some((n) => n.id === id) ? prev.map((n) => (n.id === id ? next : n)) : prev,
+        );
+      },
+      [adapter],
+    );
+
     const value = useMemo<VaultState>(
-      () => ({ notes, loaded, add, remove, setLeafIndex }),
-      [notes, loaded, add, remove, setLeafIndex],
+      () => ({ notes, loaded, add, remove, setLeafIndex, markFailed }),
+      [notes, loaded, add, remove, setLeafIndex, markFailed],
     );
 
     return <VaultCtx.Provider value={value}>{children}</VaultCtx.Provider>;

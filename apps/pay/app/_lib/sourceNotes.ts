@@ -17,6 +17,9 @@ export function summarizeBalance(
   let pendingRaw = 0n;
   for (const n of notes) {
     if (tokenBigIntToAddress(n.note.token) !== tokenLower) continue;
+    // Phantom deposits (reverted tx, never inserted) carry no balance —
+    // exclude them so they don't inflate the pending total forever.
+    if (n.status === "failed") continue;
     if (n.leafIndex >= 0) availableRaw += n.note.amount;
     else pendingRaw += n.note.amount;
   }
@@ -38,12 +41,19 @@ export const DEPOSIT_CONFIRMING_WINDOW_MS = 10 * 60_000;
  *  deposits (the bug a naive `pendingRaw > 0` check would introduce).
  *  Callers pass the token-filtered notes + `Date.now()`. */
 export function hasConfirmingDeposit(
-  tokenNotes: readonly { leafIndex: number; createdAt: number }[],
+  tokenNotes: readonly {
+    leafIndex: number;
+    createdAt: number;
+    status?: "failed";
+  }[],
   nowMs: number,
   windowMs: number = DEPOSIT_CONFIRMING_WINDOW_MS,
 ): boolean {
   return tokenNotes.some(
-    (n) => n.leafIndex < 0 && nowMs - n.createdAt < windowMs,
+    (n) =>
+      n.status !== "failed" &&
+      n.leafIndex < 0 &&
+      nowMs - n.createdAt < windowMs,
   );
 }
 

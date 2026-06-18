@@ -1210,7 +1210,11 @@ function NewPayout() {
   const tokenNotes = useMemo<VaultNote[]>(() => {
     if (!tokenAddress) return [];
     return notes.filter(
-      (n) => tokenBigIntToAddress(n.note.token).toLowerCase() === tokenAddress,
+      (n) =>
+        // Drop phantom deposits (reverted tx → never inserted) so they
+        // don't show up as spendable/pending notes for the run.
+        n.status !== "failed" &&
+        tokenBigIntToAddress(n.note.token).toLowerCase() === tokenAddress,
     );
   }, [notes, tokenAddress]);
   const autoSourcePick = useMemo<SourceNotesPick>(
