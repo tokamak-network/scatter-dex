@@ -41,6 +41,11 @@ function rowStatusLabel(e: ClaimInboxEntry, nowSec: number | undefined): string 
   return nowSec >= Number(BigInt(e.pkg.releaseTime)) ? "Claimable" : "Locked";
 }
 
+/** Single label for the untitled-run bucket — used for both the rail
+ *  group title and the per-row run fallback so the same bucket never
+ *  shows two different names. Korean per product request. */
+const UNTITLED_RUN_LABEL = "기타";
+
 /** Pro counterpart of Pay's /inbox. Same SDK storage layer
  *  (`@zkscatter/sdk/storage/claimInbox`) so a claim package generated
  *  by either app round-trips identically: the recipient pastes the
@@ -101,23 +106,27 @@ export default function ClaimsPage() {
   // Grouped-by-run-title view — mirrors Pay's /inbox (shared
   // `groupClaimInbox` helper) so the two apps stay in lock-step.
   const groups = useMemo(() => groupClaimInbox(entries), [entries]);
-  /** User toggles override the default; the default itself is derived
-   *  (fully-claimed groups start collapsed) so it stays correct as
-   *  statuses flip without an effect re-seeding state. */
-  const [collapsedOverride, setCollapsedOverride] = useState<
-    Record<string, boolean>
-  >({});
-  const isGroupCollapsed = (g: ClaimInboxGroup): boolean =>
-    collapsedOverride[g.key] ?? g.entries.every((e) => e.status === "claimed");
-  // Derive the current value from the updater's own snapshot — reading
-  // the render-scope `collapsedOverride` here could drop a toggle when
-  // React batches rapid clicks (bot review on PR #1010).
-  const toggleGroup = (g: ClaimInboxGroup) =>
-    setCollapsedOverride((s) => {
-      const collapsed =
-        s[g.key] ?? g.entries.every((e) => e.status === "claimed");
-      return { ...s, [g.key]: !collapsed };
-    });
+  // Two-pane master/detail (mirrors Pay's /inbox): the left rail lists
+  // each run (건); clicking one shows its received claims on the right.
+  // `selectedKey` falls back to the first group when unset or when the
+  // selected run disappears (claimed-away/removed), so the detail pane is
+  // never blank while runs exist. Untitled packages share the
+  // `groupClaimInbox` "untitled" bucket, surfaced as "기타".
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const effectiveKey =
+    selectedKey && groups.some((g) => g.key === selectedKey)
+      ? selectedKey
+      : (groups[0]?.key ?? null);
+  const selectedGroup =
+    groups.find((g) => g.key === effectiveKey) ?? groups[0] ?? null;
+  const groupTitle = (g: ClaimInboxGroup): string => g.label ?? UNTITLED_RUN_LABEL;
+  // Drop a stale selection once its run disappears (claimed-away /
+  // removed) so a later-reappearing run can't resurrect the old pick.
+  useEffect(() => {
+    if (selectedKey && !groups.some((g) => g.key === selectedKey)) {
+      setSelectedKey(null);
+    }
+  }, [groups, selectedKey]);
 
   const refresh = useCallback(async () => {
     if (!folder.currentId) {
@@ -322,7 +331,7 @@ export default function ClaimsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       <header className="space-y-1">
         <h1 className="text-2xl font-semibold">Claims</h1>
         <p className="text-sm text-[var(--color-text-muted)]">
@@ -408,7 +417,7 @@ export default function ClaimsPage() {
                           </div>
                           <div className="text-xs text-[var(--color-text-muted)]">
                             From {e.pkg.senderLabel ?? "unknown sender"} ·{" "}
-                            {e.pkg.runLabel?.trim() || "Private payout"}
+                            {e.pkg.runLabel?.trim() || UNTITLED_RUN_LABEL}
                           </div>
                           <div className="text-xs text-[var(--color-text-muted)]">
                             To <span className="font-mono">{shortAddr(e.pkg.recipient)}</span>
@@ -454,51 +463,70 @@ export default function ClaimsPage() {
                   );
                 };
 
-                // A single bucket (e.g. only untitled link-saves) keeps
-                // the flat list — a lone group header would be noise.
-                if (groups.length === 1) {
-                  return (
-                    <ul className="space-y-2">{groups[0].entries.map(renderRow)}</ul>
-                  );
-                }
+                // Two-pane master/detail: run rail (left) → selected
+                // run's claims (right). Stacks to one column below `md`.
                 return (
-                  <div className="space-y-3">
-                    {groups.map((g) => {
-                      const collapsed = isGroupCollapsed(g);
-                      const claimable = g.entries.filter(
-                        (e) => rowStatusLabel(e, nowSec) === "Claimable",
-                      ).length;
-                      const claimed = g.entries.filter(
-                        (e) => e.status === "claimed",
-                      ).length;
-                      return (
-                        <section key={g.key}>
+                  <div className="grid items-start gap-4 md:grid-cols-[16rem_1fr]">
+                    <nav className="md:sticky md:top-4">
+                      <div className="px-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
+                        Runs ({groups.length})
+                      </div>
+                      {/* Cap the rail and let it scroll on its own so a
+                          long run list doesn't push the page; sticky keeps
+                          it in view while the detail pane scrolls. */}
+                      <div className="mt-1.5 space-y-1.5 md:max-h-[calc(100vh-9rem)] md:overflow-y-auto md:pr-1">
+                      {groups.map((g) => {
+                        const claimable = g.entries.filter(
+                          (e) => rowStatusLabel(e, nowSec) === "Claimable",
+                        ).length;
+                        const claimed = g.entries.filter(
+                          (e) => e.status === "claimed",
+                        ).length;
+                        const active = g.key === effectiveKey;
+                        return (
                           <button
+                            key={g.key}
                             type="button"
-                            onClick={() => toggleGroup(g)}
-                            aria-expanded={!collapsed}
-                            className="flex w-full items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-left text-sm hover:bg-[var(--color-primary-soft)]"
+                            onClick={() => setSelectedKey(g.key)}
+                            aria-current={active || undefined}
+                            className={`flex w-full flex-col gap-0.5 rounded-md border px-3 py-2 text-left ${
+                              active
+                                ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)]"
+                                : "border-[var(--color-border)] bg-[var(--color-surface)] hover:bg-[var(--color-bg)]"
+                            }`}
                           >
-                            <span className="font-semibold">
-                              <span className="mr-1.5 inline-block w-3 text-[var(--color-text-subtle)]">
-                                {collapsed ? "▸" : "▾"}
-                              </span>
-                              {g.label ?? "Private payout"}
+                            <span className="truncate text-sm font-medium">
+                              {groupTitle(g)}
                             </span>
-                            <span className="text-xs text-[var(--color-text-muted)]">
+                            <span className="text-[10px] text-[var(--color-text-muted)]">
                               {g.entries.length} claim{g.entries.length === 1 ? "" : "s"}
                               {claimable > 0 && <> · {claimable} claimable</>}
                               {claimed > 0 && <> · {claimed} claimed</>}
                             </span>
                           </button>
-                          {!collapsed && (
-                            <ul className="mt-2 space-y-2 pl-1">
-                              {g.entries.map(renderRow)}
-                            </ul>
-                          )}
-                        </section>
-                      );
-                    })}
+                        );
+                      })}
+                      </div>
+                    </nav>
+
+                    <div className="space-y-2">
+                      {selectedGroup && (
+                        <>
+                          <div className="flex items-center justify-between px-1">
+                            <h2 className="truncate text-sm font-semibold">
+                              {groupTitle(selectedGroup)}
+                            </h2>
+                            <span className="shrink-0 text-xs text-[var(--color-text-muted)]">
+                              {selectedGroup.entries.length} claim
+                              {selectedGroup.entries.length === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          <ul className="space-y-2">
+                            {selectedGroup.entries.map(renderRow)}
+                          </ul>
+                        </>
+                      )}
+                    </div>
                   </div>
                 );
               })()
