@@ -454,11 +454,15 @@ export default function ClaimsPage() {
                 // Two-pane master/detail: run rail (left) → selected
                 // run's claims (right). Stacks to one column below `md`.
                 return (
-                  <div className="grid gap-4 md:grid-cols-[16rem_1fr]">
-                    <nav className="space-y-1.5">
+                  <div className="grid items-start gap-4 md:grid-cols-[16rem_1fr]">
+                    <nav className="md:sticky md:top-4">
                       <div className="px-1 text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-subtle)]">
                         Runs ({groups.length})
                       </div>
+                      {/* Cap the rail and let it scroll on its own so a
+                          long run list doesn't push the page; sticky keeps
+                          it in view while the detail pane scrolls. */}
+                      <div className="mt-1.5 space-y-1.5 md:max-h-[calc(100vh-9rem)] md:overflow-y-auto md:pr-1">
                       {groups.map((g) => {
                         const claimable = g.entries.filter(
                           (e) => rowStatusLabel(e, nowSec) === "Claimable",
@@ -490,6 +494,7 @@ export default function ClaimsPage() {
                           </button>
                         );
                       })}
+                      </div>
                     </nav>
 
                     <div className="space-y-2">
