@@ -172,8 +172,15 @@ export function WorkspaceBar() {
       >
         Change ▾
       </button>
-      <div className="w-full text-xs font-semibold text-[var(--color-warning)]">
-        ⚠ Local only — not backed up to any server. If lost, it can&apos;t be recovered.
+      <div className="w-full space-y-0.5 text-xs font-semibold text-[var(--color-warning)]">
+        <div>
+          ⚠ Local only, not backed up anywhere — lose this folder and its funds
+          can&apos;t be recovered. Keep your own backup.
+        </div>
+        <div>
+          Keep it private — anyone who copies it sees your activity, and together
+          with your wallet can spend your funds.
+        </div>
       </div>
       {open && (
         <div className="absolute right-3 top-full z-20 mt-1 w-72 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-xs shadow-lg">
