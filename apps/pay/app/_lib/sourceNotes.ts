@@ -1,6 +1,15 @@
 import type { StoredNote } from "@zkscatter/sdk/notes";
 import { tokenBigIntToAddress } from "./format";
 
+/** A note that hasn't been flagged a phantom/failed deposit (its tx
+ *  reverted → never inserted). Centralizes the "exclude failed" filter
+ *  shared across the balance summary, the confirming-deposit guard, the
+ *  wizard's note list, and the pool balance card so the rule stays in
+ *  one place. */
+export function isLiveNote(n: { status?: "failed" }): boolean {
+  return n.status !== "failed";
+}
+
 /** Per-token vault summary. `availableRaw` only counts notes the
  *  picker can actually spend (`leafIndex >= 0`); `pendingRaw` is
  *  what's deposited but the leafIndex reconciler hasn't observed
@@ -17,6 +26,9 @@ export function summarizeBalance(
   let pendingRaw = 0n;
   for (const n of notes) {
     if (tokenBigIntToAddress(n.note.token) !== tokenLower) continue;
+    // Phantom deposits (reverted tx, never inserted) carry no balance —
+    // exclude them so they don't inflate the pending total forever.
+    if (!isLiveNote(n)) continue;
     if (n.leafIndex >= 0) availableRaw += n.note.amount;
     else pendingRaw += n.note.amount;
   }
@@ -38,12 +50,16 @@ export const DEPOSIT_CONFIRMING_WINDOW_MS = 10 * 60_000;
  *  deposits (the bug a naive `pendingRaw > 0` check would introduce).
  *  Callers pass the token-filtered notes + `Date.now()`. */
 export function hasConfirmingDeposit(
-  tokenNotes: readonly { leafIndex: number; createdAt: number }[],
+  tokenNotes: readonly {
+    leafIndex: number;
+    createdAt: number;
+    status?: "failed";
+  }[],
   nowMs: number,
   windowMs: number = DEPOSIT_CONFIRMING_WINDOW_MS,
 ): boolean {
   return tokenNotes.some(
-    (n) => n.leafIndex < 0 && nowMs - n.createdAt < windowMs,
+    (n) => isLiveNote(n) && n.leafIndex < 0 && nowMs - n.createdAt < windowMs,
   );
 }
 

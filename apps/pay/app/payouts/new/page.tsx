@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ethers } from "ethers";
-import { LAUNCH_TOKENS, chainName, isConfiguredAddress } from "@zkscatter/sdk";
+import { LAUNCH_TOKENS, chainName, isConfiguredAddress, eqAddr } from "@zkscatter/sdk";
 import {
   splitPayout,
   withDeterministicSecrets,
@@ -104,6 +104,7 @@ import {
   pickPerBatchNotes,
   summarizeBalance,
   hasConfirmingDeposit,
+  isLiveNote,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
@@ -1210,7 +1211,11 @@ function NewPayout() {
   const tokenNotes = useMemo<VaultNote[]>(() => {
     if (!tokenAddress) return [];
     return notes.filter(
-      (n) => tokenBigIntToAddress(n.note.token).toLowerCase() === tokenAddress,
+      (n) =>
+        // Drop phantom deposits (reverted tx → never inserted) so they
+        // don't show up as spendable/pending notes for the run.
+        isLiveNote(n) &&
+        eqAddr(tokenBigIntToAddress(n.note.token), tokenAddress),
     );
   }, [notes, tokenAddress]);
   const autoSourcePick = useMemo<SourceNotesPick>(

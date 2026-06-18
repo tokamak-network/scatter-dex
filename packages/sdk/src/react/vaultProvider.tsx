@@ -33,6 +33,13 @@ export interface VaultState {
    *  IDB writes and no re-render; otherwise persists via
    *  `adapter.put` and triggers one re-render of vault consumers. */
   setLeafIndex(id: string, leafIndex: number): Promise<void>;
+  /** Flag a note as a failed/phantom deposit (its tx reverted, so the
+   *  commitment was never inserted). Persisted so the verdict survives
+   *  reloads; the UI then filters it out instead of showing it as
+   *  Pending forever. Idempotent: a note already `"failed"` is a no-op.
+   *  Like `setLeafIndex`, guarded against the removed/chain-switch
+   *  races so a stale write can't resurrect or cross-write a note. */
+  markFailed(id: string): Promise<void>;
 }
 
 export interface CreateVaultProviderOpts {
@@ -229,18 +236,24 @@ export function createVaultProvider(
       [adapter],
     );
 
-    const setLeafIndex = useCallback(
-      async (id: string, leafIndex: number) => {
+    // Shared write path for in-place note patches (setLeafIndex,
+    // markFailed). `skipIf` short-circuits a no-op patch; `patch` builds
+    // the next note. Guards against the removed-mid-flight and
+    // chain-switch (generation moved) races: a put that lands after the
+    // active adapter changed is reverted so a stale write can't resurrect
+    // or cross-write a note.
+    const patchNote = useCallback(
+      async (
+        id: string,
+        skipIf: (n: VaultNote) => boolean,
+        patch: (n: VaultNote) => VaultNote,
+      ) => {
         const startGen = generationRef.current;
         if (removedIdsRef.current.has(id)) return;
         const target = notesRef.current.find((n) => n.id === id);
-        if (!target || target.leafIndex === leafIndex) return;
-        const next: VaultNote = { ...target, leafIndex };
+        if (!target || skipIf(target)) return;
+        const next = patch(target);
         await adapter.put(next);
-        // Generation moved → put landed on the OLD adapter (correct
-        // for that note's chain), but the new chain's notesRef is
-        // empty and would falsely trigger the resurrection-undo
-        // path. Bail.
         if (generationRef.current !== startGen) return;
         if (
           removedIdsRef.current.has(id) ||
@@ -256,9 +269,29 @@ export function createVaultProvider(
       [adapter],
     );
 
+    const setLeafIndex = useCallback(
+      (id: string, leafIndex: number) =>
+        patchNote(
+          id,
+          (n) => n.leafIndex === leafIndex,
+          (n) => ({ ...n, leafIndex }),
+        ),
+      [patchNote],
+    );
+
+    const markFailed = useCallback(
+      (id: string) =>
+        patchNote(
+          id,
+          (n) => n.status === "failed",
+          (n) => ({ ...n, status: "failed", failedAt: Date.now() }),
+        ),
+      [patchNote],
+    );
+
     const value = useMemo<VaultState>(
-      () => ({ notes, loaded, add, remove, setLeafIndex }),
-      [notes, loaded, add, remove, setLeafIndex],
+      () => ({ notes, loaded, add, remove, setLeafIndex, markFailed }),
+      [notes, loaded, add, remove, setLeafIndex, markFailed],
     );
 
     return <VaultCtx.Provider value={value}>{children}</VaultCtx.Provider>;

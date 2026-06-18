@@ -4,6 +4,7 @@ export * from "./connect-wallet-pill";
 export * from "./useMounted";
 export * from "./commitmentTree";
 export * from "./leafIndexReconciler";
+export * from "./phantomDepositDetector";
 export * from "./claimReconciler";
 export * from "./vaultProvider";
 export * from "./eddsaKey";
