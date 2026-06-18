@@ -81,6 +81,15 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   const toast = useToast();
   const [tokenSymbol, setTokenSymbol] = useState(initialTokenSymbol ?? "ETH");
 
+  // Only offer tokens on the on-chain whitelist — a de-whitelisted token
+  // can't be deposited (no configured address), so it shouldn't be a
+  // selectable option. Fall back to the full list if the whitelist read
+  // yields nothing so the selector never goes empty.
+  const selectableDeposit = useMemo(() => {
+    const ok = depositable.filter((t) => isConfiguredAddress(t.address));
+    return ok.length > 0 ? ok : depositable;
+  }, [depositable]);
+
   // Reset the selector only on the closed→open transition. The
   // page-level instance is shared between the generic left-panel CTA
   // and the per-order-side NoteSelect inline button, so the previous
@@ -123,6 +132,15 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   }, [open, initialTokenSymbol, initialAmount]);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
+
+  // If the open transition (or a caller's initialTokenSymbol) lands on a
+  // token that isn't whitelisted, snap to the first selectable one so the
+  // modal never opens on a non-depositable selection.
+  useEffect(() => {
+    if (!open || selectableDeposit.length === 0) return;
+    if (selectableDeposit.some((t) => t.symbol === tokenSymbol)) return;
+    setTokenSymbol(selectableDeposit[0]!.symbol);
+  }, [open, selectableDeposit, tokenSymbol]);
 
   // Wallet balance of the selected token. `null` while a fetch is in
   // flight or the wallet isn't connected; bigint once resolved.
@@ -368,7 +386,7 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
             onChange={(e) => setTokenSymbol(e.target.value)}
             className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2"
           >
-            {depositable.map((t) => (
+            {selectableDeposit.map((t) => (
               <option key={t.symbol} value={t.symbol}>
                 {t.symbol}
                 {isConfiguredAddress(t.address) ? "" : " (not deployed)"}

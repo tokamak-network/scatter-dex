@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { LAUNCH_PAIRS } from "@zkscatter/sdk";
+import { LAUNCH_PAIRS, isConfiguredAddress } from "@zkscatter/sdk";
 import { useOutsideClick } from "@zkscatter/ui";
 import { useTradeForm } from "../lib/tradeForm";
+import { useProTokens } from "../lib/useProTokens";
 import { useListboxNav } from "../lib/useListboxNav";
 
 /** Workbench header pair selector — flat dropdown with Featured at
@@ -19,8 +20,22 @@ export function PairSelector() {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
-  const featured = useMemo(() => LAUNCH_PAIRS.filter((p) => p.featured), []);
-  const rest = useMemo(() => LAUNCH_PAIRS.filter((p) => !p.featured), []);
+  // Only offer pairs whose BOTH legs are on the on-chain whitelist —
+  // an admin can de-whitelist a token via setTokenWhitelist and a new
+  // order against it can't settle, so it must drop out of the picker.
+  // Fall back to the full list if the whitelist read yields nothing
+  // (RPC hiccup) so the selector never goes empty.
+  const { tokens } = useProTokens();
+  const tradablePairs = useMemo(() => {
+    const ok = new Set(
+      tokens.filter((t) => isConfiguredAddress(t.address)).map((t) => t.symbol),
+    );
+    const filtered = LAUNCH_PAIRS.filter((p) => ok.has(p.base) && ok.has(p.quote));
+    return filtered.length > 0 ? filtered : LAUNCH_PAIRS;
+  }, [tokens]);
+
+  const featured = useMemo(() => tradablePairs.filter((p) => p.featured), [tradablePairs]);
+  const rest = useMemo(() => tradablePairs.filter((p) => !p.featured), [tradablePairs]);
   // Flat ordering for keyboard nav — featured rows come first, then
   // the "All pairs" rows. Index in this list maps 1:1 to the option
   // refs the listbox hook stashes.
