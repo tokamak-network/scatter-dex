@@ -199,6 +199,37 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
     );
   }
 
+  // Pre-flight balance guard — fail BEFORE proving or any wallet prompt
+  // (approve/deposit). Otherwise the operator approves an allowance and
+  // only hits "ERC20: transfer amount exceeds balance" at the deposit's
+  // gas estimate, having already signed an approve for nothing. For
+  // native ETH the deposit wraps ETH → WETH, so the spendable amount is
+  // existing WETH plus the native balance.
+  phase({ kind: "preparing", message: "Checking wallet balance…" });
+  const fmtAmt = (raw: bigint) => ethers.formatUnits(raw, tokenInfo.decimals);
+  let spendable: bigint;
+  if (tokenInfo.isNative) {
+    const wethRead = new ethers.Contract(erc20Address, WETH9_IFACE, signer);
+    const [wethBal, nativeBal] = await Promise.all([
+      wethRead.balanceOf(account) as Promise<bigint>,
+      signer.provider
+        ? (signer.provider.getBalance(account) as Promise<bigint>)
+        : Promise.resolve(0n),
+    ]);
+    spendable = wethBal + nativeBal;
+  } else {
+    const erc20Bal = new ethers.Contract(erc20Address, ERC20_IFACE, signer);
+    spendable = (await erc20Bal.balanceOf(account)) as bigint;
+  }
+  if (spendable < amountRaw) {
+    throw new Error(
+      `Insufficient ${tokenSymbol} balance. You have ${fmtAmt(spendable)} ${tokenSymbol} ` +
+        `but this deposit needs ${fmtAmt(amountRaw)} ${tokenSymbol}. Top up the wallet ` +
+        `(e.g. from the faucet) or lower the run total before depositing.`,
+    );
+  }
+  checkAbort();
+
   phase({ kind: "preparing", message: "Deriving signing key…" });
   const kp = await eddsa.derive();
   checkAbort();
