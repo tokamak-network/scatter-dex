@@ -1519,7 +1519,12 @@ function NewPayout() {
                   onChange={(e) => setToken(e.target.value)}
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {selectableTokens.map((t) => (
+                  {/* Resuming a saved run: the token is fixed and the
+                      select is disabled, so render the full curated list
+                      — if the run's token was since de-whitelisted it
+                      must still show (filtering it out would blank the
+                      value). New runs use the whitelist-filtered list. */}
+                  {(resumeRecord ? curatedTokens : selectableTokens).map((t) => (
                     <option key={t.symbol} value={t.symbol}>
                       {t.symbol}
                       {isConfiguredAddress(t.address) ? "" : " (not deployed)"}
