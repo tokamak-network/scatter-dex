@@ -27,6 +27,8 @@ interface WireNote {
   noteHex: NotePreimageHex;
   commitmentHex: string;
   leafIndex: number;
+  status?: "failed";
+  failedAt?: number;
   txHash?: string;
   chainId?: number;
   /** Mirrors the folder adapter so a record migrated between the two
@@ -45,6 +47,8 @@ function serialize(n: StoredNote): WireNote {
     noteHex: notePreimageToHex(n.note),
     commitmentHex: bigintToHex(n.commitment),
     leafIndex: n.leafIndex,
+    status: n.status,
+    failedAt: n.failedAt,
     txHash: n.txHash,
     chainId: n.chainId,
     account: n.account,
@@ -61,6 +65,8 @@ function deserialize(w: WireNote): StoredNote {
     note: notePreimageFromHex(w.noteHex),
     commitment: BigInt(w.commitmentHex),
     leafIndex: w.leafIndex,
+    status: w.status,
+    failedAt: w.failedAt,
     txHash: w.txHash,
     chainId: w.chainId,
     account: w.account,

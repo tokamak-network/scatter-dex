@@ -54,6 +54,8 @@ interface FileShape {
   amount: string;
   commitment: string;
   leafIndex: number;
+  status?: "failed";
+  failedAt?: number;
   txHash?: string;
   chainId?: number;
   /** Lowercased 0x-prefixed wallet address that wrote this note.
@@ -325,6 +327,8 @@ function serialize(n: StoredNote): FileShape & { warning: string } {
     amount: n.amount,
     commitment: bigintToHex(n.commitment),
     leafIndex: n.leafIndex,
+    status: n.status,
+    failedAt: n.failedAt,
     txHash: n.txHash,
     chainId: n.chainId,
     // Persist the depositing wallet so future loads can isolate per
@@ -365,6 +369,8 @@ function deserialize(parsed: FileShape): StoredNote {
     note,
     commitment,
     leafIndex: parsed.leafIndex,
+    status: parsed.status,
+    failedAt: parsed.failedAt,
     txHash: parsed.txHash,
     chainId: parsed.chainId,
     account: parsed.account?.toLowerCase(),

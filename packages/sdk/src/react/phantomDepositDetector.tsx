@@ -91,6 +91,12 @@ export function usePhantomDepositDetector({
     if (targets.length === 0) return;
     runningRef.current = true;
     try {
+      // Head block is needed to require a confirmation depth before
+      // trusting a receipt — a shallow receipt a reorg could drop must
+      // not produce a premature verdict. If the head read fails, skip
+      // this tick entirely and re-check next time.
+      const head = await prov.getBlockNumber().catch(() => null);
+      if (head == null) return;
       // Independent receipt reads → fan out in parallel.
       const results = await Promise.all(
         targets.map((n) =>
@@ -107,6 +113,8 @@ export function usePhantomDepositDetector({
       for (const { n, receipt } of results) {
         // null (pending/dropped — may yet mine) → re-check next tick.
         if (!receipt) continue;
+        // Wait for confirmation depth so a reorg can't flip the verdict.
+        if (head - receipt.blockNumber < MIN_CONFIRMATIONS) continue;
         if (receipt.status === 0)
           failedIds.push(n.id); // reverted → phantom. See SAFETY note above.
         else clearedRef.current.add(n.txHash!); // mined OK → stop re-checking.
@@ -124,6 +132,12 @@ export function usePhantomDepositDetector({
   }, [staleAfterMs, label]);
 
   // Polls on a timer + on tab-visible, skipping hidden tabs — same
-  // scheduler the leaf reconciler / relayer list use.
+  // scheduler the leaf reconciler / relayer list use. `enabled` flips
+  // when the provider connects, re-arming the poll automatically.
   useTimedRefresh({ refresh: scan, intervalMs, enabled: !!provider });
 }
+
+/** Confirmation depth required before trusting a deposit receipt's
+ *  status — guards the failed verdict against a shallow-reorg flip.
+ *  Sepolia/L1 reorgs are typically ≤1-2 blocks. */
+const MIN_CONFIRMATIONS = 3;
