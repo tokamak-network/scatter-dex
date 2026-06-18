@@ -39,6 +39,11 @@ function rowStatusLabel(e: ClaimInboxEntry, nowSec: number | undefined): string 
   return nowSec >= Number(BigInt(e.pkg.releaseTime)) ? "Claimable" : "Locked";
 }
 
+/** Single label for the untitled-run bucket — used for both the rail
+ *  group title and the per-row run fallback so the same bucket never
+ *  shows two different names. Korean per product request. */
+const UNTITLED_RUN_LABEL = "기타";
+
 export default function ClaimInbox() {
   const folder = useFolderStorage();
   const { account, readProvider, signer } = useWallet();
@@ -89,7 +94,14 @@ export default function ClaimInbox() {
       : (groups[0]?.key ?? null);
   const selectedGroup =
     groups.find((g) => g.key === effectiveKey) ?? groups[0] ?? null;
-  const groupTitle = (g: ClaimInboxGroup): string => g.label ?? "기타";
+  const groupTitle = (g: ClaimInboxGroup): string => g.label ?? UNTITLED_RUN_LABEL;
+  // Drop a stale selection once its run disappears (claimed-away /
+  // removed) so a later-reappearing run can't resurrect the old pick.
+  useEffect(() => {
+    if (selectedKey && !groups.some((g) => g.key === selectedKey)) {
+      setSelectedKey(null);
+    }
+  }, [groups, selectedKey]);
 
   const refresh = useCallback(async () => {
     if (!folder.ready) {
@@ -347,7 +359,7 @@ export default function ClaimInbox() {
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
                         From {e.pkg.senderLabel ?? "unknown sender"} ·{" "}
-                        {e.pkg.runLabel?.trim() || "Private payout"}
+                        {e.pkg.runLabel?.trim() || UNTITLED_RUN_LABEL}
                       </div>
                       <div className="text-xs text-[var(--color-text-muted)]">
                         To <span className="font-mono">{shortAddr(e.pkg.recipient)}</span>
@@ -418,7 +430,7 @@ export default function ClaimInbox() {
                         key={g.key}
                         type="button"
                         onClick={() => setSelectedKey(g.key)}
-                        aria-current={active}
+                        aria-current={active || undefined}
                         className={`flex w-full flex-col gap-0.5 rounded-md border px-3 py-2 text-left ${
                           active
                             ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)]"
