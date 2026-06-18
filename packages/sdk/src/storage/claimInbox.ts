@@ -312,11 +312,12 @@ export function groupClaimInbox(entries: ClaimInboxEntry[]): ClaimInboxGroup[] {
     }
     g.entries.push(e);
   }
-  // Callers pass entries sorted newest-first, so first-appearance
-  // order ranks titled groups by their most recent claim. The untitled
-  // ("Other") bucket always sorts LAST so named runs lead the list — a
-  // stable sort keeps the titled groups' relative order intact.
-  return [...byKey.values()].sort(
-    (a, b) => Number(a.label === null) - Number(b.label === null),
-  );
+  // Callers pass entries sorted newest-first, so first-appearance order
+  // ranks titled groups by their most recent claim. Partition so the
+  // single untitled ("Other") bucket lands LAST while titled groups keep
+  // their order — O(g), and clearer than a full sort for a one-bucket move.
+  const all = [...byKey.values()];
+  const titled = all.filter((g) => g.label !== null);
+  const untitled = all.filter((g) => g.label === null);
+  return [...titled, ...untitled];
 }
