@@ -395,16 +395,26 @@ export function SourceNotesPanel({
                 </>
               )}
             </div>
-            {!fullyCoveredByPending && onDeposit && (
+            {!fullyCoveredByPending && onDeposit && (() => {
+              // A still-confirming deposit (pendingRaw > 0) locks the CTA
+              // too: re-depositing on top of an unconfirmed deposit is
+              // how a single intent became two on-chain deposits. The
+              // operator waits for the pending one to settle (it may
+              // close the gap) before topping up again.
+              const confirming = pendingRaw > 0n;
+              const locked = !depositConfigured || depositBusy || confirming;
+              return (
               <button
-                onClick={depositConfigured && !depositBusy ? onDeposit : undefined}
-                disabled={!depositConfigured || depositBusy}
+                onClick={!locked ? onDeposit : undefined}
+                disabled={locked}
                 title={
                   !depositConfigured
                     ? "Deposit env not configured"
                     : depositBusy
                       ? "Deposit in progress"
-                      : undefined
+                      : confirming
+                        ? "A deposit is still confirming — wait for it before depositing again"
+                        : undefined
                 }
                 className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
               >
@@ -412,9 +422,12 @@ export function SourceNotesPanel({
                   ? "Deposit (env not configured)"
                   : depositBusy
                     ? "Depositing…"
-                    : `Deposit ${fmt(remaining)} ${token}`}
+                    : confirming
+                      ? "Deposit confirming…"
+                      : `Deposit ${fmt(remaining)} ${token}`}
               </button>
-            )}
+              );
+            })()}
           </div>
         );
       })()}

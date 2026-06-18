@@ -1857,6 +1857,24 @@ function NewPayout() {
               // race a same-frame double-click and start two flows.
               if (depositInFlightRef.current) return;
               if (!signer || !account) return;
+              // Durable guard against a *second* deposit while the first
+              // is still confirming. `realDeposit` persists the note to
+              // the vault before awaiting the receipt, so a submitted-
+              // but-unconfirmed deposit shows up as `pendingRaw > 0` —
+              // and because that's vault-derived it survives a reload /
+              // tab swap (where the in-flight ref would be lost). Without
+              // this, "wallet kept prompting → kept approving" produced
+              // two separate on-chain deposits (lot-1 + lot-2).
+              if (pendingRaw > 0n) {
+                setDepositPhase({
+                  kind: "error",
+                  error:
+                    "A previous deposit is still confirming on-chain (see Deposit balance below). " +
+                    "Wait for it to settle before depositing again — re-depositing now would lock " +
+                    "the funds in a second, separate note.",
+                });
+                return;
+              }
               depositInFlightRef.current = true;
               const ctrl = new AbortController();
               depositAbortRef.current = ctrl;
