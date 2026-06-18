@@ -43,6 +43,19 @@ then trade. The identity website (zk-X509) lives in a
 
 ---
 
+## The apps — why you'd use each
+
+| App | Why you'd use it | Status |
+|-----|------------------|--------|
+| **Pay** | Send payroll / grants / bonuses to many people in **one signature**, without publishing who got how much. Recipients claim **gaslessly** and can't see each other's amounts. | wireframe |
+| **Pro** | Place a **private limit order** — **no MEV**, no desk spread, no balance leak. Matched off-chain, settled on-chain, proceeds claimed gaslessly. | live |
+| **Drop** | Run a **sybil-resistant airdrop** to real humans (zk-X509 = 1 person, 1 claim). Per-recipient amounts hidden on-chain, gasless claim. | wireframe |
+| **Operators** | **Run a relayer** and earn deterministic on-chain fees settling private order flow. Permissionless bond, no vendor lock-in, can't see order amounts/sides. | live |
+| **Admin** | Govern the deployment — CA issuance, sanctions, protocol params, treasury (internal console). | live |
+
+> 📘 **Full user guide → [docs/user-guide.md](docs/user-guide.md)** — what each app is
+> for, the benefits, and step-by-step **how to use it**, all in one place.
+
 ## How it works
 
 ```
@@ -132,6 +145,7 @@ docs/         Guides, design docs, operations runbooks
 
 | Topic | Doc |
 |-------|-----|
+| **User guide — what each app is for & how to use it** | [user-guide.md](docs/user-guide.md) |
 | **Team testing on Sepolia** | [operations/sepolia-team-setup.md](docs/operations/sepolia-team-setup.md) |
 | Sepolia system architecture & diagram | [operations/sepolia-architecture.md](docs/operations/sepolia-architecture.md) |
 | Local development setup | [operations/local-setup.md](docs/operations/local-setup.md) |
