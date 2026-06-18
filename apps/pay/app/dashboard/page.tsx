@@ -206,7 +206,10 @@ export default function Dashboard() {
 
       <ScopeBar scope={scope} setScope={setScope} wallet={wallet} folder={folder} />
 
-      <section className="grid grid-cols-3 gap-4">
+      {/* items-start so the multi-token "This month" card sizes to its
+          own content instead of stretching the sibling stat cards to
+          match its height. */}
+      <section className="grid grid-cols-3 items-start gap-4">
         <Stat
           label="This month"
           value={mounted ? <ThisMonthValue stats={stats} /> : "—"}
