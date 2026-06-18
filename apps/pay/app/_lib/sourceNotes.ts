@@ -23,6 +23,30 @@ export function summarizeBalance(
   return { availableRaw, pendingRaw };
 }
 
+/** Window (ms) after a deposit note is persisted during which we treat
+ *  it as "still confirming" and block a second deposit. Past this, a
+ *  note stuck at leafIndex<0 is almost certainly a dropped tx or a
+ *  discarded cross-app change note (the vault is shared across
+ *  products), so it must NOT keep funding locked forever. */
+export const DEPOSIT_CONFIRMING_WINDOW_MS = 10 * 60_000;
+
+/** True when a *recently-created* note for the run's token is still
+ *  pending on-chain (leafIndex<0) within the confirming window — i.e. a
+ *  deposit we just broadcast is most likely mid-confirmation, so a
+ *  second deposit would duplicate it. Time-bounded on `createdAt` so a
+ *  phantom/never-reconciling pending note can't permanently block
+ *  deposits (the bug a naive `pendingRaw > 0` check would introduce).
+ *  Callers pass the token-filtered notes + `Date.now()`. */
+export function hasConfirmingDeposit(
+  tokenNotes: readonly { leafIndex: number; createdAt: number }[],
+  nowMs: number,
+  windowMs: number = DEPOSIT_CONFIRMING_WINDOW_MS,
+): boolean {
+  return tokenNotes.some(
+    (n) => n.leafIndex < 0 && nowMs - n.createdAt < windowMs,
+  );
+}
+
 /** A note picked to fund a run, with the partial-spend amount the
  *  settlement will charge against it. The last note in the picked
  *  list usually has `amount > spend` — the leftover is returned as

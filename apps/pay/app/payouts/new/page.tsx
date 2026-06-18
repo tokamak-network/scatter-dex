@@ -103,6 +103,7 @@ import {
   describeBatchFitError,
   pickPerBatchNotes,
   summarizeBalance,
+  hasConfirmingDeposit,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
@@ -1859,13 +1860,14 @@ function NewPayout() {
               if (!signer || !account) return;
               // Durable guard against a *second* deposit while the first
               // is still confirming. `realDeposit` persists the note to
-              // the vault before awaiting the receipt, so a submitted-
-              // but-unconfirmed deposit shows up as `pendingRaw > 0` —
-              // and because that's vault-derived it survives a reload /
-              // tab swap (where the in-flight ref would be lost). Without
-              // this, "wallet kept prompting → kept approving" produced
-              // two separate on-chain deposits (lot-1 + lot-2).
-              if (pendingRaw > 0n) {
+              // the vault before awaiting the receipt, so a freshly-
+              // submitted deposit is a recent pending note — vault-
+              // derived, so it survives a reload / tab swap (where the
+              // in-flight ref would be lost). Time-bounded so a stale /
+              // phantom / discarded pending note can't block deposits
+              // forever. Without this, "wallet kept prompting → kept
+              // approving" produced two on-chain deposits (lot-1 + lot-2).
+              if (hasConfirmingDeposit(tokenNotes, Date.now())) {
                 setDepositPhase({
                   kind: "error",
                   error:
