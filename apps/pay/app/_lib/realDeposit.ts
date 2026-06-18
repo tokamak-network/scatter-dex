@@ -205,6 +205,11 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
   // gas estimate, having already signed an approve for nothing. For
   // native ETH the deposit wraps ETH → WETH, so the spendable amount is
   // existing WETH plus the native balance.
+  // Read-only balanceOf needs a provider-backed runner; bail with a
+  // clear message rather than ethers' "contract runner does not support
+  // calling" if the signer has none.
+  if (!signer.provider) throw new Error("Wallet provider not available.");
+
   phase({ kind: "preparing", message: "Checking wallet balance…" });
   const fmtAmt = (raw: bigint) => ethers.formatUnits(raw, tokenInfo.decimals);
   let spendable: bigint;
@@ -212,9 +217,7 @@ export async function realDeposit(args: RealDepositArgs): Promise<RealDepositRes
     const wethRead = new ethers.Contract(erc20Address, WETH9_IFACE, signer);
     const [wethBal, nativeBal] = await Promise.all([
       wethRead.balanceOf(account) as Promise<bigint>,
-      signer.provider
-        ? (signer.provider.getBalance(account) as Promise<bigint>)
-        : Promise.resolve(0n),
+      signer.provider.getBalance(account) as Promise<bigint>,
     ]);
     spendable = wethBal + nativeBal;
   } else {
