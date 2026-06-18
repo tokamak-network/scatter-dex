@@ -175,8 +175,8 @@ export function WorkspaceBar() {
           can&apos;t be recovered. Keep your own backup.
         </div>
         <div>
-          Keep it private — anyone who copies it sees your activity, and together
-          with your wallet can spend your funds.
+          Keep it private — anyone who copies it sees your activity, and with
+          your wallet&apos;s private key can spend your funds.
         </div>
       </div>
       {open && (
