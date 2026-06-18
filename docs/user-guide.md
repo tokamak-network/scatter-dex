@@ -75,7 +75,9 @@ family offices.
 4. Place a private limit order — set price, size, recipient; sign with your trading key. The order joins the shared orderbook anonymously and waits for a match.
 5. When matched, the relayer batches settlement on-chain; claim the proceeds gaslessly.
 
-> 📸 _Slots: `assets/user-guide/pro-place-order.png` (the limit-order form) and `assets/user-guide/pro-claim.png` (claiming matched proceeds)._
+> 📸 _Slot: `assets/user-guide/pro-place-order.png` — the limit-order form._
+>
+> 📸 _Slot: `assets/user-guide/pro-claim.png` — claiming matched proceeds._
 
 **Learn more:** in-app landing page · developer how-to guides under
 `developers/docs/guides/` at the repo root (connect-wallet, deposit, place-order,
