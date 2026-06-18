@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ethers } from "ethers";
-import { LAUNCH_TOKENS, chainName } from "@zkscatter/sdk";
+import { LAUNCH_TOKENS, chainName, isConfiguredAddress } from "@zkscatter/sdk";
 import {
   splitPayout,
   withDeterministicSecrets,
@@ -1496,10 +1496,12 @@ function NewPayout() {
                   onChange={(e) => setToken(e.target.value)}
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <option value="USDC">USDC</option>
-                  <option value="USDT">USDT</option>
-                  <option value="ETH">ETH</option>
-                  <option value="TON">Tokamak(TON)</option>
+                  {curatedTokens.map((t) => (
+                    <option key={t.symbol} value={t.symbol}>
+                      {t.symbol}
+                      {isConfiguredAddress(t.address) ? "" : " (not deployed)"}
+                    </option>
+                  ))}
                 </select>
               </Field>
             </div>
