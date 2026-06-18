@@ -29,7 +29,12 @@ import { applyFeeBig } from "../lib/fee";
 import { parseUnits } from "../lib/parseUnits";
 import { evaluateRecipientsAllocation } from "../lib/recipientsAllocation";
 import { deriveAutoSettle } from "../lib/autoSettle";
-import { findPair, type WhitelistedPair } from "@zkscatter/sdk";
+import {
+  findPair,
+  isConfiguredAddress,
+  LAUNCH_PAIRS,
+  type WhitelistedPair,
+} from "@zkscatter/sdk";
 import { ethers } from "ethers";
 
 interface RowData {
@@ -80,7 +85,24 @@ export default function Workbench() {
   const isTakeMode = takeMode !== null;
   // Token addresses + decimals come from the on-chain whitelist
   // (env-independent); display metadata stays from the curated lineup.
-  const { tokens } = useProTokens();
+  const { tokens, loading: tokensLoading } = useProTokens();
+  // Snap the active pair off any de-whitelisted token when composing a
+  // NEW order, so the form can't sit on (and submit) a pair that can't
+  // settle. Skipped while taking an existing order (isTakeMode — that
+  // pair is fixed by the order being taken) and during the initial
+  // whitelist load (the pre-resolve list uses env fallbacks).
+  useEffect(() => {
+    if (isTakeMode || tokensLoading) return;
+    const ok = new Set(
+      tokens.filter((t) => isConfiguredAddress(t.address)).map((t) => t.symbol),
+    );
+    if (ok.size === 0) return; // whitelist read empty — don't fight it
+    if (ok.has(pair.base) && ok.has(pair.quote)) return;
+    const replacement =
+      LAUNCH_PAIRS.find((p) => p.featured && ok.has(p.base) && ok.has(p.quote)) ??
+      LAUNCH_PAIRS.find((p) => ok.has(p.base) && ok.has(p.quote));
+    if (replacement) setPairBy(replacement.display);
+  }, [isTakeMode, tokensLoading, tokens, pair.base, pair.quote, setPairBy]);
   // Auto-release the Take Order lock if the user flips PairSelector
   // or Side off the pair/side the prefill landed on. Without this,
   // OrderModal would sign `takeMode.{sell,buy}Wei` against the

@@ -1073,7 +1073,17 @@ function NewPayout() {
   // setTokenWhitelist) rather than NEXT_PUBLIC_* env, so a token without
   // an env address (e.g. TON) still resolves. `networkCfg.tokens` is the
   // curated metadata + pre-load fallback.
-  const { tokens: curatedTokens } = useCuratedNetworkTokens(networkCfg);
+  const { tokens: curatedTokens, loading: tokensLoading } =
+    useCuratedNetworkTokens(networkCfg);
+  // Only tokens actually on the on-chain whitelist (configured address)
+  // are payable — an admin can remove a token via setTokenWhitelist and
+  // it must drop out of the picker, not linger as "(not deployed)". Fall
+  // back to the full curated list if the whitelist read yields nothing
+  // (e.g. RPC hiccup) so the dropdown never goes empty.
+  const selectableTokens = useMemo(() => {
+    const configured = curatedTokens.filter((t) => isConfiguredAddress(t.address));
+    return configured.length > 0 ? configured : curatedTokens;
+  }, [curatedTokens]);
   const tokenInfo =
     curatedTokens.find((t) => t.symbol === token) ?? LAUNCH_TOKENS[token];
   // For native ETH the vault stores notes against WETH (the deposit
@@ -1086,6 +1096,19 @@ function NewPayout() {
   // usable for both native and non-native tokens.
   const tokenAddress = tokenInfo?.address?.toLowerCase();
   const decimals = tokenInfo?.decimals ?? 18;
+
+  // If the selected token is no longer payable (de-whitelisted on-chain,
+  // or a category default that isn't deployed) snap the selection to the
+  // first selectable one. Skip while the whitelist is still loading (the
+  // pre-resolve list uses env fallbacks) and when resuming a saved run
+  // (its token is fixed). Without this a removed token can stay the
+  // active value and a deposit/settle would fail downstream.
+  useEffect(() => {
+    if (tokensLoading || resumeRecord) return;
+    if (selectableTokens.length === 0) return;
+    if (selectableTokens.some((t) => t.symbol === token)) return;
+    setToken(selectableTokens[0]!.symbol);
+  }, [tokensLoading, selectableTokens, token, resumeRecord]);
 
   const { availableRaw, pendingRaw } = useMemo(
     () => (tokenAddress ? summarizeBalance(notes, tokenAddress) : { availableRaw: 0n, pendingRaw: 0n }),
@@ -1496,7 +1519,12 @@ function NewPayout() {
                   onChange={(e) => setToken(e.target.value)}
                   className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {curatedTokens.map((t) => (
+                  {/* Resuming a saved run: the token is fixed and the
+                      select is disabled, so render the full curated list
+                      — if the run's token was since de-whitelisted it
+                      must still show (filtering it out would blank the
+                      value). New runs use the whitelist-filtered list. */}
+                  {(resumeRecord ? curatedTokens : selectableTokens).map((t) => (
                     <option key={t.symbol} value={t.symbol}>
                       {t.symbol}
                       {isConfiguredAddress(t.address) ? "" : " (not deployed)"}
