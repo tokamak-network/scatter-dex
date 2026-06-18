@@ -33,7 +33,7 @@ describe("groupClaimInbox", () => {
       makeEntry("c", "Titled"),
     ]);
     expect(groups).toHaveLength(2);
-    // Titled groups lead; the untitled ("기타") bucket sorts last.
+    // Titled groups lead; the untitled ("Other") bucket sorts last.
     expect(groups[0].label).toBe("Titled");
     expect(groups[1].label).toBeNull();
     expect(groups[1].entries.map((e) => e.id)).toEqual(["a", "b"]);

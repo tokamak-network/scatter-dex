@@ -41,8 +41,8 @@ function rowStatusLabel(e: ClaimInboxEntry, nowSec: number | undefined): string 
 
 /** Single label for the untitled-run bucket — used for both the rail
  *  group title and the per-row run fallback so the same bucket never
- *  shows two different names. Korean per product request. */
-const UNTITLED_RUN_LABEL = "기타";
+ *  shows two different names. */
+const UNTITLED_RUN_LABEL = "Other";
 
 export default function ClaimInbox() {
   const folder = useFolderStorage();
@@ -86,7 +86,7 @@ export default function ClaimInbox() {
   // chosen run's group key; it falls back to the first group when unset
   // or when the selected run disappears (claimed-away / removed), so the
   // detail pane is never blank while runs exist. Untitled packages share
-  // the `groupClaimInbox` "untitled" bucket, surfaced as "기타".
+  // the `groupClaimInbox` "untitled" bucket, surfaced as "Other".
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const effectiveKey =
     selectedKey && groups.some((g) => g.key === selectedKey)
