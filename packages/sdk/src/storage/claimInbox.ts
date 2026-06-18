@@ -313,6 +313,10 @@ export function groupClaimInbox(entries: ClaimInboxEntry[]): ClaimInboxGroup[] {
     g.entries.push(e);
   }
   // Callers pass entries sorted newest-first, so first-appearance
-  // order ranks groups by their most recent claim — no extra sort.
-  return [...byKey.values()];
+  // order ranks titled groups by their most recent claim. The untitled
+  // ("기타") bucket always sorts LAST so named runs lead the list — a
+  // stable sort keeps the titled groups' relative order intact.
+  return [...byKey.values()].sort(
+    (a, b) => Number(a.label === null) - Number(b.label === null),
+  );
 }
