@@ -9,6 +9,7 @@ import { shortTxHash } from "@zkscatter/sdk/util";
 import { ethers } from "ethers";
 import { useVault } from "../_lib/vault";
 import { useCommitmentTree } from "../_lib/commitmentTree";
+import { isLiveNote } from "../_lib/sourceNotes";
 import { WithdrawModal } from "./WithdrawModal";
 
 /** Best-effort USD prices for the launch token set. Stablecoins are
@@ -137,7 +138,7 @@ export function PoolBalanceCard() {
         // Phantom deposit (its tx reverted → commitment never inserted).
         // No funds escrowed and it can never reconcile, so drop it
         // instead of showing it as Pending forever.
-        if (n.status === "failed") continue;
+        if (!isLiveNote(n)) continue;
         // `n.symbol` is the source of truth in the vault; the
         // whitelist key matches it for tokens we care about.
         let b = bucketBySymbol.get(n.symbol);

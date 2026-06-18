@@ -104,6 +104,7 @@ import {
   pickPerBatchNotes,
   summarizeBalance,
   hasConfirmingDeposit,
+  isLiveNote,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
 import { useWalletBook } from "../../_lib/walletBook";
@@ -1213,7 +1214,7 @@ function NewPayout() {
       (n) =>
         // Drop phantom deposits (reverted tx → never inserted) so they
         // don't show up as spendable/pending notes for the run.
-        n.status !== "failed" &&
+        isLiveNote(n) &&
         tokenBigIntToAddress(n.note.token).toLowerCase() === tokenAddress,
     );
   }, [notes, tokenAddress]);

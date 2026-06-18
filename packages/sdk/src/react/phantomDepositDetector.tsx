@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
 import type { ethers } from "ethers";
+import { useTimedRefresh } from "./useTimedRefresh";
 
 /** Minimal note shape the phantom detector needs. App note types are
  *  wider; structural typing keeps the hook decoupled from any one
@@ -60,53 +61,69 @@ export function usePhantomDepositDetector({
   label = "phantomDepositDetector",
 }: UsePhantomDepositDetectorArgs): void {
   // Mirror live inputs into refs so the poll reads fresh values without
-  // restarting its interval on every render / note change.
+  // re-arming the timer on every render / note change.
   const notesRef = useRef(notes);
   notesRef.current = notes;
   const providerRef = useRef(provider);
   providerRef.current = provider;
   const markRef = useRef(markFailed);
   markRef.current = markFailed;
-  const inFlightRef = useRef<Set<string>>(new Set());
+  // Tx hashes whose receipt was found *non-reverted*: a mined tx can't
+  // later revert, so we stop re-checking it every tick (saves the RPC a
+  // call/note/tick forever once a stuck-but-mined deposit is seen).
+  const clearedRef = useRef<Set<string>>(new Set());
+  // Skip a tick while the previous scan is still in flight (slow RPC) so
+  // overlapping polls don't double-check the same notes.
+  const runningRef = useRef(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    const scan = async () => {
-      const prov = providerRef.current;
-      if (!prov) return;
-      const now = Date.now();
-      const targets = notesRef.current.filter(
-        (n) =>
-          n.leafIndex < 0 &&
-          n.status !== "failed" &&
-          !!n.txHash &&
-          now - n.createdAt > staleAfterMs &&
-          !inFlightRef.current.has(n.id),
+  const scan = useCallback(async () => {
+    const prov = providerRef.current;
+    if (!prov || runningRef.current) return;
+    const now = Date.now();
+    const targets = notesRef.current.filter(
+      (n) =>
+        n.leafIndex < 0 &&
+        n.status !== "failed" &&
+        !!n.txHash &&
+        !clearedRef.current.has(n.txHash) &&
+        now - n.createdAt > staleAfterMs,
+    );
+    if (targets.length === 0) return;
+    runningRef.current = true;
+    try {
+      // Independent receipt reads → fan out in parallel.
+      const results = await Promise.all(
+        targets.map((n) =>
+          prov
+            .getTransactionReceipt(n.txHash!)
+            .then((receipt) => ({ n, receipt }))
+            .catch((e) => {
+              console.warn(`[${label}] receipt check failed for ${n.txHash}:`, e);
+              return { n, receipt: null as ethers.TransactionReceipt | null };
+            }),
+        ),
       );
-      for (const n of targets) {
-        inFlightRef.current.add(n.id);
-        try {
-          const receipt = await prov.getTransactionReceipt(n.txHash!);
-          if (cancelled) return;
-          if (receipt && receipt.status === 0) {
-            await markRef.current(n.id).catch((e) =>
-              console.warn(`[${label}] markFailed failed:`, e),
-            );
-          }
-          // receipt == null (pending/dropped) or status === 1 (mined OK,
-          // awaiting indexing) → leave untouched. See SAFETY note above.
-        } catch (e) {
-          console.warn(`[${label}] receipt check failed for ${n.txHash}:`, e);
-        } finally {
-          inFlightRef.current.delete(n.id);
-        }
+      const failedIds: string[] = [];
+      for (const { n, receipt } of results) {
+        // null (pending/dropped — may yet mine) → re-check next tick.
+        if (!receipt) continue;
+        if (receipt.status === 0)
+          failedIds.push(n.id); // reverted → phantom. See SAFETY note above.
+        else clearedRef.current.add(n.txHash!); // mined OK → stop re-checking.
       }
-    };
-    void scan();
-    const id = setInterval(() => void scan(), intervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, [intervalMs, staleAfterMs, label]);
+      await Promise.all(
+        failedIds.map((id) =>
+          markRef.current(id).catch((e) =>
+            console.warn(`[${label}] markFailed failed:`, e),
+          ),
+        ),
+      );
+    } finally {
+      runningRef.current = false;
+    }
+  }, [staleAfterMs, label]);
+
+  // Polls on a timer + on tab-visible, skipping hidden tabs — same
+  // scheduler the leaf reconciler / relayer list use.
+  useTimedRefresh({ refresh: scan, intervalMs, enabled: !!provider });
 }
