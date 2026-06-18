@@ -26,27 +26,29 @@ describe("groupClaimInbox", () => {
     expect(groups[1].entries.map((e) => e.id)).toEqual(["b"]);
   });
 
-  it("collects untitled and whitespace-only labels into one null bucket", () => {
+  it("collects untitled and whitespace-only labels into one null bucket, sorted last", () => {
     const groups = groupClaimInbox([
       makeEntry("a"),
       makeEntry("b", "   "),
       makeEntry("c", "Titled"),
     ]);
     expect(groups).toHaveLength(2);
-    expect(groups[0].label).toBeNull();
-    expect(groups[0].entries.map((e) => e.id)).toEqual(["a", "b"]);
-    expect(groups[1].label).toBe("Titled");
+    // Titled groups lead; the untitled ("Other") bucket sorts last.
+    expect(groups[0].label).toBe("Titled");
+    expect(groups[1].label).toBeNull();
+    expect(groups[1].entries.map((e) => e.id)).toEqual(["a", "b"]);
   });
 
   it("keeps the untitled bucket's key from colliding with a literal label", () => {
     // "untitled" is the actual sentinel key; a run literally titled
-    // "untitled" must land in its own "t:"-prefixed bucket.
+    // "untitled" must land in its own "t:"-prefixed bucket. The null
+    // (untitled) bucket sorts last regardless of appearance order.
     const groups = groupClaimInbox([
       makeEntry("a"),
       makeEntry("b", "untitled"),
     ]);
-    expect(groups.map((g) => g.key)).toEqual(["untitled", "t:untitled"]);
-    expect(groups.map((g) => g.label)).toEqual([null, "untitled"]);
+    expect(groups.map((g) => g.key)).toEqual(["t:untitled", "untitled"]);
+    expect(groups.map((g) => g.label)).toEqual(["untitled", null]);
   });
 
   it("returns no groups for an empty inbox", () => {
