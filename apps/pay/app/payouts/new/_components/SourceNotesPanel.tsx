@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 import type { VaultNote } from "@zkscatter/sdk/react";
-import type { SourceNotesPick } from "../../../_lib/sourceNotes";
+import { hasConfirmingDeposit, type SourceNotesPick } from "../../../_lib/sourceNotes";
 import { formatLocalStampSec } from "../../../_lib/format";
 import { TxLink } from "../../../_components/TxLink";
 
@@ -151,6 +151,14 @@ export function SourceNotesPanel({
 
   const nextRecheckSec = onRecheck ? RECHECK_SEC - (tick % RECHECK_SEC) : null;
   const fmt = (raw: bigint) => ethers.formatUnits(raw, decimals);
+  // A *recently* submitted deposit (recent pending note) locks the CTA:
+  // re-depositing on top of an unconfirmed deposit is how a single intent
+  // became two on-chain deposits. Time-bounded (see hasConfirmingDeposit)
+  // so a stale/phantom/discarded pending note can't disable funding
+  // forever. The pending-poll ticker above (keyed on `tick`, used by
+  // nextRecheckSec) re-renders this while notes are pending, so the lock
+  // clears once the window passes or the note reconciles.
+  const depositConfirming = hasConfirmingDeposit(tokenNotes, Date.now());
 
   if (!account) {
     return (
@@ -397,14 +405,20 @@ export function SourceNotesPanel({
             </div>
             {!fullyCoveredByPending && onDeposit && (
               <button
-                onClick={depositConfigured && !depositBusy ? onDeposit : undefined}
-                disabled={!depositConfigured || depositBusy}
+                onClick={
+                  depositConfigured && !depositBusy && !depositConfirming
+                    ? onDeposit
+                    : undefined
+                }
+                disabled={!depositConfigured || depositBusy || depositConfirming}
                 title={
                   !depositConfigured
                     ? "Deposit env not configured"
                     : depositBusy
                       ? "Deposit in progress"
-                      : undefined
+                      : depositConfirming
+                        ? "A deposit is still confirming — wait for it before depositing again"
+                        : undefined
                 }
                 className="rounded-md bg-[var(--color-primary)] px-3 py-1.5 text-xs font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
               >
@@ -412,7 +426,9 @@ export function SourceNotesPanel({
                   ? "Deposit (env not configured)"
                   : depositBusy
                     ? "Depositing…"
-                    : `Deposit ${fmt(remaining)} ${token}`}
+                    : depositConfirming
+                      ? "Deposit confirming…"
+                      : `Deposit ${fmt(remaining)} ${token}`}
               </button>
             )}
           </div>
