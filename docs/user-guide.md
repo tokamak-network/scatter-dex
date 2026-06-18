@@ -10,6 +10,10 @@ New to the project and just want to see it run? Start with the
 wallet, test tokens, and a running front-end. This page is the "why / how" layer
 on top of that.
 
+> 📸 **Screenshots** go in [`assets/user-guide/`](assets/user-guide/README.md)
+> (see that folder's README for filenames + how to swap a placeholder for an
+> image). Lines below marked `📸` are slots waiting for a capture.
+
 | App | Use it when you want to… | Status |
 |-----|--------------------------|--------|
 | [Pay](#pay) | Send payroll / grants / bonuses to many people **without publishing who got how much** | Wireframe (mock data) |
@@ -44,6 +48,8 @@ rates.
 4. Fund the vault, sign once → relayer batches the settlement on-chain.
 5. Share each recipient's private claim link; they claim gaslessly.
 
+> 📸 _Slot: `assets/user-guide/pay-payout-wizard.png` — the new-payout wizard (token + recipients), labeled as preview (mock data)._
+
 **Learn more:** in-app landing page · [product spec](product/SCATTERPAY_SPEC.md)
 
 ---
@@ -68,6 +74,8 @@ family offices.
 3. Deposit into the private vault.
 4. Place a private limit order — set price, size, recipient; sign with your trading key. The order joins the shared orderbook anonymously and waits for a match.
 5. When matched, the relayer batches settlement on-chain; claim the proceeds gaslessly.
+
+> 📸 _Slots: `assets/user-guide/pro-place-order.png` (the limit-order form) and `assets/user-guide/pro-claim.png` (claiming matched proceeds)._
 
 **Learn more:** in-app landing page · developer how-to guides under
 `developers/docs/guides/` at the repo root (connect-wallet, deposit, place-order,
@@ -95,6 +103,8 @@ operators in regulated jurisdictions.
 3. Stand up the open-source relayer node (Docker / single binary).
 4. Monitor fills and treasury from the console.
 
+> 📸 _Slot: `assets/user-guide/operators-console.png` — the relayer dashboard (fills / fees / treasury)._
+
 **Learn more:** [registering a relayer](operations/registering-a-relayer.md) ·
 [running a relayer](operations/running-a-relayer.md)
 
@@ -108,6 +118,8 @@ splits, bond minimums, pause switches), and treasury (FeeVault + timelocked fee
 changes). Internal/operator tool, not an end-user product.
 
 Open with `./scripts/run-scatter-web.sh admin sepolia` (http://localhost:4005).
+
+> 📸 _Slot: `assets/user-guide/admin-console.png` — the governance console modules._
 
 ---
 
