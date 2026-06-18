@@ -9,6 +9,21 @@ on-chain, while zk-X509 identity gating keeps the protocol regulatory-compliant.
 
 ---
 
+## The apps — why you'd use each
+
+| App | Why you'd use it | Status |
+|-----|------------------|--------|
+| **Pay** | Send payroll / grants / bonuses to many people in **one signature**, without publishing who got how much. Recipients claim **gaslessly** and can't see each other's amounts. | wireframe |
+| **Pro** | Place a **private limit order** — **no MEV**, no desk spread, no balance leak. Matched off-chain, settled on-chain, proceeds claimed gaslessly. | live |
+| **Drop** | Run a **sybil-resistant airdrop** to real humans (zk-X509 = 1 person, 1 claim). Per-recipient amounts hidden on-chain, gasless claim. | wireframe |
+| **Operators** | **Run a relayer** and earn deterministic on-chain fees settling private order flow. Permissionless bond, no vendor lock-in, can't see order amounts/sides. | live |
+| **Admin** | Govern the deployment — CA issuance, sanctions, protocol params, treasury (internal console). | live |
+
+> 📘 **Full user guide → [docs/user-guide.md](docs/user-guide.md)** — what each app is
+> for, the benefits, and step-by-step **how to use it**, all in one place.
+
+---
+
 ## Try it on Sepolia (no build — just a wallet)
 
 The fastest way to see it working. You run the frontends locally against the
@@ -42,19 +57,6 @@ then trade. The identity website (zk-X509) lives in a
 > — how the Sepolia deployment is wired (frontends, VM services, on-chain contracts, external infra).
 
 ---
-
-## The apps — why you'd use each
-
-| App | Why you'd use it | Status |
-|-----|------------------|--------|
-| **Pay** | Send payroll / grants / bonuses to many people in **one signature**, without publishing who got how much. Recipients claim **gaslessly** and can't see each other's amounts. | wireframe |
-| **Pro** | Place a **private limit order** — **no MEV**, no desk spread, no balance leak. Matched off-chain, settled on-chain, proceeds claimed gaslessly. | live |
-| **Drop** | Run a **sybil-resistant airdrop** to real humans (zk-X509 = 1 person, 1 claim). Per-recipient amounts hidden on-chain, gasless claim. | wireframe |
-| **Operators** | **Run a relayer** and earn deterministic on-chain fees settling private order flow. Permissionless bond, no vendor lock-in, can't see order amounts/sides. | live |
-| **Admin** | Govern the deployment — CA issuance, sanctions, protocol params, treasury (internal console). | live |
-
-> 📘 **Full user guide → [docs/user-guide.md](docs/user-guide.md)** — what each app is
-> for, the benefits, and step-by-step **how to use it**, all in one place.
 
 ## How it works
 
