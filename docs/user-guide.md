@@ -35,6 +35,9 @@ got what.
 Snapshot result, settling a wave of freelancers without leaking per-contractor
 rates.
 
+> ⚠️ Pay launches today but is still a **wireframe with mock data** — SDK/on-chain
+> integration is in progress, so the steps below preview the intended flow.
+
 **How to use**
 1. Open Pay (`./scripts/run-scatter-web.sh pay sepolia`, http://localhost:4001).
 2. Connect MetaMask (Sepolia) and pass the zk-X509 identity gate.
@@ -86,12 +89,15 @@ farms.
 
 **Good for:** token launch teams, NFT/communities, DAO governance distributions.
 
-**How to use**
-1. Open Drop (`./scripts/run-scatter-web.sh drop sepolia`).
-2. Set the sybil & privacy policy — require zk-X509, toggle gasless claim.
-3. Upload the recipient list and fund the campaign.
-4. One transaction commits the campaign on-chain.
-5. Share the claim URL or embed the widget; recipients claim gaslessly.
+> ⚠️ **Not runnable yet.** Drop is currently a design preview (wireframe with
+> mock data) — it isn't wired to the SDK/contracts and isn't served by
+> `run-scatter-web.sh`. The flow below is the intended UX, not a live one.
+
+**Planned flow**
+1. Set the sybil & privacy policy — require zk-X509, toggle gasless claim.
+2. Upload the recipient list and fund the campaign.
+3. One transaction commits the campaign on-chain.
+4. Share the claim URL or embed the widget; recipients claim gaslessly.
 
 **Learn more:** in-app landing page · [product spec](product/SCATTERDROP_SPEC.md)
 
@@ -139,5 +145,3 @@ Open with `./scripts/run-scatter-web.sh admin sepolia` (http://localhost:4005).
 - **How the system is wired:** [Sepolia architecture](operations/sepolia-architecture.md)
 - **Build on it:** developer docs under `developers/` at the repo root (concepts, SDK guides, protocol, whitepaper)
 - **Operate a relayer:** [registering](operations/registering-a-relayer.md) · [running](operations/running-a-relayer.md)
-</content>
-</invoke>
