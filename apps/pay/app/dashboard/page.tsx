@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { shortAddr, useMounted, useWallet } from "@zkscatter/sdk/react";
 import { formatTokenLabel } from "@zkscatter/sdk";
 import {
@@ -206,10 +206,13 @@ export default function Dashboard() {
 
       <ScopeBar scope={scope} setScope={setScope} wallet={wallet} folder={folder} />
 
-      <section className="grid grid-cols-3 gap-4">
+      {/* items-start so the multi-token "This month" card sizes to its
+          own content instead of stretching the sibling stat cards to
+          match its height. */}
+      <section className="grid grid-cols-3 items-start gap-4">
         <Stat
           label="This month"
-          value={mounted ? formatThisMonthValue(stats) : "—"}
+          value={mounted ? <ThisMonthValue stats={stats} /> : "—"}
           sub={mounted ? formatThisMonthSub(stats) : "loading…"}
         />
         <Stat
@@ -567,7 +570,7 @@ function RunRow({ entry }: { entry: RunsIndexEntry }) {
   );
 }
 
-function Stat({ label, value, sub }: { label: string; value: string; sub: string }) {
+function Stat({ label, value, sub }: { label: string; value: ReactNode; sub: string }) {
   return (
     <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
       <div className="text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">{label}</div>
@@ -640,25 +643,42 @@ function deriveStats(runs: RunsIndexEntry[], mounted: boolean): DashboardStats {
   };
 }
 
-function formatThisMonthValue(stats: DashboardStats): string {
-  const entries = Object.entries(stats.thisMonthByToken);
-  if (entries.length === 0) return "0";
+/** "This month" volume — every token transacted this month, each on its
+ *  own line (highest total first). Mixed units can't be summed into one
+ *  number, so we list them rather than collapse to a single token. */
+function ThisMonthValue({ stats }: { stats: DashboardStats }) {
+  const entries = Object.entries(stats.thisMonthByToken).sort(
+    (a, b) => b[1] - a[1],
+  );
+  if (entries.length === 0) return <>0</>;
   if (entries.length === 1) {
     const [symbol, total] = entries[0]!;
-    return `${formatAmount(total)} ${formatTokenLabel(symbol)}`;
+    return (
+      <>
+        {formatAmount(total)} {formatTokenLabel(symbol)}
+      </>
+    );
   }
-  // Mixed units — surface the highest-value token's total to give
-  // the operator a number, but flag it as one-of-many in the sub.
-  const [topSymbol, topTotal] = entries.sort((a, b) => b[1] - a[1])[0]!;
-  return `${formatAmount(topTotal)} ${formatTokenLabel(topSymbol)}`;
+  // Multiple tokens: stack them at a smaller size so they all fit the
+  // card instead of hiding all but the top one.
+  return (
+    <div className="space-y-0.5 text-lg leading-tight">
+      {entries.map(([symbol, total]) => (
+        <div key={symbol}>
+          {formatAmount(total)}{" "}
+          <span className="text-sm font-normal text-[var(--color-text-muted)]">
+            {formatTokenLabel(symbol)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function formatThisMonthSub(stats: DashboardStats): string {
-  const entries = Object.entries(stats.thisMonthByToken);
-  if (entries.length <= 1) {
-    return entries.length === 0 ? "no runs this month" : "this month";
-  }
-  return `${entries[0]![0]} shown · also ${entries.length - 1} other token${entries.length - 1 === 1 ? "" : "s"}`;
+  const count = Object.keys(stats.thisMonthByToken).length;
+  if (count === 0) return "no runs this month";
+  return `this month · ${count} token${count === 1 ? "" : "s"}`;
 }
 
 function formatAmount(n: number): string {
