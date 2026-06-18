@@ -15,7 +15,6 @@ on-chain, while zk-X509 identity gating keeps the protocol regulatory-compliant.
 |-----|------------------|--------|
 | **Pay** | Send payroll / grants / bonuses to many people in **one signature**, without publishing who got how much. Recipients claim **gaslessly** and can't see each other's amounts. | wireframe |
 | **Pro** | Place a **private limit order** — **no MEV**, no desk spread, no balance leak. Matched off-chain, settled on-chain, proceeds claimed gaslessly. | live |
-| **Drop** | Run a **sybil-resistant airdrop** to real humans (zk-X509 = 1 person, 1 claim). Per-recipient amounts hidden on-chain, gasless claim. | wireframe |
 | **Operators** | **Run a relayer** and earn deterministic on-chain fees settling private order flow. Permissionless bond, no vendor lock-in, can't see order amounts/sides. | live |
 | **Admin** | Govern the deployment — CA issuance, sanctions, protocol params, treasury (internal console). | live |
 

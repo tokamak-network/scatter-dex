@@ -14,7 +14,6 @@ on top of that.
 |-----|--------------------------|--------|
 | [Pay](#pay) | Send payroll / grants / bonuses to many people **without publishing who got how much** | Wireframe (mock data) |
 | [Pro](#pro) | Place a **private limit order** with no MEV and no balance leak | Live (real ZK + on-chain) |
-| [Drop](#drop) | Run a **sybil-resistant airdrop** to real humans, gaslessly | Wireframe (mock data) |
 | [Operators](#operators) | **Run a relayer** and earn fees settling private order flow | Live |
 | [Admin](#admin) | Govern the deployment (CA issuance, sanctions, params, treasury) | Live (internal) |
 
@@ -73,33 +72,6 @@ family offices.
 **Learn more:** in-app landing page · developer how-to guides under
 `developers/docs/guides/` at the repo root (connect-wallet, deposit, place-order,
 claim, cancel) · [reposition spec](product/PRO_REPOSITION.md)
-
----
-
-## Drop
-
-**Sybil-resistant private airdrops.** Get your token to real humans, not bot
-farms.
-
-**Why use it**
-- **Provable anti-sybil** via zk-X509 — real 1 person = 1 claim, not heuristics (sybil farmers routinely take 10–30% of supply and dump on day one).
-- **Gasless claim** — the campaign covers gas for recipients.
-- **Per-recipient amount hidden on-chain** — reduces day-one dump pressure.
-- Embeddable claim widget + audit-grade signed export.
-
-**Good for:** token launch teams, NFT/communities, DAO governance distributions.
-
-> ⚠️ **Not runnable yet.** Drop is currently a design preview (wireframe with
-> mock data) — it isn't wired to the SDK/contracts and isn't served by
-> `run-scatter-web.sh`. The flow below is the intended UX, not a live one.
-
-**Planned flow**
-1. Set the sybil & privacy policy — require zk-X509, toggle gasless claim.
-2. Upload the recipient list and fund the campaign.
-3. One transaction commits the campaign on-chain.
-4. Share the claim URL or embed the widget; recipients claim gaslessly.
-
-**Learn more:** in-app landing page · [product spec](product/SCATTERDROP_SPEC.md)
 
 ---
 
