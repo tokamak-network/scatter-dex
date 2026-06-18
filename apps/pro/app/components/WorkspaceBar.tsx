@@ -172,7 +172,7 @@ export function WorkspaceBar() {
       >
         Change ▾
       </button>
-      <div className="w-full text-[10px] text-[var(--color-warning)]">
+      <div className="w-full text-xs font-semibold text-[var(--color-warning)]">
         ⚠ Local only — not backed up to any server. If lost, it can&apos;t be recovered.
       </div>
       {open && (
