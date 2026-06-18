@@ -135,7 +135,7 @@ export function WorkspaceBar() {
             No notes folder selected
           </div>
           <div className="mt-0.5 text-[var(--color-text-muted)]">
-            Pay reads run records and the address book from a folder you choose. Pick once — the browser remembers it across sessions.
+            Pay stores run records and the address book in a folder you choose. It&apos;s local only — never backed up to any server, so keep your own backup; if lost, it can&apos;t be recovered.
           </div>
         </div>
         <button
@@ -169,6 +169,9 @@ export function WorkspaceBar() {
       >
         Change ▾
       </button>
+      <div className="w-full text-[10px] text-[var(--color-warning)]">
+        ⚠ Local only — not backed up to any server. If lost, it can&apos;t be recovered.
+      </div>
       {open && (
         <div className="absolute right-3 top-full z-20 mt-1 w-72 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] py-1 text-xs shadow-lg">
           <div className="px-3 py-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-subtle)]">
