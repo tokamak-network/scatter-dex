@@ -171,8 +171,9 @@ export function WorkspaceBar() {
       </button>
       <div className="w-full space-y-0.5 text-xs font-semibold text-[var(--color-warning)]">
         <div>
-          ⚠ Local only, not backed up anywhere — lose this folder and its funds
-          can&apos;t be recovered. Keep your own backup.
+          <span aria-hidden="true">⚠</span> Local only, not backed up anywhere —
+          lose this folder and its funds can&apos;t be recovered. Keep your own
+          backup.
         </div>
         <div>
           Keep it private — anyone who copies it sees your activity, and with
