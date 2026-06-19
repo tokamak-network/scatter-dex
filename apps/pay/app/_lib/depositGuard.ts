@@ -56,9 +56,16 @@ export interface RetryGuardDeps {
 }
 
 export interface RetryGuardResult {
-  /** `true` when a retry would risk a duplicate deposit. */
+  /** `true` when positive on-chain evidence shows a retry would
+   *  duplicate a deposit (landed / still-pending) — a hard block. */
   block: boolean;
-  /** User-facing reason; set iff `block`. */
+  /** `true` when the prior deposit can be neither confirmed nor cleared
+   *  (an atomic-batch note with no tx hash that isn't in the tree, or a
+   *  receipt we couldn't read). Not safe to auto-allow *or* permanently
+   *  block — the caller should ask the user to confirm before retrying.
+   *  Mutually exclusive with `block`. */
+  confirm?: boolean;
+  /** User-facing reason; set when `block` or `confirm`. */
   message?: string;
 }
 
@@ -76,6 +83,10 @@ const DEPOSIT_LANDED_MSG =
 const DEPOSIT_PENDING_MSG =
   "Your previous deposit transaction is still pending (not yet mined). " +
   "Wait for it to confirm before depositing again.";
+const DEPOSIT_AMBIGUOUS_MSG =
+  "We couldn't confirm whether your previous deposit went through. " +
+  "Check the explorer before retrying — depositing again would lock the " +
+  "funds in a second, separate note.";
 
 /**
  * On-chain recheck before allowing a deposit *retry*. Call this only for
@@ -119,35 +130,51 @@ export async function assessDepositRetry(
     if (landed()) return { block: true, message: DEPOSIT_LANDED_MSG };
   }
 
-  // None landed in the tree. For notes we broadcast ourselves, the
-  // receipt is authoritative: mined-ok or still-pending → block;
-  // reverted → that note is dead, keep checking the rest.
-  if (deps.getReceipt) {
-    for (const n of live) {
-      if (deps.signal?.aborted) return { block: false };
-      if (!n.txHash) continue;
-      const receipt = await deps.getReceipt(n.txHash).catch(() => undefined);
-      // Couldn't read it — don't manufacture a block from a transport
-      // error; let the next note (or the caller's modal) decide.
-      if (receipt === undefined) continue;
-      if (receipt === null) {
-        // No receipt = still pending OR dropped. ethers can't tell them
-        // apart from the receipt, so ask for the tx: a known tx is a
-        // genuine mempool-pending deposit (block); an unknown one was
-        // dropped/never-broadcast (allow the retry rather than block it
-        // forever — the phantom detector never fires on a tx with no
-        // receipt at all).
-        if (deps.getTransaction) {
-          const tx = await deps.getTransaction(n.txHash).catch(() => undefined);
-          if (tx === undefined) continue; // transport error → don't block
-          if (tx === null) continue; // dropped/unknown → allow retry
+  // None landed in the tree. Classify each remaining live note from its
+  // receipt: a positive verdict (mined-ok / still-pending) hard-blocks; a
+  // reverted or dropped tx is positively safe to retry; anything we can't
+  // pin down (no tx hash — the atomic-batch sliver — or an unreadable
+  // receipt) is *ambiguous* and, absent any hard block, escalates to a
+  // caller-driven confirmation rather than a silent allow.
+  let ambiguous = false;
+  for (const n of live) {
+    if (deps.signal?.aborted) return { block: false };
+    if (!n.txHash || !deps.getReceipt) {
+      // Atomic-batch note (no per-tx hash) or no receipt reader wired —
+      // can't verify it on-chain here.
+      ambiguous = true;
+      continue;
+    }
+    const receipt = await deps.getReceipt(n.txHash).catch(() => undefined);
+    if (receipt === undefined) {
+      // Transport error — don't manufacture a hard block, but don't
+      // silently allow either.
+      ambiguous = true;
+      continue;
+    }
+    if (receipt === null) {
+      // No receipt = still pending OR dropped. ethers can't tell them
+      // apart from the receipt, so ask for the tx: a known tx is a
+      // genuine mempool-pending deposit (block); an unknown one was
+      // dropped/never-broadcast (safe to retry — the phantom detector
+      // never fires on a tx with no receipt at all).
+      if (deps.getTransaction) {
+        const tx = await deps.getTransaction(n.txHash).catch(() => undefined);
+        if (tx === undefined) {
+          ambiguous = true;
+          continue;
         }
+        if (tx === null) continue; // dropped/unknown → positively safe
         return { block: true, message: DEPOSIT_PENDING_MSG };
       }
-      if (receipt.status === 1) return { block: true, message: DEPOSIT_LANDED_MSG };
-      // status === 0 → reverted; the phantom detector marks it failed.
+      // Can't disambiguate pending vs dropped without getTransaction.
+      ambiguous = true;
+      continue;
     }
+    if (receipt.status === 1) return { block: true, message: DEPOSIT_LANDED_MSG };
+    // status === 0 → reverted; positively safe (phantom detector marks it).
   }
 
+  if (ambiguous) return { block: false, confirm: true, message: DEPOSIT_AMBIGUOUS_MSG };
   return { block: false };
 }

@@ -87,33 +87,37 @@ describe("assessDepositRetry", () => {
       }),
     );
     expect(v.block).toBe(false);
+    expect(v.confirm).toBeFalsy();
   });
 
-  it("conservatively blocks a null receipt when no getTransaction reader is wired", async () => {
+  it("escalates to confirm (not a hard block) when a null receipt can't be disambiguated without getTransaction", async () => {
     const v = await assessDepositRetry(
       [note({ commitment: 9n, txHash: "0xabc" })],
       deps({ getReceipt: async () => null }),
     );
-    expect(v.block).toBe(true);
-    expect(v.message).toMatch(/still pending/i);
+    expect(v.block).toBe(false);
+    expect(v.confirm).toBe(true);
+    expect(v.message).toMatch(/couldn't confirm/i);
   });
 
-  it("allows a retry when the tx reverted (status 0) and it's absent from the tree", async () => {
+  it("allows a retry outright when the tx reverted (status 0) and it's absent from the tree", async () => {
     const v = await assessDepositRetry(
       [note({ commitment: 9n, txHash: "0xabc" })],
       deps({ getReceipt: async () => ({ status: 0 }) }),
     );
     expect(v.block).toBe(false);
+    expect(v.confirm).toBeFalsy();
   });
 
-  it("allows a retry for an atomic-batch note (no txHash) absent from the tree", async () => {
-    // Ambiguous sliver — owned by the caller's confirmation modal, not
-    // this guard. Tree absence + no receipt to consult → don't block.
+  it("asks for confirmation on an atomic-batch note (no txHash) absent from the tree", async () => {
+    // The ambiguous sliver: can't be proven landed or dropped, so neither
+    // auto-allow nor permanent-block — escalate to the caller's modal.
     const v = await assessDepositRetry([note({ commitment: 9n })], deps());
     expect(v.block).toBe(false);
+    expect(v.confirm).toBe(true);
   });
 
-  it("does not manufacture a block from a receipt transport error", async () => {
+  it("asks for confirmation rather than manufacturing a block on a receipt transport error", async () => {
     const v = await assessDepositRetry(
       [note({ commitment: 9n, txHash: "0xabc" })],
       deps({
@@ -123,22 +127,24 @@ describe("assessDepositRetry", () => {
       }),
     );
     expect(v.block).toBe(false);
+    expect(v.confirm).toBe(true);
   });
 
   it("falls back to tree-only evidence when no receipt reader is provided", async () => {
     // No getReceipt (wallet exposed no provider). A landed commitment
-    // still blocks; an absent one is allowed.
+    // still hard-blocks; an unverifiable one escalates to confirm.
     const blocked = await assessDepositRetry(
       [note({ commitment: 1n })],
       deps({ findIndex: () => 0, getReceipt: undefined }),
     );
     expect(blocked.block).toBe(true);
 
-    const allowed = await assessDepositRetry(
+    const unverifiable = await assessDepositRetry(
       [note({ commitment: 1n, txHash: "0xabc" })],
       deps({ getReceipt: undefined }),
     );
-    expect(allowed.block).toBe(false);
+    expect(unverifiable.block).toBe(false);
+    expect(unverifiable.confirm).toBe(true);
   });
 
   it("bails out (block:false) when the signal is already aborted", async () => {
