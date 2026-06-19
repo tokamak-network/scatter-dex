@@ -105,8 +105,10 @@ import {
   summarizeBalance,
   hasConfirmingDeposit,
   isLiveNote,
+  isPendingDeposit,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
+import { assessDepositRetry } from "../../_lib/depositGuard";
 import { useWalletBook } from "../../_lib/walletBook";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
@@ -1886,7 +1888,7 @@ function NewPayout() {
               depositPhase != null &&
               !TERMINAL_DEPOSIT_PHASES.has(depositPhase.kind)
             }
-            onDeposit={() => {
+            onDeposit={async () => {
               // Synchronous lock first — state-based checks would
               // race a same-frame double-click and start two flows.
               if (depositInFlightRef.current) return;
@@ -1910,7 +1912,34 @@ function NewPayout() {
                 });
                 return;
               }
+              // Take the lock before the async on-chain recheck so a
+              // double-click during the await can't start a second flow.
               depositInFlightRef.current = true;
+              // Past-window safety net: the wall-clock guard above has
+              // already released, but a deposit that *actually landed*
+              // (its confirm/reconcile lagged past the 10-min window)
+              // must still block a retry — else a confused user
+              // re-deposits and locks 2× the funds. Re-check on-chain;
+              // only a genuinely-absent commitment (likely a dropped tx)
+              // falls through to a fresh deposit. Tree-only when the
+              // wallet exposes no provider for receipts.
+              const pendingForToken = tokenNotes.filter(isPendingDeposit);
+              if (pendingForToken.length > 0) {
+                setDepositPhase({ kind: "preparing" });
+                const readProvider = signer.provider ?? undefined;
+                const verdict = await assessDepositRetry(pendingForToken, {
+                  refreshTree: tree.refresh,
+                  findIndex: tree.findIndex,
+                  getReceipt: readProvider
+                    ? (h) => readProvider.getTransactionReceipt(h)
+                    : undefined,
+                }).catch(() => ({ block: false }) as const);
+                if (verdict.block) {
+                  setDepositPhase({ kind: "error", error: verdict.message });
+                  depositInFlightRef.current = false;
+                  return;
+                }
+              }
               const ctrl = new AbortController();
               depositAbortRef.current = ctrl;
               setDepositPhase({ kind: "preparing" });
