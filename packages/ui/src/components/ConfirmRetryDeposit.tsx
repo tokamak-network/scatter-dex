@@ -23,12 +23,7 @@ export function ConfirmRetryDeposit({
   onConfirm: () => void;
 }) {
   return (
-    <Modal
-      open
-      onClose={onCancel}
-      title="Deposit again?"
-      closeOnBackdrop={false}
-    >
+    <Modal open onClose={onCancel} title="Deposit again?">
       <p className="mt-2 text-sm text-[var(--color-text-muted)]">
         We couldn&apos;t verify whether your <strong>previous deposit</strong>{" "}
         went through. It may still be pending, or already mined but unconfirmed
