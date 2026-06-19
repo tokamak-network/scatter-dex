@@ -5,7 +5,7 @@
 
 import fs from "node:fs";
 import nodePath from "node:path";
-import { poseidon2, poseidon3, poseidon5, poseidon7, poseidon9 } from "poseidon-lite";
+import { poseidon2, poseidon3, poseidon4, poseidon5, poseidon7, poseidon9 } from "poseidon-lite";
 import { TAG_COMMITMENT_V2 } from "../../src/core/tags.js";
 
 export const BN254_ORDER = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
@@ -14,6 +14,7 @@ export function poseidonHash(inputs: bigint[]): bigint {
   switch (inputs.length) {
     case 2: return poseidon2(inputs);
     case 3: return poseidon3(inputs);
+    case 4: return poseidon4(inputs);
     case 5: return poseidon5(inputs);
     case 7: return poseidon7(inputs);
     case 9: return poseidon9(inputs);

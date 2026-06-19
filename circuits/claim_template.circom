@@ -108,13 +108,22 @@ template Claim(depth) {
     //  drift from each other. Disjoints the claim nullifier space from
     //  the escrow (tag 0) and nonce (tag 1) nullifier spaces used by
     //  withdraw / settle.
-    //     nullifier = Poseidon(2, secret, leafIndex)
+    //     nullifier = Poseidon(2, secret, leafIndex, claimsRoot)
+    //
+    //  `claimsRoot` is bound into the preimage so the SAME (secret,
+    //  leafIndex) in two DIFFERENT settled claims groups yields two
+    //  DISTINCT nullifiers. Without it, a maker — who derives every
+    //  recipient's claim secret — could settle a throwaway group with a
+    //  colliding leaf, claim it, and permanently brick the honest
+    //  recipient's claim in the real group (the on-chain claimNullifiers
+    //  set is global). `claimsRoot` is already a bound public input.
     // ════════════════════════════════════════
 
-    component nullComp = Poseidon(3);
+    component nullComp = Poseidon(4);
     nullComp.inputs[0] <== TAG_CLAIM_NULL();
     nullComp.inputs[1] <== secret;
     nullComp.inputs[2] <== leafIndex;
+    nullComp.inputs[3] <== claimsRoot;
     nullifier === nullComp.out;
 
     // ════════════════════════════════════════

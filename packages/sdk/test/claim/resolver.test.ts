@@ -15,9 +15,9 @@ const SETTLEMENT = "0x" + "55".repeat(20);
 const CHAIN = 11155111;
 
 const entries: ClaimLeafRef[] = [
-  { secret: 0x1111n, leafIndex: 0 },
-  { secret: 0x2222n, leafIndex: 1 },
-  { secret: 0x3333n, leafIndex: 2 },
+  { secret: 0x1111n, leafIndex: 0, claimsRoot: 0xABC1n },
+  { secret: 0x2222n, leafIndex: 1, claimsRoot: 0xABC1n },
+  { secret: 0x3333n, leafIndex: 2, claimsRoot: 0xABC1n },
 ];
 
 /** Real ethers read-provider that answers `claimNullifiers(bytes32)` by
@@ -57,7 +57,7 @@ function routedSettlementProvider(
 }
 
 async function hexes(): Promise<string[]> {
-  return Promise.all(entries.map((e) => claimNullifierHex(e.secret, e.leafIndex)));
+  return Promise.all(entries.map((e) => claimNullifierHex(e.secret, e.leafIndex, e.claimsRoot)));
 }
 
 describe("fetchSpentClaimNullifiers", () => {
@@ -135,10 +135,10 @@ describe("fetchSpentClaimNullifiers", () => {
 
 describe("claimNullifierHex guard", () => {
   it("rejects a negative leafIndex", async () => {
-    await expect(claimNullifierHex(0x1n, -1)).rejects.toThrow(/non-negative/);
+    await expect(claimNullifierHex(0x1n, -1, 0n)).rejects.toThrow(/non-negative/);
   });
   it("rejects a fractional leafIndex", async () => {
-    await expect(claimNullifierHex(0x1n, 1.5)).rejects.toThrow(/non-negative/);
+    await expect(claimNullifierHex(0x1n, 1.5, 0n)).rejects.toThrow(/non-negative/);
   });
 });
 
@@ -207,12 +207,12 @@ describe("resolveSpentClaimEntries (inbox — nullifier-hash keyed, heterogeneou
   const SETTLEMENT_A = "0x" + "aa".repeat(20);
   const SETTLEMENT_B = "0x" + "bb".repeat(20);
   const inbox: ClaimEntryRef[] = [
-    { key: "entry-A", secret: 0x1111n, leafIndex: 0, settlementAddress: SETTLEMENT_A },
-    { key: "entry-B", secret: 0x2222n, leafIndex: 0, settlementAddress: SETTLEMENT_B },
-    { key: "entry-C", secret: 0x3333n, leafIndex: 1, settlementAddress: SETTLEMENT_A },
+    { key: "entry-A", secret: 0x1111n, leafIndex: 0, claimsRoot: 0xABC1n, settlementAddress: SETTLEMENT_A },
+    { key: "entry-B", secret: 0x2222n, leafIndex: 0, claimsRoot: 0xABC1n, settlementAddress: SETTLEMENT_B },
+    { key: "entry-C", secret: 0x3333n, leafIndex: 1, claimsRoot: 0xABC1n, settlementAddress: SETTLEMENT_A },
   ];
   const inboxHexes = (): Promise<string[]> =>
-    Promise.all(inbox.map((e) => claimNullifierHex(e.secret, e.leafIndex)));
+    Promise.all(inbox.map((e) => claimNullifierHex(e.secret, e.leafIndex, e.claimsRoot)));
 
   it("batches all entries into one indexer call and maps spent hashes back to keys", async () => {
     const hs = await inboxHexes();

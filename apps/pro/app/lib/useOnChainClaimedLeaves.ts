@@ -44,7 +44,11 @@ export function useOnChainClaimedLeaves(
   const probeKey = useMemo(
     () =>
       `${settlementAddress ?? ""}|` +
-      (claims ?? []).map((c) => `${c.leafIndex}:${c.secret}`).join(","),
+      // Include claimsRoot: it's now part of the nullifier, so a claim whose
+      // claimsRoot is populated/changed after secret+leafIndex must re-resolve.
+      (claims ?? [])
+        .map((c) => `${c.leafIndex}:${c.secret}:${c.claimsRoot ?? ""}`)
+        .join(","),
     [claims, settlementAddress],
   );
 
@@ -70,7 +74,16 @@ export function useOnChainClaimedLeaves(
     let cancelled = false;
     (async () => {
       const spentSet = await resolveSpentClaimLeaves({
-        entries: currentClaims.map((c) => ({ secret: c.secret, leafIndex: c.leafIndex })),
+        // `claimsRoot` is now bound into the claim nullifier, so a claim
+        // without one can't be resolved (nor claimed) — skip it; it stays in
+        // the consumer's optimistic local state.
+        entries: currentClaims
+          .filter((c) => c.claimsRoot !== undefined)
+          .map((c) => ({
+            secret: c.secret,
+            leafIndex: c.leafIndex,
+            claimsRoot: BigInt(c.claimsRoot!),
+          })),
         chainId,
         settlementAddress,
         provider: readProvider ?? undefined,

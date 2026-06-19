@@ -229,9 +229,21 @@ export function computeNonceNullifier(ownerSecret: bigint, nonce: bigint): Promi
   return poseidonHash([TAG_NONCE_NULL, ownerSecret, nonce]);
 }
 
-/** Claim nullifier: Poseidon(2, secret, leafIndex). */
-export function computeClaimNullifier(secret: bigint, leafIndex: bigint): Promise<bigint> {
-  return poseidonHash([TAG_CLAIM_NULL, secret, leafIndex]);
+/** Claim nullifier: Poseidon(2, secret, leafIndex, claimsRoot).
+ *
+ *  `claimsRoot` is bound into the preimage so the same (secret, leafIndex)
+ *  in two different settled claims groups yields two DISTINCT nullifiers —
+ *  the on-chain `claimNullifiers` set is global, and a maker derives every
+ *  recipient's claim secret, so without this binding a maker could settle a
+ *  throwaway group with a colliding leaf and permanently brick the honest
+ *  recipient's claim. Must stay byte-identical to `claim_template.circom`'s
+ *  nullifier derivation. */
+export function computeClaimNullifier(
+  secret: bigint,
+  leafIndex: bigint,
+  claimsRoot: bigint,
+): Promise<bigint> {
+  return poseidonHash([TAG_CLAIM_NULL, secret, leafIndex, claimsRoot]);
 }
 
 /** Token hash for circuit public inputs: Poseidon(token). */

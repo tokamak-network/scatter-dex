@@ -7,11 +7,17 @@ import { computeClaimNullifier, toBytes32Hex } from "../zk/commitment";
  *  `/api/claim-nullifiers` endpoint are keyed on. Validates `leafIndex` up
  *  front: a negative/fractional index hashes to a nullifier that can never
  *  match a real leaf, which would read as a silent false negative downstream. */
-export async function claimNullifierHex(secret: bigint, leafIndex: number): Promise<string> {
+export async function claimNullifierHex(
+  secret: bigint,
+  leafIndex: number,
+  claimsRoot: bigint,
+): Promise<string> {
   if (!Number.isSafeInteger(leafIndex) || leafIndex < 0) {
     throw new RangeError(`leafIndex must be a non-negative integer: ${leafIndex}`);
   }
-  return toBytes32Hex(await computeClaimNullifier(secret, BigInt(leafIndex))).toLowerCase();
+  return toBytes32Hex(
+    await computeClaimNullifier(secret, BigInt(leafIndex), claimsRoot),
+  ).toLowerCase();
 }
 
 /** PrivateSettlement contract bound for read-only nullifier probes. Pull it
@@ -32,10 +38,13 @@ export async function isClaimNullifierSpentOn(
   settlement: ethers.Contract,
   secret: bigint,
   leafIndex: number,
+  claimsRoot: bigint,
 ): Promise<boolean> {
   // Reuse `claimNullifierHex` so the RPC and indexer paths derive the key
   // identically (same leafIndex guard + canonical lowercasing).
-  return (await settlement.claimNullifiers(await claimNullifierHex(secret, leafIndex))) as boolean;
+  return (await settlement.claimNullifiers(
+    await claimNullifierHex(secret, leafIndex, claimsRoot),
+  )) as boolean;
 }
 
 /** True when this claim's nullifier is already spent on-chain — i.e. the claim
@@ -52,10 +61,12 @@ export async function isClaimNullifierSpent(
   settlementAddress: string,
   secret: bigint,
   leafIndex: number,
+  claimsRoot: bigint,
 ): Promise<boolean> {
   return isClaimNullifierSpentOn(
     settlementReader(provider, settlementAddress),
     secret,
     leafIndex,
+    claimsRoot,
   );
 }

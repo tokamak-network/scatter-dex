@@ -244,6 +244,7 @@ export async function generateClaimProof(
   const nullifier = await computeClaimNullifier(
     input.secret,
     BigInt(input.leafIndex),
+    resolved.claimsRoot,
   );
 
   const circuitInput: Record<string, unknown> = {

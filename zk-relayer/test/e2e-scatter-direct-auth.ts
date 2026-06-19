@@ -95,6 +95,13 @@ const CLAIMS_TREE_DEPTH = TIER_16.claimsTreeDepth;
  *  (the standard EVM address derivation), so the same N always produces
  *  the same set across runs and the test stays reproducible. */
 function deterministicRecipients(n: number): string[] {
+  // Against a production-style deploy (DeploySepolia), the claim path enforces
+  // `_requireIdentityVerified(recipient)`, so the recipient must be a really-
+  // attested address. Override to an identity-verified account on the fork.
+  const override = process.env.E2E_RECIPIENT_ADDR;
+  if (override) {
+    return Array.from({ length: n }, () => ethers.getAddress(override));
+  }
   const out: string[] = [];
   for (let i = 0; i < n; i++) {
     const hash = ethers.keccak256(ethers.toUtf8Bytes(`pay-recipient-${i}`));
@@ -229,9 +236,33 @@ async function main() {
   // ─── Step 2: Mint USDC + deposit ──────────────────────────
   console.log("\n[2/8] Mint USDC + deposit into CommitmentPool...");
 
-  const depositAmount = ethers.parseEther("100"); // 100 USDC (mock token uses 18 decimals)
-  await (await usdc.mint(userAddr, depositAmount)).wait();
-  await (await usdc.approve(POOL_ADDR, ethers.MaxUint256)).wait();
+  const depositAmount = ethers.parseEther("100"); // 100 tokens (18 decimals)
+  if (process.env.E2E_FUND_VIA_WETH === "1") {
+    // Real WETH9 on a Sepolia fork has no mint() — wrap ETH instead. Lets
+    // this flow run against a production-style deploy (DeploySepolia) with a
+    // real whitelisted WETH and an identity-verified deployer as the user.
+    // Top up first: step-1 owner setup pins this account (owner==user here)
+    // to 100 ETH, which the wrap would exhaust, leaving nothing for gas.
+    await provider.send("anvil_setBalance", [
+      userAddr,
+      ethers.toBeHex(ethers.parseEther("100000")),
+    ]);
+    // owner==user here (deployer is both), so the step-1 impersonated owner
+    // txs advanced this account's on-chain nonce out of band. Resync the
+    // NonceManager, then route the WETH wrap through that SAME `wallet` so all
+    // user txs share one consistent nonce stream.
+    wallet.reset();
+    const weth = new ethers.Contract(
+      USDC_ADDRESS,
+      ["function deposit() payable", "function approve(address,uint256) returns (bool)"],
+      wallet,
+    );
+    await (await weth.deposit({ value: depositAmount })).wait();
+    await (await weth.approve(POOL_ADDR, ethers.MaxUint256)).wait();
+  } else {
+    await (await usdc.mint(userAddr, depositAmount)).wait();
+    await (await usdc.approve(POOL_ADDR, ethers.MaxUint256)).wait();
+  }
 
   // EdDSA key
   const { eddsa, F } = await (async () => {
@@ -332,9 +363,14 @@ async function main() {
   // (block, transactionIndex, logIndex) so multi-deposit blocks
   // produce a stable order.
   const depositBlock = depositReceipt.blockNumber;
+  // Bound the range to <50k blocks: a forked node proxies historical
+  // eth_getLogs to its upstream RPC, which caps the span (Sepolia publicnode
+  // = 50000). All CommitmentInserted events are after the deploy anyway, so a
+  // recent window covers them; on a fresh local anvil this floors to 0.
+  const fromBlock = Math.max(0, depositBlock - 49000);
   const events = await pool.queryFilter(
     pool.filters.CommitmentInserted(),
-    0,
+    fromBlock,
     depositBlock,
   );
   events.sort(
@@ -518,7 +554,16 @@ async function main() {
   const claim = claims[0]!;
   const claimIdx = 0;
   const claimRecipient = recipientAddrs[claimIdx]!;
-  const claimNullifier = poseidonHash([TAG_CLAIM_NULL, claim.secret, BigInt(claimIdx)]);
+  // claimsRoot is bound into the claim nullifier (Poseidon(4)) so the same
+  // (secret, leafIndex) in different settled groups yields distinct nullifiers
+  // — must match claim_template.circom exactly or the witness fails its
+  // `nullifier === nullComp.out` constraint.
+  const claimNullifier = poseidonHash([
+    TAG_CLAIM_NULL,
+    claim.secret,
+    BigInt(claimIdx),
+    claimsRootValue,
+  ]);
   const claimMerkleProof = getMerkleProof(claimsLayers, claimIdx);
 
   const snarkjs = await import("snarkjs");
@@ -564,9 +609,20 @@ async function main() {
   // ─── Step 8: Verify recipient received USDC ───────────────
   console.log("\n[8/8] Verifying recipient balance...");
 
-  const recipientUsdcAfter = (await usdc.balanceOf(claimRecipient)) as bigint;
-  const delta = recipientUsdcAfter - recipientUsdcBefore;
-  assert(delta === claim.amount, `Recipient delta = ${ethers.formatEther(delta)} USDC`);
+  if (process.env.E2E_FUND_VIA_WETH === "1") {
+    // WETH claims auto-unwrap to ETH, so the recipient's WETH balance is
+    // unchanged — and here recipient == tx sender, so ETH deltas carry gas
+    // noise. Assert the unambiguous on-chain claim accounting instead.
+    const grp = await settlement.claimsGroups(toHex(claimsRootValue, 32));
+    assert(
+      grp.totalClaimed === claim.amount,
+      `Claims group totalClaimed = ${ethers.formatEther(grp.totalClaimed)} (claim accounting)`,
+    );
+  } else {
+    const recipientUsdcAfter = (await usdc.balanceOf(claimRecipient)) as bigint;
+    const delta = recipientUsdcAfter - recipientUsdcBefore;
+    assert(delta === claim.amount, `Recipient delta = ${ethers.formatEther(delta)} USDC`);
+  }
 
   console.log("\n═══════════════════════════════════════════════════════");
   console.log("  ✅ E2E scatterDirectAuth — ALL 8 STEPS PASSED");

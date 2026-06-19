@@ -91,8 +91,15 @@ export function useClaimReconciler<K extends string | number = string | number>(
   const resolvedPromise = useMemo<Promise<ResolvedKey<K>[]>>(
     () =>
       Promise.all(
-        watchKeysRef.current.map(async (k): Promise<ResolvedKey<K>> => {
-          const nullifier = await computeClaimNullifier(k.secret, BigInt(k.leafIndex));
+        watchKeysRef.current
+          // `claimsRoot` is bound into the claim nullifier; a row without one
+          // (legacy package stored before the field existed) can't be resolved
+          // — and `BigInt(undefined)` would reject the whole pass. Skip it; it
+          // stays in the consumer's optimistic state (display-only, never a
+          // missed on-chain spend — the contract is the source of truth).
+          .filter((k) => !!k.claimsRoot)
+          .map(async (k): Promise<ResolvedKey<K>> => {
+          const nullifier = await computeClaimNullifier(k.secret, BigInt(k.leafIndex), BigInt(k.claimsRoot));
           return {
             rowKey: k.rowKey,
             nullifierHex: topicHex(nullifier),

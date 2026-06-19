@@ -107,6 +107,7 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
         key: string;
         secret: bigint;
         leafIndex: number;
+        claimsRoot: bigint;
         settlementAddress: string;
       }[] = [];
       const keyMap = new Map<string, { orderId: string; leafIndex: number }>();
@@ -118,9 +119,18 @@ export function ClaimStatusRefreshProvider({ children }: { children: ReactNode }
         if (claims.length === 0) continue;
         processedOrders.add(o.id);
         for (const c of claims) {
+          // `claimsRoot` is now bound into the claim nullifier; a claim
+          // without one can't be resolved (nor claimed), so skip it.
+          if (c.claimsRoot === undefined) continue;
           const key = String(entries.length);
           keyMap.set(key, { orderId: o.id, leafIndex: c.leafIndex });
-          entries.push({ key, secret: c.secret, leafIndex: c.leafIndex, settlementAddress });
+          entries.push({
+            key,
+            secret: c.secret,
+            leafIndex: c.leafIndex,
+            claimsRoot: BigInt(c.claimsRoot),
+            settlementAddress,
+          });
         }
       }
       // Skip after teardown, when there's nothing to resolve, or once a newer

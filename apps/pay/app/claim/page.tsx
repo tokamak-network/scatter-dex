@@ -227,12 +227,16 @@ function ClaimInner() {
     let cancelled = false;
     (async () => {
       try {
-        const spent = await isClaimNullifierSpent(
-          readProvider,
-          parsed.pkg.settlementAddress,
-          BigInt(parsed.pkg.secret),
-          parsed.pkg.leafIndex,
-        );
+        const spent =
+          parsed.pkg.claimsRoot === undefined
+            ? false // pre-claimsRoot package — unresolvable, treat as not spent
+            : await isClaimNullifierSpent(
+                readProvider,
+                parsed.pkg.settlementAddress,
+                BigInt(parsed.pkg.secret),
+                parsed.pkg.leafIndex,
+                BigInt(parsed.pkg.claimsRoot),
+              );
         if (!cancelled) setAlreadyClaimed(spent);
       } catch {
         if (!cancelled) setAlreadyClaimed(null);
