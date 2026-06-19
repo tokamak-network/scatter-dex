@@ -379,11 +379,49 @@ contract CommitmentPool is
     ///      contract, which then distributes them via `claimWithProof`.
     ///      (The legacy `scatterDirect` path withdraws via
     ///      `pool.withdrawFor(...)` and does not call this function.)
+    ///
+    ///      INVARIANT (caller's responsibility): any settle path that consumes
+    ///      an escrow note MUST also burn that note's escrow nullifier in this
+    ///      pool via `spendEscrowNullifier`, so the note cannot also be spent
+    ///      via `withdraw` (or any other path). This is NOT folded into the
+    ///      token transfer here because the amount/token moved is the
+    ///      *receive*-side proceeds (e.g. the buy token in `settleAuth`),
+    ///      which is decoupled from the *consumed* note (the sell-side escrow
+    ///      nullifier). New settle paths added in the future must pair every
+    ///      escrow-note spend with a `spendEscrowNullifier` call — see the
+    ///      `NullifierDoubleSpendRegression` test for the property this guards.
     function transferToSettlement(address token, uint256 amount) external nonReentrant {
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
         if (IERC20(token).balanceOf(address(this)) < amount) revert InsufficientPoolBalance();
         IERC20(token).safeTransfer(authorizedSettlement, amount);
     }
+
+    /// @notice Burn an escrow nullifier on behalf of the settlement contract,
+    ///         so a note consumed via `PrivateSettlement` (settleAuth /
+    ///         scatterDirectAuth / settleWithDex / cancelPrivate — the paths
+    ///         that move funds out via `transferToSettlement` rather than
+    ///         `withdrawFor`) cannot ALSO be re-spent through `withdraw`, and
+    ///         vice-versa.
+    /// @dev This pool's `nullifiers` set is the single source of truth for the
+    ///      escrow spent-set: both the withdraw circuit and the authorize/cancel
+    ///      circuits derive the identical escrow nullifier
+    ///      `Poseidon(TAG_ESCROW_NULL, secret, salt)` for a given note, so the
+    ///      on-chain accounting must share one mapping. Reverts if already
+    ///      spent (which is exactly the cross-path double-spend we block).
+    ///      Only the authorized settlement may call. The legacy `scatterDirect`
+    ///      path does NOT call this — it already burns the pool nullifier via
+    ///      `withdrawFor`.
+    function spendEscrowNullifier(uint256 nullifier) external {
+        if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
+        if (nullifiers[nullifier]) revert NullifierAlreadySpent();
+        nullifiers[nullifier] = true;
+        emit EscrowNullifierSpent(nullifier);
+    }
+
+    /// @notice Emitted when an escrow nullifier is burned via the settlement
+    ///         path (mirrors the `Withdrawal` event's nullifier so off-chain
+    ///         indexers see every escrow spend regardless of which path took it).
+    event EscrowNullifierSpent(uint256 indexed nullifier);
 
     event FeeTransferred(address indexed recipient, address indexed token, uint256 amount);
 
