@@ -92,7 +92,7 @@ export function useClaimReconciler<K extends string | number = string | number>(
     () =>
       Promise.all(
         watchKeysRef.current.map(async (k): Promise<ResolvedKey<K>> => {
-          const nullifier = await computeClaimNullifier(k.secret, BigInt(k.leafIndex));
+          const nullifier = await computeClaimNullifier(k.secret, BigInt(k.leafIndex), BigInt(k.claimsRoot));
           return {
             rowKey: k.rowKey,
             nullifierHex: topicHex(nullifier),

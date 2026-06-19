@@ -218,6 +218,7 @@ function ClaimInner() {
           parsed.pkg.settlementAddress,
           BigInt(parsed.pkg.secret),
           parsed.pkg.leafIndex,
+          BigInt(parsed.pkg.claimsRoot),
         );
         if (!cancelled) setAlreadyClaimed(spent);
       } catch {
@@ -302,6 +303,7 @@ function ClaimInner() {
             parsed.pkg.settlementAddress,
             BigInt(parsed.pkg.secret),
             parsed.pkg.leafIndex,
+            BigInt(parsed.pkg.claimsRoot),
           );
           if (spent) {
             setAlreadyClaimed(true);

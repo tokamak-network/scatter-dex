@@ -11,6 +11,9 @@ import { fetchSpentClaimNullifiers } from "./claimIndexer";
 export interface ClaimLeafRef {
   secret: bigint;
   leafIndex: number;
+  /** The claims-tree root the leaf belongs to — bound into the nullifier so
+   *  the same (secret, leafIndex) in different groups can't collide. */
+  claimsRoot: bigint;
 }
 
 export interface ResolveSpentClaimLeavesOpts {
@@ -46,7 +49,7 @@ export async function resolveSpentClaimLeaves(
   if (opts.sharedOrderbookUrl) {
     try {
       const hexes = await Promise.all(
-        entries.map((e) => claimNullifierHex(e.secret, e.leafIndex)),
+        entries.map((e) => claimNullifierHex(e.secret, e.leafIndex, e.claimsRoot)),
       );
       const spentHex = await fetchSpentClaimNullifiers(
         opts.sharedOrderbookUrl,
@@ -84,7 +87,7 @@ export async function probeSpentClaimLeaves(
 ): Promise<Set<number>> {
   const settlement = settlementReader(provider, settlementAddress);
   const hexes = await Promise.all(
-    entries.map((e) => claimNullifierHex(e.secret, e.leafIndex)),
+    entries.map((e) => claimNullifierHex(e.secret, e.leafIndex, e.claimsRoot)),
   );
   const spentFlags = await Promise.all(
     hexes.map(async (h) => {
@@ -111,6 +114,9 @@ export interface ClaimEntryRef {
   key: string;
   secret: bigint;
   leafIndex: number;
+  /** The claims-tree root this leaf belongs to — bound into the nullifier so
+   *  the same (secret, leafIndex) across groups can't collide. */
+  claimsRoot: bigint;
   /** Used only by the per-entry RPC fallback (entries can span settlements). */
   settlementAddress: string;
 }
@@ -175,7 +181,7 @@ export async function resolveSpentClaimEntries(
   if (opts.sharedOrderbookUrl && useIndexerFirst) {
     try {
       const withHex = await Promise.all(
-        entries.map(async (e) => ({ e, hex: await claimNullifierHex(e.secret, e.leafIndex) })),
+        entries.map(async (e) => ({ e, hex: await claimNullifierHex(e.secret, e.leafIndex, e.claimsRoot) })),
       );
       const spentHex = await fetchSpentClaimNullifiers(
         opts.sharedOrderbookUrl,
@@ -210,7 +216,7 @@ export async function resolveSpentClaimEntries(
     const results = await Promise.all(
       entries.map(async (e) => {
         try {
-          return (await isClaimNullifierSpentOn(reader(e.settlementAddress), e.secret, e.leafIndex))
+          return (await isClaimNullifierSpentOn(reader(e.settlementAddress), e.secret, e.leafIndex, e.claimsRoot))
             ? e.key
             : null;
         } catch {

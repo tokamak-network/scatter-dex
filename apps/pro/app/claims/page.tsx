@@ -197,6 +197,7 @@ export default function ClaimsPage() {
             e.pkg.settlementAddress,
             BigInt(e.pkg.secret),
             e.pkg.leafIndex,
+            BigInt(e.pkg.claimsRoot),
           );
           return { id: e.id, spent };
         }),
@@ -308,6 +309,7 @@ export default function ClaimsPage() {
             e.pkg.settlementAddress,
             BigInt(e.pkg.secret),
             e.pkg.leafIndex,
+            BigInt(e.pkg.claimsRoot),
           )
         ) {
           await markClaimInboxEntryClaimed(e.id).catch((markErr) => {

@@ -166,6 +166,7 @@ export default function ClaimInbox() {
             key: e.id,
             secret: BigInt(e.pkg.secret),
             leafIndex: e.pkg.leafIndex,
+            claimsRoot: BigInt(e.pkg.claimsRoot),
             settlementAddress: e.pkg.settlementAddress,
           })),
           chainId: cfg.chainId,

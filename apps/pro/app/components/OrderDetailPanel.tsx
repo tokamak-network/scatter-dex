@@ -1250,11 +1250,13 @@ function ShareActions({
       try {
         if (
           readProvider &&
+          target.claimsRoot !== undefined &&
           (await isClaimNullifierSpent(
             readProvider,
             settlement,
             target.secret,
             target.leafIndex,
+            BigInt(target.claimsRoot),
           ))
         ) {
           // Same optimistic reflection as the happy path — the probe just
