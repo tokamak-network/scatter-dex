@@ -1,5 +1,6 @@
 export * from "./Modal";
 export * from "./Button";
+export * from "./ConfirmRetryDeposit";
 export * from "./Field";
 export * from "./EmptyState";
 export * from "./Pill";

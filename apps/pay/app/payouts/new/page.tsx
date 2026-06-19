@@ -2,9 +2,22 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { ethers } from "ethers";
-import { LAUNCH_TOKENS, chainName, isConfiguredAddress, eqAddr } from "@zkscatter/sdk";
+import {
+  LAUNCH_TOKENS,
+  chainName,
+  isConfiguredAddress,
+  eqAddr,
+} from "@zkscatter/sdk";
 import {
   splitPayout,
   withDeterministicSecrets,
@@ -25,14 +38,16 @@ import {
 import { useCommitmentTree } from "../../_lib/commitmentTree";
 import { authorizeProver } from "../../_lib/authorizeProver";
 import { computeBatchFee } from "../../_lib/payoutFees";
-import { useIdentityStatus, useIdentityForAddresses } from "../../_lib/identity";
+import {
+  useIdentityStatus,
+  useIdentityForAddresses,
+} from "../../_lib/identity";
 import { IdentityGateModal } from "../../_components/IdentityGateModal";
 import { type ClaimPackage } from "@zkscatter/sdk/notes";
-import { Field } from "@zkscatter/ui";
+import { ConfirmRetryDeposit, Field } from "@zkscatter/ui";
 import { buildRunRecord } from "./_buildRunRecord";
 import {
   ConfirmLargeAmount,
-  ConfirmRetryDeposit,
   ReviewRow,
   ReviewSection,
   Stepper,
@@ -63,7 +78,9 @@ const UPLOAD_STATUS_STYLES: Record<"ok" | "warn" | "error", string> = {
 // Tiers known to the SDK but not yet wired on-chain — used to surface
 // the roadmap signal in user-facing validation messages without hard-
 // coding "64 / 128" copy that drifts as tiers ship.
-const PLANNED_TIER_CAPS = TIERS.filter((t) => !ACTIVE_TIERS.includes(t)).map((t) => t.cap);
+const PLANNED_TIER_CAPS = TIERS.filter((t) => !ACTIVE_TIERS.includes(t)).map(
+  (t) => t.cap,
+);
 import {
   useCuratedNetworkTokens,
   useWallet,
@@ -85,8 +102,20 @@ import { useVault } from "../../_lib/vault";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { useRelayers } from "../../_lib/relayers";
 import { getNetworkConfig, isNetworkConfigured } from "../../_lib/network";
-import { formatRecipientCsvRow, formatRelativeAgo, parseAmount, parseRecipientRows, tokenBigIntToAddress, toIsoDateTimeSec } from "../../_lib/format";
-import { csvEscape, csvSafeLabel, downloadCsv, splitCsvLine } from "@zkscatter/recipients/csv";
+import {
+  formatRecipientCsvRow,
+  formatRelativeAgo,
+  parseAmount,
+  parseRecipientRows,
+  tokenBigIntToAddress,
+  toIsoDateTimeSec,
+} from "../../_lib/format";
+import {
+  csvEscape,
+  csvSafeLabel,
+  downloadCsv,
+  splitCsvLine,
+} from "@zkscatter/recipients/csv";
 import { parseRecipientFile } from "@zkscatter/recipients/parser";
 import {
   AddressBookPicker,
@@ -109,7 +138,10 @@ import {
   isPendingDeposit,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
-import { assessDepositRetry, type RetryGuardResult } from "@zkscatter/sdk/notes";
+import {
+  assessDepositRetry,
+  type RetryGuardResult,
+} from "@zkscatter/sdk/notes";
 import { useWalletBook } from "../../_lib/walletBook";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
@@ -129,7 +161,11 @@ const DEFAULT_MAX_FEE_BPS = 30;
 // is upload-only (parser opts it in via `parseRecipientFile`), and
 // `releaseAt` is set once for the whole run via the Claim schedule
 // block — not per row.
-const SPREADSHEET_COLUMNS: readonly RecipientField[] = ["name", "address", "amount"];
+const SPREADSHEET_COLUMNS: readonly RecipientField[] = [
+  "name",
+  "address",
+  "amount",
+];
 
 // TODO: read from org settings
 const LARGE_AMOUNT_THRESHOLD = 50_000;
@@ -159,7 +195,6 @@ function formatClaimFrom(iso: string): string {
   return new Date(ms).toLocaleString();
 }
 
-
 /** Save the current run's recipient list as a CSV — same shape Step
  *  3 accepts on import, plus a header row carrying the run-level
  *  context (label / token / chain / claim time) so the file can be
@@ -178,8 +213,9 @@ function downloadOrderbook(
     `# chain,${csvEscape(chain)}`,
     `# claim_from,${csvEscape(claimFrom ?? "")}`,
     `name,address,amount`,
-    ...rows.map((r) =>
-      `${csvEscape(r.name)},${csvEscape(r.address)},${csvEscape(r.amount)}`,
+    ...rows.map(
+      (r) =>
+        `${csvEscape(r.name)},${csvEscape(r.address)},${csvEscape(r.amount)}`,
     ),
   ];
   downloadCsv(
@@ -196,7 +232,9 @@ export default function NewPayoutPage() {
   return (
     <Suspense
       fallback={
-        <p className="text-sm text-[var(--color-text-muted)]">Loading payout…</p>
+        <p className="text-sm text-[var(--color-text-muted)]">
+          Loading payout…
+        </p>
       }
     >
       <NewPayoutGate />
@@ -220,8 +258,8 @@ function NewPayoutGate() {
     return (
       <>
         <div className="mx-auto max-w-3xl py-6 text-center text-sm text-[var(--color-text-muted)]">
-          Verify your identity to start a payout. The wizard unlocks once
-          your wallet's zk-X509 status checks out.
+          Verify your identity to start a payout. The wizard unlocks once your
+          wallet's zk-X509 status checks out.
         </div>
         <IdentityGateModal state={state} onClose={() => router.push("/")} />
       </>
@@ -287,8 +325,7 @@ function NewPayout() {
   const claimFromTooEarly =
     !!claimFrom &&
     Number.isFinite(Date.parse(claimFrom)) &&
-    Date.parse(claimFrom) - Date.now() <
-      CLAIM_FROM_BUFFER_MINUTES * 60_000;
+    Date.parse(claimFrom) - Date.now() < CLAIM_FROM_BUFFER_MINUTES * 60_000;
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
   // Shown when the on-chain retry guard can't confirm a prior deposit is
@@ -304,9 +341,11 @@ function NewPayout() {
   // wizard draft on disk (requires `folder.ready`); for "partial"
   // it's a successfully persisted RunRecord (the partial-path persist
   // swallows save errors, so success is not guaranteed).
-  const [submitError, setSubmitError] = useState<
-    { kind: "total" | "partial"; message: string; recoverable: boolean } | null
-  >(null);
+  const [submitError, setSubmitError] = useState<{
+    kind: "total" | "partial";
+    message: string;
+    recoverable: boolean;
+  } | null>(null);
   const router = useRouter();
 
   const { account, chainId, signer, rpcProvider } = useWallet();
@@ -345,9 +384,10 @@ function NewPayout() {
   );
   const folder = useFolderStorage();
   type UploadStatusKind = "ok" | "warn" | "error";
-  const [uploadStatus, setUploadStatus] = useState<
-    { kind: UploadStatusKind; message: string } | null
-  >(null);
+  const [uploadStatus, setUploadStatus] = useState<{
+    kind: UploadStatusKind;
+    message: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   // Recipient editor mode: textarea (CSV power-user) vs grid
   // (HR-friendly cell-by-cell view). Persisted so the user's choice
@@ -486,7 +526,18 @@ function NewPayout() {
     } finally {
       saveInFlightRef.current = false;
     }
-  }, [account, label, step, categoryId, token, csv, reason, claimFrom, maxFeeBps, router]);
+  }, [
+    account,
+    label,
+    step,
+    categoryId,
+    token,
+    csv,
+    reason,
+    claimFrom,
+    maxFeeBps,
+    router,
+  ]);
 
   const addressBookHint = !folder.ready
     ? "Pick a notes folder to load your address book."
@@ -558,7 +609,10 @@ function NewPayout() {
         const r = await loadRun(resumeId);
         if (cancelled) return;
         if (!r) {
-          setResume({ kind: "error", message: `Run ${resumeId} not found in this folder.` });
+          setResume({
+            kind: "error",
+            message: `Run ${resumeId} not found in this folder.`,
+          });
           return;
         }
         const { partial, unsettled } = partialRunStats(r);
@@ -570,7 +624,8 @@ function NewPayout() {
           });
           return;
         }
-        const cat = CATEGORIES.find((c) => c.id === r.category) ?? CATEGORIES[0]!;
+        const cat =
+          CATEGORIES.find((c) => c.id === r.category) ?? CATEGORIES[0]!;
         setCategoryId(cat.id);
         setLabel(r.label);
         setToken(r.tokenSymbol);
@@ -647,8 +702,12 @@ function NewPayout() {
           ? mergeResumedClaimPackages({
               existing: resumeRecord,
               newPackages: claimPackages ?? [],
-              txHash: advanced ? (txHash ?? resumeRecord.txHash) : resumeRecord.txHash,
-              settledAt: advanced ? Math.floor(Date.now() / 1000) : resumeRecord.settledAt,
+              txHash: advanced
+                ? (txHash ?? resumeRecord.txHash)
+                : resumeRecord.txHash,
+              settledAt: advanced
+                ? Math.floor(Date.now() / 1000)
+                : resumeRecord.settledAt,
             })
           : buildRunRecord({
               categoryId,
@@ -665,7 +724,12 @@ function NewPayout() {
               emailByAddress: pickerEmails,
               labelByAddress: pickerLabels,
               ...(totalRelayerFeeRaw !== undefined
-                ? { relayerFee: ethers.formatUnits(totalRelayerFeeRaw, decimals) }
+                ? {
+                    relayerFee: ethers.formatUnits(
+                      totalRelayerFeeRaw,
+                      decimals,
+                    ),
+                  }
                 : {}),
               ...(payoutSeed !== undefined
                 ? { payoutSeed: payoutSeed.toString() }
@@ -725,15 +789,23 @@ function NewPayout() {
         if (!multiBatchFit?.covered) {
           const reason = multiBatchFit?.reason;
           if (reason) {
-            const { title, body } = describeBatchFitError(reason, batches.length);
+            const { title, body } = describeBatchFitError(
+              reason,
+              batches.length,
+            );
             throw new Error(`${title} — ${body}`);
           }
-          throw new Error("No source notes cover this run — top up in the Funds step.");
+          throw new Error(
+            "No source notes cover this run — top up in the Funds step.",
+          );
         }
         // Overlap EdDSA derivation with worker boot + asset warm-up.
         // The zkey is ~19 MB; on cold cache its fetch dwarfs the
         // ECDSA-derive wallet round-trip.
-        const [kp] = await Promise.all([eddsa.derive(), authorizeProver.ready()]);
+        const [kp] = await Promise.all([
+          eddsa.derive(),
+          authorizeProver.ready(),
+        ]);
         // Derive the per-payout claim-secret seed DETERMINISTICALLY from the
         // wallet's eddsa key material (claimSeedFromKey) rather than random:
         // it's re-derivable from the wallet alone, so there's no stored seed
@@ -806,14 +878,16 @@ function NewPayout() {
           };
         };
 
-        const preparePromises: Promise<PreparedSettle>[] = submitBatches.map((_, i) =>
-          prepareRealSettle(settleArgs(i)),
+        const preparePromises: Promise<PreparedSettle>[] = submitBatches.map(
+          (_, i) => prepareRealSettle(settleArgs(i)),
         );
         preparePromises.forEach((p) => p.catch(() => undefined));
 
         const readProvider = signer.provider;
         if (!readProvider) {
-          throw new Error("Wallet has no provider — can't observe relayer-broadcast tx receipt.");
+          throw new Error(
+            "Wallet has no provider — can't observe relayer-broadcast tx receipt.",
+          );
         }
         const submitted: {
           txHash: string;
@@ -860,7 +934,8 @@ function NewPayout() {
               spentNoteId: multiBatchFit.byBatch[i]!.note.id,
             });
           } catch (err) {
-            partialBatchError = err instanceof Error ? err : new Error(String(err));
+            partialBatchError =
+              err instanceof Error ? err : new Error(String(err));
             break;
           }
         }
@@ -890,7 +965,9 @@ function NewPayout() {
           if (r.status !== "fulfilled") {
             if (!partialBatchError) {
               partialBatchError =
-                r.reason instanceof Error ? r.reason : new Error(String(r.reason));
+                r.reason instanceof Error
+                  ? r.reason
+                  : new Error(String(r.reason));
             }
             continue;
           }
@@ -974,7 +1051,9 @@ function NewPayout() {
 
   function appendFromAddressBook(picked: WalletEntry[]) {
     if (picked.length === 0) return;
-    const seen = new Set(rows.map((r) => r.address.toLowerCase()).filter(Boolean));
+    const seen = new Set(
+      rows.map((r) => r.address.toLowerCase()).filter(Boolean),
+    );
     const rowsToAdd: string[] = [];
     const newEmails: Record<string, string> = {};
     const newLabels: Record<string, string> = {};
@@ -1006,7 +1085,11 @@ function NewPayout() {
       setPickerLabels((prev) => ({ ...prev, ...newLabels }));
     }
     const trimmed = csv.trimEnd();
-    setCsv(trimmed.length > 0 ? `${trimmed}\n${rowsToAdd.join("\n")}` : rowsToAdd.join("\n"));
+    setCsv(
+      trimmed.length > 0
+        ? `${trimmed}\n${rowsToAdd.join("\n")}`
+        : rowsToAdd.join("\n"),
+    );
   }
 
   async function handleRecipientFile(file: File) {
@@ -1087,16 +1170,21 @@ function NewPayout() {
         // emits via `csvEscape` (e.g. names containing `"`) round-trip
         // back into `rows` without column-shift or stray quote chars.
         const parts = splitCsvLine(l);
-        return { name: parts[0] ?? "", address: parts[1] ?? "", amount: parts[2] ?? "" };
+        return {
+          name: parts[0] ?? "",
+          address: parts[1] ?? "",
+          amount: parts[2] ?? "",
+        };
       })
       .filter((r) => r.address.length > 0);
   }, [csv]);
 
   const total = useMemo(
-    () => rows.reduce((sum, r) => {
-      const n = parseAmount(r.amount);
-      return sum + (Number.isFinite(n) ? n : 0);
-    }, 0),
+    () =>
+      rows.reduce((sum, r) => {
+        const n = parseAmount(r.amount);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0),
     [rows],
   );
 
@@ -1117,7 +1205,9 @@ function NewPayout() {
   // back to the full curated list if the whitelist read yields nothing
   // (e.g. RPC hiccup) so the dropdown never goes empty.
   const selectableTokens = useMemo(() => {
-    const configured = curatedTokens.filter((t) => isConfiguredAddress(t.address));
+    const configured = curatedTokens.filter((t) =>
+      isConfiguredAddress(t.address),
+    );
     return configured.length > 0 ? configured : curatedTokens;
   }, [curatedTokens]);
   const tokenInfo =
@@ -1147,7 +1237,10 @@ function NewPayout() {
   }, [tokensLoading, selectableTokens, token, resumeRecord]);
 
   const { availableRaw, pendingRaw } = useMemo(
-    () => (tokenAddress ? summarizeBalance(notes, tokenAddress) : { availableRaw: 0n, pendingRaw: 0n }),
+    () =>
+      tokenAddress
+        ? summarizeBalance(notes, tokenAddress)
+        : { availableRaw: 0n, pendingRaw: 0n },
     [notes, tokenAddress],
   );
 
@@ -1233,14 +1326,21 @@ function NewPayout() {
     maxFeeBps: safeMaxFeeBps,
     claimFeePerRecipientRaw,
   });
-  const { serviceFeeRaw, claimReserveRaw, feeRaw, sellAmount: totalEscrowRaw } = runFee;
+  const {
+    serviceFeeRaw,
+    claimReserveRaw,
+    feeRaw,
+    sellAmount: totalEscrowRaw,
+  } = runFee;
 
   // Operator-controlled checklist of vault notes to spend. Defaults
   // to whatever auto-pick would have chosen but switches to manual
   // mode the moment the operator toggles a checkbox — once manual,
   // the wizard never re-syncs with auto-pick so a flipping
   // totalEscrowRaw doesn't silently reset the selection mid-flow.
-  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(() => new Set());
+  const [selectedNoteIds, setSelectedNoteIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [manualPick, setManualPick] = useState(false);
   const tokenNotes = useMemo<VaultNote[]>(() => {
     if (!tokenAddress) return [];
@@ -1271,9 +1371,21 @@ function NewPayout() {
   const sourcePick = useMemo<SourceNotesPick>(
     () =>
       manualPick
-        ? pickFromSelectedNotes(notes, selectedNoteIds, tokenAddress ?? "", totalEscrowRaw)
+        ? pickFromSelectedNotes(
+            notes,
+            selectedNoteIds,
+            tokenAddress ?? "",
+            totalEscrowRaw,
+          )
         : autoSourcePick,
-    [manualPick, notes, selectedNoteIds, tokenAddress, totalEscrowRaw, autoSourcePick],
+    [
+      manualPick,
+      notes,
+      selectedNoteIds,
+      tokenAddress,
+      totalEscrowRaw,
+      autoSourcePick,
+    ],
   );
   const batches = useMemo<PayoutBatch[]>(() => {
     if (!tokenAddress || rows.length === 0 || !claimFrom) return [];
@@ -1380,12 +1492,14 @@ function NewPayout() {
       issues.push("Add at least one recipient.");
     }
     if (rows.length > MAX_RECIPIENTS_PER_RUN) {
-      const roadmap = PLANNED_TIER_CAPS.length > 0
-        ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — for now, split into multiple runs.`
-        : "";
-      const txCopy = MAX_BATCHES_PER_RUN === 1
-        ? "one settlement transaction"
-        : `${MAX_BATCHES_PER_RUN} settlement transactions`;
+      const roadmap =
+        PLANNED_TIER_CAPS.length > 0
+          ? ` Larger circuits (${PLANNED_TIER_CAPS.join(" / ")}) are planned — for now, split into multiple runs.`
+          : "";
+      const txCopy =
+        MAX_BATCHES_PER_RUN === 1
+          ? "one settlement transaction"
+          : `${MAX_BATCHES_PER_RUN} settlement transactions`;
       issues.push(
         `Pay supports up to ${MAX_RECIPIENTS_PER_RUN} recipients per payout (${txCopy}).${roadmap}`,
       );
@@ -1440,13 +1554,7 @@ function NewPayout() {
     // button's pre-submit check, so duplicating them here would
     // trap users on Step 3.
     return issues.slice(0, 5);
-  }, [
-    rows,
-    recipientIdentity,
-    tokenAddress,
-    token,
-    claimFrom,
-  ]);
+  }, [rows, recipientIdentity, tokenAddress, token, claimFrom]);
 
   return (
     <div className="space-y-8">
@@ -1458,7 +1566,9 @@ function NewPayout() {
 
       {resume.kind === "error" && (
         <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
-          <strong className="mb-0.5 block">Couldn&apos;t load run to resume</strong>
+          <strong className="mb-0.5 block">
+            Couldn&apos;t load run to resume
+          </strong>
           {resume.message}
         </div>
       )}
@@ -1475,10 +1585,9 @@ function NewPayout() {
             package
           </div>
           <div className="mt-1 text-[var(--color-text-muted)]">
-            Category, label, token, and recipient list are locked so the
-            merged record stays a faithful continuation. Pick fresh source
-            notes in the Funds step — vault state has shifted since the
-            original run.
+            Category, label, token, and recipient list are locked so the merged
+            record stays a faithful continuation. Pick fresh source notes in the
+            Funds step — vault state has shifted since the original run.
           </div>
         </div>
       )}
@@ -1504,7 +1613,8 @@ function NewPayout() {
             <div>
               <h2 className="text-lg font-semibold">Choose a category</h2>
               <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-                Categories pre-fill the run label, default token, and export format. You can change anything later.
+                Categories pre-fill the run label, default token, and export
+                format. You can change anything later.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -1523,7 +1633,9 @@ function NewPayout() {
                     {c.name}
                   </div>
                   <div className="mt-1 font-semibold">{c.tagline}</div>
-                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">{c.body}</p>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    {c.body}
+                  </p>
                 </button>
               ))}
             </div>
@@ -1564,12 +1676,16 @@ function NewPayout() {
                       — if the run's token was since de-whitelisted it
                       must still show (filtering it out would blank the
                       value). New runs use the whitelist-filtered list. */}
-                  {(resumeRecord ? curatedTokens : selectableTokens).map((t) => (
-                    <option key={t.symbol} value={t.symbol}>
-                      {t.symbol}
-                      {isConfiguredAddress(t.address) ? "" : " (not deployed)"}
-                    </option>
-                  ))}
+                  {(resumeRecord ? curatedTokens : selectableTokens).map(
+                    (t) => (
+                      <option key={t.symbol} value={t.symbol}>
+                        {t.symbol}
+                        {isConfiguredAddress(t.address)
+                          ? ""
+                          : " (not deployed)"}
+                      </option>
+                    ),
+                  )}
                 </select>
               </Field>
             </div>
@@ -1583,10 +1699,14 @@ function NewPayout() {
               <div className="flex flex-col items-end gap-1 text-xs">
                 <div className="flex gap-2">
                   <button
-                    onClick={() => addressBookHint === null && setShowBookPicker(true)}
+                    onClick={() =>
+                      addressBookHint === null && setShowBookPicker(true)
+                    }
                     aria-disabled={addressBookHint !== null}
                     aria-describedby={addressBookHint ? "abp-hint" : undefined}
-                    onMouseDown={(e) => addressBookHint !== null && e.preventDefault()}
+                    onMouseDown={(e) =>
+                      addressBookHint !== null && e.preventDefault()
+                    }
                     className={`rounded border border-[var(--color-border-strong)] px-2 py-1 hover:bg-[var(--color-primary-soft)] ${
                       addressBookHint !== null ? "opacity-40" : ""
                     }`}
@@ -1614,7 +1734,9 @@ function NewPayout() {
                   />
                 </div>
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="text-[var(--color-text-muted)]">Download sample:</span>
+                  <span className="text-[var(--color-text-muted)]">
+                    Download sample:
+                  </span>
                   <a
                     href="/samples/recipients-sample.csv"
                     download
@@ -1631,7 +1753,10 @@ function NewPayout() {
                   </a>
                 </div>
                 {addressBookHint && (
-                  <span id="abp-hint" className="text-[10px] text-[var(--color-text-subtle)]">
+                  <span
+                    id="abp-hint"
+                    className="text-[10px] text-[var(--color-text-subtle)]"
+                  >
                     {addressBookHint}
                   </span>
                 )}
@@ -1649,15 +1774,14 @@ function NewPayout() {
                     <span className={empty ? warnClass : ""}>
                       {category.identifierLabel.toLowerCase()}
                     </span>
-                    ,
-                    <span className={empty ? warnClass : ""}>address</span>
-                    ,
+                    ,<span className={empty ? warnClass : ""}>address</span>,
                     <span className={empty || missingAmount ? warnClass : ""}>
                       amount
                     </span>
                   </span>{" "}
-                  — one per line. Amounts are in the selected token (e.g. 3500.00 USDC).
-                  Optional column via upload: <span className="font-mono">email</span>.
+                  — one per line. Amounts are in the selected token (e.g.
+                  3500.00 USDC). Optional column via upload:{" "}
+                  <span className="font-mono">email</span>.
                   {empty ? (
                     <span className="ml-2 text-[var(--color-warning)]">
                       ← add at least one recipient line below.
@@ -1771,18 +1895,21 @@ function NewPayout() {
               </div>
               {claimFromTooEarly ? (
                 <p className="mt-2 text-xs font-medium text-[var(--color-warning)]">
-                  Claim time must be at least {CLAIM_FROM_BUFFER_MINUTES} minutes
-                  from now.
+                  Claim time must be at least {CLAIM_FROM_BUFFER_MINUTES}{" "}
+                  minutes from now.
                 </p>
               ) : (
                 <p className="mt-2 text-[10px] text-[var(--color-text-subtle)]">
-                  Recipients can claim any time after the moment set above — there is no expiry.
+                  Recipients can claim any time after the moment set above —
+                  there is no expiry.
                 </p>
               )}
             </div>
 
             <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3">
-              <div className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">Preview</div>
+              <div className="mb-2 text-xs font-semibold text-[var(--color-text-muted)]">
+                Preview
+              </div>
               <table className="w-full text-sm">
                 <thead className="text-xs text-[var(--color-text-subtle)]">
                   <tr>
@@ -1810,11 +1937,15 @@ function NewPayout() {
                     let identityCell: ReactNode;
                     if (!shapeOk) {
                       identityCell = (
-                        <span className="text-[var(--color-text-subtle)]">—</span>
+                        <span className="text-[var(--color-text-subtle)]">
+                          —
+                        </span>
                       );
                     } else if (v === null) {
                       identityCell = (
-                        <span className="text-[var(--color-text-subtle)]">Checking…</span>
+                        <span className="text-[var(--color-text-subtle)]">
+                          Checking…
+                        </span>
                       );
                     } else if (v.isVerified) {
                       identityCell = (
@@ -1832,11 +1963,18 @@ function NewPayout() {
                       );
                     }
                     return (
-                      <tr key={`${r.address}-${i}`} className="border-t border-[var(--color-border)]">
+                      <tr
+                        key={`${r.address}-${i}`}
+                        className="border-t border-[var(--color-border)]"
+                      >
                         <td className="py-1.5">{r.name}</td>
-                        <td className="py-1.5 font-mono text-xs">{r.address.slice(0, 10)}…{r.address.slice(-4)}</td>
+                        <td className="py-1.5 font-mono text-xs">
+                          {r.address.slice(0, 10)}…{r.address.slice(-4)}
+                        </td>
                         <td className="py-1.5 pl-3">{identityCell}</td>
-                        <td className="py-1.5 text-right font-mono">{r.amount} {token}</td>
+                        <td className="py-1.5 text-right font-mono">
+                          {r.amount} {token}
+                        </td>
                         <td className="py-1.5 pl-3 text-xs text-[var(--color-text-muted)]">
                           {claimFrom ? formatClaimFrom(claimFrom) : "—"}
                         </td>
@@ -1865,18 +2003,21 @@ function NewPayout() {
                     caps at 3 fraction digits and would show 0.0005 ETH as
                     "0.001". Lenient sum so a mid-edit invalid row doesn't
                     blank the figure. */}
-                <span className="font-semibold">{ethers.formatUnits(displayTotalRaw, decimals)} {token}</span>
+                <span className="font-semibold">
+                  {ethers.formatUnits(displayTotalRaw, decimals)} {token}
+                </span>
               </div>
             </div>
             {validation.length > 0 && (
               <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
                 <div className="mb-1 font-semibold">Fix before continuing</div>
                 <ul className="list-disc space-y-0.5 pl-4">
-                  {validation.map((v, i) => <li key={`${i}:${v}`}>{v}</li>)}
+                  {validation.map((v, i) => (
+                    <li key={`${i}:${v}`}>{v}</li>
+                  ))}
                 </ul>
               </div>
             )}
-
           </div>
         )}
 
@@ -2059,7 +2200,9 @@ function NewPayout() {
               <ReviewRow k="Chain" v={chain} />
               <ReviewRow k="Token" v={token} />
               <ReviewRow k="Recipients" v={`${rows.length}`} />
-              {category.reasonLabel && <ReviewRow k={category.reasonLabel} v={reason || "—"} />}
+              {category.reasonLabel && (
+                <ReviewRow k={category.reasonLabel} v={reason || "—"} />
+              )}
             </ReviewSection>
 
             <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
@@ -2069,7 +2212,9 @@ function NewPayout() {
                 </h3>
                 <button
                   type="button"
-                  onClick={() => downloadOrderbook(rows, label, token, chain, claimFrom)}
+                  onClick={() =>
+                    downloadOrderbook(rows, label, token, chain, claimFrom)
+                  }
                   className="rounded-md border border-[var(--color-border-strong)] px-2 py-1 text-xs hover:bg-[var(--color-bg)]"
                 >
                   Download CSV
@@ -2089,7 +2234,9 @@ function NewPayout() {
                       <tr key={i}>
                         <td className="py-1.5 pr-2">{r.name || "—"}</td>
                         <td className="py-1.5 pr-2 font-mono text-xs">
-                          {r.address ? `${r.address.slice(0, 8)}…${r.address.slice(-4)}` : "—"}
+                          {r.address
+                            ? `${r.address.slice(0, 8)}…${r.address.slice(-4)}`
+                            : "—"}
                         </td>
                         <td className="py-1.5 text-right font-mono">
                           {r.amount} {token}
@@ -2135,11 +2282,12 @@ function NewPayout() {
                         className="rounded-md border border-[var(--color-warning)] bg-white px-3 py-1.5 text-sm"
                       />
                       <span className="text-xs text-[var(--color-warning)]">
-                        Claim time has passed (or is within {CLAIM_FROM_BUFFER_MINUTES} min). Pick a new moment.
+                        Claim time has passed (or is within{" "}
+                        {CLAIM_FROM_BUFFER_MINUTES} min). Pick a new moment.
                       </span>
                     </div>
                   ) : (
-                    claimFrom ?? "—"
+                    (claimFrom ?? "—")
                   )
                 }
               />
@@ -2150,7 +2298,7 @@ function NewPayout() {
                 k="Relayer"
                 v={
                   relayer
-                    ? `${relayer.name && relayer.name.length > 0 ? relayer.name : relayer.api?.name ?? `${relayer.address.slice(0, 10)}…`}`
+                    ? `${relayer.name && relayer.name.length > 0 ? relayer.name : (relayer.api?.name ?? `${relayer.address.slice(0, 10)}…`)}`
                     : "—"
                 }
               />
@@ -2179,7 +2327,10 @@ function NewPayout() {
                   v={`${ethers.formatUnits(sourcePick.changeRaw, decimals)} ${token}`}
                 />
               )}
-              <ReviewRow k="Estimated gas" v="~$0.50 (one tx · varies by chain)" />
+              <ReviewRow
+                k="Estimated gas"
+                v="~$0.50 (one tx · varies by chain)"
+              />
             </ReviewSection>
             <div className="rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs text-[var(--color-warning)]">
               <strong className="mb-0.5 block">This cannot be reversed.</strong>
@@ -2197,10 +2348,9 @@ function NewPayout() {
                 <div className="text-[var(--color-text-muted)]">
                   {batches.length === 1 ? (
                     <>
-                      One private transaction —{" "}
-                      <strong>{rows.length}</strong> real recipients hidden
-                      inside an anonymity set of <strong>{tier.cap}</strong>.
-                      One signature.
+                      One private transaction — <strong>{rows.length}</strong>{" "}
+                      real recipients hidden inside an anonymity set of{" "}
+                      <strong>{tier.cap}</strong>. One signature.
                     </>
                   ) : (
                     <>
@@ -2265,7 +2415,9 @@ function NewPayout() {
                     href="/dashboard"
                     className="inline-block rounded-md border border-[var(--color-warning)] px-2.5 py-1 font-medium hover:bg-[var(--color-warning)] hover:text-white"
                   >
-                    {submitError.kind === "total" ? "Go to drafts" : "Go to dashboard"}
+                    {submitError.kind === "total"
+                      ? "Go to drafts"
+                      : "Go to dashboard"}
                   </Link>
                 )}
                 <details className="text-[var(--color-text-muted)]">
@@ -2293,86 +2445,89 @@ function NewPayout() {
         >
           Back
         </button>
-        {step < 5 ? (
-          (() => {
-            // Steps 3 and 4 each have prerequisites that must be in
-            // place before the operator can move on. Step 3 covers the
-            // CSV / claim-time inputs; step 4 (Funds) covers the
-            // relayer pick + a covered-shortfall check so the Sign
-            // step doesn't open with a half-funded run.
-            const step3Block =
-              step === 3 &&
-              (rows.length === 0 ||
-                !claimFrom ||
-                claimFromTooEarly ||
-                validation.length > 0);
-            const step4Block =
-              step === 4 &&
-              (!relayer || !sourcePick.covered || !multiBatchFit?.covered);
-            const blockNext = step3Block || step4Block;
-            const nextDisableReason = step3Block
-              ? rows.length === 0
-                ? "Add at least one recipient"
-                : !claimFrom
-                  ? "Pick the claim-schedule moment"
-                  : claimFromTooEarly
-                    ? `Claim time must be at least ${CLAIM_FROM_BUFFER_MINUTES} minutes from now`
-                    : "Fix the CSV errors above before continuing"
-              : step4Block
-                ? !relayer
-                  ? "Pick a relayer to dispatch the settle tx"
-                  : !sourcePick.covered
-                    ? "Select deposits whose total covers the escrow amount"
-                    : "Top up the shortfall before advancing to Review"
-                : undefined;
-            return (
-              <div className="flex items-center gap-2">
-                {resume.kind !== "ready" && (
+        {step < 5
+          ? (() => {
+              // Steps 3 and 4 each have prerequisites that must be in
+              // place before the operator can move on. Step 3 covers the
+              // CSV / claim-time inputs; step 4 (Funds) covers the
+              // relayer pick + a covered-shortfall check so the Sign
+              // step doesn't open with a half-funded run.
+              const step3Block =
+                step === 3 &&
+                (rows.length === 0 ||
+                  !claimFrom ||
+                  claimFromTooEarly ||
+                  validation.length > 0);
+              const step4Block =
+                step === 4 &&
+                (!relayer || !sourcePick.covered || !multiBatchFit?.covered);
+              const blockNext = step3Block || step4Block;
+              const nextDisableReason = step3Block
+                ? rows.length === 0
+                  ? "Add at least one recipient"
+                  : !claimFrom
+                    ? "Pick the claim-schedule moment"
+                    : claimFromTooEarly
+                      ? `Claim time must be at least ${CLAIM_FROM_BUFFER_MINUTES} minutes from now`
+                      : "Fix the CSV errors above before continuing"
+                : step4Block
+                  ? !relayer
+                    ? "Pick a relayer to dispatch the settle tx"
+                    : !sourcePick.covered
+                      ? "Select deposits whose total covers the escrow amount"
+                      : "Top up the shortfall before advancing to Review"
+                  : undefined;
+              return (
+                <div className="flex items-center gap-2">
+                  {resume.kind !== "ready" && (
+                    <button
+                      type="button"
+                      disabled={!account || !label.trim() || !folder.ready}
+                      title={
+                        !account
+                          ? "Connect a wallet to save drafts"
+                          : !label.trim()
+                            ? "Enter a label first"
+                            : !folder.ready
+                              ? "Pick a notes folder in the dashboard before saving drafts"
+                              : "Save now and sync the URL so refresh resumes this draft"
+                      }
+                      onClick={() => {
+                        void saveDraftNow().then((saved) => {
+                          if (!saved) return;
+                          setDraftJustSaved(true);
+                          window.setTimeout(
+                            () => setDraftJustSaved(false),
+                            1500,
+                          );
+                        });
+                      }}
+                      className={`rounded-md border px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${
+                        draftJustSaved
+                          ? "border-[var(--color-success,green)] bg-[var(--color-success-soft,#e6f4ea)] text-[var(--color-success,green)]"
+                          : "border-[var(--color-border-strong)] hover:bg-[var(--color-bg)]"
+                      }`}
+                    >
+                      {draftJustSaved ? "Saved ✓" : "Save draft"}
+                    </button>
+                  )}
                   <button
-                    type="button"
-                    disabled={!account || !label.trim() || !folder.ready}
-                    title={
-                      !account
-                        ? "Connect a wallet to save drafts"
-                        : !label.trim()
-                        ? "Enter a label first"
-                        : !folder.ready
-                        ? "Pick a notes folder in the dashboard before saving drafts"
-                        : "Save now and sync the URL so refresh resumes this draft"
-                    }
-                    onClick={() => {
-                      void saveDraftNow().then((saved) => {
-                        if (!saved) return;
-                        setDraftJustSaved(true);
-                        window.setTimeout(() => setDraftJustSaved(false), 1500);
-                      });
-                    }}
-                    className={`rounded-md border px-4 py-2 text-sm disabled:opacity-40 disabled:cursor-not-allowed ${
-                      draftJustSaved
-                        ? "border-[var(--color-success,green)] bg-[var(--color-success-soft,#e6f4ea)] text-[var(--color-success,green)]"
-                        : "border-[var(--color-border-strong)] hover:bg-[var(--color-bg)]"
-                    }`}
+                    onClick={() => setStep((s) => s + 1)}
+                    disabled={blockNext}
+                    title={nextDisableReason}
+                    className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
                   >
-                    {draftJustSaved ? "Saved ✓" : "Save draft"}
+                    Next
                   </button>
-                )}
-                <button
-                  onClick={() => setStep((s) => s + 1)}
-                  disabled={blockNext}
-                  title={nextDisableReason}
-                  className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)] disabled:opacity-50"
-                >
-                  Next
-                </button>
-                {draftSaveError && (
-                  <span className="ml-2 text-xs text-[var(--color-warning)]">
-                    Save failed: {draftSaveError}
-                  </span>
-                )}
-              </div>
-            );
-          })()
-        ) : null}
+                  {draftSaveError && (
+                    <span className="ml-2 text-xs text-[var(--color-warning)]">
+                      Save failed: {draftSaveError}
+                    </span>
+                  )}
+                </div>
+              );
+            })()
+          : null}
       </div>
 
       {showConfirm && (
@@ -2457,22 +2612,28 @@ function DepositProgress({
   const tone = isDone
     ? "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]"
     : isError
-    ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
-    : isCancelled
-    ? "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
-    : "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]";
+      ? "border-[var(--color-warning)] bg-[var(--color-warning-soft)] text-[var(--color-warning)]"
+      : isCancelled
+        ? "border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
+        : "border-[var(--color-success)] bg-[var(--color-success-soft)] text-[var(--color-success)]";
   return (
-    <div className={`flex items-start gap-3 rounded-md border p-3 text-xs ${tone}`}>
+    <div
+      className={`flex items-start gap-3 rounded-md border p-3 text-xs ${tone}`}
+    >
       <div className="flex-1">
         <div className="font-semibold">
           {isDone ? "✓ " : ""}
           {DEPOSIT_PHASE_COPY[phase.kind]}
         </div>
         {phase.message && !terminal && (
-          <div className="mt-0.5 text-[var(--color-text-subtle)]">{phase.message}</div>
+          <div className="mt-0.5 text-[var(--color-text-subtle)]">
+            {phase.message}
+          </div>
         )}
         {isDone && phase.txHash && (
-          <div className="mt-1 font-mono text-[10px]">{phase.txHash.slice(0, 18)}…</div>
+          <div className="mt-1 font-mono text-[10px]">
+            {phase.txHash.slice(0, 18)}…
+          </div>
         )}
         {isError && phase.error && <div className="mt-1">{phase.error}</div>}
         {isCancelled && (

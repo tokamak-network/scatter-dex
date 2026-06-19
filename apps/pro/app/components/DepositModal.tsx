@@ -34,7 +34,13 @@ import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { dispatchDeposit } from "../lib/dispatch";
 import { DEMO_NETWORK } from "../lib/network";
-import { Button, Field, Modal, useToast } from "@zkscatter/ui";
+import {
+  Button,
+  ConfirmRetryDeposit,
+  Field,
+  Modal,
+  useToast,
+} from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
 
@@ -738,64 +744,6 @@ export function DepositModal({
             })()}
           </>
         )}
-      </div>
-    </Modal>
-  );
-}
-
-/** Shown when the deposit-retry guard can't prove a prior deposit safe to
- *  re-send (atomic-batch sliver / unreadable receipt / unknown status).
- *  Re-depositing then would lock 2× the funds, so make the user
- *  explicitly acknowledge. Safe default = don't retry: "Wait / cancel" is
- *  the primary action; "Deposit again anyway" is de-emphasized. */
-function ConfirmRetryDeposit({
-  explorerHref,
-  onCancel,
-  onConfirm,
-}: {
-  /** Link to the user's address on the block explorer, when known. */
-  explorerHref?: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <Modal
-      open
-      onClose={onCancel}
-      title="Deposit again?"
-      closeOnBackdrop={false}
-    >
-      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-        We couldn&apos;t verify whether your <strong>previous deposit</strong>{" "}
-        went through. It may still be pending, or already mined but unconfirmed
-        here — we can&apos;t tell, and we can&apos;t prove it was dropped
-        either.
-      </p>
-      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-        If it actually landed, depositing again would lock{" "}
-        <strong>twice the funds</strong> in a second, separate note.{" "}
-        {explorerHref ? (
-          <>
-            Check{" "}
-            <a
-              href={explorerHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-            >
-              your recent transactions
-            </a>{" "}
-            first.
-          </>
-        ) : (
-          "Check the block explorer first."
-        )}
-      </p>
-      <div className="mt-5 flex justify-end gap-2">
-        <Button onClick={onCancel}>Wait / cancel</Button>
-        <Button variant="secondary" onClick={onConfirm}>
-          Deposit again anyway
-        </Button>
       </div>
     </Modal>
   );
