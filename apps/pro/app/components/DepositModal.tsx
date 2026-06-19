@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Contract, formatUnits } from "ethers";
 import {
   generateNote,
@@ -10,6 +17,12 @@ import {
 import type { DepositProofResult } from "@zkscatter/sdk/zk";
 import { useWallet } from "@zkscatter/sdk/react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
+import {
+  assessDepositRetry,
+  hasConfirmingDeposit,
+  isPendingDeposit,
+  type RetryGuardResult,
+} from "@zkscatter/sdk/notes";
 import { useFolder } from "../lib/folder";
 import { useProTokens } from "../lib/useProTokens";
 import { useIdentityGate } from "../lib/identity";
@@ -20,6 +33,7 @@ import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { dispatchDeposit } from "../lib/dispatch";
+import { DEMO_NETWORK } from "../lib/network";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
@@ -63,12 +77,18 @@ interface DepositModalProps {
   initialAmount?: string;
 }
 
-export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount }: DepositModalProps) {
-  const { state: identityState, blocking: identityBlocking } = useIdentityGate();
+export function DepositModal({
+  open,
+  onClose,
+  initialTokenSymbol,
+  initialAmount,
+}: DepositModalProps) {
+  const { state: identityState, blocking: identityBlocking } =
+    useIdentityGate();
 
-  const { add: addNote } = useVault();
+  const { add: addNote, notes } = useVault();
   const commitmentTree = useCommitmentTree();
-  const { account, signer } = useWallet();
+  const { account, signer, rpcProvider } = useWallet();
   // Folder gate — depositing persists a note to the active workspace
   // folder, so the button stays disabled until a folder is picked.
   // Otherwise a successful on-chain deposit would have nowhere to
@@ -132,6 +152,22 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   }, [open, initialTokenSymbol, initialAmount]);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [abortCtrl, setAbortCtrl] = useState<AbortController | null>(null);
+  // Duplicate-deposit guard plumbing (shared SDK logic). The in-flight
+  // ref is a synchronous lock so a same-frame double-click can't start
+  // two flows before `busy` re-renders the button disabled; the retry
+  // modal pauses a deposit we can't prove safe, parking its launch in
+  // `pendingDepositRef` for the confirm button to resume.
+  const inFlightRef = useRef(false);
+  const [retryConfirm, setRetryConfirm] = useState(false);
+  const pendingDepositRef = useRef<(() => void) | null>(null);
+  // Single owner of the "deposit attempt over" teardown so the in-flight
+  // lock and the abort controller can't drift out of sync across the many
+  // exit paths (launch finally, wall-clock block, abort, verdict block,
+  // account switch, reset).
+  const releaseDepositLocks = useCallback(() => {
+    inFlightRef.current = false;
+    setAbortCtrl(null);
+  }, []);
 
   // If the open transition (or a caller's initialTokenSymbol) lands on a
   // token that isn't whitelisted, snap to the first selectable one so the
@@ -197,13 +233,32 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
     setPhase({ kind: "idle" });
     setAmount("1.0");
     setTokenSymbol("ETH");
-    setAbortCtrl(null);
-  }, []);
+    releaseDepositLocks();
+    pendingDepositRef.current = null;
+    setRetryConfirm(false);
+  }, [releaseDepositLocks]);
 
   // Reset to idle whenever the modal opens fresh.
   useEffect(() => {
     if (open) setPhase({ kind: "idle" });
   }, [open]);
+
+  // Abandon any in-flight deposit / open retry-confirm when the connected
+  // account changes: the parked `launch` closure captured the *old*
+  // account + signer, so resuming it after a wallet switch would deposit
+  // against the wrong wallet. Guarded on an actual account change (not a
+  // re-render) so it doesn't tear down the attempt it's meant to protect.
+  const prevAccountRef = useRef(account);
+  useEffect(() => {
+    if (prevAccountRef.current === account) return;
+    prevAccountRef.current = account;
+    if (!inFlightRef.current && !pendingDepositRef.current) return;
+    pendingDepositRef.current = null;
+    abortCtrl?.abort();
+    releaseDepositLocks();
+    setRetryConfirm(false);
+    setPhase({ kind: "idle" });
+  }, [account, abortCtrl, releaseDepositLocks]);
 
   const close = useCallback(() => {
     if (abortCtrl) abortCtrl.abort();
@@ -212,6 +267,12 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   }, [abortCtrl, reset, onClose]);
 
   const submit = useCallback(async () => {
+    // Synchronous re-entry lock — set before any await so a same-frame
+    // double-click can't launch two flows before `busy` disables the
+    // button. Cleared on every exit path (guard block, abort, and the
+    // launch's finally); deliberately left set while the retry-confirm
+    // modal is open so its own buttons own the teardown.
+    if (inFlightRef.current) return;
     const token = depositable.find((t) => t.symbol === tokenSymbol);
     if (!token) return;
     if (!account) {
@@ -249,118 +310,247 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
       return;
     }
 
+    inFlightRef.current = true;
     const ctrl = new AbortController();
     setAbortCtrl(ctrl);
 
-    try {
-      setPhase({ kind: "preparing" });
-      // Derive (or retrieve cached) EdDSA keypair via the wallet.
-      // First call prompts the wallet for a signature; later calls
-      // in the same session resolve from cache.
-      const eddsaKey = await deriveEdDSA();
-      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    // The actual deposit pipeline — derive → prove → wrap → dispatch →
+    // persist. Reused by the guard-cleared path and the retry-confirm
+    // modal so the exact same attempt (same controller) resumes either
+    // way; a double-click can't slip a second flow while the modal is up.
+    const launch = async () => {
+      try {
+        setPhase({ kind: "preparing" });
+        // Derive (or retrieve cached) EdDSA keypair via the wallet.
+        // First call prompts the wallet for a signature; later calls
+        // in the same session resolve from cache.
+        const eddsaKey = await deriveEdDSA();
+        if (ctrl.signal.aborted)
+          throw new DOMException("Aborted", "AbortError");
 
-      const note: CommitmentNote = generateNote(
-        token.address,
-        amountWei,
-        eddsaKey.publicKey,
-      );
-      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
-
-      setPhase({ kind: "proving", message: "Generating ZK proof…" });
-      await depositProver.ready();
-      // Pass the BigInt CommitmentNote directly — structured-clone
-      // supports BigInt natively. `generateDepositProof` derives the
-      // commitment internally and returns it as `publicSignals[0]`,
-      // so we read it from the prove result instead of running a
-      // second `computeCommitment` on the main thread (which would
-      // boot circomlibjs's Poseidon tables a second time).
-      const proveResult = await depositProver.prove(
-        {
-          circuitId: "deposit",
-          input: note as unknown as Record<string, unknown>,
-        },
-        {
-          signal: ctrl.signal,
-          onProgress: (m) => setPhase({ kind: "proving", message: m }),
-        },
-      );
-      if (proveResult.publicSignals.length === 0) {
-        throw new Error("deposit prove returned no public signals");
-      }
-      const commitment = proveResult.publicSignals[0]!;
-
-      setPhase({ kind: "submitting" });
-      // ETH path wraps native → WETH first. The escrow contract
-      // (CommitmentPool) only handles ERC20, so the user's native ETH
-      // must be wrapped via `WETH.deposit{value}` before the standard
-      // approve+deposit. We don't pre-check WETH allowance — a fresh
-      // wrap leaves the user with `amountWei` WETH minus prior
-      // approvals; `ensureAllowance` inside dispatchDeposit handles it.
-      if (token.isNative && signer) {
-        const weth = new Contract(
+        const note: CommitmentNote = generateNote(
           token.address,
-          ["function deposit() payable"],
-          signer,
+          amountWei,
+          eddsaKey.publicKey,
         );
-        const wrapTx = await weth.deposit({ value: amountWei });
-        await wrapTx.wait();
-        if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
-      }
-      // The prove result carries snarkjs's raw-shaped proof; the
-      // dispatch layer expects the SDK's `DepositProofResult` shape
-      // (commitment + Groth16Proof tuples). Reconstruct it from
-      // `proveResult` — the prover already formatted the proof in
-      // the right shape, so this is purely a re-pack.
-      const depositProof: DepositProofResult = {
-        commitment,
-        proof: proveResult.proof,
-        publicSignals: proveResult.publicSignals,
-      };
-      const dispatch = await dispatchDeposit(
-        signer,
-        depositProof,
-        token.address,
-        amountWei,
-      );
-      if (ctrl.signal.aborted) throw new DOMException("Aborted", "AbortError");
+        if (ctrl.signal.aborted)
+          throw new DOMException("Aborted", "AbortError");
 
-      await addNote({
-        symbol: token.symbol,
-        amount,
-        note,
-        commitment,
+        setPhase({ kind: "proving", message: "Generating ZK proof…" });
+        await depositProver.ready();
+        // Pass the BigInt CommitmentNote directly — structured-clone
+        // supports BigInt natively. `generateDepositProof` derives the
+        // commitment internally and returns it as `publicSignals[0]`,
+        // so we read it from the prove result instead of running a
+        // second `computeCommitment` on the main thread (which would
+        // boot circomlibjs's Poseidon tables a second time).
+        const proveResult = await depositProver.prove(
+          {
+            circuitId: "deposit",
+            input: note as unknown as Record<string, unknown>,
+          },
+          {
+            signal: ctrl.signal,
+            onProgress: (m) => setPhase({ kind: "proving", message: m }),
+          },
+        );
+        if (proveResult.publicSignals.length === 0) {
+          throw new Error("deposit prove returned no public signals");
+        }
+        const commitment = proveResult.publicSignals[0]!;
+
+        setPhase({ kind: "submitting" });
+        // ETH path wraps native → WETH first. The escrow contract
+        // (CommitmentPool) only handles ERC20, so the user's native ETH
+        // must be wrapped via `WETH.deposit{value}` before the standard
+        // approve+deposit. We don't pre-check WETH allowance — a fresh
+        // wrap leaves the user with `amountWei` WETH minus prior
+        // approvals; `ensureAllowance` inside dispatchDeposit handles it.
+        if (token.isNative && signer) {
+          const weth = new Contract(
+            token.address,
+            ["function deposit() payable"],
+            signer,
+          );
+          const wrapTx = await weth.deposit({ value: amountWei });
+          await wrapTx.wait();
+          if (ctrl.signal.aborted)
+            throw new DOMException("Aborted", "AbortError");
+        }
+        // The prove result carries snarkjs's raw-shaped proof; the
+        // dispatch layer expects the SDK's `DepositProofResult` shape
+        // (commitment + Groth16Proof tuples). Reconstruct it from
+        // `proveResult` — the prover already formatted the proof in
+        // the right shape, so this is purely a re-pack.
+        const depositProof: DepositProofResult = {
+          commitment,
+          proof: proveResult.proof,
+          publicSignals: proveResult.publicSignals,
+        };
+        const dispatch = await dispatchDeposit(
+          signer,
+          depositProof,
+          token.address,
+          amountWei,
+        );
+        if (ctrl.signal.aborted)
+          throw new DOMException("Aborted", "AbortError");
+
+        // Persist the deposit tx hash so the retry guard can read its
+        // receipt later — without it a pending Pro note is unverifiable and
+        // the guard can only fall back to the (weaker) ambiguous→confirm
+        // path instead of a hard block on an already-landed deposit.
+        const depositTxHash =
+          dispatch.kind === "onchain" ? dispatch.txHash : null;
+        try {
+          await addNote({
+            symbol: token.symbol,
+            amount,
+            note,
+            commitment,
+            txHash: depositTxHash ?? undefined,
+          });
+        } catch (saveErr) {
+          // The on-chain deposit already landed; only the local note
+          // write failed (folder permissions / disk). A generic "Deposit
+          // failed" here would invite a retry — which would lock 2× the
+          // funds (and the guard can't catch it: there's no persisted
+          // pending note to re-check against). Tell the user explicitly
+          // NOT to retry and surface the tx hash for recovery.
+          console.error("[deposit] failed to save note to vault", saveErr);
+          setPhase({
+            kind: "error",
+            message:
+              "Your deposit succeeded on-chain, but saving the note to your " +
+              "vault failed. Do NOT retry — that would deposit twice. Keep " +
+              `this tx hash for recovery: ${depositTxHash ?? "unknown"}.`,
+          });
+          toast.push({
+            kind: "error",
+            title: "Note not saved — do not retry",
+            description:
+              "The deposit landed on-chain but the note write failed.",
+          });
+          return;
+        }
+        // Nudge the commitment tree off its ethers polling cadence
+        // (~4 s default) so a user clicking "Place order" immediately
+        // after this modal closes doesn't hit a "commitment not yet
+        // in the on-chain tree" race. `refresh()` does a direct
+        // `queryFilter` against the pool — bypasses the polling
+        // window without disturbing the live subscription.
+        commitmentTree.refresh();
+        setPhase({ kind: "success", commitment, txHash: depositTxHash });
+        const description =
+          dispatch.kind === "onchain"
+            ? `On-chain tx ${dispatch.txHash.slice(0, 10)}… · note added to your private vault.`
+            : "Note added to your private vault (simulated — pool not configured).";
+        toast.push({
+          kind: "success",
+          title: `Deposited ${amount} ${token.symbol}`,
+          description,
+        });
+      } catch (e) {
+        if (isAbortError(e, ctrl.signal)) {
+          return;
+        }
+        console.error("[deposit]", e);
+        const msg = (e as Error)?.message ?? "Deposit failed.";
+        setPhase({ kind: "error", message: msg });
+        toast.push({
+          kind: "error",
+          title: "Deposit failed",
+          description: msg,
+        });
+      } finally {
+        releaseDepositLocks();
+      }
+    };
+
+    // Duplicate-deposit guard (shared SDK logic). A confused user
+    // retrying a hung deposit must not silently re-deposit and lock 2×
+    // the funds in a separate note.
+    const tokenKey = BigInt(token.address.toLowerCase());
+    const pendingForToken = notes.filter(
+      (n) => n.note.token === tokenKey && isPendingDeposit(n),
+    );
+    // 1. Sync wall-clock guard: a recent pending deposit is almost
+    //    certainly mid-confirmation. Survives a reload (vault-derived).
+    if (hasConfirmingDeposit(pendingForToken, Date.now())) {
+      setPhase({
+        kind: "error",
+        message:
+          "A previous deposit is still confirming on-chain. Wait for it to " +
+          "settle before depositing again — re-depositing now would lock the " +
+          "funds in a second, separate note.",
       });
-      // Nudge the commitment tree off its ethers polling cadence
-      // (~4 s default) so a user clicking "Place order" immediately
-      // after this modal closes doesn't hit a "commitment not yet
-      // in the on-chain tree" race. `refresh()` does a direct
-      // `queryFilter` against the pool — bypasses the polling
-      // window without disturbing the live subscription.
-      commitmentTree.refresh();
-      const depositTxHash = dispatch.kind === "onchain" ? dispatch.txHash : null;
-      setPhase({ kind: "success", commitment, txHash: depositTxHash });
-      const description =
-        dispatch.kind === "onchain"
-          ? `On-chain tx ${dispatch.txHash.slice(0, 10)}… · note added to your private vault.`
-          : "Note added to your private vault (simulated — pool not configured).";
-      toast.push({
-        kind: "success",
-        title: `Deposited ${amount} ${token.symbol}`,
-        description,
+      releaseDepositLocks();
+      return;
+    }
+    // 2. Past-window on-chain recheck. Receipts come from the public
+    //    canonical node (`rpcProvider`), not the wallet RPC, since a
+    //    receipt is a global fact and a forked/stale wallet node could
+    //    return a null receipt for an already-mined tx.
+    if (pendingForToken.length > 0) {
+      setPhase({ kind: "preparing" });
+      const verdict = await assessDepositRetry(pendingForToken, {
+        refreshTree: commitmentTree.refresh,
+        findIndex: commitmentTree.findIndex,
+        getReceipt: rpcProvider
+          ? (h) => rpcProvider.getTransactionReceipt(h)
+          : undefined,
+        getTransaction: rpcProvider
+          ? (h) => rpcProvider.getTransaction(h)
+          : undefined,
+        signal: ctrl.signal,
+      }).catch((err): RetryGuardResult => {
+        // A user-driven cancel surfaces as an abort — not a guard
+        // failure; bail quietly (the aborted check below handles it).
+        if (isAbortError(err, ctrl.signal)) return { block: false };
+        // Couldn't check on-chain, but there IS an unreconciled pending
+        // note — don't silently allow; surface and ask to confirm.
+        console.error("[deposit] retry guard failed", err);
+        return { block: false, confirm: true };
       });
-    } catch (e) {
-      if (isAbortError(e, ctrl.signal)) {
+      if (ctrl.signal.aborted) {
+        releaseDepositLocks();
         return;
       }
-      console.error("[deposit]", e);
-      const msg = (e as Error)?.message ?? "Deposit failed.";
-      setPhase({ kind: "error", message: msg });
-      toast.push({ kind: "error", title: "Deposit failed", description: msg });
-    } finally {
-      setAbortCtrl(null);
+      if (verdict.block) {
+        setPhase({
+          kind: "error",
+          message: verdict.message ?? "A previous deposit is already on-chain.",
+        });
+        releaseDepositLocks();
+        return;
+      }
+      if (verdict.confirm) {
+        // Can't prove the prior deposit safe — pause and ask. Keep the
+        // in-flight lock + controller so a double-click can't slip a
+        // second flow while the modal is open.
+        setPhase({ kind: "idle" });
+        pendingDepositRef.current = launch;
+        setRetryConfirm(true);
+        return;
+      }
     }
-  }, [tokenSymbol, amount, account, signer, deriveEdDSA, addNote, toast, commitmentTree, folderReady, depositable]);
+
+    await launch();
+  }, [
+    tokenSymbol,
+    amount,
+    account,
+    signer,
+    deriveEdDSA,
+    addNote,
+    toast,
+    commitmentTree,
+    folderReady,
+    depositable,
+    notes,
+    rpcProvider,
+    releaseDepositLocks,
+  ]);
 
   if (!open) return null;
 
@@ -376,8 +566,40 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
     phase.kind === "proving" ||
     phase.kind === "submitting";
 
+  if (retryConfirm) {
+    return (
+      <ConfirmRetryDeposit
+        explorerHref={
+          DEMO_NETWORK.explorerBase && account
+            ? `${DEMO_NETWORK.explorerBase}/address/${account}`
+            : undefined
+        }
+        onCancel={() => {
+          // Safe default: abandon the attempt, release the locks.
+          pendingDepositRef.current = null;
+          abortCtrl?.abort();
+          releaseDepositLocks();
+          setRetryConfirm(false);
+          setPhase({ kind: "idle" });
+        }}
+        onConfirm={() => {
+          // User acknowledged the risk — resume the paused attempt.
+          setRetryConfirm(false);
+          const resume = pendingDepositRef.current;
+          pendingDepositRef.current = null;
+          resume?.();
+        }}
+      />
+    );
+  }
+
   return (
-    <Modal open={open} onClose={close} title="Deposit to vault" closeOnBackdrop={false}>
+    <Modal
+      open={open}
+      onClose={close}
+      title="Deposit to vault"
+      closeOnBackdrop={false}
+    >
       <TestnetNotice />
       <fieldset disabled={busy} className="space-y-4">
         <Field label="Token">
@@ -419,22 +641,24 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
                 Max
               </button>
             </div>
-            {account && selectedToken && isConfiguredAddress(selectedToken.address) && (
-              <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
-                <span className="font-mono">
-                  {account.slice(0, 6)}…{account.slice(-4)}
-                </span>
-                <span>
-                  Balance:{" "}
+            {account &&
+              selectedToken &&
+              isConfiguredAddress(selectedToken.address) && (
+                <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
                   <span className="font-mono">
-                    {balance === null
-                      ? "—"
-                      : formatUnits(balance, selectedToken.decimals)}
-                  </span>{" "}
-                  {tokenSymbol}
-                </span>
-              </div>
-            )}
+                    {account.slice(0, 6)}…{account.slice(-4)}
+                  </span>
+                  <span>
+                    Balance:{" "}
+                    <span className="font-mono">
+                      {balance === null
+                        ? "—"
+                        : formatUnits(balance, selectedToken.decimals)}
+                    </span>{" "}
+                    {tokenSymbol}
+                  </span>
+                </div>
+              )}
           </div>
         </Field>
       </fieldset>
@@ -463,7 +687,9 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
               // (`ERC20InsufficientBalance`) so users see the issue
               // before paying gas + prove time.
               const picked = selectedToken;
-              const tokenConfigured = picked ? isConfiguredAddress(picked.address) : false;
+              const tokenConfigured = picked
+                ? isConfiguredAddress(picked.address)
+                : false;
               let amountWei: bigint | null = null;
               try {
                 if (picked && amount.trim()) {
@@ -517,6 +743,64 @@ export function DepositModal({ open, onClose, initialTokenSymbol, initialAmount 
   );
 }
 
+/** Shown when the deposit-retry guard can't prove a prior deposit safe to
+ *  re-send (atomic-batch sliver / unreadable receipt / unknown status).
+ *  Re-depositing then would lock 2× the funds, so make the user
+ *  explicitly acknowledge. Safe default = don't retry: "Wait / cancel" is
+ *  the primary action; "Deposit again anyway" is de-emphasized. */
+function ConfirmRetryDeposit({
+  explorerHref,
+  onCancel,
+  onConfirm,
+}: {
+  /** Link to the user's address on the block explorer, when known. */
+  explorerHref?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal
+      open
+      onClose={onCancel}
+      title="Deposit again?"
+      closeOnBackdrop={false}
+    >
+      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+        We couldn&apos;t verify whether your <strong>previous deposit</strong>{" "}
+        went through. It may still be pending, or already mined but unconfirmed
+        here — we can&apos;t tell, and we can&apos;t prove it was dropped
+        either.
+      </p>
+      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+        If it actually landed, depositing again would lock{" "}
+        <strong>twice the funds</strong> in a second, separate note.{" "}
+        {explorerHref ? (
+          <>
+            Check{" "}
+            <a
+              href={explorerHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              your recent transactions
+            </a>{" "}
+            first.
+          </>
+        ) : (
+          "Check the block explorer first."
+        )}
+      </p>
+      <div className="mt-5 flex justify-end gap-2">
+        <Button onClick={onCancel}>Wait / cancel</Button>
+        <Button variant="secondary" onClick={onConfirm}>
+          Deposit again anyway
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
 function PhaseStatus({ phase }: { phase: Phase }) {
   if (phase.kind === "idle") return null;
 
@@ -551,8 +835,8 @@ function PhaseStatus({ phase }: { phase: Phase }) {
     phase.kind === "preparing"
       ? "Preparing note…"
       : phase.kind === "proving"
-      ? phase.message ?? "Generating ZK proof…"
-      : "Submitting to chain…";
+        ? (phase.message ?? "Generating ZK proof…")
+        : "Submitting to chain…";
 
   return (
     <div className="mt-4 flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm">
@@ -581,7 +865,10 @@ function TxHashRow({ label, hash }: { label: string; hash: string }) {
   return (
     <div className="flex items-center gap-2 rounded bg-white/40 px-2 py-1 text-[11px]">
       <span className="text-[var(--color-text-muted)]">{label}</span>
-      <span className="flex-1 truncate font-mono text-[var(--color-text)]" title={hash}>
+      <span
+        className="flex-1 truncate font-mono text-[var(--color-text)]"
+        title={hash}
+      >
         {hash}
       </span>
       <button
