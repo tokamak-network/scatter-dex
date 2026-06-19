@@ -141,6 +141,37 @@ describe("assessDepositRetry", () => {
     expect(allowed.block).toBe(false);
   });
 
+  it("bails out (block:false) when the signal is already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const findIndex = vi.fn(() => -1);
+    const v = await assessDepositRetry(
+      [note({ commitment: 7n })],
+      deps({ findIndex, signal: ac.signal }),
+    );
+    expect(v.block).toBe(false);
+    // Aborted before the first findIndex even runs.
+    expect(findIndex).not.toHaveBeenCalled();
+  });
+
+  it("stops polling and returns block:false when aborted mid-poll", async () => {
+    const ac = new AbortController();
+    let ticks = 0;
+    const v = await assessDepositRetry(
+      [note({ commitment: 7n })],
+      deps({
+        findIndex: () => -1,
+        sleep: async () => {
+          // Abort after the second sleep so the next iteration bails.
+          if (++ticks === 2) ac.abort();
+        },
+        signal: ac.signal,
+      }),
+    );
+    expect(v.block).toBe(false);
+    expect(ticks).toBeLessThan(5); // didn't burn the full 24-tick budget
+  });
+
   it("catches a commitment that lands mid-poll (after the first miss)", async () => {
     let calls = 0;
     const findIndex = (_c: bigint) => {

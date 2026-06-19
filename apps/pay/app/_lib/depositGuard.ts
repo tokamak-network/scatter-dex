@@ -46,6 +46,11 @@ export interface RetryGuardDeps {
    *  Optional; without it a null receipt is treated conservatively as
    *  pending (block). */
   getTransaction?: (txHash: string) => Promise<unknown | null>;
+  /** Abort the recheck early (e.g. the user hit Cancel). When aborted
+   *  the guard stops polling and returns `block: false`; the caller is
+   *  responsible for noticing the abort and abandoning the deposit
+   *  rather than proceeding. */
+  signal?: AbortSignal;
   /** Injectable sleep — overridden in tests to avoid real timers. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -109,6 +114,7 @@ export async function assessDepositRetry(
   deps.refreshTree();
   const landed = () => live.some((n) => deps.findIndex(n.commitment) >= 0);
   for (let i = 0; i <= POLL_TRIES; i++) {
+    if (deps.signal?.aborted) return { block: false };
     if (i > 0) await sleep(POLL_INTERVAL_MS);
     if (landed()) return { block: true, message: DEPOSIT_LANDED_MSG };
   }
@@ -118,6 +124,7 @@ export async function assessDepositRetry(
   // reverted → that note is dead, keep checking the rest.
   if (deps.getReceipt) {
     for (const n of live) {
+      if (deps.signal?.aborted) return { block: false };
       if (!n.txHash) continue;
       const receipt = await deps.getReceipt(n.txHash).catch(() => undefined);
       // Couldn't read it — don't manufacture a block from a transport
