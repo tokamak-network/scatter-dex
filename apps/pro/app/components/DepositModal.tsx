@@ -33,6 +33,7 @@ import { useEdDSAKey } from "@zkscatter/sdk/react";
 import { depositProver } from "../lib/depositProver";
 import { parseUnits } from "../lib/parseUnits";
 import { dispatchDeposit } from "../lib/dispatch";
+import { DEMO_NETWORK } from "../lib/network";
 import { Button, Field, Modal, useToast } from "@zkscatter/ui";
 import { TestnetNotice } from "./TestnetNotice";
 import { isAbortError } from "../lib/abort";
@@ -401,13 +402,37 @@ export function DepositModal({
         // path instead of a hard block on an already-landed deposit.
         const depositTxHash =
           dispatch.kind === "onchain" ? dispatch.txHash : null;
-        await addNote({
-          symbol: token.symbol,
-          amount,
-          note,
-          commitment,
-          txHash: depositTxHash ?? undefined,
-        });
+        try {
+          await addNote({
+            symbol: token.symbol,
+            amount,
+            note,
+            commitment,
+            txHash: depositTxHash ?? undefined,
+          });
+        } catch (saveErr) {
+          // The on-chain deposit already landed; only the local note
+          // write failed (folder permissions / disk). A generic "Deposit
+          // failed" here would invite a retry — which would lock 2× the
+          // funds (and the guard can't catch it: there's no persisted
+          // pending note to re-check against). Tell the user explicitly
+          // NOT to retry and surface the tx hash for recovery.
+          console.error("[deposit] failed to save note to vault", saveErr);
+          setPhase({
+            kind: "error",
+            message:
+              "Your deposit succeeded on-chain, but saving the note to your " +
+              "vault failed. Do NOT retry — that would deposit twice. Keep " +
+              `this tx hash for recovery: ${depositTxHash ?? "unknown"}.`,
+          });
+          toast.push({
+            kind: "error",
+            title: "Note not saved — do not retry",
+            description:
+              "The deposit landed on-chain but the note write failed.",
+          });
+          return;
+        }
         // Nudge the commitment tree off its ethers polling cadence
         // (~4 s default) so a user clicking "Place order" immediately
         // after this modal closes doesn't hit a "commitment not yet
@@ -479,6 +504,9 @@ export function DepositModal({
           : undefined,
         signal: ctrl.signal,
       }).catch((err): RetryGuardResult => {
+        // A user-driven cancel surfaces as an abort — not a guard
+        // failure; bail quietly (the aborted check below handles it).
+        if (isAbortError(err, ctrl.signal)) return { block: false };
         // Couldn't check on-chain, but there IS an unreconciled pending
         // note — don't silently allow; surface and ask to confirm.
         console.error("[deposit] retry guard failed", err);
@@ -541,6 +569,11 @@ export function DepositModal({
   if (retryConfirm) {
     return (
       <ConfirmRetryDeposit
+        explorerHref={
+          DEMO_NETWORK.explorerBase && account
+            ? `${DEMO_NETWORK.explorerBase}/address/${account}`
+            : undefined
+        }
         onCancel={() => {
           // Safe default: abandon the attempt, release the locks.
           pendingDepositRef.current = null;
@@ -716,9 +749,12 @@ export function DepositModal({
  *  explicitly acknowledge. Safe default = don't retry: "Wait / cancel" is
  *  the primary action; "Deposit again anyway" is de-emphasized. */
 function ConfirmRetryDeposit({
+  explorerHref,
   onCancel,
   onConfirm,
 }: {
+  /** Link to the user's address on the block explorer, when known. */
+  explorerHref?: string;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
@@ -737,8 +773,23 @@ function ConfirmRetryDeposit({
       </p>
       <p className="mt-2 text-sm text-[var(--color-text-muted)]">
         If it actually landed, depositing again would lock{" "}
-        <strong>twice the funds</strong> in a second, separate note. Check the
-        block explorer first.
+        <strong>twice the funds</strong> in a second, separate note.{" "}
+        {explorerHref ? (
+          <>
+            Check{" "}
+            <a
+              href={explorerHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              your recent transactions
+            </a>{" "}
+            first.
+          </>
+        ) : (
+          "Check the block explorer first."
+        )}
       </p>
       <div className="mt-5 flex justify-end gap-2">
         <Button onClick={onCancel}>Wait / cancel</Button>
