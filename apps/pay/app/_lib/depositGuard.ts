@@ -33,10 +33,19 @@ export interface RetryGuardDeps {
    *  hydration (rejecting forked / out-of-sync leaf sets), so a hit is
    *  trustworthy positive evidence. */
   findIndex: (commitment: bigint) => number;
-  /** Fetch a tx receipt. `null` = broadcast but not yet mined. Only
+  /** Fetch a tx receipt. `null` means *either* still-pending *or*
+   *  dropped/unknown — ethers can't tell them apart from the receipt
+   *  alone, so {@link RetryGuardDeps.getTransaction} disambiguates. Only
    *  called for notes that carry a `txHash`. Optional: when absent (no
    *  wallet provider), the guard falls back to tree-only evidence. */
   getReceipt?: (txHash: string) => Promise<MinimalReceipt | null>;
+  /** Fetch the tx itself. `null` = the node doesn't know this hash —
+   *  i.e. it was dropped from the mempool or never broadcast, so a retry
+   *  must be *allowed* rather than blocked forever. A non-null result
+   *  with a null receipt is a genuine mempool-pending tx → block.
+   *  Optional; without it a null receipt is treated conservatively as
+   *  pending (block). */
+  getTransaction?: (txHash: string) => Promise<unknown | null>;
   /** Injectable sleep — overridden in tests to avoid real timers. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -114,7 +123,20 @@ export async function assessDepositRetry(
       // Couldn't read it — don't manufacture a block from a transport
       // error; let the next note (or the caller's modal) decide.
       if (receipt === undefined) continue;
-      if (receipt === null) return { block: true, message: DEPOSIT_PENDING_MSG };
+      if (receipt === null) {
+        // No receipt = still pending OR dropped. ethers can't tell them
+        // apart from the receipt, so ask for the tx: a known tx is a
+        // genuine mempool-pending deposit (block); an unknown one was
+        // dropped/never-broadcast (allow the retry rather than block it
+        // forever — the phantom detector never fires on a tx with no
+        // receipt at all).
+        if (deps.getTransaction) {
+          const tx = await deps.getTransaction(n.txHash).catch(() => undefined);
+          if (tx === undefined) continue; // transport error → don't block
+          if (tx === null) continue; // dropped/unknown → allow retry
+        }
+        return { block: true, message: DEPOSIT_PENDING_MSG };
+      }
       if (receipt.status === 1) return { block: true, message: DEPOSIT_LANDED_MSG };
       // status === 0 → reverted; the phantom detector marks it failed.
     }

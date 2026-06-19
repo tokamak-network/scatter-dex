@@ -1933,6 +1933,9 @@ function NewPayout() {
                   getReceipt: readProvider
                     ? (h) => readProvider.getTransactionReceipt(h)
                     : undefined,
+                  getTransaction: readProvider
+                    ? (h) => readProvider.getTransaction(h)
+                    : undefined,
                 }).catch(() => ({ block: false }) as const);
                 if (verdict.block) {
                   setDepositPhase({ kind: "error", error: verdict.message });

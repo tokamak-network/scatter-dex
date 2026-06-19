@@ -63,7 +63,33 @@ describe("assessDepositRetry", () => {
     expect(getReceipt).toHaveBeenCalledWith("0xabc");
   });
 
-  it("blocks on a still-pending tx (null receipt)", async () => {
+  it("blocks on a genuinely-pending tx (null receipt, tx still known to the node)", async () => {
+    const v = await assessDepositRetry(
+      [note({ commitment: 9n, txHash: "0xabc" })],
+      deps({
+        getReceipt: async () => null,
+        getTransaction: async () => ({ hash: "0xabc" }),
+      }),
+    );
+    expect(v.block).toBe(true);
+    expect(v.message).toMatch(/still pending/i);
+  });
+
+  it("allows a retry when the tx was dropped (null receipt AND unknown to the node)", async () => {
+    // ethers returns a null receipt for both pending and dropped txs;
+    // a null getTransaction is what distinguishes a dropped/never-mined
+    // tx — blocking it would lock the user out forever.
+    const v = await assessDepositRetry(
+      [note({ commitment: 9n, txHash: "0xabc" })],
+      deps({
+        getReceipt: async () => null,
+        getTransaction: async () => null,
+      }),
+    );
+    expect(v.block).toBe(false);
+  });
+
+  it("conservatively blocks a null receipt when no getTransaction reader is wired", async () => {
     const v = await assessDepositRetry(
       [note({ commitment: 9n, txHash: "0xabc" })],
       deps({ getReceipt: async () => null }),
