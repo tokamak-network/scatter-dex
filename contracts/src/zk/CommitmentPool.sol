@@ -415,7 +415,13 @@ contract CommitmentPool is
         if (msg.sender != authorizedSettlement) revert NotAuthorizedSettlement();
         if (nullifiers[nullifier]) revert NullifierAlreadySpent();
         nullifiers[nullifier] = true;
+        emit EscrowNullifierSpent(nullifier);
     }
+
+    /// @notice Emitted when an escrow nullifier is burned via the settlement
+    ///         path (mirrors the `Withdrawal` event's nullifier so off-chain
+    ///         indexers see every escrow spend regardless of which path took it).
+    event EscrowNullifierSpent(uint256 indexed nullifier);
 
     event FeeTransferred(address indexed recipient, address indexed token, uint256 amount);
 

@@ -590,15 +590,18 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
             if (!_registry.isActiveRelayer(p.taker.relayer)) revert NotActiveRelayer();
         }
 
-        // 12. Mark nullifiers. The escrow nullifiers are ALSO burned in the
-        //     pool's set (the single source of truth shared with `withdraw`)
-        //     so neither side's note can be re-spent via CommitmentPool.withdraw.
+        // 12. Mark nullifiers (effects first — CEI).
         nullifiers[p.maker.nullifier] = true;
         nullifiers[p.taker.nullifier] = true;
-        pool.spendEscrowNullifier(uint256(p.maker.nullifier));
-        pool.spendEscrowNullifier(uint256(p.taker.nullifier));
         nonceNullifiers[p.maker.nonceNullifier] = true;
         nonceNullifiers[p.taker.nonceNullifier] = true;
+        // Interaction: ALSO burn each escrow nullifier in the pool's set (the
+        // single source of truth shared with `withdraw`) so neither side's
+        // note can be re-spent via CommitmentPool.withdraw. Done after all
+        // local effects per checks-effects-interactions; the called function
+        // makes no external calls of its own and the caller is nonReentrant.
+        pool.spendEscrowNullifier(uint256(p.maker.nullifier));
+        pool.spendEscrowNullifier(uint256(p.taker.nullifier));
 
         // 13. Insert residual commitments (skip zero — fully spent UTXOs)
         SettleVerifyLib.maybeInsertCommitment(pool, p.maker.newCommitment);
@@ -706,12 +709,12 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
             revert InvalidProof();
         }
 
-        // Burn both nullifiers. The escrow nullifier is ALSO burned in the
-        // pool's set so the old note can't be re-spent via withdraw after the
-        // cancel rotates it (cross-contract double-spend fix).
+        // Burn both nullifiers (effects first — CEI).
         nullifiers[p.oldNullifier] = true;
-        pool.spendEscrowNullifier(uint256(p.oldNullifier));
         nonceNullifiers[p.oldNonceNullifier] = true;
+        // Interaction: ALSO burn the escrow nullifier in the pool's set so the
+        // old note can't be re-spent via withdraw after the cancel rotates it.
+        pool.spendEscrowNullifier(uint256(p.oldNullifier));
 
         // Insert rotated commitment (same balance, new salt).
         // The zero-check at the top of this function guarantees
@@ -788,11 +791,12 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         //    (relayer = self). Requiring relayer registration would defeat
         //    the purpose of permissionless DEX settlement.
 
-        // 9. Mark nullifiers. The escrow nullifier is ALSO burned in the
-        //    pool's set so this note can't be re-spent via withdraw.
+        // 9. Mark nullifiers (effects first — CEI).
         nullifiers[proof.nullifier] = true;
-        pool.spendEscrowNullifier(uint256(proof.nullifier));
         nonceNullifiers[proof.nonceNullifier] = true;
+        // Interaction: ALSO burn the escrow nullifier in the pool's set so
+        // this note can't be re-spent via withdraw.
+        pool.spendEscrowNullifier(uint256(proof.nullifier));
 
         // 10. Insert residual commitment (change UTXO)
         SettleVerifyLib.maybeInsertCommitment(pool, proof.newCommitment);
@@ -1006,11 +1010,12 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
         // ── State mutations ──
 
-        // 12. Mark nullifiers. The escrow nullifier is ALSO burned in the
-        //     pool's set so this note can't be re-spent via withdraw.
+        // 12. Mark nullifiers (effects first — CEI).
         nullifiers[ap.nullifier] = true;
-        pool.spendEscrowNullifier(uint256(ap.nullifier));
         nonceNullifiers[ap.nonceNullifier] = true;
+        // Interaction: ALSO burn the escrow nullifier in the pool's set so
+        // this note can't be re-spent via withdraw.
+        pool.spendEscrowNullifier(uint256(ap.nullifier));
 
         // 13. Insert residual commitment (change UTXO)
         SettleVerifyLib.maybeInsertCommitment(pool, ap.newCommitment);
