@@ -126,3 +126,65 @@ export function ConfirmLargeAmount({
     </Modal>
   );
 }
+
+/** Shown when a deposit retry can't be confirmed safe on-chain — the
+ *  prior deposit is neither in the tree nor provably dropped (the
+ *  atomic-batch sliver, or an unreadable receipt). Re-depositing now
+ *  would lock 2× the funds in a second note, so make the user explicitly
+ *  acknowledge they've checked the explorer before proceeding. `onCancel`
+ *  is the safe default; the proceed button is styled as a warning, not a
+ *  primary action. */
+export function ConfirmRetryDeposit({
+  explorerHref,
+  onCancel,
+  onConfirm,
+}: {
+  /** Link to the user's address on the block explorer, when known. */
+  explorerHref?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <Modal open onClose={onCancel} title="Deposit again?">
+      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+        We couldn&apos;t verify whether your <strong>previous deposit</strong> went
+        through. It may still be pending, or already mined but unconfirmed
+        here — we can&apos;t tell, and we can&apos;t prove it was dropped either.
+      </p>
+      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
+        If it actually landed, depositing again would lock{" "}
+        <strong>twice the funds</strong> in a second, separate note.{" "}
+        {explorerHref ? (
+          <>
+            Check{" "}
+            <a
+              href={explorerHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              your recent transactions
+            </a>{" "}
+            first.
+          </>
+        ) : (
+          "Check the block explorer first."
+        )}
+      </p>
+      <div className="mt-5 flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
+        >
+          Wait / cancel
+        </button>
+        <button
+          onClick={onConfirm}
+          className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm text-[var(--color-text-muted)]"
+        >
+          Deposit again anyway
+        </button>
+      </div>
+    </Modal>
+  );
+}

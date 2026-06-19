@@ -32,6 +32,7 @@ import { Field } from "@zkscatter/ui";
 import { buildRunRecord } from "./_buildRunRecord";
 import {
   ConfirmLargeAmount,
+  ConfirmRetryDeposit,
   ReviewRow,
   ReviewSection,
   Stepper,
@@ -108,7 +109,7 @@ import {
   isPendingDeposit,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
-import { assessDepositRetry } from "../../_lib/depositGuard";
+import { assessDepositRetry, type RetryGuardResult } from "../../_lib/depositGuard";
 import { useWalletBook } from "../../_lib/walletBook";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
@@ -290,6 +291,10 @@ function NewPayout() {
       CLAIM_FROM_BUFFER_MINUTES * 60_000;
   const [maxFeeBps, setMaxFeeBps] = useState(DEFAULT_MAX_FEE_BPS);
   const [showConfirm, setShowConfirm] = useState(false);
+  // Shown when the on-chain retry guard can't confirm a prior deposit is
+  // safe to re-send (ambiguous atomic-batch sliver). `pendingDepositRef`
+  // bridges the paused deposit launch to the modal's confirm button.
+  const [retryConfirm, setRetryConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // `kind` distinguishes total failure (nothing landed on-chain — the
   // wizard draft is the only artifact) from partial failure (≥ 1
@@ -508,6 +513,33 @@ function NewPayout() {
   // signals the in-flight realDeposit to bail at its next checkpoint.
   // Null between attempts.
   const depositAbortRef = useRef<AbortController | null>(null);
+  // The paused deposit launch, parked here while the retry-confirm modal
+  // is open so its confirm button can resume the exact same attempt.
+  const pendingDepositRef = useRef<(() => void) | null>(null);
+  // Single owner of the "deposit attempt over" teardown so the
+  // in-flight lock + abort controller can't drift out of sync across
+  // the .finally, abort, block, and modal-cancel exit paths.
+  const releaseDepositLocks = useCallback(() => {
+    depositInFlightRef.current = false;
+    depositAbortRef.current = null;
+  }, []);
+  // Abandon any in-flight deposit / open retry-confirm when the connected
+  // account changes: the parked `launch` closure captured the *old*
+  // account + signer, so resuming it after a wallet switch would deposit
+  // against the wrong wallet. Guarded on an actual account change (not
+  // the modal opening) so it doesn't tear down the attempt it's meant to
+  // protect.
+  const prevAccountRef = useRef(account);
+  useEffect(() => {
+    if (prevAccountRef.current === account) return;
+    prevAccountRef.current = account;
+    if (!depositInFlightRef.current && !pendingDepositRef.current) return;
+    pendingDepositRef.current = null;
+    depositAbortRef.current?.abort();
+    releaseDepositLocks();
+    setRetryConfirm(false);
+    setDepositPhase({ kind: "cancelled" });
+  }, [account, releaseDepositLocks]);
 
   useEffect(() => {
     setClaimFrom(claimFromMin());
@@ -1932,6 +1964,40 @@ function NewPayout() {
               // RPC, because a receipt is a global fact and a forked /
               // stale wallet node could return a null receipt for an
               // already-mined tx (matches usePhantomDepositDetector).
+              // Fire the actual deposit. Reused by both the
+              // recheck-cleared path and the retry-confirm modal so the
+              // exact same attempt (same controller) resumes either way.
+              const launch = () => {
+                setDepositPhase({ kind: "preparing" });
+                // Persist the run before the long on-chain confirm so the
+                // escrowed funds stay tied to their recipient list even
+                // if the tab is closed / crashes mid-wait. Best-effort —
+                // never block or fail the deposit on a draft-save error.
+                void saveDraftNow();
+                realDeposit({
+                  tokenSymbol: token,
+                  amountRaw: shortfallRaw,
+                  account,
+                  signer,
+                  eddsa,
+                  vault,
+                  onPhase: setDepositPhase,
+                  signal: ctrl.signal,
+                })
+                  .catch((err) => {
+                    if (err instanceof DepositCancelled) {
+                      setDepositPhase({ kind: "cancelled" });
+                      return;
+                    }
+                    console.error("[Pay] realDeposit failed", err);
+                    setDepositPhase({
+                      kind: "error",
+                      error: err instanceof Error ? err.message : String(err),
+                    });
+                  })
+                  .finally(releaseDepositLocks);
+              };
+
               const pendingForToken = tokenNotes.filter(isPendingDeposit);
               if (pendingForToken.length > 0) {
                 setDepositPhase({ kind: "preparing" });
@@ -1941,52 +2007,36 @@ function NewPayout() {
                   getReceipt: (h) => rpcProvider.getTransactionReceipt(h),
                   getTransaction: (h) => rpcProvider.getTransaction(h),
                   signal: ctrl.signal,
-                }).catch(() => ({ block: false }) as const);
+                }).catch((err): RetryGuardResult => {
+                  // The on-chain recheck itself failed (RPC error, etc.).
+                  // There IS an unreconciled pending note, so don't
+                  // silently allow — surface it and escalate to the
+                  // confirm modal so the user verifies before retrying.
+                  console.error("[Pay] assessDepositRetry failed", err);
+                  return { block: false, confirm: true };
+                });
                 if (ctrl.signal.aborted) {
                   // User cancelled mid-recheck — abandon the attempt.
                   setDepositPhase({ kind: "cancelled" });
-                  depositInFlightRef.current = false;
-                  depositAbortRef.current = null;
+                  releaseDepositLocks();
                   return;
                 }
                 if (verdict.block) {
                   setDepositPhase({ kind: "error", error: verdict.message });
-                  depositInFlightRef.current = false;
-                  depositAbortRef.current = null;
+                  releaseDepositLocks();
+                  return;
+                }
+                if (verdict.confirm) {
+                  // Can't prove the prior deposit safe — pause and ask.
+                  // Keep the in-flight lock + controller so a double-click
+                  // can't slip a second flow while the modal is open.
+                  setDepositPhase(null);
+                  pendingDepositRef.current = launch;
+                  setRetryConfirm(true);
                   return;
                 }
               }
-              setDepositPhase({ kind: "preparing" });
-              // Persist the run before the long on-chain confirm so the
-              // escrowed funds stay tied to their recipient list even if
-              // the tab is closed / crashes mid-wait. Best-effort —
-              // never block or fail the deposit on a draft-save error.
-              void saveDraftNow();
-              realDeposit({
-                tokenSymbol: token,
-                amountRaw: shortfallRaw,
-                account,
-                signer,
-                eddsa,
-                vault,
-                onPhase: setDepositPhase,
-                signal: ctrl.signal,
-              })
-                .catch((err) => {
-                  if (err instanceof DepositCancelled) {
-                    setDepositPhase({ kind: "cancelled" });
-                    return;
-                  }
-                  console.error("[Pay] realDeposit failed", err);
-                  setDepositPhase({
-                    kind: "error",
-                    error: err instanceof Error ? err.message : String(err),
-                  });
-                })
-                .finally(() => {
-                  depositInFlightRef.current = false;
-                  depositAbortRef.current = null;
-                });
+              launch();
             }}
           />
         )}
@@ -2332,6 +2382,30 @@ function NewPayout() {
           recipients={rows.length}
           onCancel={() => setShowConfirm(false)}
           onConfirm={doSubmit}
+        />
+      )}
+      {retryConfirm && (
+        <ConfirmRetryDeposit
+          explorerHref={
+            networkCfg.explorerBase && account
+              ? `${networkCfg.explorerBase}/address/${account}`
+              : undefined
+          }
+          onCancel={() => {
+            // Safe default: abandon the attempt, release the locks.
+            setRetryConfirm(false);
+            pendingDepositRef.current = null;
+            depositAbortRef.current?.abort();
+            releaseDepositLocks();
+            setDepositPhase({ kind: "cancelled" });
+          }}
+          onConfirm={() => {
+            // User acknowledged the risk — resume the paused attempt.
+            setRetryConfirm(false);
+            const resume = pendingDepositRef.current;
+            pendingDepositRef.current = null;
+            resume?.();
+          }}
         />
       )}
       {showBookPicker && (
