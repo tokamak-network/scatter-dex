@@ -7,6 +7,7 @@ import { useFolder } from "../lib/folder";
 import { useVault } from "../lib/vault";
 import { useOrders, type OrderRecord } from "../lib/orders";
 import { aggregateBySymbol } from "../lib/noteStatus";
+import { useCrossAppNoteStates } from "../lib/useCrossAppNoteStates";
 import { formatNum } from "../lib/format";
 import { StatusBadge } from "./StatusBadge";
 
@@ -35,6 +36,13 @@ interface Props {
 export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Props) {
   const { notes } = useVault();
   const { orders } = useOrders();
+  // Cross-app note states — a note funding an OPEN order in another
+  // product (Pay) must read as locked here too, and another product's
+  // expired-matching change residual reads as discarded. Without this the
+  // escrow-pool summary counts a Pay-locked note as Available (the same
+  // cross-app symmetry the /notes page and aggregateBySymbol already
+  // honor — this panel was the one call site that dropped it).
+  const { states: crossApp } = useCrossAppNoteStates();
   // Workspace folder gate — without a picked folder a successful
   // deposit can't persist its note, so block the entry-point button
   // here too (the modal's submit button is gated separately).
@@ -62,9 +70,13 @@ export function MyPositionPanel({ onDeposit, selectedOrder, onSelectOrder }: Pro
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
+  // Use the same gated, minute-ticking `nowMs` as the order buckets
+  // below so expiry classification stays consistent across the panel
+  // (and the SSR-safe `nowMs=0` start avoids a hydration mismatch);
+  // pass `crossApp` so cross-product locks are reflected.
   const symbolBuckets = useMemo(
-    () => aggregateBySymbol(notes, orders),
-    [notes, orders],
+    () => aggregateBySymbol(notes, orders, nowMs, crossApp),
+    [notes, orders, nowMs, crossApp],
   );
 
   const { open, expired, claimable } = useMemo(() => {
