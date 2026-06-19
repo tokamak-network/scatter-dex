@@ -162,13 +162,19 @@ export default function ClaimInbox() {
         // un-claims), so it just uses the confirmed-spent `spent` set; the
         // `authoritative` flag (which guards removals) is irrelevant here.
         const { spent: spentIds } = await resolveSpentClaimEntries({
-          entries: pending.map((e) => ({
-            key: e.id,
-            secret: BigInt(e.pkg.secret),
-            leafIndex: e.pkg.leafIndex,
-            claimsRoot: BigInt(e.pkg.claimsRoot),
-            settlementAddress: e.pkg.settlementAddress,
-          })),
+          // `claimsRoot` is bound into the claim nullifier now; older
+          // locally-stored packages may predate the field — skip them
+          // (unresolvable, and they stay in optimistic local state) so we
+          // never `BigInt(undefined)`.
+          entries: pending
+            .filter((e) => e.pkg.claimsRoot !== undefined)
+            .map((e) => ({
+              key: e.id,
+              secret: BigInt(e.pkg.secret),
+              leafIndex: e.pkg.leafIndex,
+              claimsRoot: BigInt(e.pkg.claimsRoot!),
+              settlementAddress: e.pkg.settlementAddress,
+            })),
           chainId: cfg.chainId,
           provider: readProvider ?? undefined,
           sharedOrderbookUrl: cfg.sharedOrderbookUrl,

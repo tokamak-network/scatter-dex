@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   generateClaimProof,
   singleClaimTree,
@@ -20,8 +21,12 @@ import { computeClaimNullifier } from "../../src/zk/commitment";
  *  Skipped automatically if the circuit artifacts haven't been built
  *  (`circuits/build/claim_*`), so CI without the zk toolchain stays green —
  *  but it runs locally + wherever the artifacts are present. */
-const WASM = path.resolve(process.cwd(), "../../circuits/build/claim_js/claim.wasm");
-const ZKEY = path.resolve(process.cwd(), "../../circuits/build/claim_final.zkey");
+// Resolve relative to THIS test file (not process.cwd(), which varies with
+// how the runner is invoked — repo root vs packages/sdk — and would
+// false-negative `haveArtifacts` and silently skip).
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const WASM = path.resolve(HERE, "../../../../circuits/build/claim_js/claim.wasm");
+const ZKEY = path.resolve(HERE, "../../../../circuits/build/claim_final.zkey");
 const haveArtifacts = existsSync(WASM) && existsSync(ZKEY);
 
 describe.skipIf(!haveArtifacts)("claim proof ↔ SDK nullifier consistency", () => {

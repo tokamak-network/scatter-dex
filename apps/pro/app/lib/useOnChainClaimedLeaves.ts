@@ -44,7 +44,11 @@ export function useOnChainClaimedLeaves(
   const probeKey = useMemo(
     () =>
       `${settlementAddress ?? ""}|` +
-      (claims ?? []).map((c) => `${c.leafIndex}:${c.secret}`).join(","),
+      // Include claimsRoot: it's now part of the nullifier, so a claim whose
+      // claimsRoot is populated/changed after secret+leafIndex must re-resolve.
+      (claims ?? [])
+        .map((c) => `${c.leafIndex}:${c.secret}:${c.claimsRoot ?? ""}`)
+        .join(","),
     [claims, settlementAddress],
   );
 

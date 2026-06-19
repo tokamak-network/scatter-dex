@@ -192,13 +192,16 @@ export default function ClaimsPage() {
       // without speeding anything up.
       const probes = await Promise.allSettled(
         pending.map(async (e) => {
-          const spent = await isClaimNullifierSpent(
-            readProvider,
-            e.pkg.settlementAddress,
-            BigInt(e.pkg.secret),
-            e.pkg.leafIndex,
-            BigInt(e.pkg.claimsRoot),
-          );
+          const spent =
+            e.pkg.claimsRoot === undefined
+              ? false // pre-claimsRoot package — unresolvable, treat as not spent
+              : await isClaimNullifierSpent(
+                  readProvider,
+                  e.pkg.settlementAddress,
+                  BigInt(e.pkg.secret),
+                  e.pkg.leafIndex,
+                  BigInt(e.pkg.claimsRoot),
+                );
           return { id: e.id, spent };
         }),
       );
@@ -304,13 +307,14 @@ export default function ClaimsPage() {
       // if it's spent, show success instead of a false failure.
       try {
         if (
-          await isClaimNullifierSpent(
+          e.pkg.claimsRoot !== undefined &&
+          (await isClaimNullifierSpent(
             readProvider,
             e.pkg.settlementAddress,
             BigInt(e.pkg.secret),
             e.pkg.leafIndex,
             BigInt(e.pkg.claimsRoot),
-          )
+          ))
         ) {
           await markClaimInboxEntryClaimed(e.id).catch((markErr) => {
             console.warn("[Pro] mark-claimed (backstop) failed", markErr);
