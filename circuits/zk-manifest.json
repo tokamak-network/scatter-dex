@@ -32,33 +32,33 @@
       "src": "authorize_128_final.zkey"
     },
     "claim.wasm": {
-      "sha256": "0135027a2bfa91780d7bf3ebff9f42b5dc3398eb9683b905c232331027bdcba8",
-      "bytes": 2860469,
+      "sha256": "2a015f1a09044c6aa6db05b1e259eefa7480c70b969343045d7cc221dc0d52fe",
+      "bytes": 3025570,
       "src": "claim_js/claim.wasm"
     },
     "claim_final.zkey": {
-      "sha256": "22e9d37795f641d95d7a8ff50c4cf03d7c5c6b336bdcaf900b4707c91e3ddf30",
-      "bytes": 1180158,
+      "sha256": "ec9ebb1fb1201434582fc7ce17239776d1dc7a708b21811fb6a246bb86e15fc9",
+      "bytes": 1436934,
       "src": "claim_final.zkey"
     },
     "claim_64.wasm": {
-      "sha256": "eb4ecb139c7ce2ea9d2ab84cc498ff14d8c00db0123ed157ea97a37d675b6b45",
-      "bytes": 2864254,
+      "sha256": "d3a545fb2f0c411ca7f765399c1bdb7d6e0986e17111b544fef34c773ed37a1b",
+      "bytes": 3029355,
       "src": "claim_64_js/claim_64.wasm"
     },
     "claim_64_final.zkey": {
-      "sha256": "46556fe1420aae38f0168786089371da6fb1f599989919ff0e4ebce297bfb35a",
-      "bytes": 1421414,
+      "sha256": "510988352fe20ab90d95054742c88bdd846678df7fcad9c4b589b1a880fead85",
+      "bytes": 1809262,
       "src": "claim_64_final.zkey"
     },
     "claim_128.wasm": {
-      "sha256": "e211be8667007009081a948dfbc6d9eb63e2268a538f14422fffb16383014251",
-      "bytes": 2866107,
+      "sha256": "92c20a0d65641d2675602b4b8f4fbf954787ee2d0d5e3bd9767ef95bc84f0180",
+      "bytes": 3031269,
       "src": "claim_128_js/claim_128.wasm"
     },
     "claim_128_final.zkey": {
-      "sha256": "3fbb8eb3e7b122caa96007bb4aee23edd3da7f999b5ef9c054a3a35d424013a3",
-      "bytes": 1673114,
+      "sha256": "23b7011c4721ee5895265cc80dd8cf3f44002df9e2c42f330dc89561ebbe94ea",
+      "bytes": 1929890,
       "src": "claim_128_final.zkey"
     },
     "deposit.wasm": {

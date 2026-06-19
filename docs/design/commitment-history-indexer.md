@@ -147,7 +147,7 @@ Config mirrors `verify.ts`'s `CHAINS` JSON, with two new per-chain fields:
 [{ "chainId": 11155111,
    "rpcUrl": "https://…",
    "commitmentPoolAddress": "0xa711…2150",
-   "deployBlock": 11008264 }]
+   "deployBlock": 11094792 }]
 ```
 
 Single-chain env fallback: `RPC_URL`, `COMMITMENT_POOL_ADDRESS`,

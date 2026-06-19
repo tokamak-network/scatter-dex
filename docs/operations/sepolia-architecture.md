@@ -30,7 +30,7 @@ flowchart TB
     DB_REL[("SQLite<br/>zk-relayer.db")]
   end
 
-  subgraph Chain["⛓️ Sepolia contracts (deploy block 11008264)"]
+  subgraph Chain["⛓️ Sepolia contracts (deploy block 11094792)"]
     CP["CommitmentPool"]
     PS["PrivateSettlement<br/>(settleAuth / claimWithProof)"]
     IG["IdentityGate (zk-X509 dual-CA)"]
@@ -81,7 +81,7 @@ flowchart TB
         └───────────────────────────────┬───────────────────────────────┘             │ + submit tx
                               submit tx  │   (zk-relayer matches against orderbook, both │
                                          v    inside the VM)                            v
-        ┌──────────────────────── SEPOLIA contracts (deploy block 11008264) ───────────────────┐
+        ┌──────────────────────── SEPOLIA contracts (deploy block 11094792) ───────────────────┐
         │ CommitmentPool · PrivateSettlement(settleAuth/claimWithProof) · IdentityGate(zk-X509) │
         │ RelayerRegistry/FeeVault/Treasury · Groth16 verifiers · zk-X509 registries (User/Relayer-CA)│
         │ Token whitelist: ETH/WETH · USDC · USDT · TON                                          │
@@ -119,16 +119,16 @@ flowchart TB
 - **Live Sepolia box**: `http://136.115.115.93:4000` (shared-orderbook).
 - **Indexer-first claim resolution**: SDK reads `/api/claim-nullifiers` first (authoritative, monotonic), with per-leaf RPC `eth_call` fallback.
 
-### On-chain (Sepolia, chainId 11155111, deploy block 11008264)
+### On-chain (Sepolia, chainId 11155111, deploy block 11094792)
 
 | Contract | Address |
 |----------|---------|
-| CommitmentPool | `0xa7110147DB71b1A3d836C9bEb9ec963627382150` |
-| PrivateSettlement | `0x9546B0A1f9cf52405645f3EFD86E06f7ea76Ef74` |
-| IdentityGate (zk-X509 dual-CA) | `0x4AE8d74E5CB862c1D3E83e27379C653070b2FFfA` |
-| RelayerRegistry | `0x64fd8485793717fa3aBdb1FFc3406eC7fEee08fD` |
-| FeeVault | `0x49284b7d061570Ad089e75cf9b40De6D6282ffEC` |
-| Treasury | `0x681C2e5A194fd9949f9E5CE6f3eCeE04FA02fbEC` |
+| CommitmentPool | `0x1c6bc81704f100C9EddeF79C151F7C2EbEa5848b` |
+| PrivateSettlement | `0x9aA6CFc593aa76DD76015eB4752A05f3A78EA7a8` |
+| IdentityGate (zk-X509 dual-CA) | `0x134ee727b5299e16Ee3fb3aEdf5Ba48D81B7AEa3` |
+| RelayerRegistry | `0x38066496C050e8F45f5454a40d38797ED68dF826` |
+| FeeVault | `0xC0E66b179753C26b9e2874639142F082c2d33A4e` |
+| Treasury | `0x57a344C0BABA24B0716DEFb51F1a3f733795f3aa` |
 | zk-X509 User-CA registry | `0x3cF6A96f1970053ffDf957074F988aD53D13ada3` |
 | zk-X509 Relayer-CA registry | `0x9fDE6182B1fd10F2eDfE15b704FE95787C170914` |
 | WETH | `0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9` |

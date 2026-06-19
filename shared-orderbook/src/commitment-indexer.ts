@@ -11,7 +11,7 @@
  *   COMMITMENT_CHAINS              — JSON array of per-chain configs, e.g.
  *                                    [{"chainId":11155111,"rpcUrl":"https://…",
  *                                      "commitmentPoolAddress":"0x…",
- *                                      "deployBlock":11008264}, …]. Wins over
+ *                                      "deployBlock":11094792}, …]. Wins over
  *                                    the single-chain vars below.
  *   RPC_URL                       — JSON-RPC endpoint (single-chain fallback)
  *   COMMITMENT_POOL_ADDRESS       — 0x… (single-chain fallback)

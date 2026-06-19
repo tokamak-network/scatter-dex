@@ -289,7 +289,7 @@ On the live box these come from instance metadata (`vm-startup.sh` maps
 ```bash
 # 1. deploy block = the pool's deployBlock from contracts/deployments/<chainId>.json
 gcloud compute instances add-metadata zkscatter-node --zone us-central1-a \
-  --metadata commitment-deploy-block=11008264,commitment-pool-address=0xa7110147DB71b1A3d836C9bEb9ec963627382150
+  --metadata commitment-deploy-block=11094792,commitment-pool-address=0x1c6bc81704f100C9EddeF79C151F7C2EbEa5848b
 # 2. roll out (deploy.sh re-syncs compose so the commitment-indexer container exists)
 deploy/ci/deploy.sh
 # 3. verify

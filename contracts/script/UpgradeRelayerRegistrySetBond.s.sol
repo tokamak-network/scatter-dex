@@ -24,7 +24,7 @@ import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 contract UpgradeRelayerRegistrySetBond is Script {
     /// @dev Sepolia RelayerRegistry proxy (contracts/deployments/11155111.json).
     ///      Override with the RELAYER_REGISTRY_PROXY env var for other chains.
-    address internal constant SEPOLIA_PROXY = 0x64fd8485793717fa3aBdb1FFc3406eC7fEee08fD;
+    address internal constant SEPOLIA_PROXY = 0x38066496C050e8F45f5454a40d38797ED68dF826;
 
     function run() external {
         address proxy = vm.envOr("RELAYER_REGISTRY_PROXY", SEPOLIA_PROXY);
