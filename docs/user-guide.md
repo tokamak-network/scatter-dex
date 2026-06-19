@@ -87,23 +87,101 @@ claim, cancel) · [reposition spec](product/PRO_REPOSITION.md)
 
 ## Operators
 
-**Run the settlement rail for private order flow.** You can't front-run — that's
-the feature.
+**Run the settlement rail for private order flow** and earn a per-trade fee for
+it. This isn't a new business to start from scratch — it's a way to earn from
+infrastructure or order flow you already have.
 
-**Why use it**
-- **Permissionless** — post a bond to the RelayerRegistry and publish your endpoint + per-trade fee (bps).
-- **Can't see order amounts/sides** — orders are zk-encrypted.
-- **Deterministic on-chain bps per fill** — no opaque take-rate.
-- **No vendor lock-in** — change endpoint/fee in one tx; exit and recover your bond after a cool-down.
+**Why people run one**
 
-**Good for:** validators with idle gas budget, OTC desks with their own flow,
-operators in regulated jurisdictions.
+- **You already pay for a node and gas.** Validators and infra operators settle
+  trades at near-zero marginal cost, so even a thin per-trade fee (bps) is profit.
+  Your idle gas budget becomes revenue.
+- **You already have the flow — stop paying someone else to settle it.** OTC
+  desks, wallets, and apps that route their own trades can settle them in-house.
+  Here the fee isn't new income, it's a cost you stop leaking to an external
+  relayer.
+- **You need to settle privately *and* compliantly.** The KYC + zk-X509 gate is a
+  barrier to most, but for operators in regulated jurisdictions it's the point:
+  settle private order flow with a real compliance posture behind it.
+
+**Why it's safe to rely on**
+
+- **You can't front-run it** — orders are zk-encrypted, so you settle without ever
+  seeing amounts or sides. That means no MEV to extract here; this is neutral
+  infrastructure, not a searcher's game.
+- **The terms are on-chain and yours.** Deterministic bps per fill (no opaque
+  take-rate), change endpoint/fee in one tx, and exit to recover your bond after a
+  cool-down — no vendor lock-in.
+- **Skin in the game.** The bond you post is your stake in a censorship-resistant
+  settlement layer, and a neutral relayer that proves it can't peek is a
+  reputation asset.
 
 **How to use**
-1. Open Operators (`./scripts/run-scatter-web.sh operators sepolia`, http://localhost:4004).
-2. Complete relayer onboarding (KYC → approval → zk-X509 cert → on-chain registration).
-3. Stand up the open-source relayer node (Docker / single binary).
-4. Monitor fills and treasury from the console.
+
+Open Operators with `./scripts/run-scatter-web.sh operators sepolia`
+(http://localhost:4004). The top nav has a **Home** link plus four menus:
+**Platform** (public, network-wide), **My** (your relayer — needs your wallet),
+**Identity** (your verification / KYC status), and **Docs**.
+
+### Get registered
+
+Registration is a one-time, gated journey. Two independent gates must both clear
+before you can post a bond: an **admin KYC approval** (off-chain packet → on-chain
+sign-off) and a **zk-X509 certificate** that proves your identity without
+revealing it. The **Register** wizard (`My → Register relayer`) walks all five
+steps and won't let you advance until each precondition is met:
+
+1. **KYC** — submit your packet (email, ID document) to the orderbook backend.
+2. **zk-X509 verification** — open the CA portal, issue your certificate, generate
+   a keypair, and submit the ZK proof. This flips `isVerified` on-chain. Track CA
+   address, validity, and your verification/approval status on the
+   **Operator CA** screen.
+3. **Admin approval** — wait for the admin to sign off in
+   `IssuanceApprovalRegistry`; the wizard polls and unlocks automatically.
+4. **Endpoint, name & fee** — point the wizard at your running relayer's URL. It
+   live-probes `/api/info` so you catch an unreachable node *before* spending gas.
+   Set a unique display name and your per-trade fee (bps).
+5. **Bond & submit** — enter a bond ≥ the registry minimum, approve the bond token
+   if needed, and send the `register()` tx.
+
+New to this? Start at **Onboarding** (`Docs → Get started`) instead — it shows the
+six setup steps with live status cards (wallet connected, RPC reachable, on-chain
+state) and a glossary of bond / fee bps / slashing / exit cool-down.
+
+> Before step 4 your relayer node must already be running. Clone the repo,
+> copy `.env.example` → `.env` (RPC, contract addresses, `RELAYER_PRIVATE_KEY`,
+> `RELAYER_PUBLIC_URL`), then `npm start` in `zk-relayer/`. See
+> [running a relayer](operations/running-a-relayer.md).
+
+### Run it day to day
+
+Once registered, these screens are your operating loop (most under **My**). The
+admin views authenticate by **signing a SIWE challenge with your operator
+wallet** in the connect bar — no API key; the session lives only in the tab:
+
+- **Dashboard** — your live overview: bond & fee on-chain, your public endpoint,
+  24h fills / pending queue / avg gas, health (running vs paused, ETH balance,
+  last settlement), and recent throughput with latency percentiles.
+- **Orders** — open orders from the shared orderbook merged with your settled /
+  failed history, bucketed by status (Matching, Matched, Cancelled, Expired,
+  Settled, Failed). Click a row for full settlement detail or the failure reason.
+- **Treasury** — claimable FeeVault balance per token (one click to `claim`),
+  lifetime fee totals, and a banner for any pending fee change with its effective
+  time.
+- **Analytics** — aggregated metrics over 1d / 7d / 30d / 90d (success rate, gas,
+  tokens routed, throughput) with CSV export.
+- **Controls** (`/runtime`) — pause/resume the relayer, drain the authorize
+  queue, publish a fee change on-chain, and manage the sanctions blocklist
+  (`Cmd/Ctrl-K` for a command palette).
+- **Profile** — edit URL / name / fee (`RelayerRegistry.updateInfo`), add bond, or request
+  exit. Exit locks your bond for a cool-down, after which you execute it to
+  recover the bond.
+
+### Compare and verify (public)
+
+- **Leaderboard** (`Platform`) — every registered relayer ranked by volume,
+  revenue, activity, bond, fee, success rate, or speed, with a live health dot.
+  Click a row for that relayer's public **profile** (`/relayer`).
 
 > 📸 _Slot: `assets/user-guide/operators-console.png` — the relayer dashboard (fills / fees / treasury)._
 
