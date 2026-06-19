@@ -125,13 +125,15 @@ describe("deriveNoteStatus", () => {
     expect(info.lockedByOrder?.id).toBe("o1");
   });
 
-  it("keeps the funding note Locked even when the matching order has expired", () => {
-    // Reverting the earlier shortcut: matching+expired no longer
-    // releases the lock. The on-chain expiry check only blocks the
-    // settle path — the authorize binding (escrowNullifier) is
-    // still live, so reusing the commitment in a new order would
-    // produce two orders sharing one nullifier and a guaranteed
-    // zombie after the first cancel.
+  it("releases an expired matching order's funding note as recoverable (withdraw-only)", () => {
+    // An expired matching order can never settle (SettleVerifyLib's
+    // expiry check blocks it on-chain), so its funding note is
+    // recoverable via Withdraw. It classifies as `available` with
+    // `recoverableExpired` set — the escrow page offers a single-use
+    // Withdraw, while the workbench's funding picker still refuses it
+    // for a new order (a fresh order would share the live
+    // escrowNullifier; the first cancel would then burn both — the
+    // ord-1/ord-2 zombie regression). So it is NOT a plain Locked note.
     const note = makeNote({ id: "n1", leafIndex: 5 });
     const expired = makeOrder({
       id: "o1",
@@ -141,8 +143,9 @@ describe("deriveNoteStatus", () => {
       expiry: 1_000n, // long past 1970
     });
     const info = deriveNoteStatus(note, [expired], 2_000_000);
-    expect(info.status).toBe("locked");
-    expect(info.lockedByOrder?.id).toBe("o1");
+    expect(info.status).toBe("available");
+    expect(info.recoverableExpired).toBe(true);
+    expect(info.lockedByOrder).toBeUndefined();
   });
 
   it("still locks for a matching order whose expiry hasn't hit yet", () => {

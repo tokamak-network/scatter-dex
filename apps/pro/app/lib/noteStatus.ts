@@ -106,24 +106,6 @@ function buildOrderIndex(
   const recoverableNoteIds = new Set<string>();
   for (const o of orders) {
     if (!OPEN_STATUSES.has(o.status)) continue;
-    // Matching orders past their expiry KEEP pinning their funding
-    // note. The on-chain expiry check (SettleVerifyLib.sol:147) only
-    // blocks settle — not the authorize binding the commitment is
-    // tied to. Reusing the same commitment in a new order would
-    // produce two orders that share an escrowNullifier; the next
-    // cancelPrivate burns it, leaving the other order as a zombie
-    // (status="matching" but pointing at a dead note). The earlier
-    // version of this code released the lock here, which is exactly
-    // how the ord-1/ord-2 zombie state in the regression that
-    // prompted this revert was created. Cancel is the only path
-    // that frees the commitment.
-    //
-    // Still record the order under
-    // `expiredMatchingByChangeCommitment` so a `leafIndex < 0`
-    // residual surfaces as `discarded` (the change leaf can never
-    // land — the parent can't settle past expiry). Don't `continue`:
-    // the funding noteId still needs to land in `byNoteId` below
-    // so it reads as Locked.
     // Matching orders past their circuit expiry release their lock:
     // settle is blocked on-chain (SettleVerifyLib.sol:147), so the
     // funding note is recoverable via Withdraw and the change
