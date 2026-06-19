@@ -34,7 +34,7 @@ export interface CommitmentInsertedHistoryOptions {
 
 /** Coerce a block tag (number, decimal/hex string, or bigint) to a finite
  *  block number, or `fallback` when absent/unparseable. `Number` handles
- *  "11008264", "0x123", and bigints; a number-only `isFinite` guard would
+ *  "11094792", "0x123", and bigints; a number-only `isFinite` guard would
  *  reject the string forms env vars produce and quietly fall back to the
  *  default — reintroducing the genesis scan this option exists to avoid. */
 function toBlockNumber(

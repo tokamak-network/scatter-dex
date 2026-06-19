@@ -28,7 +28,7 @@ import {FeeVault} from "../src/FeeVault.sol";
 contract UpgradeFeeVault is Script {
     /// @dev Sepolia FeeVault proxy (contracts/deployments/11155111.json).
     ///      Override with the FEE_VAULT_PROXY env var for other chains.
-    address internal constant SEPOLIA_PROXY = 0x49284b7d061570Ad089e75cf9b40De6D6282ffEC;
+    address internal constant SEPOLIA_PROXY = 0xC0E66b179753C26b9e2874639142F082c2d33A4e;
 
     function run() external {
         address proxy = vm.envOr("FEE_VAULT_PROXY", SEPOLIA_PROXY);
