@@ -109,6 +109,17 @@ describe("assessDepositRetry", () => {
     expect(v.confirm).toBeFalsy();
   });
 
+  it("asks for confirmation on an unknown receipt status (null), not an allow", async () => {
+    // status null = the node couldn't classify the outcome; must not be
+    // mistaken for a confirmed revert (which would be safe to retry).
+    const v = await assessDepositRetry(
+      [note({ commitment: 9n, txHash: "0xabc" })],
+      deps({ getReceipt: async () => ({ status: null }) }),
+    );
+    expect(v.block).toBe(false);
+    expect(v.confirm).toBe(true);
+  });
+
   it("asks for confirmation on an atomic-batch note (no txHash) absent from the tree", async () => {
     // The ambiguous sliver: can't be proven landed or dropped, so neither
     // auto-allow nor permanent-block — escalate to the caller's modal.

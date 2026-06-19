@@ -147,9 +147,9 @@ export function ConfirmRetryDeposit({
   return (
     <Modal open onClose={onCancel} title="Deposit again?">
       <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-        We couldn&apos;t confirm whether your <strong>previous deposit</strong> went
-        through — it isn&apos;t on-chain yet, but we also can&apos;t prove it was
-        dropped.
+        We couldn&apos;t verify whether your <strong>previous deposit</strong> went
+        through. It may still be pending, or already mined but unconfirmed
+        here — we can&apos;t tell, and we can&apos;t prove it was dropped either.
       </p>
       <p className="mt-2 text-sm text-[var(--color-text-muted)]">
         If it actually landed, depositing again would lock{" "}

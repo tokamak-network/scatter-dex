@@ -523,6 +523,23 @@ function NewPayout() {
     depositInFlightRef.current = false;
     depositAbortRef.current = null;
   }, []);
+  // Abandon any in-flight deposit / open retry-confirm when the connected
+  // account changes: the parked `launch` closure captured the *old*
+  // account + signer, so resuming it after a wallet switch would deposit
+  // against the wrong wallet. Guarded on an actual account change (not
+  // the modal opening) so it doesn't tear down the attempt it's meant to
+  // protect.
+  const prevAccountRef = useRef(account);
+  useEffect(() => {
+    if (prevAccountRef.current === account) return;
+    prevAccountRef.current = account;
+    if (!depositInFlightRef.current && !pendingDepositRef.current) return;
+    pendingDepositRef.current = null;
+    depositAbortRef.current?.abort();
+    releaseDepositLocks();
+    setRetryConfirm(false);
+    setDepositPhase({ kind: "cancelled" });
+  }, [account, releaseDepositLocks]);
 
   useEffect(() => {
     setClaimFrom(claimFromMin());
@@ -1990,7 +2007,14 @@ function NewPayout() {
                   getReceipt: (h) => rpcProvider.getTransactionReceipt(h),
                   getTransaction: (h) => rpcProvider.getTransaction(h),
                   signal: ctrl.signal,
-                }).catch((): RetryGuardResult => ({ block: false }));
+                }).catch((err): RetryGuardResult => {
+                  // The on-chain recheck itself failed (RPC error, etc.).
+                  // There IS an unreconciled pending note, so don't
+                  // silently allow — surface it and escalate to the
+                  // confirm modal so the user verifies before retrying.
+                  console.error("[Pay] assessDepositRetry failed", err);
+                  return { block: false, confirm: true };
+                });
                 if (ctrl.signal.aborted) {
                   // User cancelled mid-recheck — abandon the attempt.
                   setDepositPhase({ kind: "cancelled" });

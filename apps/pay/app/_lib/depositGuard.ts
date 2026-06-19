@@ -172,7 +172,10 @@ export async function assessDepositRetry(
       continue;
     }
     if (receipt.status === 1) return { block: true, message: DEPOSIT_LANDED_MSG };
-    // status === 0 → reverted; positively safe (phantom detector marks it).
+    if (receipt.status === 0) continue; // reverted → positively safe (phantom detector marks it)
+    // status is null/unknown (pre-Byzantium or an odd node response) —
+    // we can't classify the outcome, so don't treat it as a safe revert.
+    ambiguous = true;
   }
 
   if (ambiguous) return { block: false, confirm: true, message: DEPOSIT_AMBIGUOUS_MSG };
