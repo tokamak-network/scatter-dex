@@ -119,9 +119,9 @@ infrastructure or order flow you already have.
 **How to use**
 
 Open Operators with `./scripts/run-scatter-web.sh operators sepolia`
-(http://localhost:4004). The top nav groups every screen into three menus:
+(http://localhost:4004). The top nav has a **Home** link plus four menus:
 **Platform** (public, network-wide), **My** (your relayer — needs your wallet),
-and **Docs**.
+**Identity** (your verification / KYC status), and **Docs**.
 
 ### Get registered
 
@@ -155,9 +155,9 @@ state) and a glossary of bond / fee bps / slashing / exit cool-down.
 
 ### Run it day to day
 
-Once registered, these screens are your operating loop (most under **My**, and
-they need your relayer's **admin API key** — paste it into the connect bar; it
-lives only in the tab's session):
+Once registered, these screens are your operating loop (most under **My**). The
+admin views authenticate by **signing a SIWE challenge with your operator
+wallet** in the connect bar — no API key; the session lives only in the tab:
 
 - **Dashboard** — your live overview: bond & fee on-chain, your public endpoint,
   24h fills / pending queue / avg gas, health (running vs paused, ETH balance,
@@ -173,7 +173,7 @@ lives only in the tab's session):
 - **Controls** (`/runtime`) — pause/resume the relayer, drain the authorize
   queue, publish a fee change on-chain, and manage the sanctions blocklist
   (`Cmd/Ctrl-K` for a command palette).
-- **Profile** — edit URL / name / fee (`updateRelayerInfo`), add bond, or request
+- **Profile** — edit URL / name / fee (`RelayerRegistry.updateInfo`), add bond, or request
   exit. Exit locks your bond for a cool-down, after which you execute it to
   recover the bond.
 
