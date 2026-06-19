@@ -415,7 +415,9 @@ async function claimFor(
     await provider.send("evm_mine", []);
   }
 
-  const claimNullifier = poseidonHash([TAG_CLAIM_NULL, art.claimSecret, 0n]);
+  // claimsRoot is bound into the claim nullifier (Poseidon(4)) — must match
+  // claim_template.circom or witness generation fails its constraint.
+  const claimNullifier = poseidonHash([TAG_CLAIM_NULL, art.claimSecret, 0n, art.claimsRoot]);
   const claimMerkleProof = getMerkleProof(art.claimsLayers, 0);
 
   const snarkjs = await import("snarkjs");

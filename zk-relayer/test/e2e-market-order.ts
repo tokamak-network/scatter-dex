@@ -506,7 +506,14 @@ async function main() {
 
   // Build claim proof (claimsLayers already computed in Step 3)
   const claimIdx = 0;
-  const claimNullifier = poseidonHash([TAG_CLAIM_NULL, claimSecret, BigInt(claimIdx)]);
+  // claimsRoot is bound into the claim nullifier (Poseidon(4)) — must match
+  // claim_template.circom or witness generation fails its constraint.
+  const claimNullifier = poseidonHash([
+    TAG_CLAIM_NULL,
+    claimSecret,
+    BigInt(claimIdx),
+    claimsRootValue,
+  ]);
   const claimMerkleProof = getMerkleProof(claimsLayers, claimIdx);
 
   const snarkjs = await import("snarkjs");

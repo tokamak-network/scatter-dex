@@ -327,9 +327,11 @@ async function main() {
   // Tag pulled from the shared module so it cannot drift from circuits
   // / zk-prover / frontend.
   const { TAG_CLAIM_NULL } = await import("./src/core/tags.js");
-  const claimNullifier = F.toObject(poseidon([TAG_CLAIM_NULL, claimSecret, BigInt(claimLeafIndex)]));
-
   const { pathElements, pathIndices, root: computedClaimsRoot } = buildMerkleTreeWithProof(aliceClaimLeaves, 4, claimLeafIndex);
+
+  // claimsRoot is bound into the claim nullifier (Poseidon(4)) — must match
+  // claim_template.circom or witness generation fails its constraint.
+  const claimNullifier = F.toObject(poseidon([TAG_CLAIM_NULL, claimSecret, BigInt(claimLeafIndex), computedClaimsRoot]));
 
   console.log("Generating claim ZK proof...");
   const { proof: claimProof } = await snarkjs.groth16.fullProve({
