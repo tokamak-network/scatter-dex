@@ -3,7 +3,13 @@
 import { Modal } from "@zkscatter/ui";
 import { STEPPER_LABELS } from "../_categories";
 
-export function Stepper({ step, onJump }: { step: number; onJump: (n: number) => void }) {
+export function Stepper({
+  step,
+  onJump,
+}: {
+  step: number;
+  onJump: (n: number) => void;
+}) {
   return (
     <div className="flex gap-2">
       {STEPPER_LABELS.map((l, i) => {
@@ -21,8 +27,8 @@ export function Stepper({ step, onJump }: { step: number; onJump: (n: number) =>
               active
                 ? "border-[var(--color-primary)] bg-[var(--color-primary-soft)] text-[var(--color-primary)]"
                 : done
-                ? "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
-                : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-subtle)]"
+                  ? "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-muted)] hover:border-[var(--color-border-strong)]"
+                  : "border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-subtle)]"
             }`}
           >
             <span className="mr-2 font-semibold">{n}</span>
@@ -45,7 +51,11 @@ export function Toggle({
 }) {
   return (
     <label className="flex cursor-pointer items-center gap-2">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
       <span>{label}</span>
     </label>
   );
@@ -78,7 +88,9 @@ export function ReviewSection({
 }) {
   return (
     <section className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <h3 className="mb-2 text-sm font-semibold text-[var(--color-text-muted)]">{title}</h3>
+      <h3 className="mb-2 text-sm font-semibold text-[var(--color-text-muted)]">
+        {title}
+      </h3>
       <dl className="grid grid-cols-[max-content_1fr] gap-x-6 divide-y divide-[var(--color-border)] text-sm">
         {children}
       </dl>
@@ -106,8 +118,8 @@ export function ConfirmLargeAmount({
         <strong>
           {total.toLocaleString()} {token}
         </strong>{" "}
-        to <strong>{recipients} recipients</strong>. Once signed, this run cannot be reversed —
-        recipients can claim it any time, forever.
+        to <strong>{recipients} recipients</strong>. Once signed, this run
+        cannot be reversed — recipients can claim it any time, forever.
       </p>
       <div className="mt-5 flex justify-end gap-2">
         <button
@@ -121,68 +133,6 @@ export function ConfirmLargeAmount({
           className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
         >
           Sign &amp; submit
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-/** Shown when a deposit retry can't be confirmed safe on-chain — the
- *  prior deposit is neither in the tree nor provably dropped (the
- *  atomic-batch sliver, or an unreadable receipt). Re-depositing now
- *  would lock 2× the funds in a second note, so make the user explicitly
- *  acknowledge they've checked the explorer before proceeding. `onCancel`
- *  is the safe default; the proceed button is styled as a warning, not a
- *  primary action. */
-export function ConfirmRetryDeposit({
-  explorerHref,
-  onCancel,
-  onConfirm,
-}: {
-  /** Link to the user's address on the block explorer, when known. */
-  explorerHref?: string;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <Modal open onClose={onCancel} title="Deposit again?">
-      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-        We couldn&apos;t verify whether your <strong>previous deposit</strong> went
-        through. It may still be pending, or already mined but unconfirmed
-        here — we can&apos;t tell, and we can&apos;t prove it was dropped either.
-      </p>
-      <p className="mt-2 text-sm text-[var(--color-text-muted)]">
-        If it actually landed, depositing again would lock{" "}
-        <strong>twice the funds</strong> in a second, separate note.{" "}
-        {explorerHref ? (
-          <>
-            Check{" "}
-            <a
-              href={explorerHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
-            >
-              your recent transactions
-            </a>{" "}
-            first.
-          </>
-        ) : (
-          "Check the block explorer first."
-        )}
-      </p>
-      <div className="mt-5 flex justify-end gap-2">
-        <button
-          onClick={onCancel}
-          className="rounded-md bg-[var(--color-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--color-primary-hover)]"
-        >
-          Wait / cancel
-        </button>
-        <button
-          onClick={onConfirm}
-          className="rounded-md border border-[var(--color-border-strong)] px-4 py-2 text-sm text-[var(--color-text-muted)]"
-        >
-          Deposit again anyway
         </button>
       </div>
     </Modal>
