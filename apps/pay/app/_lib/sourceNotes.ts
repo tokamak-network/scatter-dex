@@ -10,6 +10,18 @@ export function isLiveNote(n: { status?: "failed" }): boolean {
   return n.status !== "failed";
 }
 
+/** A deposit that has been broadcast but not yet reconciled to an
+ *  on-chain leaf — i.e. still "in flight". Excludes phantom (failed)
+ *  notes. The single predicate behind the confirming-deposit guard, the
+ *  on-chain retry recheck, and the wizard's pending filter, so they
+ *  can't drift on what "pending" means. */
+export function isPendingDeposit(n: {
+  leafIndex: number;
+  status?: "failed";
+}): boolean {
+  return isLiveNote(n) && n.leafIndex < 0;
+}
+
 /** Per-token vault summary. `availableRaw` only counts notes the
  *  picker can actually spend (`leafIndex >= 0`); `pendingRaw` is
  *  what's deposited but the leafIndex reconciler hasn't observed
@@ -59,7 +71,7 @@ export function hasConfirmingDeposit(
   windowMs: number = DEPOSIT_CONFIRMING_WINDOW_MS,
 ): boolean {
   return tokenNotes.some(
-    (n) => isLiveNote(n) && n.leafIndex < 0 && nowMs - n.createdAt < windowMs,
+    (n) => isPendingDeposit(n) && nowMs - n.createdAt < windowMs,
   );
 }
 

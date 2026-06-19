@@ -105,8 +105,10 @@ import {
   summarizeBalance,
   hasConfirmingDeposit,
   isLiveNote,
+  isPendingDeposit,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
+import { assessDepositRetry } from "../../_lib/depositGuard";
 import { useWalletBook } from "../../_lib/walletBook";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
@@ -302,7 +304,7 @@ function NewPayout() {
   >(null);
   const router = useRouter();
 
-  const { account, chainId, signer } = useWallet();
+  const { account, chainId, signer, rpcProvider } = useWallet();
   const tree = useCommitmentTree();
   const vault = useVault();
   const { notes, loaded: vaultLoaded } = vault;
@@ -1886,7 +1888,7 @@ function NewPayout() {
               depositPhase != null &&
               !TERMINAL_DEPOSIT_PHASES.has(depositPhase.kind)
             }
-            onDeposit={() => {
+            onDeposit={async () => {
               // Synchronous lock first — state-based checks would
               // race a same-frame double-click and start two flows.
               if (depositInFlightRef.current) return;
@@ -1910,9 +1912,50 @@ function NewPayout() {
                 });
                 return;
               }
+              // Take the lock before the async on-chain recheck so a
+              // double-click during the await can't start a second flow.
               depositInFlightRef.current = true;
+              // Wire the abort controller *before* the recheck so the
+              // Cancel button works during it (the recheck can poll for
+              // up to ~6 s). The same controller is reused for the
+              // deposit itself if the recheck passes.
               const ctrl = new AbortController();
               depositAbortRef.current = ctrl;
+              // Past-window safety net: the wall-clock guard above has
+              // already released, but a deposit that *actually landed*
+              // (its confirm/reconcile lagged past the 10-min window)
+              // must still block a retry — else a confused user
+              // re-deposits and locks 2× the funds. Re-check on-chain;
+              // only a genuinely-absent commitment (likely a dropped tx)
+              // falls through to a fresh deposit. Receipts come from the
+              // public canonical node (`rpcProvider`), not the wallet
+              // RPC, because a receipt is a global fact and a forked /
+              // stale wallet node could return a null receipt for an
+              // already-mined tx (matches usePhantomDepositDetector).
+              const pendingForToken = tokenNotes.filter(isPendingDeposit);
+              if (pendingForToken.length > 0) {
+                setDepositPhase({ kind: "preparing" });
+                const verdict = await assessDepositRetry(pendingForToken, {
+                  refreshTree: tree.refresh,
+                  findIndex: tree.findIndex,
+                  getReceipt: (h) => rpcProvider.getTransactionReceipt(h),
+                  getTransaction: (h) => rpcProvider.getTransaction(h),
+                  signal: ctrl.signal,
+                }).catch(() => ({ block: false }) as const);
+                if (ctrl.signal.aborted) {
+                  // User cancelled mid-recheck — abandon the attempt.
+                  setDepositPhase({ kind: "cancelled" });
+                  depositInFlightRef.current = false;
+                  depositAbortRef.current = null;
+                  return;
+                }
+                if (verdict.block) {
+                  setDepositPhase({ kind: "error", error: verdict.message });
+                  depositInFlightRef.current = false;
+                  depositAbortRef.current = null;
+                  return;
+                }
+              }
               setDepositPhase({ kind: "preparing" });
               // Persist the run before the long on-chain confirm so the
               // escrowed funds stay tied to their recipient list even if
