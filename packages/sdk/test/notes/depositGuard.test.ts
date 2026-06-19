@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   assessDepositRetry,
+  hasConfirmingDeposit,
+  isLiveNote,
+  isPendingDeposit,
+  DEPOSIT_CONFIRMING_WINDOW_MS,
   type PendingDepositNote,
   type RetryGuardDeps,
-} from "../app/_lib/depositGuard";
+} from "../../src/notes/depositGuard";
 
 // A no-op sleep so the poll loop doesn't burn real time in tests.
 const noSleep = () => Promise.resolve();
@@ -20,6 +24,43 @@ function deps(over: Partial<RetryGuardDeps> = {}): RetryGuardDeps {
     ...over,
   };
 }
+
+describe("isLiveNote / isPendingDeposit", () => {
+  it("isLiveNote excludes only failed notes", () => {
+    expect(isLiveNote({})).toBe(true);
+    expect(isLiveNote({ status: "failed" })).toBe(false);
+  });
+
+  it("isPendingDeposit is live AND unreconciled (leafIndex < 0)", () => {
+    expect(isPendingDeposit({ leafIndex: -1 })).toBe(true);
+    expect(isPendingDeposit({ leafIndex: 0 })).toBe(false); // reconciled
+    expect(isPendingDeposit({ leafIndex: -1, status: "failed" })).toBe(false); // phantom
+  });
+});
+
+describe("hasConfirmingDeposit", () => {
+  const n = (leafIndex: number, ageMs: number, status?: "failed") => ({
+    leafIndex,
+    createdAt: 1_000_000 - ageMs,
+    status,
+  });
+  const now = 1_000_000;
+
+  it("flags a recent unreconciled note within the window", () => {
+    expect(hasConfirmingDeposit([n(-1, 1_000)], now)).toBe(true);
+  });
+
+  it("ignores a note aged past the window", () => {
+    expect(
+      hasConfirmingDeposit([n(-1, DEPOSIT_CONFIRMING_WINDOW_MS + 1)], now),
+    ).toBe(false);
+  });
+
+  it("ignores reconciled and phantom notes", () => {
+    expect(hasConfirmingDeposit([n(0, 1_000)], now)).toBe(false);
+    expect(hasConfirmingDeposit([n(-1, 1_000, "failed")], now)).toBe(false);
+  });
+});
 
 describe("assessDepositRetry", () => {
   it("does not block when there are no live pending notes", async () => {

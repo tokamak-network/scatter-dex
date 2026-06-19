@@ -1,26 +1,17 @@
 import type { StoredNote } from "@zkscatter/sdk/notes";
+import { isLiveNote } from "@zkscatter/sdk/notes";
 import { tokenBigIntToAddress } from "./format";
 
-/** A note that hasn't been flagged a phantom/failed deposit (its tx
- *  reverted → never inserted). Centralizes the "exclude failed" filter
- *  shared across the balance summary, the confirming-deposit guard, the
- *  wizard's note list, and the pool balance card so the rule stays in
- *  one place. */
-export function isLiveNote(n: { status?: "failed" }): boolean {
-  return n.status !== "failed";
-}
-
-/** A deposit that has been broadcast but not yet reconciled to an
- *  on-chain leaf — i.e. still "in flight". Excludes phantom (failed)
- *  notes. The single predicate behind the confirming-deposit guard, the
- *  on-chain retry recheck, and the wizard's pending filter, so they
- *  can't drift on what "pending" means. */
-export function isPendingDeposit(n: {
-  leafIndex: number;
-  status?: "failed";
-}): boolean {
-  return isLiveNote(n) && n.leafIndex < 0;
-}
+// The deposit-guard predicates + on-chain retry recheck now live in the
+// SDK so Pay and Pro share one source of truth. Re-export the bits this
+// module's callers already import from here so their import sites don't
+// have to change.
+export {
+  isLiveNote,
+  isPendingDeposit,
+  hasConfirmingDeposit,
+  DEPOSIT_CONFIRMING_WINDOW_MS,
+} from "@zkscatter/sdk/notes";
 
 /** Per-token vault summary. `availableRaw` only counts notes the
  *  picker can actually spend (`leafIndex >= 0`); `pendingRaw` is
@@ -45,34 +36,6 @@ export function summarizeBalance(
     else pendingRaw += n.note.amount;
   }
   return { availableRaw, pendingRaw };
-}
-
-/** Window (ms) after a deposit note is persisted during which we treat
- *  it as "still confirming" and block a second deposit. Past this, a
- *  note stuck at leafIndex<0 is almost certainly a dropped tx or a
- *  discarded cross-app change note (the vault is shared across
- *  products), so it must NOT keep funding locked forever. */
-export const DEPOSIT_CONFIRMING_WINDOW_MS = 10 * 60_000;
-
-/** True when a *recently-created* note for the run's token is still
- *  pending on-chain (leafIndex<0) within the confirming window — i.e. a
- *  deposit we just broadcast is most likely mid-confirmation, so a
- *  second deposit would duplicate it. Time-bounded on `createdAt` so a
- *  phantom/never-reconciling pending note can't permanently block
- *  deposits (the bug a naive `pendingRaw > 0` check would introduce).
- *  Callers pass the token-filtered notes + `Date.now()`. */
-export function hasConfirmingDeposit(
-  tokenNotes: readonly {
-    leafIndex: number;
-    createdAt: number;
-    status?: "failed";
-  }[],
-  nowMs: number,
-  windowMs: number = DEPOSIT_CONFIRMING_WINDOW_MS,
-): boolean {
-  return tokenNotes.some(
-    (n) => isPendingDeposit(n) && nowMs - n.createdAt < windowMs,
-  );
 }
 
 /** A note picked to fund a run, with the partial-spend amount the

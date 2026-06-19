@@ -109,7 +109,7 @@ import {
   isPendingDeposit,
   type SourceNotesPick,
 } from "../../_lib/sourceNotes";
-import { assessDepositRetry, type RetryGuardResult } from "../../_lib/depositGuard";
+import { assessDepositRetry, type RetryGuardResult } from "@zkscatter/sdk/notes";
 import { useWalletBook } from "../../_lib/walletBook";
 import { WorkspaceBar } from "../../_components/WorkspaceBar";
 import { useFolderStorage } from "../../_lib/folderStorage";
