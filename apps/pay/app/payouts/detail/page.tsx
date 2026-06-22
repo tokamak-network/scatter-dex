@@ -224,6 +224,14 @@ function PayoutBody({
    *  by the operator's Dismiss click or by the next claim. */
   const [lastClaimTx, setLastClaimTx] = useState<{ rowIndex: number; txHash: string } | null>(null);
 
+  /** In-flight + result state for the "Save all to Claims inbox" bulk
+   *  action. `inboxResult` is a short summary shown next to the button
+   *  (e.g. "2 saved, 1 already there") so the operator gets explicit
+   *  feedback — and re-running shows everything as already-there rather
+   *  than silently no-op'ing. */
+  const [savingInbox, setSavingInbox] = useState(false);
+  const [inboxResult, setInboxResult] = useState<string | null>(null);
+
   /** Save THIS recipient's claim link to the operator's local Claims
    *  inbox. Useful when the operator is also a recipient (common in
    *  demo flows) or wants to pre-stage the claim for later. Decodes
@@ -231,25 +239,70 @@ function PayoutBody({
    *  folder; the inbox UI surfaces it next time the operator opens
    *  /claims. Best-effort: silently swallow corrupt-payload errors
    *  (the row's claim badge already surfaces those). */
+  /** Decode `row`'s claim package and upsert it into the local inbox.
+   *  Returns whether the entry was freshly added (`true`) vs. already
+   *  present (`false`). Shared by the single-row and bulk handlers so
+   *  the decode/persist path lives in one place. Throws on a corrupt
+   *  payload — callers decide how loud to be about it. */
+  const saveRowToInbox = useCallback(async (row: RecipientRow): Promise<boolean> => {
+    const pkg = decodeClaimPackage(row.claimPackage!);
+    const { isNew } = await addClaimInboxEntry({
+      rawInput:
+        typeof window !== "undefined"
+          ? buildClaimUrl(window.location.origin, "saved", row)
+          : "",
+      pkg,
+    });
+    return isNew;
+  }, []);
+
   const onSaveToInbox = useCallback(
     async (row: RecipientRow) => {
       if (!row.claimPackage) return;
       setOpenMenu(null);
       try {
-        const pkg = decodeClaimPackage(row.claimPackage);
-        await addClaimInboxEntry({
-          rawInput:
-            typeof window !== "undefined"
-              ? buildClaimUrl(window.location.origin, "saved", row)
-              : "",
-          pkg,
-        });
+        await saveRowToInbox(row);
       } catch (err) {
         console.warn("[Pay] save-to-inbox failed", err);
       }
     },
-    [],
+    [saveRowToInbox],
   );
+
+  /** Save EVERY recipient's claim link to the local Claims inbox in one
+   *  click, instead of opening the row menu per recipient. Idempotent:
+   *  `addClaimInboxEntry` dedupes on (claimsRoot, leafIndex), so rows
+   *  already in the inbox are reported as "already there" and never
+   *  duplicated — running this repeatedly is safe. */
+  const onSaveAllToInbox = useCallback(async () => {
+    setOpenMenu(null);
+    const eligible = record.recipients.filter((r) => r.claimPackage);
+    if (eligible.length === 0) return;
+    setSavingInbox(true);
+    setInboxResult(null);
+    let added = 0;
+    let existing = 0;
+    let failed = 0;
+    for (const row of eligible) {
+      try {
+        if (await saveRowToInbox(row)) added++;
+        else existing++;
+      } catch (err) {
+        failed++;
+        console.warn("[Pay] bulk save-to-inbox failed", err);
+      }
+    }
+    setSavingInbox(false);
+    setInboxResult(
+      [
+        `${added} saved`,
+        existing ? `${existing} already there` : "",
+        failed ? `${failed} skipped` : "",
+      ]
+        .filter(Boolean)
+        .join(", "),
+    );
+  }, [record.recipients, saveRowToInbox]);
 
   const onMarkSentRow = useCallback(
     async (row: RecipientRow) => {
@@ -388,6 +441,9 @@ function PayoutBody({
         onMarkSent={onMarkSentRow}
         onClaim={onClaimRow}
         onSaveToInbox={onSaveToInbox}
+        onSaveAllToInbox={onSaveAllToInbox}
+        savingInbox={savingInbox}
+        inboxResult={inboxResult}
         claimingRow={claimingRow}
       />
       {claimError && (
@@ -870,6 +926,9 @@ function RecipientTable({
   onMarkSent,
   onClaim,
   onSaveToInbox,
+  onSaveAllToInbox,
+  savingInbox,
+  inboxResult,
   claimingRow,
 }: {
   record: RunRecord;
@@ -886,14 +945,39 @@ function RecipientTable({
   /** Stash this row's claim link in the operator's local Claims
    *  inbox so they can re-open it from /inbox later. */
   onSaveToInbox: (row: RecipientRow) => Promise<void>;
+  /** Save every eligible recipient's claim link to the inbox at once.
+   *  Idempotent (dedupes on claimsRoot+leafIndex). */
+  onSaveAllToInbox: () => Promise<void>;
+  /** True while the bulk save is running — disables the button. */
+  savingInbox: boolean;
+  /** Short result summary shown next to the button, or null. */
+  inboxResult: string | null;
   /** `rowIndex` of the row whose claim is currently in flight, or
    *  `null` when nothing is claiming. Drives the per-row "Claiming…"
    *  label and disables the menu while the proof is generating. */
   claimingRow: number | null;
 }) {
+  const savableCount = record.recipients.filter((r) => r.claimPackage).length;
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Recipients</h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">Recipients</h2>
+        {savableCount > 0 && (
+          <div data-print="hide" className="flex items-center gap-2">
+            {inboxResult && (
+              <span className="text-xs text-[var(--color-text-muted)]">{inboxResult}</span>
+            )}
+            <button
+              onClick={onSaveAllToInbox}
+              disabled={savingInbox}
+              title="Save every recipient's claim link to your local Claims inbox. Safe to re-run — recipients already saved are skipped (no duplicates)."
+              className="rounded-lg border border-[var(--color-border-strong)] px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+            >
+              {savingInbox ? "Saving…" : `Save all to Claims inbox (${savableCount})`}
+            </button>
+          </div>
+        )}
+      </div>
       <div className="overflow-visible rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">

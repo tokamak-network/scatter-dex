@@ -130,3 +130,26 @@ describe("claim inbox per-app scoping", () => {
     expect(files.has(PAY_FILE)).toBe(false); // so nothing re-added to the app file
   });
 });
+
+// The "Save all to Claims inbox" bulk action (Pay run detail) relies on
+// this: re-running it must not create duplicates, and each recipient is a
+// distinct leaf — so a run of N recipients yields N entries, once.
+describe("addClaimInboxEntry idempotency (bulk re-save safety)", () => {
+  it("returns isNew=true once then false, keeping a single entry on repeat", async () => {
+    setClaimInboxApp("pay");
+    const first = await add(ROOT_A, 0);
+    expect(first.isNew).toBe(true);
+    const second = await add(ROOT_A, 0); // same (root, leaf) — e.g. a second bulk click
+    expect(second.isNew).toBe(false);
+    expect(second.entry.id).toBe(first.entry.id); // the existing entry is returned
+    expect(await loadClaimInbox()).toHaveLength(1); // no duplicate
+  });
+
+  it("treats each leafIndex under the same root as a distinct recipient", async () => {
+    setClaimInboxApp("pay");
+    expect((await add(ROOT_A, 0)).isNew).toBe(true);
+    expect((await add(ROOT_A, 1)).isNew).toBe(true);
+    expect((await add(ROOT_A, 2)).isNew).toBe(true);
+    expect(await loadClaimInbox()).toHaveLength(3); // all recipients saved
+  });
+});
