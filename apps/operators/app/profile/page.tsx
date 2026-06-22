@@ -243,7 +243,13 @@ function BondPanel({ operator }: { operator: OperatorState }) {
               onChange={(e) => setTopUp(e.target.value)}
               className="w-32 rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm"
             />
-            <span className="text-sm text-[var(--color-text-muted)]">ETH</span>
+            {/* Match bondLabel: only label the unit "ETH" when the bond
+                is actually native. In ERC20 mode we don't carry the
+                token symbol on the row, so labelling it "ETH" would
+                mislead operators on token-mode registries (TON). */}
+            {(!row || row.bondToken === NATIVE_BOND_TOKEN) && (
+              <span className="text-sm text-[var(--color-text-muted)]">ETH</span>
+            )}
           </div>
         </Field>
         <button

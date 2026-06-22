@@ -90,6 +90,15 @@ export default function RelayerRegisterPage() {
         isVerified, verifiedUntil, alreadyRegistered: false,
         minBond, minBondEth,
         bondToken, isErc20Bond: bondToken !== NATIVE_BOND_TOKEN, bondAllowance,
+        // This page only feeds `status` into `needsBondApproval`, which
+        // reads `bondTokenDecimals` (18 here — matches the prior
+        // parseEther behaviour and this flow's 18-decimal tokens). The
+        // symbol/balance fields are unused on this screen; populate them
+        // with safe defaults so the enriched type still type-checks.
+        bondTokenSymbol: bondToken === NATIVE_BOND_TOKEN ? "ETH" : "",
+        bondTokenDecimals: 18,
+        bondBalance: 0n,
+        bondBalanceFormatted: "0",
       };
       if (needsBondApproval(status, bondEth)) {
         setPhase("approving");
