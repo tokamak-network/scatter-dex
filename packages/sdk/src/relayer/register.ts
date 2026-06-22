@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { ERC20_ABI, IDENTITY_GATE_IFACE, RELAYER_REGISTRY_IFACE } from "../core/contracts";
+import { formatTokenAmount } from "../util/format";
 import { callExceptionErrorName } from "./errors";
 
 /** Sentinel for native (msg.value) bond mode — `bondToken()` returns
@@ -20,18 +21,32 @@ export interface RegistrationStatus {
   verifiedUntil: number;
   alreadyRegistered: boolean;
   minBond: bigint;
-  /** `minBond` rendered as a decimal string for display (assumes 18
-   *  decimals, which holds for both native ETH/TON and standard ERC20
-   *  TON). Callers can re-format with explicit decimals when needed. */
+  /** `minBond` rendered as a decimal string for display, formatted with
+   *  the bond token's own `bondTokenDecimals` (so it's correct for ERC20
+   *  bonds that don't use 18 decimals, not just native ETH/TON). */
   minBondEth: string;
   /** ERC20 bond token address, or `NATIVE_BOND_TOKEN` (zero address)
    *  when the registry is in native mode. */
   bondToken: string;
   /** Convenience: true iff `bondToken !== NATIVE_BOND_TOKEN`. */
   isErc20Bond: boolean;
+  /** Bond token symbol for display — `"ETH"` in native mode, else the
+   *  ERC20 token's `symbol()` (e.g. `"TON"`). The admin sets the bond
+   *  token on-chain; the UI must surface whatever it actually is rather
+   *  than assuming ETH. */
+  bondTokenSymbol: string;
+  /** Bond token decimals — `18` in native mode, else the ERC20
+   *  `decimals()`. Use this to parse/format bond amounts. */
+  bondTokenDecimals: number;
   /** ERC20 allowance the operator has already granted the registry,
    *  in token base units. `0n` in native mode (no approval needed). */
   bondAllowance: bigint;
+  /** Operator's current balance of the bond token (native ETH balance
+   *  in native mode), in token base units. Lets the UI warn before a
+   *  wallet prompt when the operator can't cover the bond. */
+  bondBalance: bigint;
+  /** `bondBalance` rendered with `bondTokenDecimals` for display. */
+  bondBalanceFormatted: string;
 }
 
 /** Read the prerequisite state for relayer registration: identity
@@ -59,17 +74,34 @@ export async function loadRegistrationStatus(
   // Round-trip 2: all remaining reads in parallel. `verifiedUntil` is
   // meaningless when `isVerified` is false, but the wasted call costs
   // less than the extra round-trip a sequential branch would add on
-  // the (common) verified path. Allowance read is included only in
-  // ERC20 mode — in native mode there's no token to query.
-  const allowancePromise = isErc20Bond
-    ? (new ethers.Contract(bondToken, ERC20_ABI, provider).allowance(account, registryAddress) as Promise<bigint>)
+  // the (common) verified path. In ERC20 mode we also read the token's
+  // symbol/decimals (for display) and the operator's allowance +
+  // balance (to gate approval and warn on an under-funded wallet). In
+  // native mode the bond is ETH: symbol/decimals are fixed and the
+  // "balance" is the account's native balance. symbol()/decimals() are
+  // wrapped so a non-standard token can't fail the whole status load.
+  const erc = isErc20Bond ? new ethers.Contract(bondToken, ERC20_ABI, provider) : null;
+  const allowancePromise = erc
+    ? (erc.allowance(account, registryAddress) as Promise<bigint>)
     : Promise.resolve(0n);
-  const [isVerified, verifiedUntilRaw, alreadyRegistered, minBond, bondAllowance] = await Promise.all([
+  const balancePromise = erc
+    ? (erc.balanceOf(account) as Promise<bigint>)
+    : provider.getBalance(account);
+  const symbolPromise = erc
+    ? (erc.symbol() as Promise<string>).catch(() => "token")
+    : Promise.resolve("ETH");
+  const decimalsPromise = erc
+    ? (erc.decimals() as Promise<bigint | number>).then(Number).catch(() => 18)
+    : Promise.resolve(18);
+  const [isVerified, verifiedUntilRaw, alreadyRegistered, minBond, bondAllowance, bondBalance, bondTokenSymbol, bondTokenDecimals] = await Promise.all([
     idRegistry.isVerified(account) as Promise<boolean>,
     idRegistry.verifiedUntil(account) as Promise<bigint>,
     registry.isActiveRelayer(account) as Promise<boolean>,
     registry.minBond() as Promise<bigint>,
     allowancePromise,
+    balancePromise,
+    symbolPromise,
+    decimalsPromise,
   ]);
 
   return {
@@ -77,10 +109,14 @@ export async function loadRegistrationStatus(
     verifiedUntil: isVerified ? Number(verifiedUntilRaw) : 0,
     alreadyRegistered,
     minBond,
-    minBondEth: ethers.formatEther(minBond),
+    minBondEth: formatTokenAmount(minBond, bondTokenDecimals),
     bondToken,
     isErc20Bond,
+    bondTokenSymbol,
+    bondTokenDecimals,
     bondAllowance,
+    bondBalance,
+    bondBalanceFormatted: formatTokenAmount(bondBalance, bondTokenDecimals),
   };
 }
 
@@ -90,14 +126,17 @@ export interface RegisterRelayerParams {
    *  Pay/Operators UIs. Optional — defaults to empty when omitted. */
   name?: string;
   feeBps: number;
-  /** Bond as a decimal string (e.g. `"0.1"`). 18 decimals assumed
-   *  (matches native ETH/TON and standard ERC20 TON). Parsed internally
-   *  so callers don't need their own ethers dependency. */
+  /** Bond as a decimal string (e.g. `"0.1"`). Parsed internally with
+   *  `bondDecimals` so callers don't need their own ethers dependency. */
   bondEth: string;
   /** Required when the registry is in ERC20 mode. Use the value from
    *  `RegistrationStatus.bondToken`. Pass `NATIVE_BOND_TOKEN` (or omit)
    *  for native mode. */
   bondToken?: string;
+  /** Decimals to parse `bondEth` with. Defaults to 18 (native ETH and
+   *  standard ERC20 TON); pass `RegistrationStatus.bondTokenDecimals`
+   *  for an ERC20 bond token with non-18 decimals. */
+  bondDecimals?: number;
 }
 
 /** Submit `register(url, name, fee, bondAmount)`.
@@ -121,7 +160,7 @@ export async function registerRelayer(
     throw new Error("FeeTooHigh");
   }
   let bond: bigint;
-  try { bond = ethers.parseEther(params.bondEth || "0"); }
+  try { bond = ethers.parseUnits(params.bondEth || "0", params.bondDecimals ?? 18); }
   catch { throw new Error("InvalidBond"); }
 
   const isErc20 = !!params.bondToken && params.bondToken !== NATIVE_BOND_TOKEN;
@@ -141,9 +180,22 @@ export async function registerRelayer(
 export function needsBondApproval(status: RegistrationStatus, bondEth: string): boolean {
   if (!status.isErc20Bond) return false;
   let needed: bigint;
-  try { needed = ethers.parseEther(bondEth || "0"); }
+  try { needed = ethers.parseUnits(bondEth || "0", status.bondTokenDecimals); }
   catch { return false; }
   return status.bondAllowance < needed;
+}
+
+/** True when the operator holds enough of the bond token to cover
+ *  `bondEth` — i.e. `bondBalance >= parse(bondEth)`. In native mode
+ *  `bondBalance` is the account's ETH balance, so this only checks the
+ *  bond amount, not the extra gas the register tx needs. Returns true
+ *  on an unparseable amount so a transient input state never blocks the
+ *  form (the on-chain transfer/`msg.value` still guards the bond). */
+export function hasEnoughBondBalance(status: RegistrationStatus, bondEth: string): boolean {
+  let needed: bigint;
+  try { needed = ethers.parseUnits(bondEth || "0", status.bondTokenDecimals); }
+  catch { return true; }
+  return status.bondBalance >= needed;
 }
 
 /** Read the operator's current ERC20 bond-token allowance to the
@@ -170,9 +222,10 @@ export async function approveBondToken(
   registryAddress: string,
   bondEth: string,
   signer: ethers.Signer,
+  bondDecimals: number = 18,
 ): Promise<ethers.TransactionResponse> {
   let amount: bigint;
-  try { amount = ethers.parseEther(bondEth || "0"); }
+  try { amount = ethers.parseUnits(bondEth || "0", bondDecimals); }
   catch { throw new Error("InvalidBond"); }
   const token = new ethers.Contract(bondToken, ERC20_ABI, signer);
   return token.approve(registryAddress, amount) as Promise<ethers.TransactionResponse>;
@@ -202,9 +255,18 @@ const STATIC_REGISTRY_ERROR_COPY: Record<string, string> = {
 
 const REGISTRY_ERROR_CODES = Object.keys(STATIC_REGISTRY_ERROR_COPY).concat(["InsufficientBond"]);
 
-function copyForRegistryError(code: string, minBond: bigint): string | null {
+/** Bond token metadata used to render the `InsufficientBond` minimum
+ *  in the operator's actual bond token rather than assuming ETH. */
+export interface BondMeta {
+  symbol?: string;
+  decimals?: number;
+}
+
+function copyForRegistryError(code: string, minBond: bigint, bond?: BondMeta): string | null {
   if (code === "InsufficientBond") {
-    return `Insufficient bond. Minimum: ${ethers.formatEther(minBond)} ETH`;
+    const decimals = bond?.decimals ?? 18;
+    const symbol = bond?.symbol ?? "ETH";
+    return `Insufficient bond. Minimum: ${formatTokenAmount(minBond, decimals)} ${symbol}`;
   }
   return STATIC_REGISTRY_ERROR_COPY[code] ?? null;
 }
@@ -215,17 +277,17 @@ function copyForRegistryError(code: string, minBond: bigint): string | null {
  *  copy. Falls back to the raw message when no rule matches so
  *  callers don't swallow unexpected errors. `minBond` is only used
  *  when the error is `InsufficientBond`; pass `0n` if unknown. */
-export function explainRegistryError(err: unknown, minBond: bigint): string {
+export function explainRegistryError(err: unknown, minBond: bigint, bond?: BondMeta): string {
   const named = callExceptionErrorName(err);
   if (named) {
-    const copy = copyForRegistryError(named, minBond);
+    const copy = copyForRegistryError(named, minBond, bond);
     if (copy) return copy;
   }
 
   const raw = err instanceof Error ? err.message : String(err);
   for (const code of REGISTRY_ERROR_CODES) {
     if (raw.includes(code)) {
-      const copy = copyForRegistryError(code, minBond);
+      const copy = copyForRegistryError(code, minBond, bond);
       if (copy) return copy;
     }
   }

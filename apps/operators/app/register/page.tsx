@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isConfiguredAddress } from "@zkscatter/sdk";
 import { LiveFreshness, useWallet } from "@zkscatter/sdk/react";
 import {
   approveBondToken,
   explainRegistryError,
+  hasEnoughBondBalance,
   loadActiveRelayers,
   loadRegistrationStatus,
   MAX_RELAYER_FEE_BPS,
@@ -226,6 +227,19 @@ export default function RegisterPage() {
     refreshStatus();
   }, [refreshStatus]);
 
+  // Prefill the bond input with the admin-configured minimum the first
+  // time we read it, so the operator sees what's actually required
+  // (e.g. 1000 TON) instead of the placeholder default. One-shot — we
+  // never clobber a value the operator has since typed.
+  const bondPrefilled = useRef(false);
+  useEffect(() => {
+    if (bondPrefilled.current || !status) return;
+    // Flag on first status load so this never re-runs; only override the
+    // placeholder when the registry actually requires a bond.
+    bondPrefilled.current = true;
+    if (status.minBond > 0n) setBondEth(status.minBondEth);
+  }, [status]);
+
   useEffect(() => {
     if (!deployed || !readProvider) return;
     let cancelled = false;
@@ -369,6 +383,15 @@ export default function RegisterPage() {
   const onSubmit = async () => {
     if (!signer || !status) return;
     setErrorMsg("");
+    // Guard before any wallet prompt: an under-funded operator would
+    // otherwise pay gas on an approve only to have register revert.
+    if (!hasEnoughBondBalance(status, bondEth)) {
+      setErrorMsg(
+        `Insufficient ${status.bondTokenSymbol} balance to cover the ${bondEth} ${status.bondTokenSymbol} bond.`,
+      );
+      setPhase("error");
+      return;
+    }
     try {
       if (needsBondApproval(status, bondEth)) {
         setPhase("approving");
@@ -377,13 +400,14 @@ export default function RegisterPage() {
           DEMO_NETWORK.contracts.relayerRegistry,
           bondEth,
           signer,
+          status.bondTokenDecimals,
         );
         await approveTx.wait();
       }
       setPhase("submitting");
       const tx = await registerRelayer(
         DEMO_NETWORK.contracts.relayerRegistry,
-        { url, name, feeBps: Number(feeBps), bondEth, bondToken: status.bondToken },
+        { url, name, feeBps: Number(feeBps), bondEth, bondToken: status.bondToken, bondDecimals: status.bondTokenDecimals },
         signer,
       );
       const receipt = await tx.wait();
@@ -391,7 +415,12 @@ export default function RegisterPage() {
       setStatus((prev) => (prev ? { ...prev, alreadyRegistered: true } : prev));
       setPhase("success");
     } catch (err) {
-      setErrorMsg(explainRegistryError(err, status?.minBond ?? 0n));
+      setErrorMsg(
+        explainRegistryError(err, status?.minBond ?? 0n, {
+          symbol: status?.bondTokenSymbol,
+          decimals: status?.bondTokenDecimals,
+        }),
+      );
       setPhase("error");
     }
   };
@@ -593,7 +622,7 @@ function step3Caption(
   if (phase === "approving") return "Approving bond token…";
   if (phase === "submitting") return "Submitting tx…";
   if (status && status.alreadyRegistered) return "Already registered";
-  if (status && status.minBond > 0n) return `Min bond ${status.minBondEth} ETH`;
+  if (status && status.minBond > 0n) return `Min bond ${status.minBondEth} ${status.bondTokenSymbol}`;
   return undefined;
 }
 
@@ -1250,20 +1279,27 @@ function Step3Bond({
 }) {
   const busy = phase === "approving" || phase === "submitting" || phase === "checking";
   const alreadyRegistered = !!status?.alreadyRegistered;
+  // Symbol/decimals come from the registry's configured bond token —
+  // "ETH" only when it's actually native, else the ERC20 symbol (TON on
+  // Sepolia). Never hardcode "ETH".
+  const bondSymbol = status?.bondTokenSymbol ?? "ETH";
+  // Warn before the wallet prompt when the operator can't cover the bond.
+  const lowBalance = !!status && !alreadyRegistered && !hasEnoughBondBalance(status, bondEth);
   const disabled =
-    gated || wrongChain || alreadyRegistered || busy;
+    gated || wrongChain || alreadyRegistered || busy || lowBalance;
   const label =
     phase === "approving" ? "Approving bond token…" :
     phase === "submitting" ? "Submitting…" :
     alreadyRegistered ? "Already registered" :
     wrongChain ? "Switch network in your wallet" :
+    lowBalance ? `Insufficient ${bondSymbol} balance` :
     "Register on-chain";
   return (
     <StepSection
       step={5}
       title="Bond & submit"
       hint={status && status.minBond > 0n
-        ? `Stake at least ${status.minBondEth} ETH. Refundable on exit.`
+        ? `Stake at least ${status.minBondEth} ${bondSymbol}. Refundable on exit.`
         : "Refundable on exit after the cool-down period."}
       done={phase === "success"}
       gated={gated}
@@ -1273,7 +1309,7 @@ function Step3Bond({
       <Field
         label="Bond"
         hint={status && status.minBond > 0n
-          ? `Minimum ${status.minBondEth} ETH. Refundable on exit.`
+          ? `Minimum ${status.minBondEth} ${bondSymbol}. Refundable on exit.`
           : "Refundable on exit after the cool-down period."}
       >
         <div className="flex items-center gap-2">
@@ -1286,9 +1322,16 @@ function Step3Bond({
             disabled={gated}
             className="w-32 rounded-lg border border-[var(--color-border-strong)] bg-white px-3 py-2 text-sm disabled:bg-[var(--color-surface-muted)]"
           />
-          <span className="text-sm text-[var(--color-text-muted)]">ETH</span>
+          <span className="text-sm text-[var(--color-text-muted)]">{bondSymbol}</span>
         </div>
       </Field>
+
+      {lowBalance && (
+        <div className="mt-5 rounded-lg border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs">
+          Your wallet holds {status!.bondBalanceFormatted} {bondSymbol} — not enough
+          for a {bondEth} {bondSymbol} bond. Top up before registering.
+        </div>
+      )}
 
       {phase === "error" && errorMsg && (
         <div className="mt-5 rounded-lg border border-[var(--color-danger)] bg-[var(--color-danger-soft)] px-3 py-2 text-xs text-[var(--color-danger)]">
