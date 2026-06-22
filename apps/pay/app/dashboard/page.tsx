@@ -189,7 +189,7 @@ export default function Dashboard() {
         <div>
           <h1 className="text-2xl font-semibold">Payouts</h1>
           <p className="mt-1 text-sm text-[var(--color-text-muted)]">
-            One-to-many private payouts. Recipients can&apos;t see each other&apos;s amounts.
+            One-to-many private payouts. Who got how much can&apos;t be tied to a name on-chain.
           </p>
         </div>
         <Link

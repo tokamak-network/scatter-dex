@@ -15,7 +15,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Scatter Pay — Private bulk payouts",
   description:
-    "Send payroll, grants, and bonuses without leaking who got what. One-to-many private payouts on zkScatter.",
+    "Send payroll, grants, and bonuses without revealing who paid whom. One-to-many private payouts on zkScatter.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
