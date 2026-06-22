@@ -1063,9 +1063,9 @@ function RecipientTable({
         </table>
       </div>
       <p className="mt-3 text-xs text-[var(--color-text-muted)]">
-        Each recipient sees only their own amount when they claim. The on-chain transaction
-        reveals only the recipient addresses, not the mapping to names or per-recipient amounts.
-        Claim links never expire.
+        Each recipient claims through their own private link. On-chain claims do reveal recipient
+        addresses and amounts, but they can&apos;t be linked back to you or mapped to names — no
+        observer can prove who paid whom. Claim links never expire.
       </p>
     </section>
   );

@@ -12,12 +12,12 @@ export default function Landing() {
         <h1 className="mx-auto max-w-3xl text-5xl font-bold leading-tight tracking-tight">
           Send payroll, grants, and bonuses
           <br />
-          <span className="text-[var(--color-primary)]">without leaking who got what.</span>
+          <span className="text-[var(--color-primary)]">without revealing who paid whom.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
           One-to-many private payouts for crypto-native companies and DAOs.
-          Send to up to 128 recipients in a single private settlement — each recipient sees only their own amount,
-          and you get an audit-ready accounting export.
+          Send to up to 128 recipients in a single signature — the on-chain trail can&apos;t be tied
+          back to you or mapped to names, and you get an audit-ready accounting export.
         </p>
         <div className="mt-8 flex justify-center gap-3">
           <Link
@@ -49,22 +49,22 @@ export default function Landing() {
           <PersonaCard
             badge="Payroll"
             title="Monthly salaries"
-            body="Run payroll for 5–50 people without publishing every salary on-chain. Sign once, recipients claim privately."
+            body="Run payroll for 5–50 people without tying any salary to a name on-chain. Sign once, recipients claim privately."
           />
           <PersonaCard
             badge="Grants"
             title="DAO grants"
-            body="Pay grant recipients from a Snapshot result or working group. Per-grant amounts stay private between treasury and recipient."
+            body="Pay grant recipients from a Snapshot result or working group. On-chain, a grant amount can't be tied to a recipient's identity."
           />
           <PersonaCard
             badge="Bonus"
             title="Bonuses & incentives"
-            body="One-off bonus rounds where size differences would create friction. Recipients only see their own amount."
+            body="One-off bonus rounds where size differences would create friction. On-chain, the bigger bonus can't be tied to a name."
           />
           <PersonaCard
             badge="Contractors"
             title="Contractor batch"
-            body="Settle a wave of freelancers at once without leaking per-contractor rates to the rest of the cohort."
+            body="Settle a wave of freelancers at once without tying any rate to a contractor's identity on-chain."
           />
         </div>
       </section>
@@ -89,7 +89,7 @@ export default function Landing() {
           <Step
             n={3}
             title="They claim privately"
-            body="Each recipient gets a unique link. They click, connect their wallet, and the funds land — gas paid by you, amount visible only to them."
+            body="Each recipient gets a unique link. They click, connect their wallet, and the funds land — gas paid by you, unlinked to your identity."
           />
         </div>
       </section>
@@ -98,7 +98,7 @@ export default function Landing() {
       <section>
         <h2 className="mb-2 text-center text-2xl font-semibold">Why Scatter Pay</h2>
         <p className="mx-auto mb-10 max-w-2xl text-center text-sm text-[var(--color-text-muted)]">
-          Other tools either leak amounts on-chain, charge per-recipient gas,
+          Other tools tie amounts to identities on-chain, charge per-recipient gas,
           or skip the audit trail. We do all three correctly.
         </p>
         <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
@@ -112,7 +112,7 @@ export default function Landing() {
               </tr>
             </thead>
             <tbody>
-              <Compare label="Recipients can't see each other's amounts" us />
+              <Compare label="Amounts can't be tied to a recipient's identity" us />
               <Compare label="One on-chain transaction for N recipients" left us />
               <Compare label="Gasless claim for recipients" us />
               <Compare label="Categories for payroll / grants / bonuses" us />
