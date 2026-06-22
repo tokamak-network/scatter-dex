@@ -229,15 +229,30 @@ export default function RegisterPage() {
 
   // Prefill the bond input with the admin-configured minimum the first
   // time we read it, so the operator sees what's actually required
-  // (e.g. 1000 TON) instead of the placeholder default. One-shot — we
-  // never clobber a value the operator has since typed.
+  // (e.g. 1000 TON) instead of the placeholder default. One-shot, and
+  // never clobbers a value the operator has typed.
   const bondPrefilled = useRef(false);
+  // Set once the operator edits the bond field, so a status read that
+  // resolves *after* they typed (slow RPC) doesn't overwrite their input.
+  const bondTouched = useRef(false);
+  const onBondInput = useCallback((v: string) => {
+    bondTouched.current = true;
+    setBondEth(v);
+  }, []);
+  // A wallet-account switch loads a fresh status (different registry /
+  // minimum), so re-arm the one-shot prefill and clear the touched flag
+  // — otherwise the new account's minimum would never prefill.
+  useEffect(() => {
+    bondPrefilled.current = false;
+    bondTouched.current = false;
+  }, [account]);
   useEffect(() => {
     if (bondPrefilled.current || !status) return;
     // Flag on first status load so this never re-runs; only override the
-    // placeholder when the registry actually requires a bond.
+    // placeholder when the registry requires a bond AND the operator
+    // hasn't already typed a value.
     bondPrefilled.current = true;
-    if (status.minBond > 0n) setBondEth(status.minBondEth);
+    if (status.minBond > 0n && !bondTouched.current) setBondEth(status.minBondEth);
   }, [status]);
 
   useEffect(() => {
@@ -515,7 +530,7 @@ export default function RegisterPage() {
         gated={!step2Done}
         status={status}
         bondEth={bondEth}
-        setBondEth={setBondEth}
+        setBondEth={onBondInput}
         phase={phase}
         errorMsg={errorMsg}
         txHash={txHash}
