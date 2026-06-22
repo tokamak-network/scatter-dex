@@ -54,17 +54,17 @@ export default function Landing() {
           <PersonaCard
             badge="Grants"
             title="DAO grants"
-            body="Pay grant recipients from a Snapshot result or working group. The on-chain trail won't link who got a grant to how much."
+            body="Pay grant recipients from a Snapshot result or working group. On-chain, a grant amount can't be tied to a recipient's identity."
           />
           <PersonaCard
             badge="Bonus"
             title="Bonuses & incentives"
-            body="One-off bonus rounds where size differences would create friction. No one can tell on-chain who got the bigger bonus."
+            body="One-off bonus rounds where size differences would create friction. On-chain, the bigger bonus can't be tied to a name."
           />
           <PersonaCard
             badge="Contractors"
             title="Contractor batch"
-            body="Settle a wave of freelancers at once without revealing which contractor is on which rate."
+            body="Settle a wave of freelancers at once without tying any rate to a contractor's identity on-chain."
           />
         </div>
       </section>
