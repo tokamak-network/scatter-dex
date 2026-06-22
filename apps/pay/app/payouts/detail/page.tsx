@@ -224,32 +224,106 @@ function PayoutBody({
    *  by the operator's Dismiss click or by the next claim. */
   const [lastClaimTx, setLastClaimTx] = useState<{ rowIndex: number; txHash: string } | null>(null);
 
-  /** Save THIS recipient's claim link to the operator's local Claims
-   *  inbox. Useful when the operator is also a recipient (common in
-   *  demo flows) or wants to pre-stage the claim for later. Decodes
-   *  the row's encoded ClaimPackage and persists it under the active
-   *  folder; the inbox UI surfaces it next time the operator opens
-   *  /claims. Best-effort: silently swallow corrupt-payload errors
-   *  (the row's claim badge already surfaces those). */
+  /** In-flight + result state for the "Save all to Claims inbox" bulk
+   *  action. `inboxResult` is a short summary shown next to the button
+   *  (e.g. "2 saved, 1 already there") so the operator gets explicit
+   *  feedback — and re-running shows everything as already-there rather
+   *  than silently no-op'ing. */
+  const [savingInbox, setSavingInbox] = useState(false);
+  const [inboxResult, setInboxResult] = useState<string | null>(null);
+
+  /** Decode `row`'s claim package and upsert it into the operator's
+   *  local Claims inbox. Returns whether the entry was freshly added
+   *  (`true`) vs. already present (`false`). Shared by the single-row
+   *  and bulk handlers so the decode/persist path lives in one place.
+   *  Callers guarantee `row.claimPackage` is present (the row menu /
+   *  bulk filter both gate on it), so the `!` is safe. Throws on a
+   *  corrupt payload — callers decide how loud to be about it. */
+  const saveRowToInbox = useCallback(async (row: RecipientRow): Promise<boolean> => {
+    const pkg = decodeClaimPackage(row.claimPackage!);
+    const { isNew } = await addClaimInboxEntry({
+      // Tag the saved link with the real run id so the inbox can
+      // re-associate the claim back to its run (not a "saved" placeholder).
+      rawInput:
+        typeof window !== "undefined"
+          ? buildClaimUrl(window.location.origin, record.id, row)
+          : "",
+      pkg,
+    });
+    return isNew;
+  }, [record.id]);
+
   const onSaveToInbox = useCallback(
     async (row: RecipientRow) => {
       if (!row.claimPackage) return;
       setOpenMenu(null);
       try {
-        const pkg = decodeClaimPackage(row.claimPackage);
-        await addClaimInboxEntry({
-          rawInput:
-            typeof window !== "undefined"
-              ? buildClaimUrl(window.location.origin, "saved", row)
-              : "",
-          pkg,
-        });
+        await saveRowToInbox(row);
       } catch (err) {
         console.warn("[Pay] save-to-inbox failed", err);
       }
     },
-    [],
+    [saveRowToInbox],
   );
+
+  /** Save EVERY recipient's claim link to the local Claims inbox in one
+   *  click, instead of opening the row menu per recipient. Idempotent:
+   *  `addClaimInboxEntry` dedupes on (claimsRoot, leafIndex), so rows
+   *  already in the inbox are reported as "already there" and never
+   *  duplicated — running this repeatedly is safe. */
+  // Reentry guard: a double-click before React applies `disabled` (or a
+  // programmatic trigger) would otherwise start overlapping loops racing
+  // the savingInbox/inboxResult state. A ref flips synchronously, before
+  // the state update lands.
+  const bulkInFlight = useRef(false);
+  const onSaveAllToInbox = useCallback(async () => {
+    if (bulkInFlight.current) return;
+    setOpenMenu(null);
+    // Skip rows already claimed — re-saving them just clutters the inbox.
+    const eligible = record.recipients.filter(
+      (r) => r.claimPackage && r.status !== "claimed",
+    );
+    if (eligible.length === 0) return;
+    bulkInFlight.current = true;
+    setSavingInbox(true);
+    setInboxResult(null);
+    let added = 0;
+    let existing = 0;
+    let failed = 0;
+    try {
+      for (const row of eligible) {
+        try {
+          if (await saveRowToInbox(row)) added++;
+          else existing++;
+        } catch (err) {
+          failed++;
+          console.warn("[Pay] bulk save-to-inbox failed", err);
+        }
+      }
+      setInboxResult(
+        [
+          `${added} saved`,
+          existing ? `${existing} already there` : "",
+          failed ? `${failed} skipped` : "",
+        ]
+          .filter(Boolean)
+          .join(", "),
+      );
+    } finally {
+      // Always release, even if something outside the per-row try throws,
+      // so the button never gets stuck disabled.
+      bulkInFlight.current = false;
+      setSavingInbox(false);
+    }
+  }, [record.recipients, saveRowToInbox]);
+
+  // Clear the bulk-save summary when navigating to a different run (the
+  // page swaps `?id=` without remounting), so a stale "X saved…" from the
+  // previous run never lingers on the next.
+  useEffect(() => {
+    setInboxResult(null);
+    setSavingInbox(false);
+  }, [record.id]);
 
   const onMarkSentRow = useCallback(
     async (row: RecipientRow) => {
@@ -388,6 +462,9 @@ function PayoutBody({
         onMarkSent={onMarkSentRow}
         onClaim={onClaimRow}
         onSaveToInbox={onSaveToInbox}
+        onSaveAllToInbox={onSaveAllToInbox}
+        savingInbox={savingInbox}
+        inboxResult={inboxResult}
         claimingRow={claimingRow}
       />
       {claimError && (
@@ -870,6 +947,9 @@ function RecipientTable({
   onMarkSent,
   onClaim,
   onSaveToInbox,
+  onSaveAllToInbox,
+  savingInbox,
+  inboxResult,
   claimingRow,
 }: {
   record: RunRecord;
@@ -886,14 +966,41 @@ function RecipientTable({
   /** Stash this row's claim link in the operator's local Claims
    *  inbox so they can re-open it from /inbox later. */
   onSaveToInbox: (row: RecipientRow) => Promise<void>;
+  /** Save every eligible recipient's claim link to the inbox at once.
+   *  Idempotent (dedupes on claimsRoot+leafIndex). */
+  onSaveAllToInbox: () => Promise<void>;
+  /** True while the bulk save is running — disables the button. */
+  savingInbox: boolean;
+  /** Short result summary shown next to the button, or null. */
+  inboxResult: string | null;
   /** `rowIndex` of the row whose claim is currently in flight, or
    *  `null` when nothing is claiming. Drives the per-row "Claiming…"
    *  label and disables the menu while the proof is generating. */
   claimingRow: number | null;
 }) {
+  const savableCount = record.recipients.filter(
+    (r) => r.claimPackage && r.status !== "claimed",
+  ).length;
   return (
     <section>
-      <h2 className="mb-3 text-sm font-semibold text-[var(--color-text-muted)]">Recipients</h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold text-[var(--color-text-muted)]">Recipients</h2>
+        {savableCount > 0 && (
+          <div data-print="hide" className="flex items-center gap-2">
+            {inboxResult && (
+              <span className="text-xs text-[var(--color-text-muted)]">{inboxResult}</span>
+            )}
+            <button
+              onClick={onSaveAllToInbox}
+              disabled={savingInbox}
+              title="Save every recipient's claim link to your local Claims inbox. Safe to re-run — recipients already saved are skipped (no duplicates)."
+              className="rounded-lg border border-[var(--color-border-strong)] px-3 py-1.5 text-sm hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+            >
+              {savingInbox ? "Saving…" : `Save all to Claims inbox (${savableCount})`}
+            </button>
+          </div>
+        )}
+      </div>
       <div className="overflow-visible rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
         <table className="w-full text-sm">
           <thead className="bg-[var(--color-bg)] text-xs uppercase tracking-wide text-[var(--color-text-subtle)]">
