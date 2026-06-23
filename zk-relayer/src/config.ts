@@ -87,6 +87,12 @@ export const config = {
   // [R-1] Gas guard: max gas price in gwei.
   maxGasPriceGwei: parseEnvInt("MAX_GAS_PRICE_GWEI", 100, 1),
 
+  // Off-chain Groth16 verification of authorize proofs at order-accept time
+  // (parity with the claim path). Default ON; set VERIFY_ORDER_PROOFS=0 only to
+  // ride out a vkey/zkey drift incident — settle-time verify still backstops
+  // funds, this only stops junk orders entering the store / shared orderbook.
+  verifyOrderProofs: process.env.VERIFY_ORDER_PROOFS !== "0",
+
   // Optional outbound webhook (Slack/Discord/Telegram/...) for
   // operator alerts. Posts a JSON payload on health transitions
   // and other significant events. No retry queue — single POST

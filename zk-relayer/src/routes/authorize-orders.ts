@@ -22,6 +22,7 @@ import {
   isLiveStatus,
   isInFlightStatus,
   isTerminalStatus,
+  tierForOrder,
   type AuthorizeOrderFile,
   type AuthorizePublicSignals,
   type StoredAuthorizeOrder,
@@ -33,6 +34,7 @@ import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 import { config } from "../config.js";
 import { recordOrderSubmitted } from "../core/metrics.js";
 import { isSanctionedById } from "../core/sanctions-list.js";
+import { verifyAuthorizeProof } from "../core/authorize-verifier.js";
 
 /**
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
@@ -357,6 +359,45 @@ export function createAuthorizeOrderRoutes(
         return;
       }
       incPubKeyCount(pubKeyAx, pubKeyAy);
+
+      // ── 4e. Verify the Groth16 proof off-chain (audit #4) ──
+      // Runs after the per-pubKey slot is reserved (so a flood can't bypass the
+      // limit by racing the await) and after idempotency (replays of a known
+      // nullifier short-circuit above, so an attacker can't force repeated CPU
+      // work — design §2.4). Fails CLOSED: a bogus proof or a verifier error
+      // both release the reserved slot and reject, so junk never reaches the
+      // store or the shared orderbook.
+      if (config.verifyOrderProofs) {
+        let proofValid = false;
+        let verifyUnavailable = false;
+        try {
+          proofValid = await verifyAuthorizeProof(
+            order.proof,
+            order.publicSignalsArray,
+            tierForOrder(order),
+          );
+        } catch (err) {
+          // A verifier error (e.g. missing/corrupt vkey on the relayer host) is
+          // operational, not the client's fault — flag it for a 503 below.
+          verifyUnavailable = true;
+          log.warn("Authorize proof verification errored", {
+            nullifier: nullifier.slice(0, 18) + "...",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        if (!proofValid) {
+          // Fail closed either way: release the reserved slot and reject. A
+          // verifier outage is a retriable 503; a genuinely bogus proof is a 400
+          // so the client doesn't keep retrying a proof that will never verify.
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          if (verifyUnavailable) {
+            res.status(503).json({ error: "Proof verification unavailable. Try again later." });
+          } else {
+            res.status(400).json({ error: "Invalid authorize proof" });
+          }
+          return;
+        }
+      }
 
       // ── 5. Persist as 'accepted' and seed the in-memory match cache.
       // The settlement worker (core/settlement-worker.ts) picks the row up
