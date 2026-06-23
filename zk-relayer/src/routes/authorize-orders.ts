@@ -22,6 +22,7 @@ import {
   isLiveStatus,
   isInFlightStatus,
   isTerminalStatus,
+  tierForOrder,
   type AuthorizeOrderFile,
   type AuthorizePublicSignals,
   type StoredAuthorizeOrder,
@@ -33,6 +34,7 @@ import type { SharedOrderbookClient } from "../core/shared-orderbook-client.js";
 import { config } from "../config.js";
 import { recordOrderSubmitted } from "../core/metrics.js";
 import { isSanctionedById } from "../core/sanctions-list.js";
+import { verifyAuthorizeProof } from "../core/authorize-verifier.js";
 
 /**
  * [R-6] In-memory cache backed by SQLite. On startup, pending orders
@@ -92,6 +94,14 @@ export function* lookupAuthorizeOrdersByCounterPair(
 const MAX_AUTHORIZE_ORDERS = 10_000;
 const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
+
+// Off-chain Groth16 verification of authorize proofs at accept time. Brings the
+// order path to parity with the claim path (which already pre-flight verifies),
+// so structurally-valid-but-bogus proofs can't enter the store / shared
+// orderbook (DoS amplification — audit #4). Kill-switch defaults ON; set
+// VERIFY_ORDER_PROOFS=0 only to ride out a vkey/zkey drift incident that would
+// otherwise reject legitimate orders (settle-time verify still backstops funds).
+const VERIFY_ORDER_PROOFS = process.env.VERIFY_ORDER_PROOFS !== "0";
 let _db: PrivateOrderDB | null = null;
 
 // BabyJub field elements are at most 254 bits (~77 decimal digits).
@@ -357,6 +367,37 @@ export function createAuthorizeOrderRoutes(
         return;
       }
       incPubKeyCount(pubKeyAx, pubKeyAy);
+
+      // ── 4e. Verify the Groth16 proof off-chain (audit #4) ──
+      // Runs after the per-pubKey slot is reserved (so a flood can't bypass the
+      // limit by racing the await) and after idempotency (replays of a known
+      // nullifier short-circuit above, so an attacker can't force repeated CPU
+      // work — design §2.4). Fails CLOSED: a bogus proof or a verifier error
+      // releases the reserved slot and rejects, so junk never reaches the store
+      // or the shared orderbook.
+      if (VERIFY_ORDER_PROOFS) {
+        let proofValid = false;
+        try {
+          proofValid = await verifyAuthorizeProof(
+            order.proof,
+            order.publicSignalsArray,
+            tierForOrder(order),
+          );
+        } catch (err) {
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          log.warn("Authorize proof verification errored", {
+            nullifier: nullifier.slice(0, 18) + "...",
+            error: err instanceof Error ? err.message : String(err),
+          });
+          res.status(400).json({ error: "Proof verification failed" });
+          return;
+        }
+        if (!proofValid) {
+          decPubKeyCount(pubKeyAx, pubKeyAy);
+          res.status(400).json({ error: "Invalid authorize proof" });
+          return;
+        }
+      }
 
       // ── 5. Persist as 'accepted' and seed the in-memory match cache.
       // The settlement worker (core/settlement-worker.ts) picks the row up
