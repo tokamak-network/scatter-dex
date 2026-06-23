@@ -356,9 +356,19 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      the "verified once, never re-checked" gap. `identityRegistry` is
     ///      mandatory (set non-zero in `initialize`/`setIdentityRegistry`), so no
     ///      zero-guard is needed.
+    /// @dev Fails CLOSED: the cheap storage flags are checked first (short-circuit
+    ///      avoids the external call for inactive relayers), and if
+    ///      `identityRegistry.isVerified` reverts (paused / misconfigured /
+    ///      upgrade bug) the relayer is treated as non-operational rather than
+    ///      bubbling the revert into settle-time gating and bricking settlement.
     function _isOperational(address relayer) internal view returns (bool) {
         Relayer storage r = relayers[relayer];
-        return r.active && r.exitRequestedAt == 0 && identityRegistry.isVerified(relayer);
+        if (!r.active || r.exitRequestedAt != 0) return false;
+        try identityRegistry.isVerified(relayer) returns (bool verified) {
+            return verified;
+        } catch {
+            return false;
+        }
     }
 
     function isActiveRelayer(address relayer) external view returns (bool) {
@@ -374,11 +384,18 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         return relayerList.length;
     }
 
+    /// @dev Single pass over `relayerList`: `_isOperational` (which makes an
+    ///      external `isVerified` call) runs once per relayer — N calls, not 2N
+    ///      — by collecting into a full-length scratch array, then copying the
+    ///      operational prefix into a right-sized result.
     function getActiveRelayers() external view returns (address[] memory) {
         uint256 len = relayerList.length;
+        address[] memory scratch = new address[](len);
         uint256 count;
         for (uint256 i; i < len;) {
-            if (_isOperational(relayerList[i])) {
+            address rAddr = relayerList[i];
+            if (_isOperational(rAddr)) {
+                scratch[count] = rAddr;
                 unchecked {
                     ++count;
                 }
@@ -389,15 +406,8 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         }
 
         address[] memory active = new address[](count);
-        uint256 idx;
-        for (uint256 i; i < len;) {
-            address rAddr = relayerList[i];
-            if (_isOperational(rAddr)) {
-                active[idx] = rAddr;
-                unchecked {
-                    ++idx;
-                }
-            }
+        for (uint256 i; i < count;) {
+            active[i] = scratch[i];
             unchecked {
                 ++i;
             }
@@ -497,10 +507,15 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     }
 
     /// @notice Swap the IdentityRegistry the registry checks for relayer verification.
-    /// @dev Existing relayers stay registered — `register()` is the only entry point that
-    ///      consults `identityRegistry`, so the swap takes effect for new registrations only.
-    ///      Already-active relayers keep their seats regardless of whether they would still
-    ///      verify under the new CA; downgrades are a governance decision outside this hook.
+    /// @dev Applies to BOTH new and existing relayers. `register()` consults
+    ///      `identityRegistry` at entry, and `_isOperational` (used by
+    ///      `isActiveRelayer` / `getSettlementInfo` / `getActiveRelayers`)
+    ///      re-checks it on every call — so after a swap, already-active relayers
+    ///      that do not verify under the new CA are immediately reported inactive
+    ///      and can no longer settle. Identity is enforced continuously, not just
+    ///      at registration. Relayers stay *registered* (their bond/exit state is
+    ///      untouched); they simply stop being operational until they verify under
+    ///      the new CA.
     function setIdentityRegistry(address _identityRegistry) external onlyOwner {
         if (_identityRegistry == address(0)) revert ZeroAddress();
         emit IdentityRegistryUpdated(address(identityRegistry), _identityRegistry);

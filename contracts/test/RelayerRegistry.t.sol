@@ -357,14 +357,9 @@ contract RelayerRegistryTest is Test {
         (bool isActive,,) = registry.getSettlementInfo(relayer1);
         assertFalse(isActive);
 
-        // getActiveRelayers excludes the now-unverified relayer.
-        address[] memory active = registry.getActiveRelayers();
-        for (uint256 i; i < active.length;) {
-            assertTrue(active[i] != relayer1);
-            unchecked {
-                ++i;
-            }
-        }
+        // getActiveRelayers excludes the now-unverified relayer. relayer1 is the
+        // only registered relayer here, so the active set is empty.
+        assertEq(registry.getActiveRelayers().length, 0);
     }
 
     // ─── KYC AND gate (feature-flagged) ─────────────────────────
