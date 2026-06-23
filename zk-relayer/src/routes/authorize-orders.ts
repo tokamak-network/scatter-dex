@@ -369,6 +369,7 @@ export function createAuthorizeOrderRoutes(
       // store or the shared orderbook.
       if (config.verifyOrderProofs) {
         let proofValid = false;
+        let verifyUnavailable = false;
         try {
           proofValid = await verifyAuthorizeProof(
             order.proof,
@@ -376,16 +377,24 @@ export function createAuthorizeOrderRoutes(
             tierForOrder(order),
           );
         } catch (err) {
-          // A verifier error (e.g. missing/corrupt vkey) is treated the same as
-          // a bogus proof — fall through to the single rejection path below.
+          // A verifier error (e.g. missing/corrupt vkey on the relayer host) is
+          // operational, not the client's fault — flag it for a 503 below.
+          verifyUnavailable = true;
           log.warn("Authorize proof verification errored", {
             nullifier: nullifier.slice(0, 18) + "...",
             error: err instanceof Error ? err.message : String(err),
           });
         }
         if (!proofValid) {
+          // Fail closed either way: release the reserved slot and reject. A
+          // verifier outage is a retriable 503; a genuinely bogus proof is a 400
+          // so the client doesn't keep retrying a proof that will never verify.
           decPubKeyCount(pubKeyAx, pubKeyAy);
-          res.status(400).json({ error: "Invalid authorize proof" });
+          if (verifyUnavailable) {
+            res.status(503).json({ error: "Proof verification unavailable. Try again later." });
+          } else {
+            res.status(400).json({ error: "Invalid authorize proof" });
+          }
           return;
         }
       }
