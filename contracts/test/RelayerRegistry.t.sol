@@ -318,25 +318,48 @@ contract RelayerRegistryTest is Test {
         registry.setIdentityRegistry(address(0));
     }
 
-    function test_setIdentityRegistry_preserves_existing_relayers() public {
-        // Register relayer1 under the original (verified-all) registry, then
-        // swap to a registry that returns false for everyone. The existing
-        // relayer stays active — proving the swap only gates future
-        // register() calls, not previously-seated operators.
+    function test_setIdentityRegistry_reevaluates_existing_relayers() public {
+        // Register relayer1 under the original (verified) registry, then swap to
+        // a registry that returns false for everyone. `isActiveRelayer` re-checks
+        // identity on every call, so the existing relayer is now reported
+        // inactive — identity is enforced continuously, not just at register().
+        // (Identity swaps are rare admin ops; requiring re-verification in the
+        // new registry is the correct security posture.)
         vm.prank(relayer1);
         registry.register("http://relay1", "Relayer-1", 30, 0);
         assertTrue(registry.isActiveRelayer(relayer1));
 
         MockIdentityRegistry rejectAll = new MockIdentityRegistry();
         registry.setIdentityRegistry(address(rejectAll));
-        assertTrue(registry.isActiveRelayer(relayer1));
+        assertFalse(registry.isActiveRelayer(relayer1));
 
-        // A fresh wallet that isn't in the new registry cannot register.
+        // A fresh wallet that isn't in the new registry cannot register either.
         address newcomer = address(0xCAFE);
         vm.deal(newcomer, 10 ether);
         vm.prank(newcomer);
         vm.expectRevert(RelayerRegistry.NotVerified.selector);
         registry.register("http://newcomer", "Newcomer", 25, 0);
+    }
+
+    function test_isActiveRelayer_false_when_identity_expires() public {
+        // Relayer registers while verified, then its zk-X509 certificate lapses
+        // (isVerified flips to false — the on-chain registry compares
+        // `verifiedUntil >= block.timestamp`). isActiveRelayer must re-check
+        // identity and report inactive so settleAuth stops settling for it.
+        vm.prank(relayer1);
+        registry.register("http://relay1", "Relayer-1", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        identityRegistry.setVerified(relayer1, false); // certificate expired / revoked
+        assertFalse(registry.isActiveRelayer(relayer1));
+
+        // getSettlementInfo mirrors the same gate.
+        (bool isActive,,) = registry.getSettlementInfo(relayer1);
+        assertFalse(isActive);
+
+        // getActiveRelayers excludes the now-unverified relayer. relayer1 is the
+        // only registered relayer here, so the active set is empty.
+        assertEq(registry.getActiveRelayers().length, 0);
     }
 
     // ─── KYC AND gate (feature-flagged) ─────────────────────────
