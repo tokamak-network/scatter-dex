@@ -27,16 +27,16 @@ export interface SnarkProof {
   curve: "bn128";
 }
 
+// Proof point shapes (components may be string or bigint — both are stringified).
+type G1 = readonly [unknown, unknown];
+type G2 = readonly [G1, G1];
+
 /**
  * Convert a Solidity-formatted proof (string or bigint components, `pi_b`
  * reversed) into the native snarkjs shape. Accepts `string | bigint` so both
  * the authorize path (decimal strings) and the claim path (bigints) share it.
  */
-export function buildSnarkProof(
-  a: readonly [unknown, unknown],
-  b: readonly [readonly [unknown, unknown], readonly [unknown, unknown]],
-  c: readonly [unknown, unknown],
-): SnarkProof {
+function buildSnarkProof(a: G1, b: G2, c: G1): SnarkProof {
   const s = (x: unknown) => String(x);
   return {
     pi_a: [s(a[0]), s(a[1]), "1"],
@@ -83,9 +83,9 @@ export function loadCircuitVkey(
 export async function verifyGroth16Solidity(
   vkey: unknown,
   publicSignals: string[],
-  a: readonly [unknown, unknown],
-  b: readonly [readonly [unknown, unknown], readonly [unknown, unknown]],
-  c: readonly [unknown, unknown],
+  a: G1,
+  b: G2,
+  c: G1,
 ): Promise<boolean> {
   const snarkjs = await import("snarkjs");
   return snarkjs.groth16.verify(vkey, publicSignals, buildSnarkProof(a, b, c));

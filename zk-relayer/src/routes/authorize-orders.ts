@@ -94,14 +94,6 @@ export function* lookupAuthorizeOrdersByCounterPair(
 const MAX_AUTHORIZE_ORDERS = 10_000;
 const MAX_ORDERS_PER_PUBKEY = 50;
 const MAX_EXPIRY_DURATION_SECS = 24 * 60 * 60; // 24 hours
-
-// Off-chain Groth16 verification of authorize proofs at accept time. Brings the
-// order path to parity with the claim path (which already pre-flight verifies),
-// so structurally-valid-but-bogus proofs can't enter the store / shared
-// orderbook (DoS amplification — audit #4). Kill-switch defaults ON; set
-// VERIFY_ORDER_PROOFS=0 only to ride out a vkey/zkey drift incident that would
-// otherwise reject legitimate orders (settle-time verify still backstops funds).
-const VERIFY_ORDER_PROOFS = process.env.VERIFY_ORDER_PROOFS !== "0";
 let _db: PrivateOrderDB | null = null;
 
 // BabyJub field elements are at most 254 bits (~77 decimal digits).
@@ -373,9 +365,9 @@ export function createAuthorizeOrderRoutes(
       // limit by racing the await) and after idempotency (replays of a known
       // nullifier short-circuit above, so an attacker can't force repeated CPU
       // work — design §2.4). Fails CLOSED: a bogus proof or a verifier error
-      // releases the reserved slot and rejects, so junk never reaches the store
-      // or the shared orderbook.
-      if (VERIFY_ORDER_PROOFS) {
+      // both release the reserved slot and reject, so junk never reaches the
+      // store or the shared orderbook.
+      if (config.verifyOrderProofs) {
         let proofValid = false;
         try {
           proofValid = await verifyAuthorizeProof(
@@ -384,13 +376,12 @@ export function createAuthorizeOrderRoutes(
             tierForOrder(order),
           );
         } catch (err) {
-          decPubKeyCount(pubKeyAx, pubKeyAy);
+          // A verifier error (e.g. missing/corrupt vkey) is treated the same as
+          // a bogus proof — fall through to the single rejection path below.
           log.warn("Authorize proof verification errored", {
             nullifier: nullifier.slice(0, 18) + "...",
             error: err instanceof Error ? err.message : String(err),
           });
-          res.status(400).json({ error: "Proof verification failed" });
-          return;
         }
         if (!proofValid) {
           decPubKeyCount(pubKeyAx, pubKeyAy);
