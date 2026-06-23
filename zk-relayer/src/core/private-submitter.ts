@@ -21,12 +21,9 @@ import { sendAndWait } from "./tx-retry.js";
 import { recordSettlement } from "./metrics.js";
 import { FEE_BPS_DENOMINATOR } from "./fees.js";
 import { createLogger } from "./logger.js";
-import path from "path";
-import { fileURLToPath } from "url";
+import { loadCircuitVkey, verifyGroth16Solidity } from "./groth16.js";
 
 const log = createLogger("private-submitter");
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PRIVATE_SETTLEMENT_ABI = [
   "function claimWithProof(uint[2] proofA, uint[2][2] proofB, uint[2] proofC, bytes32 claimsRoot, bytes32 claimNullifier, uint256 amount, address token, address recipient, uint256 releaseTime) external",
@@ -239,7 +236,6 @@ export class PrivateSubmitter {
     publicSignals: string[],
     claimsRoot: string,
   ): Promise<boolean> {
-    const snarkjs = await import("snarkjs");
     const group = await this.settlement.claimsGroups(claimsRoot) as {
       token: string;
       tier: bigint;
@@ -258,31 +254,8 @@ export class PrivateSubmitter {
         `Unsupported claim tier ${tier} for root ${claimsRoot} — relayer has no matching vkey`,
       );
     }
-    let vkey = this.claimVkeyByTier.get(tier);
-    if (!vkey) {
-      const suffix = tier === 16 ? "" : `_${tier}`;
-      const vkeyPath = path.join(
-        __dirname,
-        `../../../circuits/build/claim${suffix}_vkey.json`,
-      );
-      const { readFileSync } = await import("fs");
-      vkey = JSON.parse(readFileSync(vkeyPath, "utf8"));
-      this.claimVkeyByTier.set(tier, vkey);
-    }
-
-    const proof = {
-      pi_a: [proofA[0].toString(), proofA[1].toString(), "1"],
-      pi_b: [
-        [proofB[0][1].toString(), proofB[0][0].toString()],
-        [proofB[1][1].toString(), proofB[1][0].toString()],
-        ["1", "0"],
-      ],
-      pi_c: [proofC[0].toString(), proofC[1].toString(), "1"],
-      protocol: "groth16",
-      curve: "bn128",
-    };
-
-    return snarkjs.groth16.verify(vkey, publicSignals, proof);
+    const vkey = loadCircuitVkey(this.claimVkeyByTier, "claim", tier);
+    return verifyGroth16Solidity(vkey, publicSignals, proofA, proofB, proofC);
   }
 
   /** Submit a gasless claim on behalf of the recipient. */
