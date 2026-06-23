@@ -348,15 +348,26 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         return relayers[relayer].fee;
     }
 
-    function isActiveRelayer(address relayer) external view returns (bool) {
+    /// @notice True when a relayer may settle: registered & active, not exiting,
+    ///         and its zk-X509 identity certificate has not expired.
+    /// @dev Identity is re-checked on every call (not just at `register`), so a
+    ///      relayer whose certificate lapses can no longer settle. `isVerified`
+    ///      compares `verifiedUntil >= block.timestamp` in the registry, closing
+    ///      the "verified once, never re-checked" gap. `identityRegistry` is
+    ///      mandatory (set non-zero in `initialize`/`setIdentityRegistry`), so no
+    ///      zero-guard is needed.
+    function _isOperational(address relayer) internal view returns (bool) {
         Relayer storage r = relayers[relayer];
-        return r.active && r.exitRequestedAt == 0;
+        return r.active && r.exitRequestedAt == 0 && identityRegistry.isVerified(relayer);
+    }
+
+    function isActiveRelayer(address relayer) external view returns (bool) {
+        return _isOperational(relayer);
     }
 
     /// @notice Single-call getter for settlement validation — avoids 3 separate external calls.
     function getSettlementInfo(address relayer) external view returns (bool isActive, uint256 fee, address treasury_) {
-        Relayer storage r = relayers[relayer];
-        return (r.active && r.exitRequestedAt == 0, r.fee, treasury);
+        return (_isOperational(relayer), relayers[relayer].fee, treasury);
     }
 
     function getRelayerCount() external view returns (uint256) {
@@ -367,8 +378,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         uint256 len = relayerList.length;
         uint256 count;
         for (uint256 i; i < len;) {
-            Relayer storage r = relayers[relayerList[i]];
-            if (r.active && r.exitRequestedAt == 0) {
+            if (_isOperational(relayerList[i])) {
                 unchecked {
                     ++count;
                 }
@@ -382,8 +392,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         uint256 idx;
         for (uint256 i; i < len;) {
             address rAddr = relayerList[i];
-            Relayer storage r = relayers[rAddr];
-            if (r.active && r.exitRequestedAt == 0) {
+            if (_isOperational(rAddr)) {
                 active[idx] = rAddr;
                 unchecked {
                     ++idx;
