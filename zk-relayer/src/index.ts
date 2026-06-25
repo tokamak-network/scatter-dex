@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { WebSocketServer } from "ws";
 import { config, updateRelayerFee } from "./config.js";
 import { PrivateSubmitter } from "./core/private-submitter.js";
@@ -439,7 +439,11 @@ async function main() {
         try { return `pubkey:${pubKeyId(ax, ay)}`; }
         catch { /* fall through to IP */ }
       }
-      return req.ip ?? "unknown";
+      // IP fallback (no pubkey on the body). Use express-rate-limit's
+      // ipKeyGenerator so IPv6 addresses are normalised to their /64 subnet —
+      // raw req.ip would let an IPv6 client rotate the host suffix to evade the
+      // per-identity cap.
+      return req.ip ? ipKeyGenerator(req.ip) : "unknown";
     },
   });
 
