@@ -62,9 +62,10 @@ library SettleVerifyLib {
         address relayer;
         bytes32 orderHash;
         // Tier selects which authorize.circom variant produced this proof —
-        // tiers 16 / 64 / 128 are all wired on the live deployment; the field
-        // lets the verifier registry on PrivateSettlement dispatch to the
-        // right Groth16 verifier per side (mixed tiers allowed).
+        // the field lets the per-tier verifier registry on PrivateSettlement
+        // dispatch to the right Groth16 verifier per side (mixed tiers
+        // allowed). Which tiers are actually wired is a per-deployment owner
+        // setting (setAuthorizeVerifier); an unconfigured tier reverts.
         // The Groth16 public signals (packAuthSignals) are unchanged across
         // tiers — claimsRoot already hashes the variable-length claims set
         // inside the circuit — so this byte never reaches the verifier.

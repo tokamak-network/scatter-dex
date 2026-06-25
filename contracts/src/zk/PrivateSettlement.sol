@@ -484,9 +484,10 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         _requireNotSanctioned(msg.sender);
         // Resolve the verifier for each side's tier. Mixed tiers are allowed
         // (e.g. maker tier-16 ↔ taker tier-64) — the registry is per-tier so
-        // each side gets the right Groth16 verifier independently. Tiers
-        // 16 / 64 / 128 are all wired on the live deployment. Same-tier
-        // settlements skip the second SLOAD by reusing the maker's verifier.
+        // each side gets the right Groth16 verifier independently, for whichever
+        // tiers the owner has wired via setAuthorizeVerifier (an unconfigured
+        // tier reverts with TierNotConfigured below). Same-tier settlements
+        // skip the second SLOAD by reusing the maker's verifier.
         IAuthorizeVerifier _makerVerifier = authorizeVerifierByTier[p.maker.tier];
         if (address(_makerVerifier) == address(0)) revert TierNotConfigured(p.maker.tier);
         IAuthorizeVerifier _takerVerifier =
