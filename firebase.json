@@ -1,11 +1,16 @@
 {
   "_csp_notes": [
     "Strict CSP — rejects `unsafe-eval` in `script-src` so an XSS",
-    "escalation cannot pivot into RCE. Currently applied to the two",
-    "deployed targets (hub, pay). Other targets (docs, pro, relayer)",
-    "stay header-stripped until they're re-enabled — when that happens,",
+    "escalation cannot pivot into RCE. Currently applied to the deployed",
+    "targets (hub, pay, pro). Remaining targets (docs, relayer) stay",
+    "header-stripped until they're re-enabled — when that happens,",
     "copy the matching CSP block from hub (static, no ZK) or pay (ZK",
     "in WebWorkers, wagmi RPC, relayer + shared-orderbook fetch).",
+    "",
+    "apps/pro is a funds-handling app (orders/withdraw/claim, in-memory",
+    "EdDSA keys) that runs snarkjs in WebWorkers and talks to RPC +",
+    "relayer hosts, so it reuses the pay block (worker-src 'self' blob:,",
+    "connect-src 'self' https: wss:) rather than the static hub one.",
     "",
     "apps/pay moved snarkjs into WebWorkers (`apps/pay/app/workers/*.worker.ts`),",
     "so the main thread no longer needs eval. If a future change",
@@ -88,6 +93,14 @@
       "cleanUrls": true,
       "trailingSlash": false,
       "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' data: https://fonts.gstatic.com; worker-src 'self' blob:; connect-src 'self' https: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" },
+            { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+          ]
+        },
         {
           "source": "**/*.@(js|css|woff2|woff|ttf|svg|png|jpg|jpeg|webp|ico)",
           "headers": [
