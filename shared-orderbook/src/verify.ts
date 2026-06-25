@@ -129,6 +129,12 @@ async function main(): Promise<void> {
   const watch = process.argv.includes("--watch");
   const safety = envInt("VERIFIER_BLOCK_SAFETY_MARGIN", 6);
   const limit = envInt("VERIFIER_LIMIT_PER_PASS", 500);
+  // Cap the getLogs window per pass so a stuck low-block row can't stretch the
+  // fetch range across millions of blocks and trip an RPC's "range too large"
+  // limit (which would throw and stall the quarantine). 10k stays under the
+  // common provider caps (Infura ~10k, Alchemy response-size bound); tune per
+  // RPC. The verifier just makes progress in 10k-block steps.
+  const maxBlockRange = envInt("VERIFIER_MAX_BLOCK_RANGE", 10000);
   // One DB handle shared by every chain's loop — rows are partitioned by
   // chain_id, so the loops never collide.
   const db = new OrderbookDB(dbPath);
@@ -140,7 +146,7 @@ async function main(): Promise<void> {
       const fetcher = makeEventFetcher({ rpcUrl: c.rpcUrl, contractAddress: c.settlementAddress, provider });
       const latest = await provider.getBlockNumber();
       const maxBlock = Math.max(0, latest - safety);
-      const r = await runVerifyPass(db, fetcher, { chainId: c.chainId, maxBlock, limit });
+      const r = await runVerifyPass(db, fetcher, { chainId: c.chainId, maxBlock, limit, maxBlockRange });
       console.log(
         `[verifier] one-shot chain=${c.chainId}: scanned=${r.scanned} flipped=${r.flipped} unmatched=${r.report.unmatched.length} maxBlock=${maxBlock}`,
       );
@@ -171,6 +177,7 @@ async function main(): Promise<void> {
       intervalSec,
       blockSafetyMargin: safety,
       limitPerPass: limit,
+      maxBlockRange,
       provider,
       monitor: new VerifyMonitor(),
       signal: ac.signal,

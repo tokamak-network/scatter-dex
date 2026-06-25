@@ -295,4 +295,27 @@ describe("verify-attempt quarantine (A-5)", () => {
     expect(db.recordVerifyFailures([row.txHash])).toBe(0);
     expect(db.countQuarantinedSettlements()).toBe(0);
   });
+
+  it("bounds the fetch window to maxBlockRange so a stuck low block can't stall the verifier", async () => {
+    // A fake row at block 0 that never lands, plus a legit recent row far away.
+    db.insertSettlement(makeRow().makerRelayer, makeRow({ txHash: "0x" + "a1".repeat(32), blockNumber: 0 }));
+    db.insertSettlement(makeRow().makerRelayer, makeRow({
+      txHash: "0x" + "a2".repeat(32), blockNumber: 5_000_000,
+      makerNullifier: "0x" + "03".repeat(32), takerNullifier: "0x" + "04".repeat(32),
+    }));
+
+    let seenRange: [number, number] | null = null;
+    const r = await runVerifyPass(
+      db,
+      async (from, to) => { seenRange = [from, to]; return []; },
+      { chainId: 11155111, maxBlock: 9_000_000, limit: 500, maxBlockRange: 5000 },
+    );
+    // Only the block-0 row is in the capped window — the 5M row is deferred,
+    // so the fetcher is never asked for a multi-million-block range.
+    expect(seenRange).toEqual([0, 0]);
+    expect(r.scanned).toBe(1);
+    // The stuck row still accrues an attempt, so it progresses toward quarantine
+    // instead of stalling the whole pass.
+    expect(r.report.unmatched).toHaveLength(1);
+  });
 });

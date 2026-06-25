@@ -188,11 +188,10 @@ export class OrderbookDB {
       -- trailing key, so ORDER BY created_at, rowid is fully index-served.
       CREATE INDEX IF NOT EXISTS idx_settle_created ON settlements(created_at);
 
-      -- Serves the verify-attempt quarantine predicate (A-5): the verify-stats
-      -- counts and the verifier's per-pass scan all filter verified=0 AND
-      -- verify_attempts against the budget. Leading with verified keeps the
-      -- (large) verified=1 majority out of the b-tree range entirely.
-      CREATE INDEX IF NOT EXISTS idx_settle_verify ON settlements(verified, verify_attempts);
+      -- NB: idx_settle_verify (verified, verify_attempts) is created AFTER the
+      -- verify_attempts ALTER below, not here — on a pre-A-5 DB the column
+      -- doesn't exist yet at this point, and creating the index here would
+      -- error and block startup before the migration could add it.
 
       -- Expression index so "since" filters on COALESCE(block_time,
       -- created_at) >= ? (used by listSettlements, getNetworkSettlementTotals,
@@ -305,6 +304,13 @@ export class OrderbookDB {
     if (!columns.some((c) => c.name === "verify_attempts")) {
       this.db.exec("ALTER TABLE settlements ADD COLUMN verify_attempts INTEGER NOT NULL DEFAULT 0");
     }
+    // Created here (not in the CREATE TABLE exec block) so it runs only after
+    // verify_attempts is guaranteed to exist — on a pre-A-5 DB the column is
+    // added by the ALTER just above, and on a fresh DB it's already in the
+    // table definition. Either way the index references a present column.
+    // Serves the A-5 quarantine predicate (verified=0 AND verify_attempts
+    // </>= ?) used by verify-stats counts and the verifier's per-pass scan.
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_settle_verify ON settlements(verified, verify_attempts)");
   }
 
   private prepareStatements(): void {
