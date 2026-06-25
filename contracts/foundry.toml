@@ -10,7 +10,10 @@ optimizer = true
 optimizer_runs = 200
 # Allow deploy scripts to write the per-network address ledger
 # (deployments/<chainId>.json) via vm.writeJson.
-fs_permissions = [{ access = "read-write", path = "./deployments" }]
+fs_permissions = [
+    { access = "read-write", path = "./deployments" },
+    { access = "read", path = "./test/fixtures" },
+]
 # Emit storageLayout so `forge inspect <contract> storage` (used by
 # script/storage-layout/{check,snapshot}.sh) works without a separate
 # `--extra-output` build pass.
@@ -32,7 +35,12 @@ skip = [
     "lib/openzeppelin-contracts-upgradeable/test/**",
     "lib/openzeppelin-contracts-upgradeable/certora/**",
     "lib/openzeppelin-contracts-upgradeable/scripts/**",
-    "src/zk/BatchAuthorizeVerifier.sol",
+    # All tiers of the hand-written batch verifier need via-ir (deep Yul) —
+    # glob covers BatchAuthorizeVerifier{,_64,_128,…}.sol as tiers are added.
+    "src/zk/BatchAuthorizeVerifier*.sol",
+    # Real-proof batch test imports the via-ir verifiers above — only the
+    # batch-verifier profile can compile it. Skip it in the default profile.
+    "test/BatchAuthorizeVerifier.t.sol",
 ]
 
 # Fuzz / invariant defaults for PR builds — fast enough to keep PR CI snappy
