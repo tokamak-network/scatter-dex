@@ -15,7 +15,7 @@ import {IBatchAuthorizeVerifier} from "./IBatchAuthorizeVerifier.sol";
 ///
 ///   Soundness error: 1/r ≈ 2^{-254} (negligible).
 ///
-///   This contract uses the same verification key as AuthorizeVerifier.sol (same circuit,
+///   This contract uses the same verification key as AuthorizeVerifier_128.sol (same circuit,
 ///   same trusted setup). The vkey constants are duplicated here rather than read from
 ///   storage to keep everything in assembly for gas efficiency.
 ///   WARNING: If the circuit is recompiled, both AuthorizeVerifier_128.sol and this file
