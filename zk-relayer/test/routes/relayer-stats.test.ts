@@ -52,6 +52,46 @@ describe("/api/relayer", () => {
     expect(calls[3][0]).toBe(1);
   });
 
+  it("GET /trade-offers projects out trader identifiers (no pubkeys/nonces/peer/reason)", async () => {
+    // The full row carries operator-private identifiers; the UNAUTHENTICATED
+    // public endpoint must expose only non-identifying fields (admin route
+    // is SIWE-gated for the full row). Regression for the A-1 PII leak.
+    const fullRow = {
+      id: 7,
+      direction: "sent" as const,
+      peer_relayer: "0x" + "pe".repeat(20),
+      maker_pub_key: "0x" + "11".repeat(32),
+      maker_nonce: "42",
+      taker_pub_key: "0x" + "22".repeat(32),
+      taker_nonce: "43",
+      status: "settled",
+      tx_hash: "0x" + "ab".repeat(32),
+      reason: "internal-failure-detail",
+      created_at: 1234,
+    };
+    const db = makeDbStub({ getTradeOffers: () => [fullRow] });
+    const app = mountRouter("/api/relayer",
+      createRelayerStatsRoutes(db, makeSubmitterStub()));
+    const res = await request(app).get("/api/relayer/trade-offers");
+    expect(res.status).toBe(200);
+    expect(res.body.offers).toHaveLength(1);
+    const offer = res.body.offers[0];
+    // Safe fields present…
+    expect(offer).toEqual({
+      direction: "sent",
+      status: "settled",
+      txHash: "0x" + "ab".repeat(32),
+      createdAt: 1234,
+    });
+    // …and no identifying field leaks (allowlist projection).
+    const leaked = JSON.stringify(res.body);
+    expect(leaked).not.toContain("maker_pub_key");
+    expect(leaked).not.toContain("11".repeat(32)); // maker pubkey value
+    expect(leaked).not.toContain("22".repeat(32)); // taker pubkey value
+    expect(leaked).not.toContain("peer_relayer");
+    expect(leaked).not.toContain("internal-failure-detail"); // reason
+  });
+
   it("GET /trade-offers returns 500 when DB throws", async () => {
     const db = makeDbStub({ getTradeOffers: () => { throw new Error("db error"); } });
     const app = mountRouter("/api/relayer",

@@ -1,12 +1,43 @@
 import { Router, RequestHandler } from "express";
 import { clampLimit } from "@scatter-dex/types";
-import type { PrivateOrderDB } from "../core/db.js";
+import type { PrivateOrderDB, TradeOfferRow } from "../core/db.js";
 import type { PrivateSubmitter } from "../core/private-submitter.js";
 import { getMetrics } from "../core/metrics.js";
 import { authorizeOrders } from "./authorize-orders.js";
 import { createLogger } from "../core/logger.js";
 
 const log = createLogger("relayer-stats");
+
+/** Non-identifying view of a Trade Offer for the UNAUTHENTICATED public
+ *  audit trail. */
+interface PublicTradeOffer {
+  direction: "sent" | "received";
+  status: string;
+  txHash: string | null;
+  createdAt: number;
+}
+
+/**
+ * Project a Trade Offer row down to its non-identifying fields.
+ *
+ * The full `TradeOfferRow` carries trader EdDSA pubkeys
+ * (`maker_pub_key` / `taker_pub_key`), nonces, the counterparty relayer
+ * (`peer_relayer`), and failure `reason`s — operator-private identifiers
+ * that de-anonymize traders if scraped from the public endpoint. The
+ * SIWE-gated admin route (`/api/admin/trade-offers`) returns the full
+ * row; this public endpoint must expose only non-identifying fields.
+ *
+ * Allowlist (explicit pick), NOT omit — a future sensitive column added
+ * to `TradeOfferRow` then can't silently leak through here.
+ */
+function toPublicTradeOffer(r: TradeOfferRow): PublicTradeOffer {
+  return {
+    direction: r.direction,
+    status: r.status,
+    txHash: r.tx_hash,
+    createdAt: r.created_at,
+  };
+}
 
 /**
  * Relayer stats & audit trail API.
@@ -69,7 +100,7 @@ export function createRelayerStatsRoutes(
     try {
       const limit = clampLimit(req.query.limit, 200, 50);
       const offset = Math.max(0, Number(req.query.offset) || 0);
-      const offers = db.getTradeOffers(limit, offset);
+      const offers = db.getTradeOffers(limit, offset).map(toPublicTradeOffer);
       res.json({ offers, count: offers.length, offset });
     } catch (err) {
       log.error("Failed to load trade offers", {
