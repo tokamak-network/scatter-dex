@@ -401,3 +401,63 @@ describe("/api/settlements", () => {
     expect(r.status).toBe(400);
   });
 });
+
+describe("/api/settlements — on-chain membership gate (A-3 follow-up)", () => {
+  let server: http.Server;
+  let db: OrderbookDB;
+  const GATE_PORT = 14573;
+  const GATE_DB = "/tmp/shared-orderbook-settlements-gate-test.db";
+  // Stub membership: makerW is an active relayer, takerW is not.
+  const active = new Set([makerW.address.toLowerCase()]);
+  const membership = {
+    isActiveRelayer: async (_chainId: number, relayer: string) => active.has(relayer.toLowerCase()),
+  };
+
+  beforeAll(async () => {
+    process.env.ALLOW_PRIVATE_RELAYER_URLS = "1";
+    process.env.ALLOW_LEGACY_RELAYER_SIG = "1";
+    try { fs.unlinkSync(GATE_DB); } catch { /* ignore */ }
+    db = new OrderbookDB(GATE_DB);
+    const app = express();
+    app.use(cors());
+    app.use(express.json({ limit: "10kb" }));
+    app.use("/api/settlements", createSettlementRoutes(db, noopLimiter, noopLimiter, undefined, membership));
+    server = http.createServer(app);
+    await new Promise<void>((resolve) => server.listen(GATE_PORT, resolve));
+  });
+
+  afterAll(async () => {
+    delete process.env.ALLOW_LEGACY_RELAYER_SIG;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    db.close();
+    for (const s of ["", "-wal", "-shm"]) { try { fs.unlinkSync(GATE_DB + s); } catch { /* ignore */ } }
+  });
+
+  beforeEach(() => {
+    // Reset between cases so the shared default txHash from basePayload() can't
+    // make one test depend on another's insert.
+    db._resetSettlementsForTests();
+  });
+
+  async function postTo(body: unknown, signer: Wallet) {
+    const headers = await authHeaders(signer, "POST", "/api/settlements", "http://localhost:" + GATE_PORT);
+    const res = await fetch(`http://localhost:${GATE_PORT}/api/settlements`, {
+      method: "POST", headers, body: JSON.stringify(body),
+    });
+    return { status: res.status, body: await res.json() };
+  }
+
+  it("accepts a settlement from an active relayer (201)", async () => {
+    // makerW is the submitter and a maker side, and is on-chain active.
+    const r = await postTo(basePayload({ makerRelayer: makerW.address, takerRelayer: takerW.address }), makerW);
+    expect(r.status).toBe(201);
+    expect(r.body.inserted).toBe(true);
+  });
+
+  it("rejects a settlement from a non-active relayer (403)", async () => {
+    // takerW submits (and is a side), but isn't an active relayer on-chain.
+    const r = await postTo(basePayload({ makerRelayer: makerW.address, takerRelayer: takerW.address }), takerW);
+    expect(r.status).toBe(403);
+    expect(r.body.error).toMatch(/not an active relayer/);
+  });
+});

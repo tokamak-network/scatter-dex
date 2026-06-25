@@ -16,6 +16,7 @@ import { createClaimNullifierRoutes } from "./routes/claim-nullifiers.js";
 import { createAdminRoutes } from "./routes/admin.js";
 import { createKycRoutes } from "./routes/kyc.js";
 import { VerifyMonitor } from "./core/verify-runtime.js";
+import { makeRelayerMembership } from "./core/relayer-membership.js";
 import { makeAdminSiweFromAllowlist } from "./core/admin-siwe.js";
 import { makeAdminAuth } from "./middleware/admin-auth.js";
 
@@ -85,7 +86,15 @@ async function main() {
   app.use("/api/relayers", createRelayerRoutes(orderbook, broadcaster, writeLimiter, readLimiter, relayerWriteLimiter));
   app.use("/api/stats", createStatsRoutes(orderbook, readLimiter));
   app.use("/api/peers", createPeerRoutes(orderbook, readLimiter));
-  app.use("/api/settlements", createSettlementRoutes(db, writeLimiter, readLimiter, relayerWriteLimiter));
+  // On-chain relayer-membership gate for settlement writes — enabled only when
+  // RELAYER_REGISTRY_CHAINS is configured (otherwise undefined → no gate).
+  const settlementMembership = config.relayerRegistryChains.length
+    ? makeRelayerMembership(config.relayerRegistryChains)
+    : undefined;
+  if (settlementMembership) {
+    console.log(`Settlement membership gate ON for chains: ${config.relayerRegistryChains.map((c) => c.chainId).join(", ")}`);
+  }
+  app.use("/api/settlements", createSettlementRoutes(db, writeLimiter, readLimiter, relayerWriteLimiter, settlementMembership));
   // Per-relayer + network read views from the settlements indexer. Mounted
   // at root so the URLs read naturally (/api/relayers/:addr/stats etc).
   app.use("/api", createSettlementStatsRoutes(db, readLimiter));
