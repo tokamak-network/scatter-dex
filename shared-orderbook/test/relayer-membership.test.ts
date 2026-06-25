@@ -57,6 +57,28 @@ describe("makeRelayerMembership", () => {
     expect(calls).toBe(2); // re-checked, not cached
   });
 
+  it("bounds the cache and FIFO-evicts the oldest under flooding (memory-DoS guard)", async () => {
+    // The submitter address is attacker-controlled and negatives are cached, so
+    // address rotation must not grow the map without bound. With a fixed clock,
+    // nothing expires and eviction is pure FIFO at the cap.
+    let calls = 0;
+    const m = makeRelayerMembership([], {
+      check: async () => { calls++; return false; },
+      now: () => 1_000,
+      maxEntries: 50,
+    });
+    const addr = (i: number) => "0x" + i.toString(16).padStart(40, "0");
+    for (let i = 0; i < 200; i++) await m.isActiveRelayer(CHAIN, addr(i));
+    expect(calls).toBe(200); // 200 distinct addresses → 200 misses
+
+    // The most-recent address is still cached (no new check)…
+    await m.isActiveRelayer(CHAIN, addr(199));
+    expect(calls).toBe(200);
+    // …but the oldest was evicted by the cap, so it re-checks.
+    await m.isActiveRelayer(CHAIN, addr(0));
+    expect(calls).toBe(201);
+  });
+
   it("keys the cache by (chainId, address) and lowercases the address", async () => {
     const seen: string[] = [];
     const m = makeRelayerMembership([], {

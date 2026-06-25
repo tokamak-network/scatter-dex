@@ -40,6 +40,11 @@ export interface MembershipOpts {
   check?: (chainId: number, relayer: string) => Promise<boolean>;
   /** Clock injection for deterministic cache-expiry tests. */
   now?: () => number;
+  /** Hard cap on cache entries. The cache key includes the submitter address,
+   *  which is attacker-controlled (any keypair passes relayerAuth) and is
+   *  cached even when inactive — so without a bound, address rotation could
+   *  grow the map without limit (a memory DoS). Default 5000. */
+  maxEntries?: number;
 }
 
 interface CacheEntry {
@@ -56,7 +61,10 @@ interface CacheEntry {
 export function makeRelayerMembership(chains: ChainRegistry[], opts: MembershipOpts = {}): RelayerMembership {
   const positiveTtl = opts.positiveTtlMs ?? 60_000;
   const negativeTtl = opts.negativeTtlMs ?? 10_000;
+  const maxEntries = opts.maxEntries ?? 5_000;
   const now = opts.now ?? (() => Date.now());
+  const SWEEP_INTERVAL_MS = 30_000;
+  let lastSweep = 0;
 
   const contracts = new Map<number, Contract>();
   for (const c of chains) {
@@ -72,10 +80,28 @@ export function makeRelayerMembership(chains: ChainRegistry[], opts: MembershipO
       return Boolean(await contract.isActiveRelayer(relayer));
     });
 
-  // Keyed by `${chainId}:${addrLc}`. Expired entries are skipped on read but
-  // not swept — fine because the key space is the relayer set (O(10²)), not
-  // arbitrary user input. Revisit with a bounded LRU if that assumption breaks.
+  // Keyed by `${chainId}:${addrLc}`. The key space is attacker-influenced
+  // (negative results for arbitrary submitter addresses are cached too), so the
+  // map is size-bounded: an occasional expired-entry sweep plus a hard FIFO cap
+  // keep it from growing without limit under address-rotation flooding.
   const cache = new Map<string, CacheEntry>();
+
+  /** Keep the cache under `maxEntries`. Runs only when at/over the cap. Sweeps
+   *  expired entries at most every SWEEP_INTERVAL_MS (O(n) but rare), then
+   *  FIFO-evicts oldest entries until under the cap — Map preserves insertion
+   *  order, so the first key is the oldest. */
+  const evictIfNeeded = (t: number): void => {
+    if (cache.size < maxEntries) return;
+    if (t - lastSweep > SWEEP_INTERVAL_MS) {
+      lastSweep = t;
+      for (const [k, e] of cache) if (e.expiresAt <= t) cache.delete(k);
+    }
+    while (cache.size >= maxEntries) {
+      const oldest = cache.keys().next().value;
+      if (oldest === undefined) break;
+      cache.delete(oldest);
+    }
+  };
 
   return {
     async isActiveRelayer(chainId: number, relayer: string): Promise<boolean> {
@@ -97,6 +123,7 @@ export function makeRelayerMembership(chains: ChainRegistry[], opts: MembershipO
         );
         return true;
       }
+      evictIfNeeded(t);
       cache.set(key, { active, expiresAt: t + (active ? positiveTtl : negativeTtl) });
       return active;
     },
