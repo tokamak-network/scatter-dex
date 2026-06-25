@@ -1,7 +1,7 @@
 import http from "http";
 import express from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { config } from "./config.js";
 import { OrderbookDB } from "./core/db.js";
 import { SharedOrderbook } from "./core/orderbook.js";
@@ -76,9 +76,11 @@ async function main() {
     message: { error: "too many requests for this relayer" },
     keyGenerator: (req) => {
       const addr = (req as unknown as Record<string, unknown>).relayerAddress as string | undefined;
-      return addr ? `relayer:${addr}` : (req.ip ?? "unknown");
+      // IP fallback normalised via ipKeyGenerator so an IPv6 client can't
+      // rotate the host suffix to evade the per-relayer cap (replaces the
+      // prior keyGeneratorIpFallback validation suppression).
+      return addr ? `relayer:${addr}` : (req.ip ? ipKeyGenerator(req.ip) : "unknown");
     },
-    validate: { keyGeneratorIpFallback: false },
   });
 
   // Routes
