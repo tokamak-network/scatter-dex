@@ -344,7 +344,8 @@ The same circuit serves three more entrypoints — the proof is a generic
 |---|---|---|
 | `settleWithDex` | 1 proof + whitelisted DEX router + calldata | Permissionless market order — user submits directly (`relayer = self`), no registry gating. Requires `sellToken != buyToken`, a `deadline`, and `amountOut ≥ totalLocked`; optional platform fee (`dexPlatformFeeBps ≤ 500`) and positive slippage accrue to `FeeVault.platformRevenue`. |
 | `scatterDirectAuth` | 1 proof + relayer fee | Same-token scatter (`sellToken == buyToken` enforced). Fee capped by `sellAmount × maxFee`; claims + fee ≤ `sellAmount`. |
-| `scatterDirect` | withdraw-proof variant | Legacy single-party scatter routed through `pool.withdrawFor`; registers claims at tier 16. |
+
+> **Removed (2026-06-25, #1094):** the legacy `scatterDirect` (withdraw-proof variant via `pool.withdrawFor`) was dead code — the withdraw proof never bound `claimsRoot`, so a relayer could register an arbitrary distribution. Production migrated to the proof-bound `scatterDirectAuth` (S-M14); no callers remained. Use `scatterDirectAuth` for same-token scatter.
 
 ### 5.4 Verifier registries and tiers
 

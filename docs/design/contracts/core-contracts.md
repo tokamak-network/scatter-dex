@@ -70,14 +70,15 @@
 
 ### 2.1 역할
 
-4종 세틀먼트 플로우를 통합 관리하고 Claims Group(수령자 Merkle tree) 을 등록, 이후 사용자가 개별 Claim 증명으로 토큰을 수령하도록 한다.
+3종 세틀먼트 플로우를 통합 관리하고 Claims Group(수령자 Merkle tree) 을 등록, 이후 사용자가 개별 Claim 증명으로 토큰을 수령하도록 한다.
 
 | 플로우 | 증명 형태 | 호출자 | 용도 |
 |--------|----------|--------|------|
 | `settleAuth` | half-proof 2개(`authorize.circom` ×2) | maker.relayer 또는 taker.relayer | **메인 플로우**. 사용자가 로컬에서 증명 생성, 릴레이어는 witness 불가시. |
 | `settleWithDex` | half-proof 1개 + DEX 스왑 | self-relayer (permissionless) | 시장가 주문용. 화이트리스트된 DEX 라우터로 스왑 후 Claims 등록. |
-| `scatterDirect` | 출금 증명(`withdraw.circom`) | 릴레이어(`onlyRelayer`) | 동일 토큰 1자 → 여러 수령자 분배(레거시 스캐터). |
 | `scatterDirectAuth` | authorize 증명 1개 | 증명에 바인딩된 릴레이어 | 동일 토큰 스캐터의 half-proof 판(`sellToken == buyToken` 강제). |
+
+> **제거됨(2026-06-25, #1094):** 레거시 `scatterDirect`(`withdraw.circom` 출금 증명 변형)는 withdraw proof가 `claimsRoot`를 바인딩하지 않아 릴레이어가 임의 분배를 등록할 수 있는 죽은코드였다(S-M14에서 proof-bound `scatterDirectAuth`로 마이그레이션 완료, 프로덕션 호출자 0). 동일 토큰 스캐터는 `scatterDirectAuth`를 사용한다.
 
 추가 기능:
 - `cancelPrivate` — 에스크로 회전(old nullifier burn + new commitment 삽입) 으로 대기중 주문 취소.

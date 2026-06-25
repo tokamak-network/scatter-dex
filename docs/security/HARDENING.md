@@ -33,7 +33,7 @@ PR. Deep profile bumps this to 1024 × 2000.
 | `FeeVault` | `FeeVaultInvariant.t.sol` | 5 | solvency, `totalTracked == Σbalances`, platform-revenue mirror, treasury receipts, fee bps ≤ cap |
 | `RelayerRegistry` | `RelayerRegistryInvariant.t.sol` | 3 | bonds covered, active relayers respect `MAX_FEE`, `relayerList` uniqueness |
 | `PrivateSettlement.cancelPrivate` | `PrivateSettlementCancelInvariant.t.sol` | 3 | nullifier monotonicity (escrow + nonce), claim mapping isolation, leaf count ≥ cancel count |
-| `PrivateSettlement.scatterDirect + claimWithProof` | `ScatterClaimInvariant.t.sol` | 6 | **`totalClaimed ≤ totalLocked`**, group mirror, claim nullifier monotonicity, settlement escrow coverage, per-recipient balance ledger, adversarial claim attempts never inflate claimed |
+| `PrivateSettlement.scatterDirectAuth + claimWithProof` | `ScatterClaimInvariant.t.sol` | 6 | **`totalClaimed ≤ totalLocked`**, group mirror, claim nullifier monotonicity, settlement escrow coverage, per-recipient balance ledger, adversarial claim attempts never inflate claimed (retargeted from the removed `scatterDirect` to live `scatterDirectAuth`, #1094) |
 | `PrivateSettlement.settleAuth + settleWithDex + scatterDirectAuth + claimWithProof` | `PrivateSettlementSettleInvariant.t.sol` | 4 | **`totalClaimed ≤ totalLocked`**, group mirror (incl. token), escrow + nonce + claim nullifier monotonicity, per-token settlement escrow coverage |
 | `CommitmentPool` | `CommitmentPoolInvariant.t.sol` | 5 | solvency, withdraw-nullifier monotonicity, leaf-count floor, whitelist stability, `insertCommitment` access control |
 | `SanctionsList` | `SanctionsListInvariant.t.sol` | 2 | self-managed map mirror, `isSanctioned` ≡ `sanctioned` when no oracle wired |
@@ -69,8 +69,6 @@ Slither runs on every PR with `fail-on: low`, against a committed
   - `src/RelayerRegistry.sol`: native bond push to the original bond owner.
   - `src/zk/PrivateSettlement.sol`: balance-before/after around the DEX
     router call in `settleWithDex` (guarded by `nonReentrant`).
-  - `src/zk/PrivateSettlement.sol`: nullifier write after `pool.withdrawFor`
-    in `scatterDirect` (guarded by `nonReentrant`, pool is trusted).
   - `src/zk/PrivateSettlement.sol` and `src/zk/SettleVerifyLib.sol`:
     `insertCommitment` return value (leaf index) consumed via the
     `CommitmentInserted` event, not the return value.

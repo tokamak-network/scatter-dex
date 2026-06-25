@@ -85,12 +85,11 @@ for completeness so an auditor isn't surprised:
   submitter's own escrow. Pool deposit / withdraw / claim — the
   paths funds actually leave through — still carry the gate, so
   a sanctioned address cannot extract the rotated funds.
-- **`scatterDirect`** (the legacy non-auth variant, not
-  `scatterDirectAuth`) — restricted to `onlyRelayer`, so the
-  relayer-registry path is the gate. The funds it routes still
-  land in `claimsGroups[…]` and become subject to the
-  beneficiary-level claim-time gate before any user receives
-  them.
+- **`scatterDirect`** — **removed (#1094, 2026-06-25).** The legacy
+  non-auth variant (withdraw-proof, `onlyRelayer`) was dead code and
+  has been deleted; same-token scatter now goes only through
+  `scatterDirectAuth`. The beneficiary-level claim-time gate on
+  `claimsGroups[…]` (below) still applies to all scatter flows.
 - **`claimWithProofBatch`** — wraps `claimWithProof` per leaf, so
   every leaf in the batch goes through the recipient-level
   check. The batch wrapper itself doesn't need a separate
