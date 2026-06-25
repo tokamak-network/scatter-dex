@@ -337,7 +337,7 @@ worst-case net even at `fee = maxFee`.
 
 ### 5.3 Other consumers of the authorize proof
 
-The same circuit serves three more entrypoints — the proof is a generic
+The same circuit serves two more entrypoints — the proof is a generic
 "spend authorisation", not settlement-specific:
 
 | Entrypoint | Shape | Notes |
