@@ -78,7 +78,7 @@
 | `settleWithDex` | half-proof 1개 + DEX 스왑 | self-relayer (permissionless) | 시장가 주문용. 화이트리스트된 DEX 라우터로 스왑 후 Claims 등록. |
 | `scatterDirectAuth` | authorize 증명 1개 | 증명에 바인딩된 릴레이어 | 동일 토큰 스캐터의 half-proof 판(`sellToken == buyToken` 강제). |
 
-> **제거됨(2026-06-25, #1094):** 레거시 `scatterDirect`(`withdraw.circom` 출금 증명 변형)는 withdraw proof가 `claimsRoot`를 바인딩하지 않아 릴레이어가 임의 분배를 등록할 수 있는 죽은코드였다(S-M14에서 proof-bound `scatterDirectAuth`로 마이그레이션 완료, 프로덕션 호출자 0). 동일 토큰 스캐터는 `scatterDirectAuth`를 사용한다.
+> **제거됨(2026-06-25, #1094):** 레거시 `scatterDirect`(`withdraw.circom` 출금 증명 변형)는 withdraw proof가 `claimsRoot`를 바인딩하지 않아 릴레이어가 임의 분배를 등록할 수 있는 죽은 코드였다(S-M14에서 proof-bound `scatterDirectAuth`로 마이그레이션 완료, 프로덕션 호출자 0). 동일 토큰 스캐터는 `scatterDirectAuth`를 사용한다.
 
 추가 기능:
 - `cancelPrivate` — 에스크로 회전(old nullifier burn + new commitment 삽입) 으로 대기중 주문 취소.
@@ -119,7 +119,7 @@
 ### 2.4 설정/권한
 
 - `onlyOwner`: verifier 레지스트리, 화이트리스트, 수수료, 제재·신원 게이트 관리.
-- 릴레이어 레지스트리 검사(설정 시): `settleAuth` 는 양쪽 릴레이어 활성 여부를 인라인 검사, `scatterDirect` 는 `onlyRelayer` modifier, `scatterDirectAuth` 는 증명에 바인딩된 릴레이어를 검사. `settleWithDex` 와 `cancelPrivate` 는 레지스트리 검사 없음(permissionless — 시장가 주문/사용자 직접 취소).
+- 릴레이어 레지스트리 검사(설정 시): `settleAuth` 는 양쪽 릴레이어 활성 여부를 인라인 검사, `scatterDirectAuth` 는 증명에 바인딩된 릴레이어를 검사. `settleWithDex` 와 `cancelPrivate` 는 레지스트리 검사 없음(permissionless — 시장가 주문/사용자 직접 취소).
 - 릴레이어 바인딩: 증명 안에 릴레이어 주소가 포함 → 다른 주소 대체 불가.
 - `_requireNotSanctioned`: 세틀 제출자·클레임 수령자 제재 확인. `_requireIdentityVerified`: `identityGate` 설정 시 클레임 수령자의 zk-X509 검증 상태 확인.
 - 모든 상태 변경 함수에 `nonReentrant`.
@@ -143,7 +143,7 @@
 
 ### 2.6 이벤트
 
-`PrivateSettledAuth`, `SettledWithDex`, `DexPlatformFeeCollected`, `DexSurplusCollected`, `PrivateCancel`, `ScatterDirect`, `ScatterDirectAuthSettled`, `PrivateClaim`, 그리고 각종 구성 이벤트.
+`PrivateSettledAuth`, `SettledWithDex`, `DexPlatformFeeCollected`, `DexSurplusCollected`, `PrivateCancel`, `ScatterDirectAuthSettled`, `PrivateClaim`, 그리고 각종 구성 이벤트.
 
 ### 2.7 연동
 
