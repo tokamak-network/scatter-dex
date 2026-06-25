@@ -6,6 +6,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {RelayerRegistry} from "../src/RelayerRegistry.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {MockKycApproval} from "./mocks/MockKycApproval.sol";
+import {MockFeeOnTransferToken} from "./mocks/MockFeeOnTransferToken.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
@@ -440,6 +441,86 @@ contract RelayerRegistryTest is Test {
         vm.prank(relayer2);
         vm.expectRevert(RelayerRegistry.NotKycApproved.selector);
         registry.register("http://relay2.com", "Relayer-2", 30, 0);
+    }
+
+    // ─── B-1: continuous (operational) KYC enforcement ──────────────
+
+    function test_operationalKycRequired_default_off() public view {
+        // The opt-in flag defaults off → legacy register-time-only gate.
+        assertFalse(registry.operationalKycRequired());
+    }
+
+    function test_setOperationalKycRequired_emits_and_sets() public {
+        vm.expectEmit(false, false, false, true);
+        emit RelayerRegistry.OperationalKycRequirementUpdated(true);
+        registry.setOperationalKycRequired(true);
+        assertTrue(registry.operationalKycRequired());
+
+        registry.setOperationalKycRequired(false);
+        assertFalse(registry.operationalKycRequired());
+    }
+
+    function test_setOperationalKycRequired_not_owner_reverts() public {
+        vm.prank(relayer1);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, relayer1));
+        registry.setOperationalKycRequired(true);
+    }
+
+    function test_operational_kyc_evicts_relayer_on_revocation() public {
+        // Register with the KYC gate on and approved, then enable continuous
+        // enforcement. A later revocation must drop the relayer from operational.
+        registry.setKycApprovalRegistry(address(kycApproval));
+        kycApproval.setApproved(relayer1, true);
+        vm.prank(relayer1);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        registry.setOperationalKycRequired(true);
+        assertTrue(registry.isActiveRelayer(relayer1)); // still approved
+
+        kycApproval.setApproved(relayer1, false); // KYC revoked
+        assertFalse(registry.isActiveRelayer(relayer1));
+        (bool isActive,,) = registry.getSettlementInfo(relayer1);
+        assertFalse(isActive);
+
+        kycApproval.setApproved(relayer1, true); // re-approved → operational again
+        assertTrue(registry.isActiveRelayer(relayer1));
+    }
+
+    function test_operational_kyc_off_ignores_revocation() public {
+        // Flag off (default): a revocation does NOT evict an existing relayer —
+        // legacy semantics preserved.
+        registry.setKycApprovalRegistry(address(kycApproval));
+        kycApproval.setApproved(relayer1, true);
+        vm.prank(relayer1);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+
+        kycApproval.setApproved(relayer1, false);
+        assertTrue(registry.isActiveRelayer(relayer1)); // not re-checked
+    }
+
+    function test_operational_kyc_required_noop_without_registry() public {
+        // Flag on but no KYC registry wired → nothing to enforce, identity-only.
+        vm.prank(relayer1);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+        registry.setOperationalKycRequired(true);
+        assertEq(address(registry.kycApprovalRegistry()), address(0));
+        assertTrue(registry.isActiveRelayer(relayer1));
+    }
+
+    function test_operational_kyc_fail_closed_when_registry_reverts() public {
+        // A reverting KYC registry must drop the relayer to non-operational
+        // (fail closed) rather than bubbling the revert into settle gating.
+        registry.setKycApprovalRegistry(address(kycApproval));
+        kycApproval.setApproved(relayer1, true);
+        vm.prank(relayer1);
+        registry.register("http://relay1.com", "Relayer-1", 30, 0);
+        registry.setOperationalKycRequired(true);
+        assertTrue(registry.isActiveRelayer(relayer1));
+
+        RevertingKycApproval reverting = new RevertingKycApproval();
+        registry.setKycApprovalRegistry(address(reverting));
+        assertFalse(registry.isActiveRelayer(relayer1));
     }
 
     function test_initialize_zero_treasury_reverts() public {
@@ -1014,5 +1095,91 @@ contract RelayerRegistryBondTokenTest is Test {
         (,,,,,,, address tok) = registry.relayers(relayer1);
         assertEq(tok, address(tokenA));
         assertEq(registry.exitCooldown(), registry.DEFAULT_EXIT_COOLDOWN());
+    }
+}
+
+// ─── B-1 helper: a KYC registry whose isApproved always reverts ──────
+
+contract RevertingKycApproval {
+    error Boom();
+
+    function isApproved(address) external pure returns (bool) {
+        revert Boom();
+    }
+}
+
+// ─── B-2: fee-on-transfer bond token accounting ─────────────────────
+
+contract RelayerRegistryFeeOnTransferTest is Test {
+    RelayerRegistry public registry;
+    MockIdentityRegistry public identityRegistry;
+    MockFeeOnTransferToken public fton;
+    address treasury = address(0x7777);
+    address relayer1 = address(0xA1);
+
+    function setUp() public {
+        identityRegistry = new MockIdentityRegistry();
+        fton = new MockFeeOnTransferToken(1000); // 10% transfer fee
+        registry = ProxyDeployer.deployRelayerRegistry(
+            address(this), address(this), treasury, address(identityRegistry), address(fton)
+        );
+        identityRegistry.setVerified(relayer1, true);
+        fton.mint(relayer1, 10 ether);
+    }
+
+    function test_register_credits_measured_delta_not_requested() public {
+        vm.startPrank(relayer1);
+        fton.approve(address(registry), 1 ether);
+        registry.register("http://relay1.com", "Relayer-1", 30, 1 ether);
+        vm.stopPrank();
+
+        // 10% fee → registry actually received 0.9 ether. The recorded bond must
+        // equal what landed, NOT the requested 1 ether (else exit over-pays).
+        uint256 received = fton.balanceOf(address(registry));
+        assertEq(received, 0.9 ether);
+        (,,, uint256 bond,,,,) = registry.relayers(relayer1);
+        assertEq(bond, received);
+    }
+
+    function test_addBond_credits_measured_delta() public {
+        vm.startPrank(relayer1);
+        fton.approve(address(registry), 1 ether);
+        registry.register("http://relay1.com", "Relayer-1", 30, 1 ether);
+        fton.approve(address(registry), 1 ether);
+        registry.addBond(1 ether);
+        vm.stopPrank();
+
+        (,,, uint256 bond,,,,) = registry.relayers(relayer1);
+        // 0.9 (register) + 0.9 (addBond), both measured as received.
+        assertEq(bond, 1.8 ether);
+        assertEq(fton.balanceOf(address(registry)), 1.8 ether);
+    }
+
+    function test_exit_never_overpays_with_fee_on_transfer() public {
+        vm.startPrank(relayer1);
+        fton.approve(address(registry), 1 ether);
+        registry.register("http://relay1.com", "Relayer-1", 30, 1 ether);
+        registry.requestExit();
+        vm.warp(block.timestamp + 7 days + 1);
+        registry.executeExit();
+        vm.stopPrank();
+
+        // Recorded bond (0.9) was pushed out in full; the registry holds nothing
+        // left over and never paid out more than it received.
+        assertEq(fton.balanceOf(address(registry)), 0);
+        (,,, uint256 bond,,, bool active,) = registry.relayers(relayer1);
+        assertEq(bond, 0);
+        assertFalse(active);
+    }
+
+    function test_register_minBond_uses_measured_delta() public {
+        // minBond is enforced against the RECEIVED amount: 1 ether sent → 0.9
+        // received < 0.95 minBond → InsufficientBond.
+        registry.setMinBond(0.95 ether);
+        vm.startPrank(relayer1);
+        fton.approve(address(registry), 1 ether);
+        vm.expectRevert(RelayerRegistry.InsufficientBond.selector);
+        registry.register("http://relay1.com", "Relayer-1", 30, 1 ether);
+        vm.stopPrank();
     }
 }

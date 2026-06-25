@@ -15,6 +15,10 @@ export const RELAYER_REGISTRY_ABI = [
   "function minBond() external view returns (uint256)",
   "function identityRegistry() external view returns (address)",
   "function bondToken() external view returns (address)",
+  "function kycApprovalRegistry() external view returns (address)",
+  // True when KYC approval is re-checked continuously at settle time (not just
+  // at register) — a revoked/expired approval then evicts the relayer (audit B-1).
+  "function operationalKycRequired() external view returns (bool)",
   "function exitCooldown() external view returns (uint256)",
   "function DEFAULT_EXIT_COOLDOWN() external view returns (uint256)",
   "function MAX_EXIT_COOLDOWN() external view returns (uint256)",
@@ -33,6 +37,12 @@ export const RELAYER_REGISTRY_ABI = [
   "function setBond(address _bondToken, uint256 _minBond) external",
   // Owner tunes the exit cooldown (seconds), capped at MAX_EXIT_COOLDOWN.
   "function setExitCooldown(uint256 _exitCooldown) external",
+  // Owner wires (or clears, via address(0)) the admin KYC-approval registry that
+  // gates registration. With `operationalKycRequired` on, it also gates settling.
+  "function setKycApprovalRegistry(address _kycApprovalRegistry) external",
+  // Owner opts into continuous KYC enforcement: when on, a later KYC revocation
+  // or expiry drops an already-registered relayer from the operational set.
+  "function setOperationalKycRequired(bool _required) external",
   "function setIdentityRegistry(address _identityRegistry) external",
   "function transferOwnership(address newOwner) external",
   "function acceptOwnership() external",
@@ -41,6 +51,8 @@ export const RELAYER_REGISTRY_ABI = [
   "event MinBondUpdated(uint256 oldMinBond, uint256 newMinBond)",
   "event BondTokenUpdated(address indexed oldToken, address indexed newToken)",
   "event ExitCooldownUpdated(uint256 oldCooldown, uint256 newCooldown)",
+  "event KycApprovalRegistryUpdated(address oldRegistry, address newRegistry)",
+  "event OperationalKycRequirementUpdated(bool enabled)",
   // Emitted by the owner-only `adminRemoveRelayer` — sets the same
   // `exitRequestedAt` cool-down as a self `requestExit`, so the
   // existing exit/executeExit (bond return) path covers it; the event
@@ -61,6 +73,7 @@ export const RELAYER_REGISTRY_ABI = [
   "error BondTransferFailed()",
   "error FeeTooHigh()",
   "error NotVerified()",
+  "error NotKycApproved()",
   "error WrongPaymentMode()",
   "error NotAContract()",
   "error CooldownTooLong()",
