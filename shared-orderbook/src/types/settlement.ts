@@ -193,8 +193,13 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (r.takerRelayer !== undefined && (!isStringField(r.takerRelayer) || !HEX_ADDR.test(r.takerRelayer))) {
     throw new Error("takerRelayer: must be a 0x-prefixed address when provided");
   }
+  // Nullifiers are bytes32 field elements on-chain. Validate the shape (not
+  // just non-empty) so the public, registry-ungated write surface can't be
+  // used to stuff arbitrary-length junk into indexed columns.
   for (const f of ["makerNullifier", "takerNullifier"] as const) {
-    if (!isStringField(r[f])) throw new Error(`${f}: must be a non-empty string`);
+    if (!isStringField(r[f]) || !HEX_BYTES32.test(r[f] as string)) {
+      throw new Error(`${f}: must be a 0x-prefixed 32-byte hex string`);
+    }
   }
   for (const f of ["feeMaker", "feeTaker"] as const) {
     if (!isNonNegativeBigInt(r[f])) {
@@ -244,8 +249,12 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     txHash: r.txHash.toLowerCase(),
     blockNumber: r.blockNumber as number,
     makerRelayer: (r.makerRelayer as string).toLowerCase(),
-    makerNullifier: r.makerNullifier as string,
-    takerNullifier: r.takerNullifier as string,
+    // Lowercase like txHash/addresses: maker_nullifier/taker_nullifier are
+    // indexed TEXT columns and the verifier compares against on-chain values
+    // it has already lowercased, so mixed-case here would create duplicate
+    // representations of the same bytes32 and weaken lookups/joins.
+    makerNullifier: (r.makerNullifier as string).toLowerCase(),
+    takerNullifier: (r.takerNullifier as string).toLowerCase(),
     feeMaker: r.feeMaker as string,
     feeTaker: r.feeTaker as string,
     userMaxFeeMaker: r.userMaxFeeMaker as number,

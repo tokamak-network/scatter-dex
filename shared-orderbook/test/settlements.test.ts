@@ -37,8 +37,8 @@ function basePayload(overrides: Partial<SettlementInsert> = {}): SettlementInser
     blockTime: 1700000000,
     makerRelayer: makerW.address,
     takerRelayer: takerW.address,
-    makerNullifier: "1234567890",
-    takerNullifier: "9876543210",
+    makerNullifier: "0x" + "12".repeat(32),
+    takerNullifier: "0x" + "98".repeat(32),
     feeMaker: "100",
     feeTaker: "100",
     userMaxFeeMaker: 30,
@@ -185,6 +185,15 @@ describe("/api/settlements", () => {
     const r = await post(basePayload({ userMaxFeeMaker: 99999 }), makerW);
     expect(r.status).toBe(400);
     expect(r.body.error).toMatch(/userMaxFeeMaker/);
+  });
+
+  it("400 on non-bytes32 nullifier (A-3 — public write surface can't stuff junk)", async () => {
+    const bad = await post(basePayload({ makerNullifier: "1234567890" }), makerW);
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/makerNullifier/);
+    const tooLong = await post(basePayload({ takerNullifier: "0x" + "cd".repeat(48) }), makerW);
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.error).toMatch(/takerNullifier/);
   });
 
   it("normalizes addresses to lowercase on storage", async () => {
