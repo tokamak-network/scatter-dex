@@ -39,7 +39,10 @@ const settlementLog = createLogger("settlement-worker");
 const expiryLog = createLogger("expiry-sweeper");
 const netLog = createLogger("net");
 
-const MAX_ORDERBOOK_SIZE = 10_000;
+// Hard ceiling on the in-memory remote orderbook — passed to
+// RemoteOrderStore so a flood on permissionless /api/p2p/orders can't
+// grow the heap unbounded. Override via env for larger deployments.
+const MAX_ORDERBOOK_SIZE = Number(process.env.MAX_ORDERBOOK_SIZE) || 10_000;
 
 async function main() {
   const db = new PrivateOrderDB();
@@ -130,7 +133,7 @@ async function main() {
   let republishTimer: NodeJS.Timeout | null = null;
 
   if (config.sharedOrderbookUrl && config.relayerPublicUrl) {
-    remoteOrderbook = new RemoteOrderStore();
+    remoteOrderbook = new RemoteOrderStore(MAX_ORDERBOOK_SIZE);
     sharedClient = new SharedOrderbookClient({
       serverUrl: config.sharedOrderbookUrl,
       relayerWallet: submitter.getWallet(),
@@ -434,6 +437,17 @@ async function main() {
     },
   });
 
+  // Peer-to-peer surface limiter. /api/p2p/orders is relayer-signed but
+  // permissionless (any keypair passes, no allow-list), and was mounted
+  // with NO limiter — a flood could exhaust heap/CPU via RemoteOrderStore
+  // inserts and serialize settlement on the trade-offer path. Sized
+  // generously for legit peer order/cancel chatter while capping floods.
+  const p2pLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 120,
+    message: { error: "too many p2p requests" },
+  });
+
   // [R-7] Admin API — fee, pause/resume, drain, balance
   app.use("/api/admin", createAdminRoutes({
     submitter, db,
@@ -485,7 +499,7 @@ async function main() {
   app.use("/metrics", createMetricsRoutes(db));
 
   // P2P routes (relayer-to-relayer communication)
-  app.use("/api/p2p", createP2PRoutes(
+  app.use("/api/p2p", p2pLimiter, createP2PRoutes(
     (order) => {
       remoteOrderbook?.add(order);
       // P2P fallback (when shared-OB server is down): peer relayer POSTs
