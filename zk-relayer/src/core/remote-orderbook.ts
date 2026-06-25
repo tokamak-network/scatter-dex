@@ -34,7 +34,9 @@ export class RemoteOrderStore {
   private readonly maxSize: number;
 
   constructor(maxSize: number = DEFAULT_MAX_SIZE) {
-    this.maxSize = Number.isFinite(maxSize) && maxSize > 0 ? maxSize : DEFAULT_MAX_SIZE;
+    // Require a positive integer — a fractional or non-finite cap would be
+    // a silent misconfiguration for a hard ceiling. Fall back otherwise.
+    this.maxSize = Number.isInteger(maxSize) && maxSize > 0 ? maxSize : DEFAULT_MAX_SIZE;
   }
 
   get size(): number { return this.byId.size; }

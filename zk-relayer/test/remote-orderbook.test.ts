@@ -167,22 +167,27 @@ describe("RemoteOrderStore", () => {
 
     it("reclaims expired rows before refusing, admitting a fresh order", () => {
       vi.useFakeTimers();
-      const now = 1_000_000; // fixed epoch seconds under fake timers
-      vi.setSystemTime(now * 1000);
-      const capped = new RemoteOrderStore(2);
-      // Fill to cap; 'stale' expires 1s out (add() rejects already-expired,
-      // so seed it in the future then advance the clock past it).
-      capped.add(makeRemoteOrder({ id: "stale", expiry: now + 1 }));
-      capped.add(makeRemoteOrder({ id: "live", expiry: now + 3600 }));
-      expect(capped.size).toBe(2);
+      try {
+        const now = 1_000_000; // fixed epoch seconds under fake timers
+        vi.setSystemTime(now * 1000);
+        const capped = new RemoteOrderStore(2);
+        // Fill to cap; 'stale' expires 1s out (add() rejects already-expired,
+        // so seed it in the future then advance the clock past it).
+        capped.add(makeRemoteOrder({ id: "stale", expiry: now + 1 }));
+        capped.add(makeRemoteOrder({ id: "live", expiry: now + 3600 }));
+        expect(capped.size).toBe(2);
 
-      vi.setSystemTime((now + 2) * 1000); // 'stale' now expired
-      // At cap, but add() should purgeExpired (frees 'stale') then admit.
-      capped.add(makeRemoteOrder({ id: "fresh", expiry: now + 3600 }));
-      expect(capped.get("fresh")).toBeDefined();
-      expect(capped.get("stale")).toBeUndefined();
-      expect(capped.size).toBe(2);
-      vi.useRealTimers();
+        vi.setSystemTime((now + 2) * 1000); // 'stale' now expired
+        // At cap, but add() should purgeExpired (frees 'stale') then admit.
+        capped.add(makeRemoteOrder({ id: "fresh", expiry: now + 3600 }));
+        expect(capped.get("fresh")).toBeDefined();
+        expect(capped.get("stale")).toBeUndefined();
+        expect(capped.size).toBe(2);
+      } finally {
+        // Restore real timers even if an assertion throws, so a failure
+        // here can't leave later tests running under fake time.
+        vi.useRealTimers();
+      }
     });
 
     it("non-positive / non-finite maxSize falls back to default (no accidental zero cap)", () => {

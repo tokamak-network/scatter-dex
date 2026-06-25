@@ -42,7 +42,13 @@ const netLog = createLogger("net");
 // Hard ceiling on the in-memory remote orderbook — passed to
 // RemoteOrderStore so a flood on permissionless /api/p2p/orders can't
 // grow the heap unbounded. Override via env for larger deployments.
-const MAX_ORDERBOOK_SIZE = Number(process.env.MAX_ORDERBOOK_SIZE) || 10_000;
+// Parse strictly: only a positive integer overrides the default, so a
+// malformed env (e.g. "5000.5", "abc") falls back rather than setting a
+// fractional/NaN ceiling.
+const MAX_ORDERBOOK_SIZE = ((): number => {
+  const n = Number(process.env.MAX_ORDERBOOK_SIZE);
+  return Number.isInteger(n) && n > 0 ? n : 10_000;
+})();
 
 async function main() {
   const db = new PrivateOrderDB();
@@ -442,6 +448,14 @@ async function main() {
   // with NO limiter — a flood could exhaust heap/CPU via RemoteOrderStore
   // inserts and serialize settlement on the trade-offer path. Sized
   // generously for legit peer order/cancel chatter while capping floods.
+  //
+  // NOTE (deployment): like the existing write/read limiters, this keys on
+  // `req.ip`. Behind a reverse proxy (nginx / LB / Cloudflare) every
+  // request shares the proxy IP unless Express `trust proxy` is set to the
+  // exact hop count. We deliberately do NOT set `trust proxy` here — a
+  // wrong value lets clients spoof `X-Forwarded-For` to bypass *every*
+  // limiter, so it must be configured per real deployment topology. Tracked
+  // as a separate infra follow-up (applies to all limiters, pre-existing).
   const p2pLimiter = rateLimit({
     windowMs: 60_000,
     max: 120,
