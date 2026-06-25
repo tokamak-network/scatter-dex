@@ -807,9 +807,17 @@ export class OrderbookDB {
    * rows so the prune evicts genuine history instead. `created_at` can't be
    * forged by the client, so oldest-inserted is what ages out. Returns the
    * number of rows deleted.
+   *
+   * The cap is GLOBAL, not per-chain: this is a disk-DoS backstop, so it
+   * bounds total rows regardless of chain_id. The default (200k) sits well
+   * above real multi-chain volume, but in principle heavy spam on one chain
+   * could age out another chain's oldest history. A per-chain cap is a
+   * deliberate follow-up if cross-chain isolation ever matters.
    */
   pruneSettlements(maxRows: number): number {
-    if (!Number.isFinite(maxRows) || maxRows <= 0) return 0;
+    // `< 1` (not `<= 0`) also rejects fractional caps, which would otherwise
+    // flow into the LIMIT as a non-integer.
+    if (!Number.isFinite(maxRows) || maxRows < 1) return 0;
     const { c } = this.db.prepare(`SELECT COUNT(*) AS c FROM settlements`).get() as { c: number };
     if (c <= maxRows) return 0;
     // Delete by rowid (internal row pointer) rather than the text tx_hash

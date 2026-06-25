@@ -139,9 +139,16 @@ async function main() {
   // sweeps: pruning is bulk DELETE work and the writeLimiter already bounds
   // how fast the table can grow between passes.
   const settlementPruneInterval = setInterval(() => {
-    const removed = db.pruneSettlements(config.maxSettlements);
-    if (removed > 0) {
-      console.log(`Pruned ${removed} settlement rows over cap (${config.maxSettlements})`);
+    // pruneSettlements is synchronous (better-sqlite3), but guard the tick so a
+    // transient DB error (e.g. locked file) logs and the interval keeps firing
+    // instead of throwing out of the timer callback.
+    try {
+      const removed = db.pruneSettlements(config.maxSettlements);
+      if (removed > 0) {
+        console.log(`Pruned ${removed} settlement rows over cap (${config.maxSettlements})`);
+      }
+    } catch (err) {
+      console.error("Failed to prune settlements:", err);
     }
   }, 300_000);
 

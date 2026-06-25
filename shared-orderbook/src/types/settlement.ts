@@ -249,8 +249,12 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     txHash: r.txHash.toLowerCase(),
     blockNumber: r.blockNumber as number,
     makerRelayer: (r.makerRelayer as string).toLowerCase(),
-    makerNullifier: r.makerNullifier as string,
-    takerNullifier: r.takerNullifier as string,
+    // Lowercase like txHash/addresses: maker_nullifier/taker_nullifier are
+    // indexed TEXT columns and the verifier compares against on-chain values
+    // it has already lowercased, so mixed-case here would create duplicate
+    // representations of the same bytes32 and weaken lookups/joins.
+    makerNullifier: (r.makerNullifier as string).toLowerCase(),
+    takerNullifier: (r.takerNullifier as string).toLowerCase(),
     feeMaker: r.feeMaker as string,
     feeTaker: r.feeTaker as string,
     userMaxFeeMaker: r.userMaxFeeMaker as number,
