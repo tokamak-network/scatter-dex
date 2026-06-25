@@ -31,6 +31,8 @@ contract BatchAuthorizeVerifierRealTest is Test {
     // Regular per-tier verifiers deployed on Sepolia (deployments/11155111.json).
     address constant SEPOLIA_AUTH_64 = 0x3186864eE4952D2fdd2889CEd675794D762B8226;
     address constant SEPOLIA_AUTH_128 = 0xFC955Bd5Dc10aa3216b44445e8B839Eb2abCd2d4;
+    // BN254 base field modulus.
+    uint256 constant Q_MOD = 21888242871839275222246405745257275088696311157297823662689037894645226208583;
 
     function _parse(string memory json, string memory key) internal pure returns (Proof memory p) {
         uint256[] memory pA = vm.parseJsonUintArray(json, string.concat(key, ".pA"));
@@ -80,6 +82,16 @@ contract BatchAuthorizeVerifierRealTest is Test {
         (Proof memory p1, Proof memory p2) = _loadBoth("batch_authorize_128.json");
         p2.pA[0] ^= 1; // corrupt proof-2's A point
         assertFalse(_verifyBatch(new BatchAuthorizeVerifier128(), p1, p2), "corrupted A must fail");
+    }
+
+    /// @dev Regression for the pA1.y malleability fix: a valid proof whose A.y
+    ///      is shifted by +q_mod (same point mod q) must be rejected by the
+    ///      explicit `pA1.y < q_mod` guard. Without the guard this aliased
+    ///      encoding would verify identically to the original.
+    function test_batch64_malleableA1y_rejects() public {
+        (Proof memory p1, Proof memory p2) = _loadBoth("batch_authorize_64.json");
+        p1.pA[1] = p1.pA[1] + Q_MOD; // < 2^256 (coord < q ≈ 2^254), so no overflow
+        assertFalse(_verifyBatch(new BatchAuthorizeVerifier64(), p1, p2), "A1.y >= q_mod must be rejected");
     }
 
     // ── Sepolia-fork oracle: the batch vkey matches the LIVE regular verifier ──
