@@ -63,6 +63,7 @@ describe("audit log wiring (KYC → /api/admin/audit)", () => {
   let server: http.Server;
   let db: OrderbookDB;
   let port: number;
+  let origKycRequireWalletSig: boolean;
 
   function submitForm(wallet: string) {
     const form = new FormData();
@@ -91,6 +92,8 @@ describe("audit log wiring (KYC → /api/admin/audit)", () => {
     // entry); the KYC submit here is just setup. The wallet-ownership gate
     // (A-6) is covered by kyc.test.ts, and these tests use fixture addresses
     // with no signing key, so opt the gate off for the setup submits.
+    // Capture the original so afterAll restores it exactly (no assume-true).
+    origKycRequireWalletSig = config.kycRequireWalletSig;
     config.kycRequireWalletSig = false;
     db = new OrderbookDB(TEST_DB);
     const siwe = makeAdminSiweFromAllowlist([adminWallet.address])!;
@@ -105,7 +108,7 @@ describe("audit log wiring (KYC → /api/admin/audit)", () => {
     port = typeof addr === "object" && addr ? addr.port : 0;
   });
   afterAll(async () => {
-    config.kycRequireWalletSig = true; // restore default; don't leak to other suites
+    config.kycRequireWalletSig = origKycRequireWalletSig; // restore captured; don't leak to other suites
     await new Promise<void>((resolve) => server.close(() => resolve()));
     db.close();
     cleanDb();
