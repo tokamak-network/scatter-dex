@@ -34,11 +34,13 @@ Legend: [x] = implemented in scenarios.test.ts, [ ] = requires integration/on-ch
 3. Relayer cancels order → "cancelled"
 4. Shared orderbook also cancels
 
-### [ ] U5: Same-Token Scatter (ScatterDirect)
+### [ ] U5: Same-Token Scatter (scatterDirectAuth)
 1. User deposits WETH
 2. User creates scatter order (sellToken == buyToken)
-3. Relayer settles via withdraw circuit (no counterparty needed)
+3. Relayer settles via `scatterDirectAuth` (authorize proof, no counterparty needed)
 4. Recipients receive tokens via claims
+
+> Note: the legacy withdraw-circuit `scatterDirect` was removed (#1094, 2026-06-25); same-token scatter now goes through the proof-bound `scatterDirectAuth`.
 
 ### [ ] U6: Claim After Cross-Relayer Settlement
 1. Cross-relayer settlement completes (U2)
