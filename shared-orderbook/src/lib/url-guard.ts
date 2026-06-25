@@ -33,6 +33,13 @@ import net from "net";
  * lookups is acceptable for the trust model (semi-trusted peer
  * relayers, not internet-wide attackers).
  *
+ * Redirect bypass: this guard only vets the URL it is handed, so a peer
+ * that registers a benign public host could still 30x-redirect the
+ * outbound request to a private IP / metadata endpoint. The guard alone
+ * cannot see that — callers MUST pass `redirect: "error"` to `fetch`
+ * (peer endpoints are machine-to-machine JSON APIs that never
+ * legitimately redirect).
+ *
  * Dev escape hatch: `scripts/dev.sh` sets
  * `ALLOW_PRIVATE_RELAYER_URLS=1` so local stacks can register
  * `http://localhost:3002` style URLs. The flag MUST stay unset in

@@ -636,6 +636,12 @@ export class SharedOrderbookClient {
           method: "POST",
           headers,
           body,
+          // `redirect: "error"` closes the SSRF redirect bypass: the guard
+          // above only vets the initial URL, so a peer that registered a
+          // public host could 30x-redirect to a private IP / metadata
+          // endpoint. Peer endpoints are machine-to-machine JSON APIs that
+          // never legitimately redirect, so any redirect is fatal.
+          redirect: "error",
           signal: AbortSignal.timeout(5000),
         });
       } catch (e) {
@@ -657,6 +663,9 @@ export class SharedOrderbookClient {
         await fetch(`${peer.url}/api/p2p/orders/${orderId}`, {
           method: "DELETE",
           headers,
+          // See postOrderToPeers — block redirects so the SSRF guard can't
+          // be bypassed by a 30x to a private/metadata target.
+          redirect: "error",
           signal: AbortSignal.timeout(5000),
         });
       } catch (e) {

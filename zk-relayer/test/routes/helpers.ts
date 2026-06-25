@@ -6,7 +6,15 @@ import type { PrivateOrderDB } from "../../src/core/db.js";
 
 export function mountRouter(basePath: string, router: Router): Express {
   const app = express();
-  app.use(express.json());
+  // Capture raw bytes so body-hash-bound relayer auth can verify them,
+  // mirroring the production `express.json({ verify })` in `index.ts`.
+  app.use(
+    express.json({
+      verify: (req, _res, buf) => {
+        (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(basePath, router);
   return app;
 }

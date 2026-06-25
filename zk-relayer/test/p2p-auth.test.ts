@@ -2,7 +2,8 @@
  * Coverage for the peer-relayer auth wiring on
  * `zk-relayer/src/routes/p2p.ts`. Mirrors the shared-orderbook
  * `relayerAuth` middleware tests — same body-hash binding, same
- * REQUIRE_BODY_HASH=1 fail-closed mode — applied to the P2P
+ * fail-closed-by-default legacy handling (opt back in with
+ * `ALLOW_LEGACY_RELAYER_SIG=1`) — applied to the P2P
  * `POST /api/p2p/orders` accept path.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -66,9 +67,10 @@ describe("p2p verifyRelayerAuth: body-hash binding", () => {
 
   beforeEach(() => {
     server = startApp();
-    delete process.env.REQUIRE_BODY_HASH;
+    delete process.env.ALLOW_LEGACY_RELAYER_SIG;
   });
   afterEach(async () => {
+    delete process.env.ALLOW_LEGACY_RELAYER_SIG;
     await new Promise<void>((r) => server.close(() => r()));
   });
 
@@ -107,7 +109,24 @@ describe("p2p verifyRelayerAuth: body-hash binding", () => {
     expect(status).toBe(401);
   });
 
-  it("accepts the legacy (no-body-hash) signature and warns", async () => {
+  it("rejects the legacy (no-body-hash) signature by default", async () => {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const url = `http://localhost:${PORT}`;
+    const body = sampleOrder(wallet.address);
+    const message = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:POST:/api/p2p/orders:${url}`;
+    const signature = await wallet.signMessage(message);
+
+    const status = await postOrder(body, {
+      "x-relayer-address": wallet.address,
+      "x-relayer-signature": signature,
+      "x-relayer-timestamp": ts,
+      "x-relayer-url": url,
+    });
+    expect(status).toBe(401);
+  });
+
+  it("accepts the legacy signature only with ALLOW_LEGACY_RELAYER_SIG=1 and warns", async () => {
+    process.env.ALLOW_LEGACY_RELAYER_SIG = "1";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const ts = Math.floor(Date.now() / 1000).toString();
     const url = `http://localhost:${PORT}`;
@@ -124,23 +143,6 @@ describe("p2p verifyRelayerAuth: body-hash binding", () => {
     expect(status).toBe(200);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("[deprecated-body-hash]"));
     warn.mockRestore();
-  });
-
-  it("REQUIRE_BODY_HASH=1 disables the legacy fallback", async () => {
-    process.env.REQUIRE_BODY_HASH = "1";
-    const ts = Math.floor(Date.now() / 1000).toString();
-    const url = `http://localhost:${PORT}`;
-    const body = sampleOrder(wallet.address);
-    const message = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:POST:/api/p2p/orders:${url}`;
-    const signature = await wallet.signMessage(message);
-
-    const status = await postOrder(body, {
-      "x-relayer-address": wallet.address,
-      "x-relayer-signature": signature,
-      "x-relayer-timestamp": ts,
-      "x-relayer-url": url,
-    });
-    expect(status).toBe(401);
   });
 
   it("rejects when required headers are missing", async () => {

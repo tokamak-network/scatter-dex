@@ -19,15 +19,16 @@ import { eqAddr } from "../lib/address.js";
  *     `req.rawBody` (populated by the `express.json({ verify })`
  *     hook in `index.ts`).
  *
- * Legacy message format (still accepted for one release):
+ * Legacy message format (fail-closed by default, off):
  *   "zkScatter-relay:{address}:{timestamp}:{METHOD}:{path}:{url}"
  *
- *   The middleware tries the body-bound message first and falls back
- *   to the legacy form so a server upgraded ahead of its clients
- *   doesn't break them. Operators should set `REQUIRE_BODY_HASH=1`
- *   once every peer relayer is on the new SDK to disable the
- *   fallback. A `[deprecated-body-hash]` warning logs whenever the
- *   fallback is used.
+ *   The body-binding transition release (PR #693, 2026-05) is over, so
+ *   the legacy non-body-bound form is now REJECTED by default. Accepting
+ *   it reopens a replay-modify window: an attacker who captures a legacy
+ *   signature can swap the body and resend within the 5-minute freshness
+ *   window. Operators who still run un-upgraded peers can re-enable the
+ *   fallback with `ALLOW_LEGACY_RELAYER_SIG=1` (a `[deprecated-body-hash]`
+ *   warning logs on every use); leave it unset in production.
  *
  * Headers (all required, except `x-relayer-url` which is required
  * for write endpoints only):
@@ -70,7 +71,9 @@ export function relayerAuth(req: Request, res: Response, next: NextFunction): vo
   const bodyHash = bodyHashOf(rawBody);
 
   const messageWithBody = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}:${bodyHash}`;
-  const requireBodyHash = process.env.REQUIRE_BODY_HASH === "1";
+  // Fail-closed by default — the body-binding transition is complete.
+  // Only an explicit opt-out re-enables the un-bound legacy signature.
+  const allowLegacy = process.env.ALLOW_LEGACY_RELAYER_SIG === "1";
 
   let recovered: string | null = null;
   try {
@@ -84,14 +87,14 @@ export function relayerAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
 
-  // Fall back to legacy (no body hash) — one-release transition.
-  if (!requireBodyHash) {
+  // Fall back to legacy (no body hash) only when explicitly opted in.
+  if (allowLegacy) {
     const messageLegacy = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
     try {
       const legacyRecovered = verifyMessage(messageLegacy, signature);
       if (eqAddr(legacyRecovered, address)) {
         console.warn(
-          `[deprecated-body-hash] ${address} signed ${method} ${path} without body binding; upgrade client. Set REQUIRE_BODY_HASH=1 to reject after rollout.`,
+          `[deprecated-body-hash] ${address} signed ${method} ${path} without body binding; upgrade client. Unset ALLOW_LEGACY_RELAYER_SIG to reject (default).`,
         );
         accept(req, address);
         next();

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { createHash } from "crypto";
 import request from "supertest";
 import { Wallet } from "ethers";
 import { createP2PRoutes } from "../../src/routes/p2p.js";
@@ -7,10 +8,19 @@ import { mountRouter } from "./helpers.js";
 // Dedicated peer wallet so we can produce valid x-relayer-signature values.
 const peerWallet = new Wallet("0x" + "1".repeat(64));
 
-async function authHeaders(method: string, path: string, relayerUrl = "") {
+const EMPTY_BODY_SHA256 =
+  "0xe3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+// Body-bound auth — must hash the exact bytes supertest serializes
+// (`JSON.stringify(body)`) so the server's rawBody hash matches. The
+// legacy non-body-bound shape is fail-closed by default now.
+async function authHeaders(method: string, path: string, relayerUrl = "", body?: unknown) {
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const address = peerWallet.address;
-  const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method.toUpperCase()}:${path}:${relayerUrl}`;
+  const bodyHash = body === undefined
+    ? EMPTY_BODY_SHA256
+    : "0x" + createHash("sha256").update(JSON.stringify(body)).digest("hex");
+  const message = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method.toUpperCase()}:${path}:${relayerUrl}:${bodyHash}`;
   const signature = await peerWallet.signMessage(message);
   return {
     "x-relayer-address": address,
@@ -58,8 +68,8 @@ describe("POST /api/p2p/orders", () => {
 
   it("rejects missing required order fields with 400", async () => {
     const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn()));
-    const headers = await authHeaders("POST", "/api/p2p/orders");
     const { sellToken: _s, ...missingSellToken } = VALID_ORDER;
+    const headers = await authHeaders("POST", "/api/p2p/orders", "", missingSellToken);
     const res = await request(app).post("/api/p2p/orders").set(headers).send(missingSellToken);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/sellToken/);
@@ -67,8 +77,8 @@ describe("POST /api/p2p/orders", () => {
 
   it("rejects order whose relayer does not match peer identity with 403", async () => {
     const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn()));
-    const headers = await authHeaders("POST", "/api/p2p/orders");
     const impostor = { ...VALID_ORDER, relayer: "0x" + "f".repeat(40) };
+    const headers = await authHeaders("POST", "/api/p2p/orders", "", impostor);
     const res = await request(app).post("/api/p2p/orders").set(headers).send(impostor);
     expect(res.status).toBe(403);
   });
@@ -76,7 +86,7 @@ describe("POST /api/p2p/orders", () => {
   it("accepts a valid order and calls onRemoteOrder", async () => {
     const onRemote = vi.fn();
     const app = mountRouter("/api/p2p", createP2PRoutes(onRemote, vi.fn()));
-    const headers = await authHeaders("POST", "/api/p2p/orders");
+    const headers = await authHeaders("POST", "/api/p2p/orders", "", VALID_ORDER);
     const res = await request(app).post("/api/p2p/orders").set(headers).send(VALID_ORDER);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("received");

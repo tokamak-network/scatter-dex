@@ -61,6 +61,11 @@ describe("API integration", () => {
     // headers in production. Tests register against a real localhost
     // server, so flip the dev opt-in for the duration of the suite.
     process.env.ALLOW_PRIVATE_RELAYER_URLS = "1";
+    // This suite signs the legacy (non-body-bound) auth shape and its
+    // harness app omits `express.json({ verify })`, so opt back into the
+    // legacy fallback (fail-closed by default). Body-bound auth is
+    // covered authoritatively by `test/auth.test.ts`.
+    process.env.ALLOW_LEGACY_RELAYER_SIG = "1";
     try { fs.unlinkSync(TEST_DB); } catch {}
     db = new OrderbookDB(TEST_DB);
     orderbook = new SharedOrderbook();
@@ -82,6 +87,7 @@ describe("API integration", () => {
   });
 
   afterAll(async () => {
+    delete process.env.ALLOW_LEGACY_RELAYER_SIG;
     broadcaster.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     db.close();
