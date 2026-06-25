@@ -106,6 +106,9 @@ contract DeploySepolia is Script {
         address authVerifier16;
         address authVerifier64;
         address authVerifier128;
+        address batchAuthVerifier16;
+        address batchAuthVerifier64;
+        address batchAuthVerifier128;
         // Owners / bond token + the full verifier set, for a complete ledger.
         address deployer;
         address treasuryOwner;
@@ -426,6 +429,22 @@ contract DeploySepolia is Script {
         settlement.setClaimVerifier(128, claimVerifier128);
         settlement.setCancelVerifier(cancelVerifier);
         console.log("Authorize(16/64/128) + Claim(64/128) + Cancel verifiers wired");
+
+        // Batched 5-pairing (8→5) authorize verifiers per tier — enables the
+        // same-tier settleAuth gas optimisation. Deployed by artifact (via_ir),
+        // so this script must run under FOUNDRY_PROFILE=batch-verifier (else the
+        // artifacts are absent and vm.getCode reverts). Reversible later via
+        // setBatchAuthorizeVerifier(tier, address(0)).
+        address batchAuth16 = _deployCode("BatchAuthorizeVerifier.sol:BatchAuthorizeVerifier");
+        address batchAuth64 = _deployCode("BatchAuthorizeVerifier_64.sol:BatchAuthorizeVerifier64");
+        address batchAuth128 = _deployCode("BatchAuthorizeVerifier_128.sol:BatchAuthorizeVerifier128");
+        d.batchAuthVerifier16 = batchAuth16;
+        d.batchAuthVerifier64 = batchAuth64;
+        d.batchAuthVerifier128 = batchAuth128;
+        settlement.setBatchAuthorizeVerifier(16, batchAuth16);
+        settlement.setBatchAuthorizeVerifier(64, batchAuth64);
+        settlement.setBatchAuthorizeVerifier(128, batchAuth128);
+        console.log("BatchAuthorize(16/64/128) verifiers deployed + wired (5-pairing opt)");
     }
 
     function _deployCode(string memory what) internal returns (address addr) {
@@ -511,6 +530,9 @@ contract DeploySepolia is Script {
         vm.serializeAddress(o, "authorizeVerifier16", d.authVerifier16);
         vm.serializeAddress(o, "authorizeVerifier64", d.authVerifier64);
         vm.serializeAddress(o, "authorizeVerifier128", d.authVerifier128);
+        vm.serializeAddress(o, "batchAuthorizeVerifier16", d.batchAuthVerifier16);
+        vm.serializeAddress(o, "batchAuthorizeVerifier64", d.batchAuthVerifier64);
+        vm.serializeAddress(o, "batchAuthorizeVerifier128", d.batchAuthVerifier128);
         vm.serializeAddress(o, "withdrawVerifier", d.withdrawVerifier);
         vm.serializeAddress(o, "depositVerifier", d.depositVerifier);
         vm.serializeAddress(o, "claimVerifier16", d.claimVerifier16);
