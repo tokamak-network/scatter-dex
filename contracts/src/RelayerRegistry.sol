@@ -341,7 +341,12 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         // fee-on-transfer token can't make the recorded bond exceed what landed.
         uint256 balanceBefore = token.balanceOf(address(this));
         token.safeTransferFrom(msg.sender, address(this), bondAmount);
-        return token.balanceOf(address(this)) - balanceBefore;
+        uint256 balanceAfter = token.balanceOf(address(this));
+        // A well-behaved (possibly fee-on-transfer) token can only raise our
+        // balance; a balance that dropped means a hostile/rebasing token mutated
+        // it mid-transfer — fail with a clear error instead of an underflow panic.
+        if (balanceAfter < balanceBefore) revert BondTransferFailed();
+        return balanceAfter - balanceBefore;
     }
 
     /// @dev Push bond back to recipient in their recorded token. Skips no-op
@@ -569,6 +574,12 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      (audit B-1) — so a later revocation/expiry evicts an already-seated relayer —
     ///      the owner opts in via `setOperationalKycRequired(true)`.
     function setKycApprovalRegistry(address _kycApprovalRegistry) external onlyOwner {
+        // A non-zero registry MUST carry contract code: a fat-fingered EOA would
+        // make `register()`'s `isApproved` call revert on ABI-decode (bricking new
+        // registrations) and, with `operationalKycRequired` on, fail-close every
+        // relayer. Guard it exactly like `setBondToken`. `address(0)` stays valid
+        // (the feature-flag "off").
+        if (_kycApprovalRegistry != address(0) && _kycApprovalRegistry.code.length == 0) revert NotAContract();
         emit KycApprovalRegistryUpdated(address(kycApprovalRegistry), _kycApprovalRegistry);
         kycApprovalRegistry = IKycApproval(_kycApprovalRegistry);
     }

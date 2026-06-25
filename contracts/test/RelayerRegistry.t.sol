@@ -415,6 +415,13 @@ contract RelayerRegistryTest is Test {
         registry.setKycApprovalRegistry(address(kycApproval));
     }
 
+    function test_setKycApprovalRegistry_non_contract_reverts() public {
+        // A non-zero EOA would brick register() (and fail-close relayers) — reject
+        // it like setBondToken does. address(0) (gate off) stays allowed.
+        vm.expectRevert(RelayerRegistry.NotAContract.selector);
+        registry.setKycApprovalRegistry(address(0xDEAD)); // EOA, no code
+    }
+
     function test_setKycApprovalRegistry_zero_disables_gate() public {
         // Enable, then clear back to address(0): registration falls back to
         // zk-X509-only. address(0) is a valid input (the feature-flag "off").
