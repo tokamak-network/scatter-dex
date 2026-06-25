@@ -482,6 +482,9 @@ contract DeploySepolia is Script {
         console.log(string.concat("AuthorizeVerifier(16)=", vm.toString(d.authVerifier16)));
         console.log(string.concat("AuthorizeVerifier(64)=", vm.toString(d.authVerifier64)));
         console.log(string.concat("AuthorizeVerifier(128)=", vm.toString(d.authVerifier128)));
+        console.log(string.concat("BatchAuthorizeVerifier(16)=", vm.toString(d.batchAuthVerifier16)));
+        console.log(string.concat("BatchAuthorizeVerifier(64)=", vm.toString(d.batchAuthVerifier64)));
+        console.log(string.concat("BatchAuthorizeVerifier(128)=", vm.toString(d.batchAuthVerifier128)));
         console.log("");
         console.log("POST-DEPLOY (owner = deployer): whitelist real tokens, e.g.");
         console.log("  cast send <POOL> 'setTokenWhitelist(address,bool)' <TOKEN> true ...");
