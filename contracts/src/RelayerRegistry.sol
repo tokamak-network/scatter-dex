@@ -88,8 +88,22 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///         `kycApprovalRegistry`, consuming one `__gap` slot.
     uint256 public exitCooldown;
 
+    /// @notice When true, `_isOperational` ALSO re-checks the wired
+    ///         `kycApprovalRegistry` on every call, so a relayer whose admin KYC
+    ///         approval is later revoked (or expires) stops being operational and
+    ///         can no longer settle — closing the "KYC checked at register, never
+    ///         re-checked" compliance gap (audit B-1).
+    /// @dev Defaults to `false` (the zero value), which preserves the legacy
+    ///      register-time-only gate semantics for existing proxies WITHOUT a
+    ///      reinitializer: enabling the KYC gate via `setKycApprovalRegistry`
+    ///      still never evicts already-seated relayers until the owner opts into
+    ///      continuous enforcement with `setOperationalKycRequired(true)`. A
+    ///      no-op when `kycApprovalRegistry == address(0)` (nothing to check).
+    ///      Appended after `exitCooldown`, consuming one `__gap` slot.
+    bool public operationalKycRequired;
+
     /// @dev Reserved storage for future upgrades. Decrement when new state added.
-    uint256[48] private __gap;
+    uint256[47] private __gap;
 
     // ─── Events ──────────────────────────────────────────────────
     event RelayerRegistered(address indexed relayer, string url, string name, uint256 fee, uint256 bond);
@@ -103,6 +117,7 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     event ExitCooldownUpdated(uint256 oldCooldown, uint256 newCooldown);
     event IdentityRegistryUpdated(address oldRegistry, address newRegistry);
     event KycApprovalRegistryUpdated(address oldRegistry, address newRegistry);
+    event OperationalKycRequirementUpdated(bool enabled);
     /// @param exitAfter Timestamp after which the relayer can `executeExit` to
     ///        recover their bond (the cooldown deadline).
     event RelayerForceRemoved(address indexed relayer, string reason, uint256 exitAfter);
@@ -302,15 +317,15 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      `bondAmount` from caller via `safeTransferFrom` and returns the same value
     ///      (`msg.value` MUST be 0).
     ///
-    ///      INVARIANT — no fee-on-transfer / rebasing bond tokens. The ERC20 path
-    ///      records the *requested* `bondAmount` as the relayer's bond rather than
-    ///      measuring the balance delta, so the recorded bond must equal what the
-    ///      contract actually received. A fee-on-transfer or rebasing `bondToken`
-    ///      would break this (recorded > received), letting a relayer withdraw more
-    ///      on exit than was deposited. The bond token is therefore expected to be a
-    ///      standard ERC20 (e.g. TON). (Unlike `CommitmentPool.deposit`, which
-    ///      defends against fee-on-transfer via a balance-delta check, the bond path
-    ///      relies on this invariant.)
+    ///      FEE-ON-TRANSFER SAFE (audit B-2). The ERC20 path records the *actual*
+    ///      balance delta credited to this contract — measured before/after the
+    ///      `safeTransferFrom` — not the requested `bondAmount`. So a fee-on-transfer
+    ///      or otherwise-deflationary `bondToken` credits a relayer only what the
+    ///      contract truly received, never more, closing the exit-overpayment gap
+    ///      (recorded > received). This mirrors `CommitmentPool.deposit`'s
+    ///      balance-delta defense. A rebasing token can still drift the pooled
+    ///      balance AFTER deposit, so a standard non-rebasing ERC20 (e.g. TON) is
+    ///      still expected, but the deposit itself can no longer over-credit.
     /// @param token The token to pull in — `address(0)` for native. Callers pass the
     ///        global token on register, or the relayer's recorded token on top-up.
     function _pullBond(IERC20 token, uint256 bondAmount) internal returns (uint256) {
@@ -321,10 +336,17 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
         }
         // ERC20 mode
         if (msg.value != 0) revert WrongPaymentMode();
-        if (bondAmount != 0) {
-            token.safeTransferFrom(msg.sender, address(this), bondAmount);
-        }
-        return bondAmount;
+        if (bondAmount == 0) return 0;
+        // Credit the measured balance delta, not the requested amount, so a
+        // fee-on-transfer token can't make the recorded bond exceed what landed.
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(msg.sender, address(this), bondAmount);
+        uint256 balanceAfter = token.balanceOf(address(this));
+        // A well-behaved (possibly fee-on-transfer) token can only raise our
+        // balance; a balance that dropped means a hostile/rebasing token mutated
+        // it mid-transfer — fail with a clear error instead of an underflow panic.
+        if (balanceAfter < balanceBefore) revert BondTransferFailed();
+        return balanceAfter - balanceBefore;
     }
 
     /// @dev Push bond back to recipient in their recorded token. Skips no-op
@@ -361,14 +383,33 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     ///      `identityRegistry.isVerified` reverts (paused / misconfigured /
     ///      upgrade bug) the relayer is treated as non-operational rather than
     ///      bubbling the revert into settle-time gating and bricking settlement.
+    /// @dev When `operationalKycRequired` is set (audit B-1), a wired
+    ///      `kycApprovalRegistry` is ALSO re-checked here on every call — same
+    ///      fail-closed try/catch as identity — so a relayer whose admin KYC
+    ///      approval is revoked or expires stops being operational and can no
+    ///      longer settle. With the flag off (default) or no KYC registry wired,
+    ///      this leg is skipped, preserving the register-time-only gate.
     function _isOperational(address relayer) internal view returns (bool) {
         Relayer storage r = relayers[relayer];
         if (!r.active || r.exitRequestedAt != 0) return false;
         try identityRegistry.isVerified(relayer) returns (bool verified) {
-            return verified;
+            if (!verified) return false;
         } catch {
             return false;
         }
+        // Continuous KYC enforcement (opt-in): only when the owner has both wired
+        // a KYC registry AND turned on operational re-checking. With the flag off
+        // or no registry wired, this leg is skipped (identity-only).
+        if (operationalKycRequired) {
+            IKycApproval _kyc = kycApprovalRegistry;
+            if (address(_kyc) == address(0)) return true;
+            try _kyc.isApproved(relayer) returns (bool approved) {
+                return approved;
+            } catch {
+                return false;
+            }
+        }
+        return true;
     }
 
     function isActiveRelayer(address relayer) external view returns (bool) {
@@ -526,11 +567,34 @@ contract RelayerRegistry is Initializable, Ownable2StepUpgradeable, ReentrancyGu
     /// @param _kycApprovalRegistry The `IssuanceApprovalRegistry` address, or `address(0)`
     ///        to disable the KYC AND gate (registration falls back to zk-X509 only).
     /// @dev Owner-only. Unlike `setIdentityRegistry`, `address(0)` is intentionally allowed —
-    ///      it is the feature-flag "off" value. Takes effect for new `register()` calls only;
-    ///      already-seated relayers are never re-checked, so enabling the gate never evicts
-    ///      existing relayers (mirrors the `setIdentityRegistry` migration semantics).
+    ///      it is the feature-flag "off" value. Takes effect for new `register()` calls
+    ///      immediately. By default already-seated relayers are NOT re-checked, so enabling
+    ///      the gate does not evict existing relayers (mirrors the `setIdentityRegistry`
+    ///      migration semantics). To additionally enforce KYC continuously at settle time
+    ///      (audit B-1) — so a later revocation/expiry evicts an already-seated relayer —
+    ///      the owner opts in via `setOperationalKycRequired(true)`.
     function setKycApprovalRegistry(address _kycApprovalRegistry) external onlyOwner {
+        // A non-zero registry MUST carry contract code: a fat-fingered EOA would
+        // make `register()`'s `isApproved` call revert on ABI-decode (bricking new
+        // registrations) and, with `operationalKycRequired` on, fail-close every
+        // relayer. Guard it exactly like `setBondToken`. `address(0)` stays valid
+        // (the feature-flag "off").
+        if (_kycApprovalRegistry != address(0) && _kycApprovalRegistry.code.length == 0) revert NotAContract();
         emit KycApprovalRegistryUpdated(address(kycApprovalRegistry), _kycApprovalRegistry);
         kycApprovalRegistry = IKycApproval(_kycApprovalRegistry);
+    }
+
+    /// @notice Toggle continuous KYC enforcement: when on, `_isOperational`
+    ///         re-checks the wired `kycApprovalRegistry` on every call so a
+    ///         relayer whose KYC approval is revoked or expires stops settling.
+    /// @dev Owner-only. Closes the audit-B-1 compliance gap (KYC checked only at
+    ///      register, never re-checked). A no-op while `kycApprovalRegistry` is
+    ///      `address(0)` — there is nothing to enforce — so order of `setBondToken`
+    ///      / `setKycApprovalRegistry` / this call doesn't strand relayers. Off by
+    ///      default to preserve the legacy register-time-only gate; turning it on
+    ///      may immediately render existing non-approved relayers non-operational.
+    function setOperationalKycRequired(bool _required) external onlyOwner {
+        emit OperationalKycRequirementUpdated(_required);
+        operationalKycRequired = _required;
     }
 }
