@@ -63,6 +63,14 @@ export const config = {
   // needing full history should archive off-box.
   maxSettlements: envInt("MAX_SETTLEMENTS", "200000"),
 
+  // How many verify passes may fail to match a settlement row to an on-chain
+  // event before it's treated as "verify-impossible" and quarantined out of
+  // the active unverified set (verify-stats alerts + the verifier's re-scan).
+  // Rows are only scanned once they're confirmation-deep (VERIFIER_BLOCK_SAFETY_MARGIN),
+  // so a handful of misses means the tx genuinely never landed — not RPC lag.
+  // Default 5 absorbs transient fetch flakiness before giving up.
+  maxVerifyAttempts: envInt("MAX_VERIFY_ATTEMPTS", "5"),
+
   // Admin endpoints (verify-stats + KYC review). Static bearer token —
   // unset = disabled (the legacy / fallback path). We never default this to
   // a fixed value: an unset env must mean "off" or every default deployment

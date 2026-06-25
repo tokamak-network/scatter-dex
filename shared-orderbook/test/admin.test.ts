@@ -8,6 +8,7 @@ import fs from "fs";
 import http from "http";
 import express from "express";
 import { OrderbookDB } from "../src/core/db.js";
+import { config } from "../src/config.js";
 import { createAdminRoutes } from "../src/routes/admin.js";
 import { makeAdminAuth } from "../src/middleware/admin-auth.js";
 import { VerifyMonitor } from "../src/core/verify-runtime.js";
@@ -120,5 +121,33 @@ describe("/api/admin/verify-stats", () => {
     expect(r.json.oldestUnverifiedBlock).toBe(42);
     expect(r.json.totalPasses).toBe(1);
     expect((r.json.lastPass as { scanned: number }).scanned).toBe(1);
+  });
+
+  it("excludes quarantined rows from the backlog alert (A-5)", async () => {
+    const txHash = "0x" + "a1".repeat(32);
+    db.insertSettlement("0x" + "11".repeat(20), {
+      txHash,
+      blockNumber: 7,
+      makerRelayer: "0x" + "11".repeat(20),
+      takerRelayer: "0x" + "22".repeat(20),
+      makerNullifier: "0x" + "01".repeat(32),
+      takerNullifier: "0x" + "02".repeat(32),
+      feeMaker: "0",
+      feeTaker: "0",
+      userMaxFeeMaker: 30,
+      userMaxFeeTaker: 30,
+    });
+    // Simulate the verifier giving up after maxVerifyAttempts unmatched passes.
+    for (let i = 0; i < config.maxVerifyAttempts; i++) db.recordVerifyFailures([txHash]);
+
+    server = startApp("secret-token", monitor, db);
+    const r = await getStats({ Authorization: "Bearer secret-token" });
+    expect(r.status).toBe(200);
+    // The fake row no longer lights the pending-backlog alert...
+    expect(r.json.hasUnverifiedRows).toBe(false);
+    expect(r.json.unverifiedCount).toBe(0);
+    expect(r.json.oldestUnverifiedBlock).toBe(null);
+    // ...but stays visible to ops as quarantined.
+    expect(r.json.quarantinedCount).toBe(1);
   });
 });

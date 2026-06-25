@@ -146,5 +146,10 @@ export async function runVerifyPass(
   const events = await fetcher(fromBlock, toBlock);
   const report = matchSettlements(rows, events);
   const flipped = db.markSettlementsVerified(report.matched);
+  // Bump the attempt counter on rows we scanned but couldn't confirm. Rows
+  // that keep failing (a fake tx that never lands, a tampered hash) cross
+  // maxVerifyAttempts and quarantine themselves out of the active set, so they
+  // stop being re-scanned every pass and stop pinning verify-stats alerts.
+  db.recordVerifyFailures(report.unmatched.map((u) => u.txHash));
   return { scanned: rows.length, flipped, report };
 }

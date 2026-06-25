@@ -97,11 +97,17 @@ export function createAdminRoutes(deps: AdminDeps): Router {
 
   router.get("/verify-stats", adminAuth, (_req, res) => {
     const monSnap = monitor.snapshot();
+    // unverifiedCount / oldestUnverifiedBlock are the ACTIVE pending set — rows
+    // the verify job gave up on (quarantinedCount) are excluded so a single
+    // fake row can't keep the backlog alert lit forever. quarantinedCount is
+    // surfaced separately so ops still sees tampering/spam.
     const unverifiedCount = db.countUnverifiedSettlements();
+    const quarantinedCount = db.countQuarantinedSettlements();
     const unverifiedSample = unverifiedCount > 0 ? db.listUnverifiedSettlements({ limit: 1 }) : [];
     res.json({
       ...monSnap,
       unverifiedCount,
+      quarantinedCount,
       hasUnverifiedRows: unverifiedCount > 0,
       oldestUnverifiedBlock: unverifiedSample[0]?.blockNumber ?? null,
     });
