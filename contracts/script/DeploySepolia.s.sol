@@ -406,6 +406,19 @@ contract DeploySepolia is Script {
         address authorizeVerifier64 = _deployCode("AuthorizeVerifier_64.sol:Groth16Verifier");
         address authorizeVerifier128 = _deployCode("AuthorizeVerifier_128.sol:Groth16Verifier");
         address cancelVerifier = _deployCode("CancelVerifier.sol:Groth16Verifier");
+        // Batched 5-pairing (8→5) authorize verifiers per tier — enables the
+        // same-tier settleAuth gas optimisation (wired below, after settlement).
+        // Deployed by artifact (via_ir), so this script must RUN under
+        // FOUNDRY_PROFILE=batch-verifier (else the artifacts are absent and
+        // vm.getCode reverts). Deployed here, alongside the other verifiers, so
+        // a missing-artifact failure happens BEFORE the pool/settlement proxies
+        // — never leaving a half-deployed system. Reversible later via
+        // setBatchAuthorizeVerifier(tier, address(0)). Written straight to `d`
+        // (storage) rather than locals to keep _deployZkCore under the
+        // non-via-ir stack limit for the default-profile compile.
+        d.batchAuthVerifier16 = _deployCode("BatchAuthorizeVerifier.sol:BatchAuthorizeVerifier");
+        d.batchAuthVerifier64 = _deployCode("BatchAuthorizeVerifier_64.sol:BatchAuthorizeVerifier64");
+        d.batchAuthVerifier128 = _deployCode("BatchAuthorizeVerifier_128.sol:BatchAuthorizeVerifier128");
         d.authVerifier16 = authorizeVerifier;
         d.authVerifier64 = authorizeVerifier64;
         d.authVerifier128 = authorizeVerifier128;
@@ -415,7 +428,7 @@ contract DeploySepolia is Script {
         d.claimVerifier64 = claimVerifier64;
         d.claimVerifier128 = claimVerifier128;
         d.cancelVerifier = cancelVerifier;
-        console.log("Verifiers deployed (withdraw/claim x3/deposit/authorize x3/cancel)");
+        console.log("Verifiers deployed (withdraw/claim x3/deposit/authorize x3/batch-authorize x3/cancel)");
 
         pool = _commitmentPoolProxy(withdrawVerifier, depositVerifier);
         settlement = _privateSettlementProxy(address(pool), claimVerifier, weth);
@@ -430,21 +443,11 @@ contract DeploySepolia is Script {
         settlement.setCancelVerifier(cancelVerifier);
         console.log("Authorize(16/64/128) + Claim(64/128) + Cancel verifiers wired");
 
-        // Batched 5-pairing (8→5) authorize verifiers per tier — enables the
-        // same-tier settleAuth gas optimisation. Deployed by artifact (via_ir),
-        // so this script must run under FOUNDRY_PROFILE=batch-verifier (else the
-        // artifacts are absent and vm.getCode reverts). Reversible later via
-        // setBatchAuthorizeVerifier(tier, address(0)).
-        address batchAuth16 = _deployCode("BatchAuthorizeVerifier.sol:BatchAuthorizeVerifier");
-        address batchAuth64 = _deployCode("BatchAuthorizeVerifier_64.sol:BatchAuthorizeVerifier64");
-        address batchAuth128 = _deployCode("BatchAuthorizeVerifier_128.sol:BatchAuthorizeVerifier128");
-        d.batchAuthVerifier16 = batchAuth16;
-        d.batchAuthVerifier64 = batchAuth64;
-        d.batchAuthVerifier128 = batchAuth128;
-        settlement.setBatchAuthorizeVerifier(16, batchAuth16);
-        settlement.setBatchAuthorizeVerifier(64, batchAuth64);
-        settlement.setBatchAuthorizeVerifier(128, batchAuth128);
-        console.log("BatchAuthorize(16/64/128) verifiers deployed + wired (5-pairing opt)");
+        // Wire the batch verifiers deployed above (enables same-tier 5-pairing).
+        settlement.setBatchAuthorizeVerifier(16, d.batchAuthVerifier16);
+        settlement.setBatchAuthorizeVerifier(64, d.batchAuthVerifier64);
+        settlement.setBatchAuthorizeVerifier(128, d.batchAuthVerifier128);
+        console.log("BatchAuthorize(16/64/128) verifiers wired (5-pairing opt)");
     }
 
     function _deployCode(string memory what) internal returns (address addr) {

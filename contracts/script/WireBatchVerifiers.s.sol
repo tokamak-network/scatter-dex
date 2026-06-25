@@ -32,12 +32,19 @@ contract WireBatchVerifiers is Script {
         require(proxy.code.length != 0, "WireBatchVerifiers: proxy has no code");
         PrivateSettlement settlement = PrivateSettlement(payable(proxy));
 
-        uint256 key = vm.envUint("DEPLOYER_KEY");
+        // Signing: env key (B) if DEPLOYER_KEY is set, else CLI keystore (A) via
+        // `--account` (mirrors DeploySepolia — don't force a raw key in the env).
+        uint256 deployerKey = vm.envOr("DEPLOYER_KEY", uint256(0));
+        address signer = deployerKey != 0 ? vm.addr(deployerKey) : msg.sender;
         // setBatchAuthorizeVerifier is onlyOwner — fail up front if the signer
         // isn't the owner, before paying to deploy three verifiers.
-        require(settlement.owner() == vm.addr(key), "WireBatchVerifiers: signer not owner");
+        require(settlement.owner() == signer, "WireBatchVerifiers: signer not owner");
 
-        vm.startBroadcast(key);
+        if (deployerKey != 0) {
+            vm.startBroadcast(deployerKey);
+        } else {
+            vm.startBroadcast();
+        }
         address v16 = address(new BatchAuthorizeVerifier());
         address v64 = address(new BatchAuthorizeVerifier64());
         address v128 = address(new BatchAuthorizeVerifier128());
