@@ -128,6 +128,10 @@ export interface RunLoopOpts {
   /** Per-pass cap on rows pulled from the DB. Bounds memory + the
    *  `getLogs` window width. */
   limitPerPass: number;
+  /** Per-pass cap on the getLogs block window (blocks). Bounds [fromBlock,
+   *  toBlock] so a stuck low-block row can't stretch the range past an RPC's
+   *  limit and stall the quarantine. Omit for no cap (legacy behaviour). */
+  maxBlockRange?: number;
   /** Provider used to discover `latestBlock` each pass. */
   provider: Pick<AbstractProvider, "getBlockNumber">;
   monitor?: VerifyMonitor;
@@ -163,7 +167,7 @@ export async function runVerifyLoop(
     try {
       const latest = await opts.provider.getBlockNumber();
       const maxBlock = Math.max(0, latest - opts.blockSafetyMargin);
-      const r = await runVerifyPass(db, fetcher, { chainId: opts.chainId, maxBlock, limit: opts.limitPerPass });
+      const r = await runVerifyPass(db, fetcher, { chainId: opts.chainId, maxBlock, limit: opts.limitPerPass, maxBlockRange: opts.maxBlockRange });
 
       const unmatchedByReason: VerifyPassStats["unmatchedByReason"] = {
         "no-event": 0,

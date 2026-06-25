@@ -125,7 +125,8 @@ export type EventFetcher = (fromBlock: number, toBlock: number) => Promise<Settl
 /**
  * Orchestrates one verifier pass:
  *   - pulls unverified rows up to `maxBlock`
- *   - fetches events for the matching block window
+ *   - bounds them to a single `maxBlockRange`-wide window from the oldest row
+ *   - fetches events for that window
  *   - matches and writes the flips back to the DB
  *
  * Returns a report so the caller can log / alert.
@@ -133,7 +134,7 @@ export type EventFetcher = (fromBlock: number, toBlock: number) => Promise<Settl
 export async function runVerifyPass(
   db: OrderbookDB,
   fetcher: EventFetcher,
-  opts: { chainId: number; maxBlock?: number; limit?: number },
+  opts: { chainId: number; maxBlock?: number; limit?: number; maxBlockRange?: number },
 ): Promise<{ scanned: number; flipped: number; report: VerifyReport }> {
   // Scoped to one chain: this pass's fetcher binds a single network's RPC +
   // settlement contract, so it must only pull that network's unverified rows.
@@ -142,9 +143,26 @@ export async function runVerifyPass(
     return { scanned: 0, flipped: 0, report: { matched: [], unmatched: [] } };
   }
   const fromBlock = rows[0]!.blockNumber;
-  const toBlock = rows[rows.length - 1]!.blockNumber;
+  // Bound the fetch window. Without this, one stuck row at a low block (e.g. a
+  // fake blockNumber=0 that never lands) plus a recent legit row stretches
+  // [fromBlock, toBlock] across millions of blocks — most RPC getLogs endpoints
+  // reject that with "block range too large", the fetcher throws, and
+  // recordVerifyFailures below never runs, so the fake row never accrues
+  // attempts and never quarantines (the verifier stalls forever on it). Capping
+  // the window processes the oldest rows first and lets the quarantine make
+  // incremental progress pass over pass.
+  const range = opts.maxBlockRange;
+  const activeRows = typeof range === "number" && range >= 0
+    ? rows.filter((r) => r.blockNumber <= fromBlock + range)
+    : rows;
+  const toBlock = activeRows[activeRows.length - 1]!.blockNumber;
   const events = await fetcher(fromBlock, toBlock);
-  const report = matchSettlements(rows, events);
+  const report = matchSettlements(activeRows, events);
   const flipped = db.markSettlementsVerified(report.matched);
-  return { scanned: rows.length, flipped, report };
+  // Bump the attempt counter on rows we scanned but couldn't confirm. Rows
+  // that keep failing (a fake tx that never lands, a tampered hash) cross
+  // maxVerifyAttempts and quarantine themselves out of the active set, so they
+  // stop being re-scanned every pass and stop pinning verify-stats alerts.
+  db.recordVerifyFailures(report.unmatched.map((u) => u.txHash));
+  return { scanned: activeRows.length, flipped, report };
 }

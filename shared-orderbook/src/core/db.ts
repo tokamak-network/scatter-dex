@@ -154,6 +154,14 @@ export class OrderbookDB {
         user_maxfee_maker  INTEGER NOT NULL,
         user_maxfee_taker  INTEGER NOT NULL,
         verified           INTEGER NOT NULL DEFAULT 0,
+        -- Count of verify passes that looked at this row and could NOT match
+        -- it to an on-chain PrivateSettledAuth event (no-event / tx-mismatch /
+        -- relayer-mismatch). Once it reaches MAX_VERIFY_ATTEMPTS the row is
+        -- "verify-impossible" — quarantined from the active unverified set so a
+        -- single fake row (e.g. blockNumber=0 that never lands on-chain) can't
+        -- pin verify-stats alerts or get re-scanned forever. Stays 0 for
+        -- verified rows and for rows not yet reached by a pass.
+        verify_attempts    INTEGER NOT NULL DEFAULT 0,
         type               TEXT,
         created_at         INTEGER NOT NULL
       );
@@ -179,6 +187,11 @@ export class OrderbookDB {
       -- table on every prune. SQLite appends the rowid as the implicit
       -- trailing key, so ORDER BY created_at, rowid is fully index-served.
       CREATE INDEX IF NOT EXISTS idx_settle_created ON settlements(created_at);
+
+      -- NB: idx_settle_verify (verified, verify_attempts) is created AFTER the
+      -- verify_attempts ALTER below, not here — on a pre-A-5 DB the column
+      -- doesn't exist yet at this point, and creating the index here would
+      -- error and block startup before the migration could add it.
 
       -- Expression index so "since" filters on COALESCE(block_time,
       -- created_at) >= ? (used by listSettlements, getNetworkSettlementTotals,
@@ -284,6 +297,20 @@ export class OrderbookDB {
     if (!columns.some((c) => c.name === "type")) {
       this.db.exec("ALTER TABLE settlements ADD COLUMN type TEXT");
     }
+    // Same lightweight ALTER for the A-5 verify-attempts quarantine counter on
+    // settlements tables that pre-date it. Existing rows default to 0, so a
+    // backlog of genuinely-pending rows is unaffected; only rows a verify pass
+    // repeatedly fails to match accrue attempts.
+    if (!columns.some((c) => c.name === "verify_attempts")) {
+      this.db.exec("ALTER TABLE settlements ADD COLUMN verify_attempts INTEGER NOT NULL DEFAULT 0");
+    }
+    // Created here (not in the CREATE TABLE exec block) so it runs only after
+    // verify_attempts is guaranteed to exist — on a pre-A-5 DB the column is
+    // added by the ALTER just above, and on a fresh DB it's already in the
+    // table definition. Either way the index references a present column.
+    // Serves the A-5 quarantine predicate (verified=0 AND verify_attempts
+    // </>= ?) used by verify-stats counts and the verifier's per-pass scan.
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_settle_verify ON settlements(verified, verify_attempts)");
   }
 
   private prepareStatements(): void {
@@ -839,31 +866,55 @@ export class OrderbookDB {
   }
 
   /**
-   * Count of rows still marked verified=0. Cheap scalar — uses the
-   * partial index implicit in SQLite's `COUNT(*)` over a `WHERE`. The
-   * `/api/admin/verify-stats` endpoint reports this so an operator can
-   * alert on "unverified backlog grew past N" without paying for a
-   * full list scan.
+   * Count of rows in the ACTIVE unverified set: verified=0 AND still within
+   * the verify-attempt budget. Rows that a verify pass has repeatedly failed
+   * to match (verify_attempts >= maxVerifyAttempts) are "verify-impossible"
+   * and excluded here so the `/api/admin/verify-stats` alert ("backlog grew
+   * past N") reflects genuinely-pending work, not a permanently-stuck fake
+   * row. Cheap scalar — `COUNT(*)` over a `WHERE`. See
+   * countQuarantinedSettlements for the excluded tail.
    */
   countUnverifiedSettlements(): number {
-    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM settlements WHERE verified = 0`).get() as { c: number };
+    return this.countUnverifiedByAttempts("<");
+  }
+
+  /**
+   * Count of quarantined rows: verified=0 but the verify job gave up on them
+   * (verify_attempts >= maxVerifyAttempts) — no on-chain event ever matched.
+   * Surfaced separately in verify-stats so an operator keeps visibility into
+   * tampering/spam without those rows triggering the pending-backlog alert.
+   */
+  countQuarantinedSettlements(): number {
+    return this.countUnverifiedByAttempts(">=");
+  }
+
+  /** Shared scalar count of verified=0 rows split by the verify-attempt budget.
+   *  `<` → active pending, `>=` → quarantined; the two callers are exact
+   *  complements over the unverified set. */
+  private countUnverifiedByAttempts(op: "<" | ">="): number {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS c FROM settlements WHERE verified = 0 AND verify_attempts ${op} ?`,
+    ).get(config.maxVerifyAttempts) as { c: number };
     return row.c;
   }
 
   /**
-   * Phase 2.5b verify job: pull rows still marked verified=0, optionally
-   * older than `maxBlock` (so an in-flight chain tail isn't re-checked
-   * on every pass). Ordered by block_number ASC so the job processes
-   * the oldest unverified rows first — verified=0 rows can pile up
-   * during a chain re-org without starving the queue.
+   * Phase 2.5b verify job: pull rows in the ACTIVE unverified set (verified=0
+   * AND verify_attempts < maxVerifyAttempts), optionally older than `maxBlock`
+   * (so an in-flight chain tail isn't re-checked on every pass). Ordered by
+   * block_number ASC so the job processes the oldest unverified rows first —
+   * verified=0 rows can pile up during a chain re-org without starving the
+   * queue. Quarantined rows (over the attempt budget — no event ever matched)
+   * are excluded so a permanently-stuck fake row can't consume a scan slot
+   * every pass and starve genuinely-pending rows.
    */
   listUnverifiedSettlements(opts: { chainId?: number; maxBlock?: number; limit?: number } = {}): StoredSettlement[] {
     // Scoped to one chain when chainId is given — each verifier loop owns a
     // single network's RPC + settlement contract and must not pick up another
     // chain's rows. Omitting chainId (e.g. the admin verify-stats sample)
     // scans across all networks.
-    const where: string[] = ["verified = 0"];
-    const params: unknown[] = [];
+    const where: string[] = ["verified = 0", "verify_attempts < ?"];
+    const params: unknown[] = [config.maxVerifyAttempts];
     if (typeof opts.chainId === "number") {
       where.push("chain_id = ?");
       params.push(opts.chainId);
@@ -909,6 +960,29 @@ export class OrderbookDB {
     });
     txn();
     return flipped;
+  }
+
+  /**
+   * Record that a verify pass looked at these rows and could NOT match them to
+   * an on-chain event (no-event / tx-mismatch / relayer-mismatch). Increments
+   * `verify_attempts`; once it crosses `maxVerifyAttempts` the row drops out of
+   * the active unverified set (listUnverifiedSettlements / countUnverified) so
+   * it stops being re-scanned and stops pinning verify-stats alerts. Guarded on
+   * `verified = 0` so a row verified by the same pass (it can't be both, but
+   * belt-and-suspenders against future reordering) is never bumped. Single
+   * transaction. Returns the number of rows whose counter advanced.
+   */
+  recordVerifyFailures(txHashes: string[]): number {
+    if (txHashes.length === 0) return 0;
+    const stmt = this.db.prepare(
+      `UPDATE settlements SET verify_attempts = verify_attempts + 1 WHERE tx_hash = ? AND verified = 0`,
+    );
+    let bumped = 0;
+    const txn = this.db.transaction(() => {
+      for (const h of txHashes) bumped += stmt.run(h.toLowerCase()).changes;
+    });
+    txn();
+    return bumped;
   }
 
   /**

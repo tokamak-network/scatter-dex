@@ -221,6 +221,26 @@ describe("OrderbookDB", () => {
     expect(match!.settlingRelayer).toBe("0xrelayer1");
   });
 
+  it("migrates a pre-A-5 settlements table (no verify_attempts) without failing on startup", () => {
+    // Simulate a DB created before A-5: drop the column + its index to mimic an
+    // existing deployment, then reopen. createTables must ADD the column and
+    // THEN create idx_settle_verify — if the index were created in the initial
+    // exec block (before the ALTER) the reopen would throw "no such column".
+    const submitter = "0x" + "11".repeat(20);
+    db.insertSettlement(submitter, makeSettlement(1));
+    db.close();
+    const raw = new Database(TEST_DB);
+    raw.exec("DROP INDEX IF EXISTS idx_settle_verify");
+    raw.exec("ALTER TABLE settlements DROP COLUMN verify_attempts");
+    raw.close();
+
+    // Reopen — must not throw, and the verify-attempt paths must work again.
+    db = new OrderbookDB(TEST_DB);
+    expect(() => db.countQuarantinedSettlements()).not.toThrow();
+    expect(db.countUnverifiedSettlements()).toBe(1); // pre-existing row defaulted to attempts=0
+    expect(db.recordVerifyFailures([makeSettlement(1).txHash])).toBe(1);
+  });
+
   describe("pruneSettlements (A-3 DoS cap)", () => {
     const submitter = "0x" + "11".repeat(20);
 

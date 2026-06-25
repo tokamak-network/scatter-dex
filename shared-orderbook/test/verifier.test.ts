@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "fs";
 import { OrderbookDB } from "../src/core/db.js";
+import { config } from "../src/config.js";
 import {
   matchSettlements,
   runVerifyPass,
@@ -216,5 +217,105 @@ describe("runVerifyPass (DB-integrated)", () => {
     const stillOpen = db.listUnverifiedSettlements({ maxBlock: 1000 });
     expect(stillOpen).toHaveLength(1);
     expect(stillOpen[0].blockNumber).toBe(500);
+  });
+});
+
+describe("verify-attempt quarantine (A-5)", () => {
+  let db: OrderbookDB;
+
+  beforeEach(() => {
+    if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
+    db = new OrderbookDB(TEST_DB);
+  });
+  afterEach(() => {
+    db.close();
+    if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
+  });
+
+  const N = config.maxVerifyAttempts;
+
+  it("quarantines a row the verifier repeatedly fails to match (no-event)", async () => {
+    const row = makeRow();
+    db.insertSettlement(row.makerRelayer, row);
+    expect(db.countUnverifiedSettlements()).toBe(1);
+
+    // Every pass returns no event → unmatched → verify_attempts++. After N
+    // passes the row crosses the budget and leaves the active set.
+    for (let i = 0; i < N; i++) {
+      const r = await runVerifyPass(db, async () => [], { chainId: 11155111, maxBlock: 1000 });
+      expect(r.scanned).toBe(1); // still scanned right up to the Nth failure
+      expect(r.report.unmatched[0]?.reason).toBe("no-event");
+    }
+
+    // Now quarantined: dropped from the active unverified set + counters, but
+    // still present (verified stays false) and counted separately.
+    expect(db.countUnverifiedSettlements()).toBe(0);
+    expect(db.countQuarantinedSettlements()).toBe(1);
+    expect(db.listUnverifiedSettlements({ maxBlock: 1000 })).toHaveLength(0);
+    expect(db.getSettlement(row.txHash)?.verified).toBe(false);
+  });
+
+  it("stops re-scanning a quarantined row on subsequent passes", async () => {
+    const row = makeRow();
+    db.insertSettlement(row.makerRelayer, row);
+    for (let i = 0; i < N; i++) {
+      await runVerifyPass(db, async () => [], { chainId: 11155111, maxBlock: 1000 });
+    }
+    // The fake row no longer consumes a scan slot — the pass short-circuits.
+    let calls = 0;
+    const after = await runVerifyPass(
+      db,
+      async () => { calls++; return []; },
+      { chainId: 11155111, maxBlock: 1000 },
+    );
+    expect(after.scanned).toBe(0);
+    expect(calls).toBe(0);
+  });
+
+  it("a transient miss still verifies once the event shows up (no premature quarantine)", async () => {
+    const row = makeRow();
+    db.insertSettlement(row.makerRelayer, row);
+
+    // Fail a few times (below the budget), then the event appears.
+    for (let i = 0; i < N - 1; i++) {
+      await runVerifyPass(db, async () => [], { chainId: 11155111, maxBlock: 1000 });
+    }
+    expect(db.countUnverifiedSettlements()).toBe(1); // still active
+
+    const r = await runVerifyPass(db, async () => [makeEvent()], { chainId: 11155111, maxBlock: 1000 });
+    expect(r.flipped).toBe(1);
+    expect(db.getSettlement(row.txHash)?.verified).toBe(true);
+    expect(db.countQuarantinedSettlements()).toBe(0);
+  });
+
+  it("recordVerifyFailures does not bump an already-verified row", () => {
+    const row = makeRow();
+    db.insertSettlement(row.makerRelayer, row);
+    db.markSettlementsVerified([{ txHash: row.txHash }]);
+    expect(db.recordVerifyFailures([row.txHash])).toBe(0);
+    expect(db.countQuarantinedSettlements()).toBe(0);
+  });
+
+  it("bounds the fetch window to maxBlockRange so a stuck low block can't stall the verifier", async () => {
+    // A fake row at block 0 that never lands, plus a legit recent row far away.
+    db.insertSettlement(makeRow().makerRelayer, makeRow({ txHash: "0x" + "a1".repeat(32), blockNumber: 0 }));
+    db.insertSettlement(makeRow().makerRelayer, makeRow({
+      txHash: "0x" + "a2".repeat(32), blockNumber: 5_000_000,
+      makerNullifier: "0x" + "03".repeat(32), takerNullifier: "0x" + "04".repeat(32),
+    }));
+
+    let seenRange: [number, number] | null = null;
+    const r = await runVerifyPass(
+      db,
+      async (from, to) => { seenRange = [from, to]; return []; },
+      { chainId: 11155111, maxBlock: 9_000_000, limit: 500, maxBlockRange: 5000 },
+    );
+    // Only the block-0 row is in the capped window — the 5M row is deferred,
+    // so the fetcher is never asked for a multi-million-block range.
+    expect(seenRange).toEqual([0, 0]);
+    expect(r.scanned).toBe(1);
+    // The stuck row still accrues an attempt, so it progresses toward quarantine
+    // instead of stalling the whole pass.
+    expect(r.report.unmatched).toHaveLength(1);
   });
 });
