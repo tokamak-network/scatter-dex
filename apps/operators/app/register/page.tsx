@@ -180,9 +180,17 @@ export default function RegisterPage() {
 
   const onKycSubmit = useCallback(async () => {
     if (!account || !SHARED_ORDERBOOK_URL || !kycEmail || !kycVideo || !kycIdDoc) return;
+    if (!signer) { setKycError("Connect a wallet to sign the submission"); setKycPhase("error"); return; }
     setKycError("");
     setKycPhase("submitting");
     try {
+      // Prove wallet ownership: sign `zkScatter-kyc:<wallet-lowercased>:<signedAt>`
+      // and send the proof in headers so the backend rejects an unauthorized
+      // submission before streaming the uploads to disk (shared-orderbook A-6).
+      const walletLc = account.toLowerCase();
+      const signedAt = Math.floor(Date.now() / 1000);
+      const signature = await signer.signMessage(`zkScatter-kyc:${walletLc}:${signedAt}`);
+
       const fd = new FormData();
       fd.append("wallet", account);
       fd.append("email", kycEmail.trim());
@@ -190,6 +198,11 @@ export default function RegisterPage() {
       fd.append("idDoc", kycIdDoc);
       const res = await fetch(`${SHARED_ORDERBOOK_URL}/api/kyc/submit`, {
         method: "POST",
+        headers: {
+          "x-kyc-wallet": walletLc,
+          "x-kyc-signedat": String(signedAt),
+          "x-kyc-signature": signature,
+        },
         body: fd,
       });
       if (!res.ok) throw new Error(`Submit failed (${res.status})`);
@@ -201,7 +214,7 @@ export default function RegisterPage() {
       setKycError(err instanceof Error ? err.message : "Submit failed");
       setKycPhase("error");
     }
-  }, [account, kycEmail, kycVideo, kycIdDoc]);
+  }, [account, signer, kycEmail, kycVideo, kycIdDoc]);
 
   const wrongChain = chainId !== null && chainId !== DEMO_NETWORK.chainId;
   const deployed = isConfiguredAddress(DEMO_NETWORK.contracts.relayerRegistry);

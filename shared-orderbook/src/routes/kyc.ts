@@ -1,12 +1,14 @@
-import { Router, type RequestHandler } from "express";
+import { Router, type Request, type RequestHandler } from "express";
 import { randomUUID } from "crypto";
 import { createReadStream } from "fs";
 import { mkdir, rename, rm, stat } from "fs/promises";
 import path from "path";
 import multer from "multer";
+import { verifyMessage } from "ethers";
 import { config } from "../config.js";
 import type { OrderbookDB } from "../core/db.js";
 import type { AdminAuthedRequest } from "../middleware/admin-auth.js";
+import { eqAddr } from "../lib/address.js";
 import { recordAuditSafe } from "../core/audit.js";
 import {
   isKycStatus,
@@ -21,7 +23,15 @@ import {
  * Relayer operator KYC onboarding.
  *
  * Public surface (Stage 1, PR1-A — consumed by the operators register form):
- *   POST /api/kyc/submit        — multipart: wallet, email + video, idDoc files
+ *   POST /api/kyc/submit        — multipart body: email + video, idDoc files.
+ *                                 Wallet-ownership proof travels in HEADERS so
+ *                                 it's checked before any upload hits disk (A-6):
+ *                                   x-kyc-wallet:    0x… (lowercased)
+ *                                   x-kyc-signedat:  unix seconds
+ *                                   x-kyc-signature: EIP-191 personal_sign over
+ *                                     `zkScatter-kyc:<wallet-lowercased>:<signedAt>`
+ *                                 Gated by KYC_REQUIRE_WALLET_SIG (on by default);
+ *                                 when off, `wallet` is read from the form body.
  *   GET  /api/kyc/status?wallet — { status } | { status: 'none' }
  *
  * Admin review surface (PR2-A — consumed by the admin review UI, PR2-B).
@@ -44,6 +54,33 @@ const HEX_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_EMAIL_LEN = 254;
 const MAX_NOTES_LEN = 2000;
+
+// Wallet-ownership proof on /submit. The caller signs a timestamped,
+// domain-separated message with the wallet's key (EIP-191 personal_sign); the
+// server recovers the signer and asserts it matches `wallet`. The timestamp
+// bounds replay — a leaked signature is only good for KYC_SIG_MAX_AGE_SEC. The
+// expiry window is generous (10 min) because the operator records a liveness
+// video before submitting, so signing-to-POST can lag; the future-skew tolerance
+// is tight (1 min) so a future-dated signature can't widen the replay window.
+const KYC_SIG_MAX_AGE_SEC = 600;
+const KYC_SIG_FUTURE_SKEW_SEC = 60;
+// The proof travels in REQUEST HEADERS (not multipart fields) so it can be
+// checked in a middleware BEFORE multer streams the (up to 25 MB × 2) uploads
+// to disk — otherwise an unsigned attacker could still burn disk/IO on every
+// rejected request. The handler then trusts req.kycWallet over any form field.
+const HDR_WALLET = "x-kyc-wallet";
+const HDR_SIGNATURE = "x-kyc-signature";
+const HDR_SIGNED_AT = "x-kyc-signedat";
+// `walletLc` MUST be the lowercased address — the client has to lowercase it
+// before signing or recovery won't match (verifyMessage hashes the exact bytes).
+const kycOwnershipMessage = (walletLc: string, signedAt: number): string =>
+  `zkScatter-kyc:${walletLc}:${signedAt}`;
+
+interface KycOwnedRequest extends Request {
+  /** Wallet whose ownership the pre-upload middleware proved (lowercased).
+   *  Absent only when KYC_REQUIRE_WALLET_SIG is off. */
+  kycWallet?: string;
+}
 
 // Accepted upload content types, mapped to a canonical on-disk extension.
 // multer's fileFilter rejects anything outside these so the public endpoint
@@ -154,15 +191,61 @@ export function createKycRoutes(
     });
   };
 
-  router.post("/submit", writeLimiter, parseUpload, async (req, res) => {
+  // Verify the wallet-ownership proof carried in request HEADERS *before*
+  // parseUpload runs multer — a failed proof rejects here, so the (up to
+  // 25 MB × 2) uploads are never streamed to disk. Without this an unsigned
+  // attacker could still exhaust disk/IO on every rejected request. Stashes the
+  // proven wallet on req.kycWallet for the handler. Disabled (transition
+  // window) → no-op, and the handler falls back to the form `wallet` field.
+  const verifyKycOwnership: RequestHandler = (req, res, next) => {
+    if (!config.kycRequireWalletSig) { next(); return; }
+    const hdr = (name: string): string => {
+      const v = req.headers[name];
+      return (typeof v === "string" ? v : "").trim();
+    };
+    const wallet = hdr(HDR_WALLET);
+    if (!HEX_ADDR_RE.test(wallet)) {
+      res.status(400).json({ error: `${HDR_WALLET}: must be a 0x-prefixed address` });
+      return;
+    }
+    const signature = hdr(HDR_SIGNATURE);
+    const signedAt = Number(req.headers[HDR_SIGNED_AT]);
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Expiry (10 min in the past) and future-skew (1 min ahead) are separate so
+    // a future-dated signedAt can't widen the replay window past the expiry.
+    const expired = !Number.isFinite(signedAt) || nowSec - signedAt > KYC_SIG_MAX_AGE_SEC;
+    const futureSkewed = signedAt - nowSec > KYC_SIG_FUTURE_SKEW_SEC;
+    if (!signature || expired || futureSkewed) {
+      res.status(401).json({ error: "wallet ownership proof required: fresh signature over signedAt" });
+      return;
+    }
+    let recovered: string | null = null;
+    try {
+      recovered = verifyMessage(kycOwnershipMessage(wallet.toLowerCase(), signedAt), signature);
+    } catch {
+      recovered = null;
+    }
+    if (!eqAddr(recovered, wallet)) {
+      res.status(401).json({ error: "wallet ownership proof invalid" });
+      return;
+    }
+    (req as KycOwnedRequest).kycWallet = wallet.toLowerCase();
+    next();
+  };
+
+  router.post("/submit", writeLimiter, verifyKycOwnership, parseUpload, async (req, res) => {
     const files = req.files as KycFiles | undefined;
     try {
-      const wallet = typeof req.body.wallet === "string" ? req.body.wallet.trim() : "";
+      // verifyKycOwnership proved this when the gate is on; the form field is a
+      // fallback only for the toggle-off transition window.
+      const wallet = (req as KycOwnedRequest).kycWallet
+        ?? (typeof req.body.wallet === "string" ? req.body.wallet.trim() : "");
       if (!HEX_ADDR_RE.test(wallet)) {
         await discardStaged(files);
         res.status(400).json({ error: "wallet: must be a 0x-prefixed address" });
         return;
       }
+
       const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
       if (!email || email.length > MAX_EMAIL_LEN || !EMAIL_RE.test(email)) {
         await discardStaged(files);

@@ -4,6 +4,7 @@ import express from "express";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { Wallet } from "ethers";
 import { OrderbookDB } from "../src/core/db.js";
 import { createKycRoutes } from "../src/routes/kyc.js";
 import { makeAdminAuth } from "../src/middleware/admin-auth.js";
@@ -14,8 +15,42 @@ const TEST_DB = "/tmp/shared-orderbook-kyc-test.db";
 const UPLOAD_DIR = path.join(os.tmpdir(), "kyc-test-uploads");
 const ADMIN_TOKEN = "test-admin-token";
 
-const WALLET_A = "0x" + "a".repeat(40);
-const WALLET_B = "0x" + "b".repeat(40);
+// Real keypairs so /submit's EIP-191 wallet-ownership proof (A-6) can be
+// produced; the wallet addresses double as the DB-layer test fixtures.
+const SIGNER_A = new Wallet("0x" + "11".repeat(32));
+const SIGNER_B = new Wallet("0x" + "22".repeat(32));
+const WALLET_A = SIGNER_A.address;
+const WALLET_B = SIGNER_B.address;
+const SIGNER_BY_WALLET: Record<string, Wallet> = {
+  [WALLET_A.toLowerCase()]: SIGNER_A,
+  [WALLET_B.toLowerCase()]: SIGNER_B,
+};
+
+/** Fresh keypair registered so submitForm can sign for it — for tests that
+ *  just need a distinct submittable wallet (the admin-review cases). */
+function newSigner(): Wallet {
+  const w = Wallet.createRandom();
+  SIGNER_BY_WALLET[w.address.toLowerCase()] = w;
+  return w;
+}
+
+/** Build the ownership-proof form fields for a wallet, signing with its key
+ *  unless overridden. `omit` skips them entirely; `signer` forges with the
+ *  wrong key; `signedAt`/`signature` override the freshness / sig directly. */
+async function ownershipFields(
+  wallet: string,
+  opts: { omit?: boolean; signer?: Wallet; signedAt?: number; signature?: string } = {},
+): Promise<Record<string, string>> {
+  if (opts.omit) return {};
+  const signedAt = opts.signedAt ?? Math.floor(Date.now() / 1000);
+  if (opts.signature !== undefined) return { signature: opts.signature, signedAt: String(signedAt) };
+  const signer = opts.signer ?? SIGNER_BY_WALLET[wallet.toLowerCase()];
+  // No keypair for this address (e.g. the malformed-wallet test) → send no
+  // proof; the server rejects on wallet format / missing-proof first anyway.
+  if (!signer) return {};
+  const signature = await signer.signMessage(`zkScatter-kyc:${wallet.toLowerCase()}:${signedAt}`);
+  return { signature, signedAt: String(signedAt) };
+}
 
 const noopLimiter: express.RequestHandler = (_req, _res, next) => next();
 
@@ -97,13 +132,30 @@ describe("KYC routes", () => {
   let server: http.Server;
   let db: OrderbookDB;
 
-  function submitForm(opts: { wallet?: string; email?: string; video?: boolean; idDoc?: boolean; videoType?: string }) {
+  async function submitForm(opts: {
+    wallet?: string; email?: string; video?: boolean; idDoc?: boolean; videoType?: string;
+    // Ownership-proof overrides for the A-6 negative tests.
+    proof?: { omit?: boolean; signer?: Wallet; signedAt?: number; signature?: string };
+  }) {
     const form = new FormData();
     if (opts.wallet !== undefined) form.append("wallet", opts.wallet);
     if (opts.email !== undefined) form.append("email", opts.email);
     if (opts.video) form.append("video", new Blob([new Uint8Array([1, 2, 3])], { type: opts.videoType ?? "video/webm" }), "v.webm");
     if (opts.idDoc) form.append("idDoc", new Blob([new Uint8Array([4, 5, 6])], { type: "image/png" }), "d.png");
-    return fetch(`http://localhost:${PORT}/api/kyc/submit`, { method: "POST", body: form });
+    // The wallet-ownership proof travels in headers (A-6) so the server can
+    // reject before multer writes the upload. x-kyc-wallet is always sent (so
+    // an omitted proof reads as "missing signature" → 401, not a bad address);
+    // the signature/signedAt are built/overridable per test.
+    const headers: Record<string, string> = {};
+    if (opts.wallet !== undefined) {
+      headers["x-kyc-wallet"] = opts.wallet;
+      const fields = await ownershipFields(opts.wallet, opts.proof ?? {});
+      if (fields.signature !== undefined) {
+        headers["x-kyc-signature"] = fields.signature;
+        headers["x-kyc-signedat"] = fields.signedAt;
+      }
+    }
+    return fetch(`http://localhost:${PORT}/api/kyc/submit`, { method: "POST", body: form, headers });
   }
 
   beforeAll(async () => {
@@ -161,7 +213,7 @@ describe("KYC routes", () => {
   });
 
   it("POST /submit — re-record with a different extension removes the orphaned file", async () => {
-    const wallet = "0x" + "c".repeat(40);
+    const wallet = newSigner().address;
     const first = await (await submitForm({ wallet, email: "c@example.com", video: true, idDoc: true })).json();
     const oldVideo = db.getKycById(first.id)!.videoPath!;
     expect(oldVideo.endsWith("/video.webm")).toBe(true);
@@ -183,6 +235,53 @@ describe("KYC routes", () => {
   it("GET /status — rejects a malformed wallet", async () => {
     const res = await fetch(`http://localhost:${PORT}/api/kyc/status?wallet=nope`);
     expect(res.status).toBe(400);
+  });
+
+  // ── A-6: wallet-ownership proof on /submit ───────────────────────────────
+  it("POST /submit — 401 without an ownership proof (griefing guard)", async () => {
+    const res = await submitForm({ wallet: WALLET_A, email: "x@y.com", video: true, idDoc: true, proof: { omit: true } });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toMatch(/ownership proof required/);
+  });
+
+  it("POST /submit — 401 on a stale signedAt (replay window)", async () => {
+    const stale = Math.floor(Date.now() / 1000) - 3600;
+    const res = await submitForm({ wallet: WALLET_A, email: "x@y.com", video: true, idDoc: true, proof: { signedAt: stale } });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toMatch(/ownership proof required/);
+  });
+
+  it("POST /submit — 401 when another wallet signs (can't submit for a victim)", async () => {
+    // SIGNER_B signs but the form claims WALLET_A — recovery won't match.
+    const res = await submitForm({ wallet: WALLET_A, email: "x@y.com", video: true, idDoc: true, proof: { signer: SIGNER_B } });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toMatch(/ownership proof invalid/);
+  });
+
+  it("POST /submit — 401 on a garbage signature", async () => {
+    const res = await submitForm({ wallet: WALLET_A, email: "x@y.com", video: true, idDoc: true, proof: { signature: "0xdeadbeef" } });
+    expect(res.status).toBe(401);
+  });
+
+  it("POST /submit — a rejected proof never stages an upload (disk-burn guard)", async () => {
+    // The proof is checked before multer, so a failed submit must not write any
+    // file to the staging dir — that's the whole point of header-based auth.
+    const stagingDir = path.join(UPLOAD_DIR, ".staging");
+    const before = fs.existsSync(stagingDir) ? fs.readdirSync(stagingDir).length : 0;
+    const res = await submitForm({ wallet: WALLET_A, email: "x@y.com", video: true, idDoc: true, proof: { omit: true } });
+    expect(res.status).toBe(401);
+    const after = fs.existsSync(stagingDir) ? fs.readdirSync(stagingDir).length : 0;
+    expect(after).toBe(before);
+  });
+
+  it("POST /submit — accepts unsigned submissions when KYC_REQUIRE_WALLET_SIG is off", async () => {
+    config.kycRequireWalletSig = false;
+    try {
+      const res = await submitForm({ wallet: WALLET_B, email: "b@y.com", video: true, idDoc: true, proof: { omit: true } });
+      expect([200, 201]).toContain(res.status);
+    } finally {
+      config.kycRequireWalletSig = true;
+    }
   });
 
   // ── Admin review surface (PR2-A) ─────────────────────────────────────────
@@ -218,11 +317,12 @@ describe("KYC routes", () => {
 
   it("admin GET /submissions/:id — 404 missing; meta + file availability, no paths", async () => {
     expect((await fetch(`${base}/api/kyc/submissions/nope`, { headers: adminAuth })).status).toBe(404);
-    const sub = await (await submitForm({ wallet: "0x" + "d".repeat(40), email: "d@example.com", video: true, idDoc: true })).json();
+    const walletD = newSigner().address;
+    const sub = await (await submitForm({ wallet: walletD, email: "d@example.com", video: true, idDoc: true })).json();
     const res = await fetch(`${base}/api/kyc/submissions/${sub.id}`, { headers: adminAuth });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.wallet).toBe("0x" + "d".repeat(40));
+    expect(body.wallet).toBe(walletD.toLowerCase());
     expect(body.files.video).toEqual({ present: true, contentType: "video/webm", sizeBytes: 3 });
     expect(body.files.idDoc.present).toBe(true);
     expect(body.files.idDoc.contentType).toBe("image/png");
@@ -230,7 +330,7 @@ describe("KYC routes", () => {
   });
 
   it("admin GET /submissions/:id/file/:kind — streams correct bytes + Content-Type; rejects bad kind / no auth", async () => {
-    const sub = await (await submitForm({ wallet: "0x" + "e".repeat(40), email: "e@example.com", video: true, idDoc: true })).json();
+    const sub = await (await submitForm({ wallet: newSigner().address, email: "e@example.com", video: true, idDoc: true })).json();
     expect((await fetch(`${base}/api/kyc/submissions/${sub.id}/file/bogus`, { headers: adminAuth })).status).toBe(400);
     expect((await fetch(`${base}/api/kyc/submissions/${sub.id}/file/video`)).status).toBe(401);
 
@@ -245,7 +345,7 @@ describe("KYC routes", () => {
   });
 
   it("admin file routes treat a missing-on-disk document as absent (present:false / 404)", async () => {
-    const sub = await (await submitForm({ wallet: "0x" + "9".repeat(40), email: "9@example.com", video: true, idDoc: true })).json();
+    const sub = await (await submitForm({ wallet: newSigner().address, email: "9@example.com", video: true, idDoc: true })).json();
     const row = db.getKycById(sub.id)!;
     fs.rmSync(row.videoPath!, { force: true }); // file vanishes after submission
 
@@ -258,7 +358,7 @@ describe("KYC routes", () => {
   });
 
   it("admin POST /submissions/:id/status — auth, validation, and the two-step transition", async () => {
-    const wallet = "0x" + "f".repeat(40);
+    const wallet = newSigner().address;
     const sub = await (await submitForm({ wallet, email: "f@example.com", video: true, idDoc: true })).json();
 
     // no auth
@@ -296,7 +396,7 @@ describe("KYC routes", () => {
   });
 
   it("admin POST /submissions/:id/status — approved → revoked (post-approval), terminal, with reason", async () => {
-    const wallet = "0x" + "7".repeat(40);
+    const wallet = newSigner().address;
     const sub = await (await submitForm({ wallet, email: "7@example.com", video: true, idDoc: true })).json();
 
     // revoke is only reachable from approved — not from pending.
