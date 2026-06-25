@@ -8,10 +8,13 @@ import {
   isPriceCompatible,
   isTokenCompatible,
   isLiveStatus,
+  tierForOrder,
+  checkTakerSignalsConsistent,
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
 import { computeSideFee } from "./fees.js";
+import { verifyAuthorizeProof } from "./authorize-verifier.js";
 import { publicSignalToAddress } from "../types/authorize-order.js";
 import { decPubKeyCount, nullifierToOfferHandle } from "../routes/authorize-orders.js";
 import { eqAddr } from "../lib/address.js";
@@ -341,6 +344,18 @@ export class AuthorizeCrossRelayerMatchService {
     const makerPs = makerStored.order.publicSignals;
     const takerPs = takerOrder.publicSignals;
 
+    // Reject malformed taker orders and any divergence between the flat
+    // `publicSignalsArray` (what the Groth16 proof is verified against) and
+    // the named `publicSignals` (what the compat checks + settlement consume).
+    // Without this a peer could submit a proof that verifies against one set
+    // of signals while we settle a different, more favourable set. Also fails
+    // closed cleanly on a missing-proof / wrong-length order before the verify
+    // call (which would otherwise throw → a misleading "unavailable" error).
+    const consistencyErr = checkTakerSignalsConsistent(takerOrder);
+    if (consistencyErr) {
+      return { status: "rejected", reason: `taker order: ${consistencyErr}` };
+    }
+
     if (!isTokenCompatible(makerPs, takerPs)) {
       return { status: "rejected", reason: "token mismatch" };
     }
@@ -363,6 +378,33 @@ export class AuthorizeCrossRelayerMatchService {
     const relayerFee = BigInt(config.relayerFee);
     if (relayerFee > BigInt(takerPs.maxFee)) {
       return { status: "rejected", reason: "taker maxFee below this relayer's minimum" };
+    }
+
+    // Verify the taker's Groth16 proof OFF-CHAIN before any expensive work —
+    // parity with the local submit path (routes/authorize-orders.ts). This
+    // endpoint is reachable by any permissionless peer; without this leg a
+    // junk proof would still acquire the global tx mutex and an
+    // eth_estimateGas round-trip inside `submitAuthSettle`, letting a peer
+    // grief settlement throughput / burn RPC quota (the on-chain verify only
+    // reverts after that work). Fail closed: bogus → reject, verifier outage
+    // → retriable error.
+    if (config.verifyOrderProofs) {
+      let proofValid = false;
+      try {
+        proofValid = await verifyAuthorizeProof(
+          takerOrder.proof,
+          takerOrder.publicSignalsArray,
+          tierForOrder(takerOrder),
+        );
+      } catch (err) {
+        log.warn("Taker proof verification errored", {
+          err: err instanceof Error ? err.message : String(err),
+        });
+        return { status: "error", reason: "proof verification unavailable" };
+      }
+      if (!proofValid) {
+        return { status: "rejected", reason: "invalid taker proof" };
+      }
     }
 
     this.lockingOrders.add(mapKey);

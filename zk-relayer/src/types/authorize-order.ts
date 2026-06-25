@@ -238,6 +238,54 @@ export function isTokenCompatible(
 const BN254_FIELD_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
 
 /**
+ * Canonical order of the 15 authorize public signals — the same order the
+ * circuit emits and the on-chain verifier consumes. The flat
+ * `publicSignalsArray[i]` MUST equal the named `publicSignals[field]` at this
+ * index. Single source of truth shared by `validateAuthorizeOrder` and
+ * `checkTakerSignalsConsistent` so the two can't drift.
+ */
+export const AUTHORIZE_PUBLIC_SIGNAL_ORDER: (keyof AuthorizePublicSignals)[] = [
+  "pubKeyBind",
+  "commitmentRoot", "nullifier", "nonceNullifier", "newCommitment",
+  "sellToken", "buyToken", "sellAmount", "buyAmount",
+  "maxFee", "expiry", "claimsRoot", "totalLocked",
+  "relayer", "orderHash",
+];
+
+/**
+ * Structural + array↔named consistency check for an order whose Groth16 proof
+ * will be verified against its `publicSignalsArray`. Ensures the verified
+ * array can't diverge from the named `publicSignals` that compatibility
+ * checks and settlement actually consume — otherwise a peer could submit a
+ * proof that verifies against one set of signals while we settle a different
+ * (more favourable) set.
+ *
+ * Unlike `validateAuthorizeOrder`, this does NOT enforce this-relayer
+ * binding (the cross-relayer P2P path leaves that to on-chain `settleAuth`),
+ * so it's safe to run against a taker order received from a peer. Returns
+ * null when consistent, or an error message string.
+ */
+export function checkTakerSignalsConsistent(order: AuthorizeOrderFile): string | null {
+  if (!order.proof?.a || !order.proof?.b || !order.proof?.c) {
+    return "Missing proof components";
+  }
+  if (!order.publicSignalsArray || order.publicSignalsArray.length !== 15) {
+    return "publicSignalsArray must have exactly 15 elements";
+  }
+  const ps = order.publicSignals;
+  for (let i = 0; i < AUTHORIZE_PUBLIC_SIGNAL_ORDER.length; i++) {
+    const field = AUTHORIZE_PUBLIC_SIGNAL_ORDER[i]!;
+    if (ps[field] === undefined || ps[field] === null) {
+      return `Missing required public signal: ${field}`;
+    }
+    if (order.publicSignalsArray[i] !== ps[field]) {
+      return `publicSignalsArray[${i}] (${field}) does not match named publicSignals`;
+    }
+  }
+  return null;
+}
+
+/**
  * Validate an incoming AuthorizeOrderFile from a user.
  * Returns null on success, or an error message string on failure.
  * Does NOT verify the Groth16 proof (that's done on-chain); this
@@ -259,13 +307,7 @@ export function validateAuthorizeOrder(
   }
 
   // All 15 named fields must be present
-  const requiredFields: (keyof AuthorizePublicSignals)[] = [
-    "pubKeyBind",
-    "commitmentRoot", "nullifier", "nonceNullifier", "newCommitment",
-    "sellToken", "buyToken", "sellAmount", "buyAmount",
-    "maxFee", "expiry", "claimsRoot", "totalLocked",
-    "relayer", "orderHash",
-  ];
+  const requiredFields = AUTHORIZE_PUBLIC_SIGNAL_ORDER;
   for (const field of requiredFields) {
     if (ps[field] === undefined || ps[field] === null) {
       return `Missing required public signal: ${field}`;
