@@ -24,11 +24,19 @@ const PEER_PORT = 14640;   // "public" peer that 307-redirects
 const INTERNAL_PORT = 14641; // stand-in for a private / metadata target
 
 describe("cross-relayer SSRF: outbound fetch does not follow redirects", () => {
-  let peer: http.Server;
-  let internal: http.Server;
+  let peer: http.Server | undefined;
+  let internal: http.Server | undefined;
   let internalHit = false;
 
-  beforeEach(() => {
+  // Resolve only once the OS has bound the port — `listen` is async, so an
+  // un-awaited server can race the fetch below and intermittently fail with
+  // ECONNREFUSED.
+  const listen = (app: express.Express, port: number) =>
+    new Promise<http.Server>((resolve) => {
+      const s = app.listen(port, () => resolve(s));
+    });
+
+  beforeEach(async () => {
     process.env.ALLOW_PRIVATE_RELAYER_URLS = "1";
     internalHit = false;
 
@@ -37,19 +45,19 @@ describe("cross-relayer SSRF: outbound fetch does not follow redirects", () => {
       internalHit = true;
       res.json({ status: "settled" });
     });
-    internal = internalApp.listen(INTERNAL_PORT);
+    internal = await listen(internalApp, INTERNAL_PORT);
 
     const peerApp = express();
     peerApp.all("*", (_req, res) => {
       res.redirect(307, `http://localhost:${INTERNAL_PORT}/api/p2p/authorize-trade-offer`);
     });
-    peer = peerApp.listen(PEER_PORT);
+    peer = await listen(peerApp, PEER_PORT);
   });
 
   afterEach(async () => {
     delete process.env.ALLOW_PRIVATE_RELAYER_URLS;
-    await new Promise<void>((r) => peer.close(() => r()));
-    await new Promise<void>((r) => internal.close(() => r()));
+    if (peer) await new Promise<void>((r) => peer!.close(() => r()));
+    if (internal) await new Promise<void>((r) => internal!.close(() => r()));
   });
 
   it("aborts on a 307 redirect to an internal target", async () => {
