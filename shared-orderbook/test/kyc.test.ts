@@ -140,14 +140,22 @@ describe("KYC routes", () => {
     const form = new FormData();
     if (opts.wallet !== undefined) form.append("wallet", opts.wallet);
     if (opts.email !== undefined) form.append("email", opts.email);
-    // Attach a wallet-ownership proof signed by the wallet's key (overridable).
-    if (opts.wallet !== undefined) {
-      const fields = await ownershipFields(opts.wallet, opts.proof ?? {});
-      for (const [k, v] of Object.entries(fields)) form.append(k, v);
-    }
     if (opts.video) form.append("video", new Blob([new Uint8Array([1, 2, 3])], { type: opts.videoType ?? "video/webm" }), "v.webm");
     if (opts.idDoc) form.append("idDoc", new Blob([new Uint8Array([4, 5, 6])], { type: "image/png" }), "d.png");
-    return fetch(`http://localhost:${PORT}/api/kyc/submit`, { method: "POST", body: form });
+    // The wallet-ownership proof travels in headers (A-6) so the server can
+    // reject before multer writes the upload. x-kyc-wallet is always sent (so
+    // an omitted proof reads as "missing signature" → 401, not a bad address);
+    // the signature/signedAt are built/overridable per test.
+    const headers: Record<string, string> = {};
+    if (opts.wallet !== undefined) {
+      headers["x-kyc-wallet"] = opts.wallet;
+      const fields = await ownershipFields(opts.wallet, opts.proof ?? {});
+      if (fields.signature !== undefined) {
+        headers["x-kyc-signature"] = fields.signature;
+        headers["x-kyc-signedat"] = fields.signedAt;
+      }
+    }
+    return fetch(`http://localhost:${PORT}/api/kyc/submit`, { method: "POST", body: form, headers });
   }
 
   beforeAll(async () => {
@@ -253,6 +261,17 @@ describe("KYC routes", () => {
   it("POST /submit — 401 on a garbage signature", async () => {
     const res = await submitForm({ wallet: WALLET_A, email: "x@y.com", video: true, idDoc: true, proof: { signature: "0xdeadbeef" } });
     expect(res.status).toBe(401);
+  });
+
+  it("POST /submit — a rejected proof never stages an upload (disk-burn guard)", async () => {
+    // The proof is checked before multer, so a failed submit must not write any
+    // file to the staging dir — that's the whole point of header-based auth.
+    const stagingDir = path.join(UPLOAD_DIR, ".staging");
+    const before = fs.existsSync(stagingDir) ? fs.readdirSync(stagingDir).length : 0;
+    const res = await submitForm({ wallet: WALLET_A, email: "x@y.com", video: true, idDoc: true, proof: { omit: true } });
+    expect(res.status).toBe(401);
+    const after = fs.existsSync(stagingDir) ? fs.readdirSync(stagingDir).length : 0;
+    expect(after).toBe(before);
   });
 
   it("POST /submit — accepts unsigned submissions when KYC_REQUIRE_WALLET_SIG is off", async () => {

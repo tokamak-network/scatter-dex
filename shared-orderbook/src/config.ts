@@ -91,7 +91,9 @@ export const config = {
   // Require an EIP-191 wallet-ownership proof on POST /api/kyc/submit. The
   // endpoint is public, so without it anyone can submit (and overwrite the
   // pending row + burn disk for) any victim's wallet address. Secure by
-  // default; set KYC_REQUIRE_WALLET_SIG=0 only as a transition window while the
-  // operators register form ships the matching client-side signature.
-  kycRequireWalletSig: (process.env.KYC_REQUIRE_WALLET_SIG ?? "1") !== "0",
+  // default; set KYC_REQUIRE_WALLET_SIG=0 (or "false") only as a transition
+  // window while the operators register form ships the matching signature.
+  // Accept both "0" and "false" (case-insensitive) as off — "false" would
+  // otherwise read as on and surprise an operator trying to disable it.
+  kycRequireWalletSig: !["0", "false"].includes((process.env.KYC_REQUIRE_WALLET_SIG ?? "1").trim().toLowerCase()),
 };
