@@ -5,9 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
+import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
 
@@ -20,21 +22,21 @@ contract PscToken is ERC20 {
 }
 
 /// @title PrivateSettlementClaimGuardsTest
-/// @notice Drives scatterDirect to register a real claimsGroup, then
-///         exhaustively tests every revert branch inside _executeClaim
-///         + the scatterDirect early-revert guards. Complements the
-///         Admin / Guards suites in the Track B trail.
+/// @notice Drives scatterDirectAuth to register a real claimsGroup, then
+///         exhaustively tests every revert branch inside _executeClaim.
+///         Complements the Admin / Guards suites in the Track B trail.
 contract PrivateSettlementClaimGuardsTest is Test {
     PrivateSettlement settlement;
     CommitmentPool pool;
     MockWETH weth;
     PscToken token;
     MockClaimVerifier claimVerifier;
+    MockAuthorizeVerifier authVerifier;
 
     address alice = address(0xA11CE);
     address relayer = address(0xBEEF);
 
-    // claimsRoot used by the test fixture (scatterDirect registers under this).
+    // claimsRoot used by the test fixture (scatterDirectAuth registers under this).
     bytes32 constant TEST_CLAIMS_ROOT = bytes32(uint256(0xC1A1));
     bytes32 constant WETH_CLAIMS_ROOT = bytes32(uint256(0xC1A2));
 
@@ -49,6 +51,7 @@ contract PrivateSettlementClaimGuardsTest is Test {
         MockVerifier withdrawVerifier = new MockVerifier();
         MockDepositVerifier depositVerifier = new MockDepositVerifier();
         claimVerifier = new MockClaimVerifier();
+        authVerifier = new MockAuthorizeVerifier();
         weth = new MockWETH();
         token = new PscToken();
 
@@ -68,6 +71,8 @@ contract PrivateSettlementClaimGuardsTest is Test {
         // setUp seeds tier-16 claim verifier; explicitly wire it just to be
         // resilient to ProxyDeployer wiring changes.
         settlement.setClaimVerifier(16, address(claimVerifier));
+        // Wire the tier-16 authorize verifier so scatterDirectAuth succeeds.
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
 
         // Fund pool with both tokens so withdrawFor + WETH-unwrap paths work.
         token.mint(address(pool), 1_000 ether);
@@ -86,134 +91,55 @@ contract PrivateSettlementClaimGuardsTest is Test {
         vm.stopPrank();
     }
 
-    function _registerErc20Group() internal {
-        // scatterDirect: relayer pays no fee, withdrawAmount == totalLocked.
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: pool.getLastRoot(),
-            nullifier: bytes32(uint256(0xABCD)),
-            newCommitment: 0,
-            token: address(token),
-            withdrawAmount: 10 ether,
-            claimsRoot: TEST_CLAIMS_ROOT,
-            totalLocked: 10 ether,
+    /// @dev Build a same-token scatterDirectAuth fixture that registers a
+    ///      claimsGroup under `claimsRoot` for `token`/`amount` (tier 16, no
+    ///      fee). Distinct nullifiers per call so repeated registrations don't
+    ///      collide on the escrow/nonce nullifier sets.
+    function _registerAuthGroup(
+        address sellToken,
+        uint128 amount,
+        bytes32 claimsRoot,
+        bytes32 nullifier,
+        bytes32 nonceNullifier
+    ) internal {
+        PrivateSettlement.ScatterDirectAuthParams memory p = PrivateSettlement.ScatterDirectAuthParams({
+            proof: SettleVerifyLib.AuthorizeProof({
+                proofA: proofA,
+                proofB: proofB,
+                proofC: proofC,
+                pubKeyBind: bytes32(uint256(0xD0)),
+                commitmentRoot: pool.getLastRoot(),
+                nullifier: nullifier,
+                nonceNullifier: nonceNullifier,
+                newCommitment: 0,
+                sellToken: sellToken,
+                buyToken: sellToken, // same-token invariant
+                sellAmount: amount,
+                buyAmount: amount,
+                maxFee: 0,
+                expiry: uint64(block.timestamp + 1 hours),
+                claimsRoot: claimsRoot,
+                totalLocked: amount,
+                relayer: relayer,
+                orderHash: bytes32(uint256(0xD5)),
+                tier: 16
+            }),
             fee: 0
         });
         vm.prank(relayer);
-        settlement.scatterDirect(p);
+        settlement.scatterDirectAuth(p);
+    }
+
+    function _registerErc20Group() internal {
+        _registerAuthGroup(
+            address(token), 10 ether, TEST_CLAIMS_ROOT, bytes32(uint256(0xABCD)), bytes32(uint256(0xAB01))
+        );
     }
 
     function _registerWethGroup() internal {
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: pool.getLastRoot(),
-            nullifier: bytes32(uint256(0xDCBA)),
-            newCommitment: 0,
-            token: address(weth),
-            withdrawAmount: 5 ether,
-            claimsRoot: WETH_CLAIMS_ROOT,
-            totalLocked: 5 ether,
-            fee: 0
-        });
-        vm.prank(relayer);
-        settlement.scatterDirect(p);
-    }
-
-    // ─── scatterDirect early-revert guards ──────────────────────
-
-    function test_scatterDirect_unwhitelistedToken_reverts() public {
-        PscToken stranger = new PscToken();
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: pool.getLastRoot(),
-            nullifier: bytes32(uint256(0x11)),
-            newCommitment: 0,
-            token: address(stranger),
-            withdrawAmount: 1 ether,
-            claimsRoot: bytes32(uint256(0xAA)),
-            totalLocked: 1 ether,
-            fee: 0
-        });
-        vm.prank(relayer);
-        vm.expectRevert(PrivateSettlement.TokenNotWhitelisted.selector);
-        settlement.scatterDirect(p);
-    }
-
-    function test_scatterDirect_amountOverflow_reverts() public {
-        // withdrawAmount must equal totalLocked + fee.
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: pool.getLastRoot(),
-            nullifier: bytes32(uint256(0x12)),
-            newCommitment: 0,
-            token: address(token),
-            withdrawAmount: 2 ether,
-            claimsRoot: bytes32(uint256(0xAB)),
-            totalLocked: 1 ether,
-            fee: 0
-        });
-        vm.prank(relayer);
-        vm.expectRevert(PrivateSettlement.AmountOverflow.selector);
-        settlement.scatterDirect(p);
-    }
-
-    function test_scatterDirect_unknownRoot_reverts() public {
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: uint256(0xDEAD),
-            nullifier: bytes32(uint256(0x13)),
-            newCommitment: 0,
-            token: address(token),
-            withdrawAmount: 1 ether,
-            claimsRoot: bytes32(uint256(0xAC)),
-            totalLocked: 1 ether,
-            fee: 0
-        });
-        vm.prank(relayer);
-        vm.expectRevert(PrivateSettlement.UnknownRoot.selector);
-        settlement.scatterDirect(p);
-    }
-
-    function test_scatterDirect_nullifierReplay_reverts() public {
-        _registerErc20Group(); // uses nullifier 0xABCD
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: pool.getLastRoot(),
-            nullifier: bytes32(uint256(0xABCD)),
-            newCommitment: 0,
-            token: address(token),
-            withdrawAmount: 1 ether,
-            claimsRoot: bytes32(uint256(0xAD)),
-            totalLocked: 1 ether,
-            fee: 0
-        });
-        vm.prank(relayer);
-        vm.expectRevert(PrivateSettlement.NullifierAlreadySpent.selector);
-        settlement.scatterDirect(p);
-    }
-
-    function test_scatterDirect_happyPath_registers_claimsGroup() public {
-        _registerErc20Group();
-        assertTrue(settlement.nullifiers(bytes32(uint256(0xABCD))));
-        // Direct claimsGroups probe — confirms token/totalLocked/tier landed.
-        (uint128 totalLocked, uint128 totalClaimed, address gToken, uint8 tier) =
-            settlement.claimsGroups(TEST_CLAIMS_ROOT);
-        assertEq(gToken, address(token));
-        assertEq(totalLocked, 10 ether);
-        assertEq(totalClaimed, 0);
-        assertEq(tier, 16);
+        _registerAuthGroup(
+            address(weth), 5 ether, WETH_CLAIMS_ROOT, bytes32(uint256(0xDCBA)), bytes32(uint256(0xDC01))
+        );
     }
 
     // ─── _executeClaim revert guards (via claimWithProof) ───────
