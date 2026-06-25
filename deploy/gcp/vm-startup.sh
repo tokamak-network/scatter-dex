@@ -64,8 +64,11 @@ CORS_ORIGINS=$(mget cors-origins)
 ADMIN_ADDRESSES=$(mget admin-addresses)
 # On-chain relayer-membership gate config for the settlements write path
 # (audit A-3). Minified JSON array of {chainId,rpcUrl,registryAddress};
-# empty → gate OFF (back-compat). Public config, so metadata (not Secret
-# Manager). Strip newlines so a copy-pasted value can't corrupt the .env.
+# empty → gate OFF (back-compat). Lives in metadata, so the `rpcUrl` MUST be a
+# keyless endpoint (e.g. publicnode / drpc) — instance metadata is readable by
+# anyone with compute.instances.get, so never put a provider API key here. If a
+# keyed RPC is unavoidable, source it from Secret Manager instead (cf. RPC_URL).
+# Strip newlines so a copy-pasted value can't corrupt the .env.
 RELAYER_REGISTRY_CHAINS=$(mget relayer-registry-chains | tr -d '\r\n')
 DOMAIN=$(mget domain)
 ACME_EMAIL=$(mget acme-email)
@@ -198,7 +201,10 @@ CLAIM_DEPLOY_BLOCK=${CLAIM_DEPLOY_BLOCK}
 CORS_ORIGINS=${CORS_ORIGINS}
 ADMIN_ADDRESSES=${ADMIN_ADDRESSES}
 ADMIN_TOKEN=${ADMIN_TOKEN}
-RELAYER_REGISTRY_CHAINS=${RELAYER_REGISTRY_CHAINS}
+# Single-quoted: the value is JSON (contains double-quotes, colons, brackets).
+# docker compose strips the surrounding single quotes and takes the literal
+# inside, so the JSON reaches the container intact and can't be mis-parsed.
+RELAYER_REGISTRY_CHAINS='${RELAYER_REGISTRY_CHAINS}'
 CIRCUITS_BUILD_DIR=/var/lib/zkscatter/circuits/build
 RELAYER_KEY_FILE=/var/lib/zkscatter/secrets/relayer.key
 RELAYER_NAME=${RELAYER_NAME}
