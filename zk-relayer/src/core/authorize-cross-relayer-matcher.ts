@@ -9,6 +9,7 @@ import {
   isTokenCompatible,
   isLiveStatus,
   tierForOrder,
+  checkTakerSignalsConsistent,
 } from "../types/authorize-order.js";
 import { config } from "../config.js";
 import type { PrivateOrderDB } from "./db.js";
@@ -342,6 +343,18 @@ export class AuthorizeCrossRelayerMatchService {
 
     const makerPs = makerStored.order.publicSignals;
     const takerPs = takerOrder.publicSignals;
+
+    // Reject malformed taker orders and any divergence between the flat
+    // `publicSignalsArray` (what the Groth16 proof is verified against) and
+    // the named `publicSignals` (what the compat checks + settlement consume).
+    // Without this a peer could submit a proof that verifies against one set
+    // of signals while we settle a different, more favourable set. Also fails
+    // closed cleanly on a missing-proof / wrong-length order before the verify
+    // call (which would otherwise throw → a misleading "unavailable" error).
+    const consistencyErr = checkTakerSignalsConsistent(takerOrder);
+    if (consistencyErr) {
+      return { status: "rejected", reason: `taker order: ${consistencyErr}` };
+    }
 
     if (!isTokenCompatible(makerPs, takerPs)) {
       return { status: "rejected", reason: "token mismatch" };

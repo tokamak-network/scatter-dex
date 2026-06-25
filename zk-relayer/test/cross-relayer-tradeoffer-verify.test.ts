@@ -41,13 +41,24 @@ function makePs(over: Partial<AuthorizePublicSignals>): AuthorizePublicSignals {
   };
 }
 
+// publicSignalsArray must match the named publicSignals in canonical order
+// (the gate now rejects any divergence), so derive it from `ps`.
+function arrayFromPs(ps: AuthorizePublicSignals): string[] {
+  return [
+    ps.pubKeyBind, ps.commitmentRoot, ps.nullifier, ps.nonceNullifier, ps.newCommitment,
+    ps.sellToken, ps.buyToken, ps.sellAmount, ps.buyAmount,
+    ps.maxFee, ps.expiry, ps.claimsRoot, ps.totalLocked, ps.relayer, ps.orderHash,
+  ];
+}
+
 function makeTaker(): AuthorizeOrderFile {
   // Token-compatible mirror of the maker (sell B / buy A), price-compatible
   // (equal ratios), maxFee well above any relayer minimum.
+  const ps = makePs({ sellToken: TOKEN_B, buyToken: TOKEN_A, nullifier: "0x2" });
   return {
     proof: { a: ["1", "2"], b: [["3", "4"], ["5", "6"]], c: ["7", "8"] },
-    publicSignals: makePs({ sellToken: TOKEN_B, buyToken: TOKEN_A, nullifier: "0x2" }),
-    publicSignalsArray: Array.from({ length: 15 }, (_, i) => String(i)),
+    publicSignals: ps,
+    publicSignalsArray: arrayFromPs(ps),
     tier: 16,
   } as unknown as AuthorizeOrderFile;
 }
@@ -87,6 +98,22 @@ describe("handleTradeOffer: off-chain taker-proof gate (A-4)", () => {
     expect(submitAuthSettle).not.toHaveBeenCalled();
   });
 
+  it("rejects when publicSignalsArray diverges from named publicSignals, before verify", async () => {
+    verifyMock.mockResolvedValue(true); // even a 'valid' proof must not get through
+    const taker = makeTaker();
+    // Tamper a named field so the array (proven) no longer matches the named
+    // signals the compat/settlement logic uses.
+    (taker.publicSignals as { sellAmount: string }).sellAmount = "999999";
+    const res = await svc.handleTradeOffer(
+      { makerNullifier: "0x1", takerOrder: taker },
+      "0x" + "ee".repeat(20),
+    );
+    expect(res.status).toBe("rejected");
+    expect(res.reason).toMatch(/does not match named publicSignals/i);
+    expect(verifyMock).not.toHaveBeenCalled();   // rejected before the verify call
+    expect(submitAuthSettle).not.toHaveBeenCalled();
+  });
+
   it("surfaces a verifier outage as a retriable error, no submit", async () => {
     verifyMock.mockRejectedValue(new Error("vkey missing"));
     const res = await svc.handleTradeOffer(offer(), "0x" + "ee".repeat(20));
@@ -104,6 +131,6 @@ describe("handleTradeOffer: off-chain taker-proof gate (A-4)", () => {
     const res = await svc.handleTradeOffer(offer(), "0x" + "ee".repeat(20));
     expect(verifyMock).toHaveBeenCalledOnce();
     expect(submitAuthSettle).toHaveBeenCalledOnce();
-    expect(res.reason).not.toMatch(/invalid taker proof/i);
+    expect(res.reason ?? "").not.toMatch(/invalid taker proof/i);
   });
 });
