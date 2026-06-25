@@ -58,16 +58,17 @@ export function createP2PRoutes(
     const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody;
     const bodyHash = bodyHashOf(rawBody);
 
-    // Try the body-bound message first, fall back to the legacy
-    // (no body hash) shape for one release. Set REQUIRE_BODY_HASH=1
-    // to disable the fallback once every peer is upgraded.
+    // Try the body-bound message first. The legacy (no body hash) shape
+    // is fail-closed by default now that the transition release is over;
+    // accepting it reopens a 5-minute replay-modify window. Set
+    // ALLOW_LEGACY_RELAYER_SIG=1 only to support un-upgraded peers.
     const messageWithBody = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}:${bodyHash}`;
     try {
       if (eqAddr(verifyMessage(messageWithBody, signature), address)) return true;
     } catch {
       // fall through
     }
-    if (process.env.REQUIRE_BODY_HASH === "1") return false;
+    if (process.env.ALLOW_LEGACY_RELAYER_SIG !== "1") return false;
     const messageLegacy = `zkScatter-relay:${address.toLowerCase()}:${timestamp}:${method}:${path}:${relayerUrl}`;
     try {
       const ok = eqAddr(verifyMessage(messageLegacy, signature), address);

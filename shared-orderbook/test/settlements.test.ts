@@ -58,6 +58,11 @@ describe("/api/settlements", () => {
   beforeAll(async () => {
     // SSRF guard rejects localhost URLs; opt in for the test harness.
     process.env.ALLOW_PRIVATE_RELAYER_URLS = "1";
+    // This suite signs the legacy (non-body-bound) auth shape and its
+    // harness app omits `express.json({ verify })`, so opt back into the
+    // legacy fallback (fail-closed by default). Body-bound auth is
+    // covered authoritatively by `test/auth.test.ts`.
+    process.env.ALLOW_LEGACY_RELAYER_SIG = "1";
     try { fs.unlinkSync(TEST_DB); } catch {}
     db = new OrderbookDB(TEST_DB);
     const app = express();
@@ -70,6 +75,7 @@ describe("/api/settlements", () => {
   });
 
   afterAll(async () => {
+    delete process.env.ALLOW_LEGACY_RELAYER_SIG;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     db.close();
     try { fs.unlinkSync(TEST_DB); } catch {}

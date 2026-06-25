@@ -1,7 +1,8 @@
 /**
  * Unit coverage for the EIP-191 relayer auth middleware, in particular
- * the body-hash binding introduced in PR #693 and the
- * `REQUIRE_BODY_HASH=1` fail-closed mode that ends the legacy fallback.
+ * the body-hash binding introduced in PR #693 and the fail-closed
+ * legacy handling (rejected by default; opt back in with
+ * `ALLOW_LEGACY_RELAYER_SIG=1`).
  *
  * The middleware is exercised through a minimal express app so the
  * test mirrors what the real router does — `express.json({ verify })`
@@ -56,9 +57,10 @@ describe("relayerAuth: body-hash binding", () => {
 
   beforeEach(() => {
     server = startApp();
-    delete process.env.REQUIRE_BODY_HASH;
+    delete process.env.ALLOW_LEGACY_RELAYER_SIG;
   });
   afterEach(async () => {
+    delete process.env.ALLOW_LEGACY_RELAYER_SIG;
     await new Promise<void>((r) => server.close(() => r()));
   });
 
@@ -113,7 +115,25 @@ describe("relayerAuth: body-hash binding", () => {
     expect(r.json.error).toBe("signature mismatch");
   });
 
-  it("falls back to legacy (no body hash) and emits a deprecation warning", async () => {
+  it("rejects the legacy (no body hash) signature shape by default", async () => {
+    const ts = Math.floor(Date.now() / 1000).toString();
+    const url = `http://localhost:${PORT}`;
+    const body = { foo: "bar" };
+    const message = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:POST:/api/secret:${url}`;
+    const signature = await wallet.signMessage(message);
+
+    const r = await callPost("/api/secret", {
+      "x-relayer-address": wallet.address,
+      "x-relayer-signature": signature,
+      "x-relayer-timestamp": ts,
+      "x-relayer-url": url,
+    }, body);
+    expect(r.status).toBe(401);
+    expect(r.json.error).toBe("signature mismatch");
+  });
+
+  it("ALLOW_LEGACY_RELAYER_SIG=1 re-enables the legacy fallback and warns", async () => {
+    process.env.ALLOW_LEGACY_RELAYER_SIG = "1";
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const ts = Math.floor(Date.now() / 1000).toString();
     const url = `http://localhost:${PORT}`;
@@ -132,24 +152,6 @@ describe("relayerAuth: body-hash binding", () => {
     expect(r.status).toBe(200);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("[deprecated-body-hash]"));
     warn.mockRestore();
-  });
-
-  it("REQUIRE_BODY_HASH=1 rejects the legacy signature shape", async () => {
-    process.env.REQUIRE_BODY_HASH = "1";
-    const ts = Math.floor(Date.now() / 1000).toString();
-    const url = `http://localhost:${PORT}`;
-    const body = { foo: "bar" };
-    const message = `zkScatter-relay:${wallet.address.toLowerCase()}:${ts}:POST:/api/secret:${url}`;
-    const signature = await wallet.signMessage(message);
-
-    const r = await callPost("/api/secret", {
-      "x-relayer-address": wallet.address,
-      "x-relayer-signature": signature,
-      "x-relayer-timestamp": ts,
-      "x-relayer-url": url,
-    }, body);
-    expect(r.status).toBe(401);
-    expect(r.json.error).toBe("signature mismatch");
   });
 
   it("rejects when the timestamp is older than the 5-minute window", async () => {
