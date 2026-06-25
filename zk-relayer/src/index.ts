@@ -39,7 +39,16 @@ const settlementLog = createLogger("settlement-worker");
 const expiryLog = createLogger("expiry-sweeper");
 const netLog = createLogger("net");
 
-const MAX_ORDERBOOK_SIZE = 10_000;
+// Hard ceiling on the in-memory remote orderbook — passed to
+// RemoteOrderStore so a flood on permissionless /api/p2p/orders can't
+// grow the heap unbounded. Override via env for larger deployments.
+// Parse strictly: only a positive integer overrides the default, so a
+// malformed env (e.g. "5000.5", "abc") falls back rather than setting a
+// fractional/NaN ceiling.
+const MAX_ORDERBOOK_SIZE = ((): number => {
+  const n = Number(process.env.MAX_ORDERBOOK_SIZE);
+  return Number.isInteger(n) && n > 0 ? n : 10_000;
+})();
 
 async function main() {
   const db = new PrivateOrderDB();
@@ -130,7 +139,7 @@ async function main() {
   let republishTimer: NodeJS.Timeout | null = null;
 
   if (config.sharedOrderbookUrl && config.relayerPublicUrl) {
-    remoteOrderbook = new RemoteOrderStore();
+    remoteOrderbook = new RemoteOrderStore(MAX_ORDERBOOK_SIZE);
     sharedClient = new SharedOrderbookClient({
       serverUrl: config.sharedOrderbookUrl,
       relayerWallet: submitter.getWallet(),
@@ -434,6 +443,25 @@ async function main() {
     },
   });
 
+  // Peer-to-peer surface limiter. /api/p2p/orders is relayer-signed but
+  // permissionless (any keypair passes, no allow-list), and was mounted
+  // with NO limiter — a flood could exhaust heap/CPU via RemoteOrderStore
+  // inserts and serialize settlement on the trade-offer path. Sized
+  // generously for legit peer order/cancel chatter while capping floods.
+  //
+  // NOTE (deployment): like the existing write/read limiters, this keys on
+  // `req.ip`. Behind a reverse proxy (nginx / LB / Cloudflare) every
+  // request shares the proxy IP unless Express `trust proxy` is set to the
+  // exact hop count. We deliberately do NOT set `trust proxy` here — a
+  // wrong value lets clients spoof `X-Forwarded-For` to bypass *every*
+  // limiter, so it must be configured per real deployment topology. Tracked
+  // as a separate infra follow-up (applies to all limiters, pre-existing).
+  const p2pLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 120,
+    message: { error: "too many p2p requests" },
+  });
+
   // [R-7] Admin API — fee, pause/resume, drain, balance
   app.use("/api/admin", createAdminRoutes({
     submitter, db,
@@ -485,7 +513,7 @@ async function main() {
   app.use("/metrics", createMetricsRoutes(db));
 
   // P2P routes (relayer-to-relayer communication)
-  app.use("/api/p2p", createP2PRoutes(
+  app.use("/api/p2p", p2pLimiter, createP2PRoutes(
     (order) => {
       remoteOrderbook?.add(order);
       // P2P fallback (when shared-OB server is down): peer relayer POSTs

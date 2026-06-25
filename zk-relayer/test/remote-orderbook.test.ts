@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { RemoteOrderStore } from "../src/core/remote-orderbook.js";
 import type { OrderSummary } from "../src/types/order.js";
 
@@ -149,5 +149,51 @@ describe("RemoteOrderStore", () => {
     store.add(makeRemoteOrder({ id: "b" }));
     store.clear();
     expect(store.size).toBe(0);
+  });
+
+  // ─── DoS cap (audit A-2) ───────────────────────────────────────
+  describe("maxSize cap", () => {
+    it("refuses new orders once at capacity (bounds memory)", () => {
+      const capped = new RemoteOrderStore(3);
+      for (let i = 0; i < 3; i++) capped.add(makeRemoteOrder({ id: `o${i}` }));
+      expect(capped.size).toBe(3);
+      // Over-cap insert is dropped, not stored.
+      capped.add(makeRemoteOrder({ id: "overflow" }));
+      expect(capped.size).toBe(3);
+      expect(capped.get("overflow")).toBeUndefined();
+      // Pre-cap orders stay sticky (genuine orders not evicted).
+      expect(capped.get("o0")).toBeDefined();
+    });
+
+    it("reclaims expired rows before refusing, admitting a fresh order", () => {
+      vi.useFakeTimers();
+      try {
+        const now = 1_000_000; // fixed epoch seconds under fake timers
+        vi.setSystemTime(now * 1000);
+        const capped = new RemoteOrderStore(2);
+        // Fill to cap; 'stale' expires 1s out (add() rejects already-expired,
+        // so seed it in the future then advance the clock past it).
+        capped.add(makeRemoteOrder({ id: "stale", expiry: now + 1 }));
+        capped.add(makeRemoteOrder({ id: "live", expiry: now + 3600 }));
+        expect(capped.size).toBe(2);
+
+        vi.setSystemTime((now + 2) * 1000); // 'stale' now expired
+        // At cap, but add() should purgeExpired (frees 'stale') then admit.
+        capped.add(makeRemoteOrder({ id: "fresh", expiry: now + 3600 }));
+        expect(capped.get("fresh")).toBeDefined();
+        expect(capped.get("stale")).toBeUndefined();
+        expect(capped.size).toBe(2);
+      } finally {
+        // Restore real timers even if an assertion throws, so a failure
+        // here can't leave later tests running under fake time.
+        vi.useRealTimers();
+      }
+    });
+
+    it("non-positive / non-finite maxSize falls back to default (no accidental zero cap)", () => {
+      const zero = new RemoteOrderStore(0);
+      zero.add(makeRemoteOrder({ id: "x" }));
+      expect(zero.size).toBe(1); // default cap (10k), so a single add succeeds
+    });
   });
 });

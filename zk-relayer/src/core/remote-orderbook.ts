@@ -10,6 +10,9 @@ const log = createLogger("remote-orderbook");
  * Separate from PrivateOrderbook — remote orders lack secrets
  * and cannot be stored as StoredPrivateOrder.
  */
+/** Default hard ceiling on stored remote orders — see `maxSize`. */
+const DEFAULT_MAX_SIZE = 10_000;
+
 export class RemoteOrderStore {
   /** pair → OrderSummary[] sorted by price ascending (sell side) */
   private sells = new Map<string, OrderSummary[]>();
@@ -19,6 +22,22 @@ export class RemoteOrderStore {
   private byId = new Map<string, OrderSummary>();
   /** relayer address → Set of order IDs */
   private byRelayer = new Map<string, Set<string>>();
+
+  /**
+   * Hard ceiling on the number of stored orders. `/api/p2p/orders` is
+   * relayer-signed but permissionless (any keypair passes auth, no
+   * allow-list / bond gate), so an attacker can flood unique-id orders.
+   * Without a cap `byId` / `byRelayer` / the sorted pair lists grow
+   * unbounded (O(N) splice per insert → O(N²)) — a heap/CPU DoS. When
+   * full, `add` reclaims expired rows first, then refuses new ones.
+   */
+  private readonly maxSize: number;
+
+  constructor(maxSize: number = DEFAULT_MAX_SIZE) {
+    // Require a positive integer — a fractional or non-finite cap would be
+    // a silent misconfiguration for a hard ceiling. Fall back otherwise.
+    this.maxSize = Number.isInteger(maxSize) && maxSize > 0 ? maxSize : DEFAULT_MAX_SIZE;
+  }
 
   get size(): number { return this.byId.size; }
 
@@ -52,6 +71,21 @@ export class RemoteOrderStore {
     } catch {
       log.warn("Skipping malformed order: invalid amount", { id: order.id });
       return;
+    }
+
+    // DoS cap: bound memory against a flood on permissionless
+    // /api/p2p/orders. Reclaim expired rows first, then refuse the new
+    // order if still at capacity (dropping the incoming one rather than
+    // evicting a live order keeps genuine peer orders sticky; the p2p
+    // rate limiter throttles how fast a flood can probe this ceiling).
+    if (this.byId.size >= this.maxSize) {
+      this.purgeExpired();
+      if (this.byId.size >= this.maxSize) {
+        log.warn("RemoteOrderStore at capacity; dropping order", {
+          id: order.id, size: this.byId.size, max: this.maxSize,
+        });
+        return;
+      }
     }
 
     // Store with the normalised id so all subsequent lookups (by-id,
