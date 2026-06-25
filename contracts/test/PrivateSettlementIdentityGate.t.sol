@@ -5,9 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {PrivateSettlement} from "../src/zk/PrivateSettlement.sol";
 import {CommitmentPool} from "../src/zk/CommitmentPool.sol";
+import {SettleVerifyLib} from "../src/zk/SettleVerifyLib.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "./mocks/MockDepositVerifier.sol";
 import {MockClaimVerifier} from "./mocks/MockClaimVerifier.sol";
+import {MockAuthorizeVerifier} from "./mocks/MockAuthorizeVerifier.sol";
 import {MockWETH} from "./mocks/MockWETH.sol";
 import {MockIdentityRegistry} from "./mocks/MockIdentityRegistry.sol";
 import {ProxyDeployer} from "./utils/ProxyDeployer.sol";
@@ -29,6 +31,7 @@ contract PrivateSettlementIdentityGateTest is Test {
     MockWETH weth;
     PsigToken token;
     MockClaimVerifier claimVerifier;
+    MockAuthorizeVerifier authVerifier;
     MockIdentityRegistry gate;
 
     address alice = address(0xA11CE); // depositor
@@ -46,6 +49,7 @@ contract PrivateSettlementIdentityGateTest is Test {
         MockVerifier withdrawVerifier = new MockVerifier();
         MockDepositVerifier depositVerifier = new MockDepositVerifier();
         claimVerifier = new MockClaimVerifier();
+        authVerifier = new MockAuthorizeVerifier();
         weth = new MockWETH();
         token = new PsigToken();
         gate = new MockIdentityRegistry();
@@ -61,6 +65,7 @@ contract PrivateSettlementIdentityGateTest is Test {
         pool.setAuthorizedSettlement(address(settlement));
         settlement.setTokenWhitelist(address(token), true);
         settlement.setClaimVerifier(16, address(claimVerifier));
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
 
         token.mint(address(pool), 1_000 ether);
 
@@ -74,24 +79,35 @@ contract PrivateSettlementIdentityGateTest is Test {
         vm.stopPrank();
     }
 
-    /// @dev Register a claimsGroup via scatterDirect so `claimWithProof`
+    /// @dev Register a claimsGroup via scatterDirectAuth so `claimWithProof`
     ///      reaches `_executeClaim` proper.
     function _registerGroup() internal {
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: pool.getLastRoot(),
-            nullifier: bytes32(uint256(0xABCD)),
-            newCommitment: 0,
-            token: address(token),
-            withdrawAmount: 10 ether,
-            claimsRoot: TEST_CLAIMS_ROOT,
-            totalLocked: 10 ether,
+        PrivateSettlement.ScatterDirectAuthParams memory p = PrivateSettlement.ScatterDirectAuthParams({
+            proof: SettleVerifyLib.AuthorizeProof({
+                proofA: proofA,
+                proofB: proofB,
+                proofC: proofC,
+                pubKeyBind: bytes32(uint256(0xD0)),
+                commitmentRoot: pool.getLastRoot(),
+                nullifier: bytes32(uint256(0xABCD)),
+                nonceNullifier: bytes32(uint256(0xAB01)),
+                newCommitment: 0,
+                sellToken: address(token),
+                buyToken: address(token), // same-token invariant
+                sellAmount: 10 ether,
+                buyAmount: 10 ether,
+                maxFee: 0,
+                expiry: uint64(block.timestamp + 1 hours),
+                claimsRoot: TEST_CLAIMS_ROOT,
+                totalLocked: 10 ether,
+                relayer: relayer,
+                orderHash: bytes32(uint256(0xD5)),
+                tier: 16
+            }),
             fee: 0
         });
         vm.prank(relayer);
-        settlement.scatterDirect(p);
+        settlement.scatterDirectAuth(p);
     }
 
     // ─── setIdentityGate ─────────────────────────────────────────

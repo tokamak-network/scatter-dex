@@ -7,9 +7,10 @@ import {StdUtils} from "forge-std/StdUtils.sol";
 
 import {PrivateSettlement} from "../../src/zk/PrivateSettlement.sol";
 import {CommitmentPool} from "../../src/zk/CommitmentPool.sol";
+import {SettleVerifyLib} from "../../src/zk/SettleVerifyLib.sol";
 import {InvariantToken} from "./FeeVaultHandler.sol";
 
-/// @notice Actor-based handler for PrivateSettlement.scatterDirect + claimWithProof.
+/// @notice Actor-based handler for PrivateSettlement.scatterDirectAuth + claimWithProof.
 /// @dev    Mocks accept any proof, so the harness exercises the on-chain accounting
 ///         layer: `ClaimsGroup.totalLocked / totalClaimed`, the claim nullifier
 ///         mapping, and the pool → settlement → recipient token flow.
@@ -94,23 +95,38 @@ contract ScatterClaimHandler is CommonBase, StdCheats, StdUtils {
         bytes32 claimsRoot = bytes32((ghostClaimsRootCounter++) & FIELD_SAFE_MASK);
         if (claimsRoot == bytes32(0)) claimsRoot = bytes32(uint256(1));
 
+        // Disjoint, field-safe nonce nullifier derived from the same counter
+        // so nonceNullifiers never collide across scatter calls.
+        bytes32 nonceNullifier = bytes32((uint256(nullifier) + (uint256(1) << 200)) & FIELD_SAFE_MASK);
+
         address relayer = _relayer(relayerSeed);
-        PrivateSettlement.ScatterDirectParams memory p = PrivateSettlement.ScatterDirectParams({
-            proofA: proofA,
-            proofB: proofB,
-            proofC: proofC,
-            currentRoot: pool.getLastRoot(),
-            nullifier: nullifier,
-            newCommitment: bytes32(0), // empty change UTXO
-            token: address(token),
-            withdrawAmount: withdrawAmount,
-            claimsRoot: claimsRoot,
-            totalLocked: totalLocked,
+        PrivateSettlement.ScatterDirectAuthParams memory p = PrivateSettlement.ScatterDirectAuthParams({
+            proof: SettleVerifyLib.AuthorizeProof({
+                proofA: proofA,
+                proofB: proofB,
+                proofC: proofC,
+                pubKeyBind: bytes32(uint256(0xD0)),
+                commitmentRoot: pool.getLastRoot(),
+                nullifier: nullifier,
+                nonceNullifier: nonceNullifier,
+                newCommitment: bytes32(0), // empty change UTXO
+                sellToken: address(token),
+                buyToken: address(token), // same-token invariant
+                sellAmount: uint128(withdrawAmount),
+                buyAmount: uint128(withdrawAmount),
+                maxFee: 10_000, // FEE_BPS_DENOMINATOR — fee <= sellAmount always holds
+                expiry: uint64(block.timestamp + 1 hours),
+                claimsRoot: claimsRoot,
+                totalLocked: totalLocked,
+                relayer: relayer,
+                orderHash: bytes32(0),
+                tier: 16
+            }),
             fee: fee
         });
 
         vm.prank(relayer);
-        try settlement.scatterDirect(p) {
+        try settlement.scatterDirectAuth(p) {
             knownClaimsRoots.push(claimsRoot);
             seenClaimsRoot[claimsRoot] = true;
             ghostTotalLocked[claimsRoot] = totalLocked;

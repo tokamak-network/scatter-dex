@@ -437,15 +437,6 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         if (address(_gate) != address(0) && !_gate.isVerified(addr)) revert NotIdentityVerified();
     }
 
-    /// @dev Revert if relayer registry is set and caller is not an active relayer.
-    modifier onlyRelayer() {
-        RelayerRegistry _registry = relayerRegistry;
-        if (address(_registry) != address(0)) {
-            if (!_registry.isActiveRelayer(msg.sender)) revert NotActiveRelayer();
-        }
-        _;
-    }
-
     // ─── settleAuth (Half-proof) ─────────────────────────────────
     //
     // Two `circuits/authorize.circom` proofs (one per party) are matched and
@@ -893,71 +884,6 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
         );
     }
 
-    // ─── Scatter Direct (same-token, no counterparty) ─────────────
-
-    struct ScatterDirectParams {
-        uint256[2] proofA;
-        uint256[2][2] proofB;
-        uint256[2] proofC;
-        uint256 currentRoot;
-        bytes32 nullifier;
-        bytes32 newCommitment;
-        address token;
-        uint256 withdrawAmount; // total amount withdrawn from commitment
-        bytes32 claimsRoot;
-        uint128 totalLocked; // sum of claim amounts; matches circuit Num2Bits(128)
-        uint96 fee; // relayer fee
-    }
-
-    event ScatterDirect(bytes32 indexed nullifier, bytes32 indexed claimsRoot, address relayer, uint96 fee);
-
-    /// @notice Single-party scatter: consume a commitment and register claims directly.
-    ///         Uses withdraw proof — no counterparty or settle circuit needed.
-    ///         For same-token orders (e.g., scheduled transfers).
-    function scatterDirect(ScatterDirectParams calldata p) external onlyRelayer nonReentrant whenNotPaused {
-        if (!whitelistedTokens[p.token]) revert TokenNotWhitelisted();
-        if (nullifiers[p.nullifier]) revert NullifierAlreadySpent();
-
-        // withdrawAmount must exactly equal claims + fee (no surplus left in contract)
-        if (p.withdrawAmount != uint256(p.totalLocked) + uint256(p.fee)) revert AmountOverflow();
-
-        // Verify root is known
-        if (!pool.isKnownRoot(p.currentRoot)) revert UnknownRoot();
-
-        // Withdraw from pool: recipient = this contract, relayer = msg.sender.
-        // `nonReentrant` modifier on scatterDirect prevents re-entry. The pool is the
-        // immutable CommitmentPool (set in initialize, mutators are owner-only or guarded),
-        // so the post-call nullifier write is safe against cross-function reentry.
-        // slither-disable-next-line reentrancy-no-eth,reentrancy-events
-        pool.withdrawFor(
-            p.proofA,
-            p.proofB,
-            p.proofC,
-            p.currentRoot,
-            uint256(p.nullifier),
-            uint256(p.newCommitment),
-            p.token,
-            p.withdrawAmount,
-            address(this), // funds come to PrivateSettlement
-            msg.sender // relayer bound in proof
-        );
-
-        // Mark nullifier
-        nullifiers[p.nullifier] = true;
-
-        // Register claims group (prevent overwriting existing group).
-        // scatterDirect uses a withdraw proof (no authorize tier on the
-        // params), so we record tier 16 — the only depth the live claim
-        // verifier handles. Future tier-aware scatter variants would
-        // thread the tier through ScatterDirectParams.
-        SettleVerifyLib.registerClaimsGroup(claimsGroups, p.claimsRoot, p.token, p.totalLocked, 16);
-
-        // Transfer fee
-        if (p.fee > 0) _routeFeeLocal(p.token, p.fee);
-
-        emit ScatterDirect(p.nullifier, p.claimsRoot, msg.sender, p.fee);
-    }
-
     // ─── Scatter Direct Auth (single-party, same-token via authorize proof) ──
 
     struct ScatterDirectAuthParams {
@@ -1151,7 +1077,7 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
 
     // ─── Internal Fee Routing ────────────────────────────────────
 
-    /// @dev Route fee from CommitmentPool to msg.sender via vault (legacy: scatterDirect).
+    /// @dev Route fee from CommitmentPool to msg.sender via vault.
     function _routeFeeFromPool(address token, uint256 amount) internal {
         _routeFeeFromPoolTo(token, amount, msg.sender);
     }
@@ -1163,16 +1089,6 @@ contract PrivateSettlement is Initializable, ReentrancyGuardUpgradeable, Pausabl
             feeVault.deposit(relayer, token, amount);
         } else {
             pool.transferFee(relayer, token, amount);
-        }
-    }
-
-    /// @dev Route fee from this contract's balance to vault or relayer.
-    function _routeFeeLocal(address token, uint256 amount) internal {
-        if (address(feeVault) != address(0)) {
-            IERC20(token).safeTransfer(address(feeVault), amount);
-            feeVault.deposit(msg.sender, token, amount);
-        } else {
-            IERC20(token).safeTransfer(msg.sender, amount);
         }
     }
 

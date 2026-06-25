@@ -10,12 +10,13 @@ import {SettleVerifyLib} from "../../src/zk/SettleVerifyLib.sol";
 import {MockVerifier} from "../mocks/MockVerifier.sol";
 import {MockDepositVerifier} from "../mocks/MockDepositVerifier.sol";
 import {MockClaimVerifier} from "../mocks/MockClaimVerifier.sol";
+import {MockAuthorizeVerifier} from "../mocks/MockAuthorizeVerifier.sol";
 import {MockWETH} from "../mocks/MockWETH.sol";
 import {ProxyDeployer} from "../utils/ProxyDeployer.sol";
 import {InvariantToken} from "./FeeVaultHandler.sol";
 import {ScatterClaimHandler} from "./ScatterClaimHandler.sol";
 
-/// @notice Invariant suite covering PrivateSettlement.scatterDirect +
+/// @notice Invariant suite covering PrivateSettlement.scatterDirectAuth +
 ///         claimWithProof — the simplest path that exercises the
 ///         ClaimsGroup accounting (totalLocked vs totalClaimed) end-to-end.
 contract ScatterClaimInvariantTest is StdInvariant, Test {
@@ -28,6 +29,7 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
         MockVerifier withdrawVerifier = new MockVerifier();
         MockDepositVerifier depositVerifier = new MockDepositVerifier();
         MockClaimVerifier claimVerifier = new MockClaimVerifier();
+        MockAuthorizeVerifier authVerifier = new MockAuthorizeVerifier();
         MockWETH weth = new MockWETH();
         token = new InvariantToken();
 
@@ -40,6 +42,7 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
         pool.setTokenWhitelist(address(token), true);
         pool.setAuthorizedSettlement(address(settlement));
         settlement.setTokenWhitelist(address(token), true);
+        settlement.setAuthorizeVerifier(16, address(authVerifier));
 
         handler = new ScatterClaimHandler(settlement, pool, token, address(this));
         targetContract(address(handler));
@@ -66,7 +69,7 @@ contract ScatterClaimInvariantTest is StdInvariant, Test {
     }
 
     /// @dev ClaimsGroup on-chain state matches the ghost mirror exactly. Catches
-    ///      mismatches between what `scatterDirect`/`claimWithProof` wrote and
+    ///      mismatches between what `scatterDirectAuth`/`claimWithProof` wrote and
     ///      what the test harness believes happened.
     function invariant_claimsGroupMirror() public view {
         uint256 n = handler.knownClaimsRootsCount();
