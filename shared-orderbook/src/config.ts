@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { isAddress } from "ethers";
 
 function env(key: string, fallback?: string): string {
   const val = process.env[key] ?? fallback;
@@ -12,6 +13,44 @@ function envInt(key: string, fallback: string): number {
     throw new Error(`Invalid numeric env: ${key}`);
   }
   return val;
+}
+
+/** Per-chain RelayerRegistry wiring for the settlements membership gate. */
+export interface RelayerRegistryChain {
+  chainId: number;
+  rpcUrl: string;
+  registryAddress: string;
+}
+
+/**
+ * Parse RELAYER_REGISTRY_CHAINS — a JSON array of
+ * `{ chainId, rpcUrl, registryAddress }`. Unset/empty → `[]`, which leaves the
+ * settlements membership gate OFF (back-compat). Present-but-malformed throws
+ * (fail-fast: a typo in a security gate's config must not silently disable it).
+ */
+function parseRegistryChains(raw: string | undefined): RelayerRegistryChain[] {
+  if (!raw || !raw.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("RELAYER_REGISTRY_CHAINS must be valid JSON");
+  }
+  if (!Array.isArray(parsed)) throw new Error("RELAYER_REGISTRY_CHAINS must be a JSON array");
+  return parsed.map((c, i) => {
+    const o = c as Record<string, unknown>;
+    const chainId = Number(o?.chainId);
+    if (!Number.isInteger(chainId) || chainId <= 0) {
+      throw new Error(`RELAYER_REGISTRY_CHAINS[${i}].chainId must be a positive integer`);
+    }
+    const rpcUrl = typeof o?.rpcUrl === "string" ? o.rpcUrl.trim() : "";
+    if (!rpcUrl) throw new Error(`RELAYER_REGISTRY_CHAINS[${i}].rpcUrl must be a non-empty string`);
+    const registryAddress = typeof o?.registryAddress === "string" ? o.registryAddress.trim() : "";
+    if (!isAddress(registryAddress)) {
+      throw new Error(`RELAYER_REGISTRY_CHAINS[${i}].registryAddress must be a valid EVM address`);
+    }
+    return { chainId, rpcUrl, registryAddress };
+  });
 }
 
 export const config = {
@@ -104,4 +143,9 @@ export const config = {
   // Accept both "0" and "false" (case-insensitive) as off — "false" would
   // otherwise read as on and surprise an operator trying to disable it.
   kycRequireWalletSig: !["0", "false"].includes((process.env.KYC_REQUIRE_WALLET_SIG ?? "1").trim().toLowerCase()),
+
+  // Per-chain RelayerRegistry wiring for the settlements membership gate
+  // (A-3 follow-up). When non-empty, POST /api/settlements rejects a submitter
+  // that isn't an active relayer on-chain. Empty (default) → gate off.
+  relayerRegistryChains: parseRegistryChains(process.env.RELAYER_REGISTRY_CHAINS),
 };

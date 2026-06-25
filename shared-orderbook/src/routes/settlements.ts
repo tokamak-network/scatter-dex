@@ -5,7 +5,8 @@ import type { OrderbookDB } from "../core/db.js";
 import { parseSettlementInsert, LEADERBOARD_METRICS, type LeaderboardMetric } from "../types/settlement.js";
 import { isValidPair } from "../types/order.js";
 import { relayerAuth, type AuthenticatedRequest } from "../middleware/auth.js";
-import { parseChainIdQuery } from "../core/chain.js";
+import { parseChainIdQuery, DEFAULT_CHAIN_ID } from "../core/chain.js";
+import type { RelayerMembership } from "../core/relayer-membership.js";
 
 const HEX_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const MAX_LIMIT = 500;
@@ -42,13 +43,17 @@ export function createSettlementRoutes(
   writeLimiter: RequestHandler,
   readLimiter: RequestHandler,
   relayerWriteLimiter?: RequestHandler,
+  /** Optional on-chain membership gate. When provided, a submitter that isn't
+   *  an active relayer in the RelayerRegistry is rejected (403) — blocking
+   *  fake-row injection at the source. Omitted → no gate (back-compat). */
+  membership?: RelayerMembership,
 ): Router {
   const router = Router();
 
   const middleware: RequestHandler[] = [writeLimiter, relayerAuth];
   if (relayerWriteLimiter) middleware.push(relayerWriteLimiter);
 
-  router.post("/", ...middleware, (req, res) => {
+  router.post("/", ...middleware, async (req, res) => {
     try {
       const { relayerAddress } = req as AuthenticatedRequest;
       const payload = parseSettlementInsert(req.body);
@@ -62,6 +67,17 @@ export function createSettlementRoutes(
       if (!sides.includes(submitter)) {
         res.status(403).json({ error: "submitter must be either makerRelayer or takerRelayer" });
         return;
+      }
+
+      // On-chain membership gate: the signature only proves key control, not
+      // that the submitter is a real relayer. Reject non-members at the source
+      // (the row cap/prune only bound the impact of rows that get through).
+      if (membership) {
+        const active = await membership.isActiveRelayer(payload.chainId ?? DEFAULT_CHAIN_ID, submitter);
+        if (!active) {
+          res.status(403).json({ error: "submitter is not an active relayer in the on-chain registry" });
+          return;
+        }
       }
 
       const inserted = db.insertSettlement(submitter, payload);
