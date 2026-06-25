@@ -193,8 +193,13 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
   if (r.takerRelayer !== undefined && (!isStringField(r.takerRelayer) || !HEX_ADDR.test(r.takerRelayer))) {
     throw new Error("takerRelayer: must be a 0x-prefixed address when provided");
   }
+  // Nullifiers are bytes32 field elements on-chain. Validate the shape (not
+  // just non-empty) so the public, registry-ungated write surface can't be
+  // used to stuff arbitrary-length junk into indexed columns.
   for (const f of ["makerNullifier", "takerNullifier"] as const) {
-    if (!isStringField(r[f])) throw new Error(`${f}: must be a non-empty string`);
+    if (!isStringField(r[f]) || !HEX_BYTES32.test(r[f] as string)) {
+      throw new Error(`${f}: must be a 0x-prefixed 32-byte hex string`);
+    }
   }
   for (const f of ["feeMaker", "feeTaker"] as const) {
     if (!isNonNegativeBigInt(r[f])) {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { OrderbookDB } from "../src/core/db.js";
 import type { OrderSummary } from "../src/types/order.js";
+import type { SettlementInsert } from "../src/types/settlement.js";
 import fs from "fs";
 
 const TEST_DB = "/tmp/shared-orderbook-test.db";
@@ -22,6 +23,23 @@ function makeOrder(overrides: Partial<OrderSummary> = {}): OrderSummary {
     maxFee: overrides.maxFee ?? 30,
     expiry: overrides.expiry ?? Math.floor(Date.now() / 1000) + 3600,
     createdAt: overrides.createdAt ?? Math.floor(Date.now() / 1000),
+  };
+}
+
+function makeSettlement(i: number, overrides: Partial<SettlementInsert> = {}): SettlementInsert {
+  const hex = i.toString(16).padStart(64, "0");
+  return {
+    txHash: "0x" + hex,
+    blockNumber: overrides.blockNumber ?? 1000 + i,
+    makerRelayer: "0x" + "11".repeat(20),
+    takerRelayer: "0x" + "22".repeat(20),
+    makerNullifier: "0x" + "aa".repeat(32),
+    takerNullifier: "0x" + "bb".repeat(32),
+    feeMaker: "100",
+    feeTaker: "100",
+    userMaxFeeMaker: 30,
+    userMaxFeeTaker: 30,
+    ...overrides,
   };
 }
 
@@ -201,5 +219,49 @@ describe("OrderbookDB", () => {
     const match = db.getMatch("match-001");
     expect(match).not.toBeNull();
     expect(match!.settlingRelayer).toBe("0xrelayer1");
+  });
+
+  describe("pruneSettlements (A-3 DoS cap)", () => {
+    const submitter = "0x" + "11".repeat(20);
+
+    it("is a no-op when the row count is at or below the cap", () => {
+      for (let i = 0; i < 5; i++) db.insertSettlement(submitter, makeSettlement(i));
+      expect(db.pruneSettlements(5)).toBe(0);
+      expect(db.pruneSettlements(10)).toBe(0);
+      expect(db.listSettlements({ limit: 500 }).length).toBe(5);
+    });
+
+    it("deletes the oldest-inserted rows down to the cap", () => {
+      for (let i = 0; i < 10; i++) db.insertSettlement(submitter, makeSettlement(i));
+      const removed = db.pruneSettlements(4);
+      expect(removed).toBe(6);
+      const remaining = db.listSettlements({ limit: 500 });
+      expect(remaining.length).toBe(4);
+      // created_at is server-stamped equal within the test, so the prune
+      // falls back to rowid (insertion order): the last 4 inserted survive.
+      const survivors = new Set(remaining.map((r) => r.txHash));
+      for (let i = 6; i < 10; i++) {
+        expect(survivors.has(makeSettlement(i).txHash)).toBe(true);
+      }
+    });
+
+    it("does not order the prune by attacker-controlled block_number", () => {
+      // An old row carrying a huge block_number must still age out first —
+      // ordering by block_number would let spam pin itself above real history.
+      db.insertSettlement(submitter, makeSettlement(0, { blockNumber: 9_000_000 }));
+      for (let i = 1; i < 5; i++) db.insertSettlement(submitter, makeSettlement(i, { blockNumber: 10 + i }));
+      db.pruneSettlements(4);
+      const survivors = new Set(db.listSettlements({ limit: 500 }).map((r) => r.txHash));
+      // The first-inserted row is gone despite its high block_number.
+      expect(survivors.has(makeSettlement(0).txHash)).toBe(false);
+    });
+
+    it("ignores a non-positive or non-finite cap", () => {
+      for (let i = 0; i < 3; i++) db.insertSettlement(submitter, makeSettlement(i));
+      expect(db.pruneSettlements(0)).toBe(0);
+      expect(db.pruneSettlements(-1)).toBe(0);
+      expect(db.pruneSettlements(Number.NaN)).toBe(0);
+      expect(db.listSettlements({ limit: 500 }).length).toBe(3);
+    });
   });
 });

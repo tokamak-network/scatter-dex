@@ -173,6 +173,13 @@ export class OrderbookDB {
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_m ON settlements(maker_nullifier);
       CREATE INDEX IF NOT EXISTS idx_settle_nullifier_t ON settlements(taker_nullifier);
 
+      -- Serves the DoS-cap prune (pruneSettlements): its oldest-first
+      -- ORDER BY created_at runs unscoped (no chain filter), so without a
+      -- created_at-leading index SQLite would scan + filesort the whole
+      -- table on every prune. SQLite appends the rowid as the implicit
+      -- trailing key, so ORDER BY created_at, rowid is fully index-served.
+      CREATE INDEX IF NOT EXISTS idx_settle_created ON settlements(created_at);
+
       -- Expression index so "since" filters on COALESCE(block_time,
       -- created_at) >= ? (used by listSettlements, getNetworkSettlementTotals,
       -- getLeaderboard) can be served by an index rather than a table scan.
@@ -786,6 +793,38 @@ export class OrderbookDB {
     return result.changes > 0;
   }
 
+  /**
+   * Enforce a hard ceiling on stored settlement rows. The write surface is
+   * relayer-signed but not registry-gated (any valid keypair passes
+   * `relayerAuth`), so without a cap the table grows without bound — a disk
+   * DoS that also slows the per-relayer aggregation reads which stream every
+   * matching row. Deletes the oldest rows once the count exceeds `maxRows`,
+   * keeping the newest `maxRows`.
+   *
+   * Ordering is by `created_at` (the server-stamped insert clock) — NOT
+   * `block_number`, which is an attacker-controlled payload field. Ordering a
+   * prune by block_number would let a spammer pin a huge block number on junk
+   * rows so the prune evicts genuine history instead. `created_at` can't be
+   * forged by the client, so oldest-inserted is what ages out. Returns the
+   * number of rows deleted.
+   */
+  pruneSettlements(maxRows: number): number {
+    if (!Number.isFinite(maxRows) || maxRows <= 0) return 0;
+    const { c } = this.db.prepare(`SELECT COUNT(*) AS c FROM settlements`).get() as { c: number };
+    if (c <= maxRows) return 0;
+    // Delete by rowid (internal row pointer) rather than the text tx_hash
+    // PK — the subquery's ORDER BY created_at, rowid is served straight off
+    // idx_settle_created, and rowid IN avoids materialising/joining hashes.
+    const result = this.db.prepare(
+      `DELETE FROM settlements WHERE rowid IN (
+         SELECT rowid FROM settlements
+         ORDER BY created_at ASC, rowid ASC
+         LIMIT ?
+       )`,
+    ).run(c - maxRows);
+    return result.changes;
+  }
+
   getSettlement(txHash: string): StoredSettlement | null {
     const row = this.stmtGetSettlement.get(txHash.toLowerCase()) as Record<string, unknown> | undefined;
     return row ? this.rowToSettlement(row) : null;
@@ -951,6 +990,12 @@ export class OrderbookDB {
     txCount: number;
     txCountVerified: number;
     lastSettleAt: number | null;
+    /** Running numerator/denominator for the mean effective fee in bps.
+     *  Accumulated in this same pass so getRelayerSettlementStats can stream
+     *  the row set straight off `.iterate()` instead of materialising every
+     *  matching row into an array for a second loop. */
+    feeBpsNum: number;
+    feeBpsDen: number;
   } {
     let txCount = 0;
     const tokenAgg = new Map<string, { sell: bigint; buy: bigint; sellCount: number; buyCount: number }>();
@@ -959,6 +1004,20 @@ export class OrderbookDB {
     const pairAggVerified = new Map<string, { sellToken: string; buyToken: string; count: number }>();
     let txCountVerified = 0;
     let lastSettleAt: number | null = null;
+    let feeBpsNum = 0;
+    let feeBpsDen = 0;
+
+    // Mean realised fee bps across both sides of a row. Only sides with a
+    // present fee + buy > 0 contribute (zero buy is degenerate). user_maxfee
+    // is *not* a gate — 0 bps is a valid signed cap and dropping those rows
+    // would bias the average toward higher-fee orders.
+    const accumulateFee = (feeStr: string | null, buyStr: string | null): void => {
+      if (!feeStr || !buyStr) return;
+      const buy = BigInt(buyStr);
+      if (buy === 0n) return;
+      feeBpsNum += Number((BigInt(feeStr) * 10_000n) / buy);
+      feeBpsDen += 1;
+    };
 
     // Hoisted out of the loop — defining a closure per row materially
     // hurts perf on relayer histories with tens of thousands of rows
@@ -1002,6 +1061,11 @@ export class OrderbookDB {
       bumpToken(tokenAgg, sellToken, buyToken, sellAmount, buyAmount);
       if (verified) bumpToken(tokenAggVerified, sellToken, buyToken, sellAmount, buyAmount);
 
+      // buy_amount is the denominator for both sides' fee rate, matching the
+      // pre-refactor two-pass behaviour.
+      accumulateFee(r.fee_maker as string | null, buyAmount);
+      accumulateFee(r.fee_taker as string | null, buyAmount);
+
       if (sellToken && buyToken) {
         const key = `${sellToken}-${buyToken}`;
         const cur = pairAgg.get(key) ?? { sellToken, buyToken, count: 0 };
@@ -1014,7 +1078,7 @@ export class OrderbookDB {
         }
       }
     }
-    return { tokenAgg, tokenAggVerified, pairAgg, pairAggVerified, txCount, txCountVerified, lastSettleAt };
+    return { tokenAgg, tokenAggVerified, pairAgg, pairAggVerified, txCount, txCountVerified, lastSettleAt, feeBpsNum, feeBpsDen };
   }
 
   private materialiseTokenVolume(
@@ -1047,36 +1111,15 @@ export class OrderbookDB {
     const args = [...branchArgs, ...branchArgs, ...branchArgs];
     // .iterate() streams rows so a relayer with millions of settlements
     // doesn't OOM the Node heap; .all() materialises the whole set first.
+    // aggregateSettlementRows now folds the fee-bps accumulation into the
+    // same pass, so we never need to collect the rows into an array — the
+    // iterator is consumed exactly once.
     const rowIter = this.db.prepare(sql).iterate(...args) as Iterable<Record<string, unknown>>;
 
-    // Tee the iterator: aggregate runs the main pass, then the fee-bps
-    // pass needs the raw rows again. Materialising once is unavoidable
-    // here because we need both. To still bound memory, we collect into
-    // an array but the row set is already pre-filtered to one relayer.
-    const rows: Record<string, unknown>[] = [];
-    for (const r of rowIter) rows.push(r);
-
-    const { tokenAgg, tokenAggVerified, pairAgg, pairAggVerified, txCount, txCountVerified, lastSettleAt } =
-      this.aggregateSettlementRows(rows);
-
-    // Mean realised fee bps across both sides of every row the relayer
-    // participated in. Only sides with present fee + buy > 0 contribute
-    // (zero buy is degenerate). user_maxfee is *not* a gate — 0 bps is a
-    // valid signed cap and dropping those rows would silently bias the
-    // average toward higher-fee orders.
-    let feeBpsNum = 0;
-    let feeBpsDen = 0;
-    const accumulateSide = (feeStr: string | null, buyStr: string | null): void => {
-      if (!feeStr || !buyStr) return;
-      const buy = BigInt(buyStr);
-      if (buy === 0n) return;
-      feeBpsNum += Number((BigInt(feeStr) * 10_000n) / buy);
-      feeBpsDen += 1;
-    };
-    for (const r of rows) {
-      accumulateSide(r.fee_maker as string | null, r.buy_amount as string | null);
-      accumulateSide(r.fee_taker as string | null, r.buy_amount as string | null);
-    }
+    const {
+      tokenAgg, tokenAggVerified, pairAgg, pairAggVerified,
+      txCount, txCountVerified, lastSettleAt, feeBpsNum, feeBpsDen,
+    } = this.aggregateSettlementRows(rowIter);
 
     return {
       address: a,

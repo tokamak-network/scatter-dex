@@ -133,6 +133,18 @@ async function main() {
     }
   }, 60_000);
 
+  // Cap the settlements table — the write surface is relayer-signed but not
+  // registry-gated, so without a ceiling it grows without bound (disk DoS +
+  // slower per-relayer aggregation reads). Runs less often than the order
+  // sweeps: pruning is bulk DELETE work and the writeLimiter already bounds
+  // how fast the table can grow between passes.
+  const settlementPruneInterval = setInterval(() => {
+    const removed = db.pruneSettlements(config.maxSettlements);
+    if (removed > 0) {
+      console.log(`Pruned ${removed} settlement rows over cap (${config.maxSettlements})`);
+    }
+  }, 300_000);
+
   // Purge stale relayers (no heartbeat for 10 min)
   const staleInterval = setInterval(() => {
     const stale = orderbook.purgeStaleRelayers(600);
@@ -182,6 +194,7 @@ async function main() {
     isShuttingDown = true;
     console.log("Shutting down...");
     clearInterval(expireInterval);
+    clearInterval(settlementPruneInterval);
     clearInterval(staleInterval);
     broadcaster.close();
     server.close(() => {

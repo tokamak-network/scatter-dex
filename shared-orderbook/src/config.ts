@@ -54,6 +54,15 @@ export const config = {
   // Total max orders in memory
   maxOrders: envInt("MAX_ORDERS", "50000"),
 
+  // Hard ceiling on stored settlement rows. POST /api/settlements is
+  // relayer-signed but not registry-gated (any valid keypair passes), so
+  // without a cap the table grows without bound — a disk DoS that also slows
+  // the per-relayer aggregation reads which stream every matching row. The
+  // periodic prune deletes the oldest rows (by server-stamped created_at) once
+  // the count exceeds this. Sized well above expected testnet volume; operators
+  // needing full history should archive off-box.
+  maxSettlements: envInt("MAX_SETTLEMENTS", "200000"),
+
   // Admin endpoints (verify-stats + KYC review). Static bearer token —
   // unset = disabled (the legacy / fallback path). We never default this to
   // a fixed value: an unset env must mean "off" or every default deployment
