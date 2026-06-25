@@ -37,12 +37,22 @@ contract UpgradePrivateSettlement is Script {
 
     function run() external {
         address proxy = vm.envOr("PRIVATE_SETTLEMENT_PROXY", SEPOLIA_PROXY);
+        // Preflight: fail loud BEFORE broadcasting if the target is wrong (e.g. an
+        // unset/typo'd proxy on a fresh chain) rather than emitting a cryptic revert
+        // or, worse, deploying an impl no one can wire up.
+        require(proxy.code.length != 0, "UpgradePrivateSettlement: proxy has no code");
 
         // The transparent proxy doesn't expose its ProxyAdmin; read it from the
         // ERC1967 admin slot (mirrors test/upgrade/UpgradeHelper.sol).
-        ProxyAdmin admin = ProxyAdmin(address(uint160(uint256(vm.load(proxy, ERC1967Utils.ADMIN_SLOT)))));
+        address adminAddr = address(uint160(uint256(vm.load(proxy, ERC1967Utils.ADMIN_SLOT))));
+        require(adminAddr != address(0), "UpgradePrivateSettlement: admin slot empty");
+        ProxyAdmin admin = ProxyAdmin(adminAddr);
 
         uint256 key = vm.envUint("DEPLOYER_KEY");
+        // The signer MUST own the ProxyAdmin, or `upgradeAndCall` reverts after we've
+        // already paid to deploy the new impl — check up front.
+        require(admin.owner() == vm.addr(key), "UpgradePrivateSettlement: signer not ProxyAdmin owner");
+
         vm.startBroadcast(key);
         PrivateSettlement newImpl = new PrivateSettlement();
         // Empty calldata → no reinitializer; storage layout is unchanged.
