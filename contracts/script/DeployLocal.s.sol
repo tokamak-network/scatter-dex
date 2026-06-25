@@ -673,6 +673,11 @@ contract DeployLocal is Script {
         privateSettlement.setClaimVerifier(128, claimVerifier128);
         console.log("AuthorizeVerifier (16/64/128) wired into PrivateSettlement");
         console.log("ClaimVerifier (64/128) wired into PrivateSettlement");
+        // NOTE: the batched 5-pairing BatchAuthorizeVerifier is intentionally
+        // NOT wired here. Local/e2e runs the default (non-via-ir) profile, which
+        // skips the batch verifier artifacts, and the optimisation has no value
+        // on a local chain. Network deploys (DeploySepolia) deploy + wire it
+        // under FOUNDRY_PROFILE=batch-verifier.
         // cancelPrivate is gated the same way — without setCancelVerifier
         // every cancel reverts with `CancelVerifierNotSet()` (selector
         // 0xe5b08665), even though the user's wallet signed a perfectly

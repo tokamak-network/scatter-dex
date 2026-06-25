@@ -266,7 +266,9 @@ function validateScatterAuth(
 
 `AuthorizeVerifier.sol` is auto-generated from the zkey. New circuit → new zkey → new verifier. Three verifiers need regeneration: `AuthorizeVerifier`, `AuthorizeVerifier64`, `AuthorizeVerifier128`.
 
-Hot-swap path: `PrivateSettlement.setAuthorizeVerifier(tier, newVerifierAddr)`. Existing setter exists — admin/governance call.
+The hand-written batched verifiers (`BatchAuthorizeVerifier{,_64,_128}.sol`, the 8→5 pairing optimisation) share each tier's verifying key, so they must be re-synced in lock-step on every circuit recompile. `circuits/scripts/build.sh` calls `sync-batch-verifier-vk.mjs` to patch all three from the new zkeys; `sync-batch-verifier-vk.mjs --check` is the drift gate. Forgetting this reverts every same-tier `settleAuth` with `InvalidProof()` once the batch verifier is wired (the PR #708 drift class).
+
+Hot-swap path: `PrivateSettlement.setAuthorizeVerifier(tier, newVerifierAddr)` (+ `setBatchAuthorizeVerifier(tier, addr)` if the batch path is enabled). Existing setters exist — admin/governance call.
 
 ### 8.5 Trusted setup ceremony
 

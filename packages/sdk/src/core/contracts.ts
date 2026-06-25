@@ -141,6 +141,7 @@ export const PRIVATE_SETTLEMENT_ABI = [
   // implicitly, but the registry shape is what this PR is wiring
   // up so the tooling already has the keys it needs.
   "function authorizeVerifierByTier(uint8) view returns (address)",
+  "function batchAuthorizeVerifierByTier(uint8) view returns (address)",
   "function claimVerifierByTier(uint8) view returns (address)",
   // Settlement-side token whitelist (settle/claim eligibility). The UI
   // intersects this with CommitmentPool's list so only tokens usable

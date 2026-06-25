@@ -41,6 +41,12 @@ skip = [
     # Real-proof batch test imports the via-ir verifiers above — only the
     # batch-verifier profile can compile it. Skip it in the default profile.
     "test/BatchAuthorizeVerifier.t.sol",
+    # WireBatchVerifiers imports the via-ir batch verifiers directly, so it can
+    # only COMPILE under FOUNDRY_PROFILE=batch-verifier — skip it here.
+    # (DeploySepolia doesn't import them — it deploys by artifact via vm.getCode
+    # — so it COMPILES under the default profile, but it must still be RUN under
+    # FOUNDRY_PROFILE=batch-verifier so those artifacts exist at deploy time.)
+    "script/WireBatchVerifiers.s.sol",
 ]
 
 # Fuzz / invariant defaults for PR builds — fast enough to keep PR CI snappy
