@@ -27,6 +27,14 @@ services:
       # Optional static bearer for CI / verify-stats (legacy path). Empty when
       # only SIWE is used. Injected from Secret Manager by the VM startup.
       - ADMIN_TOKEN=${ADMIN_TOKEN:-}
+      # On-chain relayer-membership gate for POST /api/settlements (audit A-3
+      # follow-up). JSON array of {chainId,rpcUrl,registryAddress}. Empty →
+      # gate OFF (signature-only, back-compat). When set, settlement writes are
+      # rejected unless the submitter is an active relayer in the on-chain
+      # RelayerRegistry for the row's chain (result TTL-cached; RPC error
+      # fails open; unconfigured chainId fails closed). Public config →
+      # instance metadata, never git.
+      - RELAYER_REGISTRY_CHAINS=${RELAYER_REGISTRY_CHAINS:-}
     volumes:
       - orderbook-data:/data
     ports:
