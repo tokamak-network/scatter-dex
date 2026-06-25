@@ -87,6 +87,11 @@ describe("audit log wiring (KYC → /api/admin/audit)", () => {
     cleanDb();
     fs.rmSync(UPLOAD_DIR, { recursive: true, force: true });
     config.kycUploadDir = UPLOAD_DIR;
+    // This suite exercises audit-log WIRING (a KYC status decision → an audit
+    // entry); the KYC submit here is just setup. The wallet-ownership gate
+    // (A-6) is covered by kyc.test.ts, and these tests use fixture addresses
+    // with no signing key, so opt the gate off for the setup submits.
+    config.kycRequireWalletSig = false;
     db = new OrderbookDB(TEST_DB);
     const siwe = makeAdminSiweFromAllowlist([adminWallet.address])!;
     const adminAuth = makeAdminAuth({ siwe, staticToken: STATIC_TOKEN });
@@ -100,6 +105,7 @@ describe("audit log wiring (KYC → /api/admin/audit)", () => {
     port = typeof addr === "object" && addr ? addr.port : 0;
   });
   afterAll(async () => {
+    config.kycRequireWalletSig = true; // restore default; don't leak to other suites
     await new Promise<void>((resolve) => server.close(() => resolve()));
     db.close();
     cleanDb();
