@@ -54,9 +54,10 @@ interface CacheEntry {
 
 /**
  * Build a `RelayerMembership` backed by per-chain `RelayerRegistry` contracts,
- * with a TTL cache and fail-open semantics. A chain with no configured registry
- * is treated as "not gated" (returns true) so an unconfigured chain can't
- * accidentally reject every settlement.
+ * with a TTL cache. Fail-OPEN on RPC error (a node blip shouldn't block legit
+ * relayers), but fail-CLOSED on an unconfigured chain — chainId is
+ * client-controlled, so an unknown chainId is rejected rather than waved
+ * through. Enable the gate only for chains you've listed.
  */
 export function makeRelayerMembership(chains: ChainRegistry[], opts: MembershipOpts = {}): RelayerMembership {
   const positiveTtl = opts.positiveTtlMs ?? 60_000;
@@ -75,8 +76,13 @@ export function makeRelayerMembership(chains: ChainRegistry[], opts: MembershipO
     opts.check ??
     (async (chainId: number, relayer: string): Promise<boolean> => {
       const contract = contracts.get(chainId);
-      // No registry for this chain → can't gate; don't reject.
-      if (!contract) return true;
+      // No registry for this chain → REJECT. chainId is client-controlled
+      // (parsed from the POST body), so returning true here would let an
+      // attacker bypass the gate entirely by submitting under an unconfigured
+      // chainId. Enabling the gate therefore restricts settlement writes to the
+      // chains listed in RELAYER_REGISTRY_CHAINS — configure every chain you
+      // accept settlements on.
+      if (!contract) return false;
       return Boolean(await contract.isActiveRelayer(relayer));
     });
 

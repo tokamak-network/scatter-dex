@@ -46,8 +46,12 @@ function parseRegistryChains(raw: string | undefined): RelayerRegistryChain[] {
     const rpcUrl = typeof o?.rpcUrl === "string" ? o.rpcUrl.trim() : "";
     if (!rpcUrl) throw new Error(`RELAYER_REGISTRY_CHAINS[${i}].rpcUrl must be a non-empty string`);
     const registryAddress = typeof o?.registryAddress === "string" ? o.registryAddress.trim() : "";
-    if (!isAddress(registryAddress)) {
-      throw new Error(`RELAYER_REGISTRY_CHAINS[${i}].registryAddress must be a valid EVM address`);
+    // Reject the zero address explicitly: it passes isAddress but every
+    // isActiveRelayer call against it reverts, which the gate treats as an RPC
+    // error and FAILS OPEN — silently disabling a gate the operator believes is
+    // configured. Better to fail-fast at startup.
+    if (!isAddress(registryAddress) || /^0x0{40}$/i.test(registryAddress)) {
+      throw new Error(`RELAYER_REGISTRY_CHAINS[${i}].registryAddress must be a valid non-zero EVM address`);
     }
     return { chainId, rpcUrl, registryAddress };
   });

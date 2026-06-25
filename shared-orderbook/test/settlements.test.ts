@@ -433,6 +433,12 @@ describe("/api/settlements — on-chain membership gate (A-3 follow-up)", () => 
     for (const s of ["", "-wal", "-shm"]) { try { fs.unlinkSync(GATE_DB + s); } catch { /* ignore */ } }
   });
 
+  beforeEach(() => {
+    // Reset between cases so the shared default txHash from basePayload() can't
+    // make one test depend on another's insert.
+    db._resetSettlementsForTests();
+  });
+
   async function postTo(body: unknown, signer: Wallet) {
     const headers = await authHeaders(signer, "POST", "/api/settlements", "http://localhost:" + GATE_PORT);
     const res = await fetch(`http://localhost:${GATE_PORT}/api/settlements`, {

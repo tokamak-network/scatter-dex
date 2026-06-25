@@ -79,6 +79,17 @@ describe("makeRelayerMembership", () => {
     expect(calls).toBe(201);
   });
 
+  it("rejects (fail-closed) a chainId with no configured registry — no RPC call", async () => {
+    // Build with a real (but unused) chain config and the default on-chain
+    // check. Querying an UNconfigured chainId must return false without ever
+    // constructing/calling a contract — chainId is client-controlled, so an
+    // unknown chain can't be allowed to bypass the gate.
+    const m = makeRelayerMembership([
+      { chainId: 11155111, rpcUrl: "http://127.0.0.1:1", registryAddress: "0x" + "ab".repeat(20) },
+    ]);
+    expect(await m.isActiveRelayer(999_999, ADDR)).toBe(false);
+  });
+
   it("keys the cache by (chainId, address) and lowercases the address", async () => {
     const seen: string[] = [];
     const m = makeRelayerMembership([], {
