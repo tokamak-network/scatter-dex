@@ -22,10 +22,9 @@ code below. Each piece stands on its own.
    · Read in [English](https://medium.com/@zena_tokamak/1959a62ae0ff) · [한국어](https://medium.com/@zena_tokamak/56fba35dd63c)
 4. **Protocol Internals** (deep-dive) — how commitments, nullifiers, circuits, and settlement fit together
    · Read in [English](https://medium.com/@zena_tokamak/94466fcdc9be) · [한국어](https://medium.com/@zena_tokamak/7fab0f806aa0)
-   · *Companion:* **zk-X509 (Identity Gate)** — Stop Building New Identity Systems: Bridging 4 Billion Existing IDs to Web3
-   · Read in [English](https://medium.com/@zena_tokamak/68712efaa09e) · [한국어](https://medium.com/@zena_tokamak/727143a942f1)
 
-All pieces on **[@zena_tokamak](https://medium.com/@zena_tokamak)**.
+**Companion — zk-X509 (Identity Gate):** Stop Building New Identity Systems: Bridging 4 Billion Existing IDs to Web3
+· Read in [English](https://medium.com/@zena_tokamak/68712efaa09e) · [한국어](https://medium.com/@zena_tokamak/727143a942f1)
 
 ---
 
