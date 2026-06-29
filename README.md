@@ -9,6 +9,25 @@ on-chain, while zk-X509 identity gating keeps the protocol regulatory-compliant.
 
 ---
 
+## 📖 Read the series first (Medium)
+
+New here? Read the Medium series for the *why* and the *how*, then dive into the
+code below. Each piece stands on its own.
+
+1. **Product Introduction** — the problem → Pay & Pro → what's hidden and what's shown
+   · Read in [English](https://medium.com/@zena_tokamak/8c074a5bfeb6) · [한국어](https://medium.com/@zena_tokamak/fc0bd3d6037a)
+2. **Economics & Investors** — why build another, how it sustains itself without a token
+   · Read in [English](https://medium.com/@zena_tokamak/8682fb64978b) · [한국어](https://medium.com/@zena_tokamak/5acd65c2df63)
+3. **Developers** — under the hood: how ZK notes, half-proofs, and relayers fit together
+   · Read in [English](https://medium.com/@zena_tokamak/1959a62ae0ff) · [한국어](https://medium.com/@zena_tokamak/56fba35dd63c)
+4. **Protocol Internals** (deep-dive) — how commitments, nullifiers, circuits, and settlement fit together
+   · Read in [English](https://medium.com/@zena_tokamak/94466fcdc9be) · [한국어](https://medium.com/@zena_tokamak/7fab0f806aa0)
+   · *Companion:* **zk-X509** — bringing billions of existing IDs on-chain, with zero personal data (the identity gate)
+
+All pieces on **[@zena_tokamak](https://medium.com/@zena_tokamak)**.
+
+---
+
 ## The apps — why you'd use each
 
 | App | Why you'd use it | Status |
