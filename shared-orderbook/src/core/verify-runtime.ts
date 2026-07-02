@@ -172,7 +172,13 @@ export async function runVerifyLoop(
     try {
       const latest = await opts.provider.getBlockNumber();
       const maxBlock = Math.max(0, latest - opts.blockSafetyMargin);
-      const futureBlockThreshold = latest + (opts.futureBlockBuffer ?? 1000);
+      // Clamp the buffer to a finite, non-negative value: a negative or NaN
+      // buffer would drop the threshold to/below head and could quarantine
+      // legitimately-recent rows.
+      const buffer = Number.isFinite(opts.futureBlockBuffer)
+        ? Math.max(0, opts.futureBlockBuffer as number)
+        : 1000;
+      const futureBlockThreshold = latest + buffer;
       const r = await runVerifyPass(db, fetcher, { chainId: opts.chainId, maxBlock, limit: opts.limitPerPass, maxBlockRange: opts.maxBlockRange, futureBlockThreshold });
 
       const unmatchedByReason: VerifyPassStats["unmatchedByReason"] = {

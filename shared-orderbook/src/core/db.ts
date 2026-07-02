@@ -1003,6 +1003,10 @@ export class OrderbookDB {
    * Returns the number of rows quarantined this call.
    */
   quarantineFutureSettlements(opts: { chainId?: number; aboveBlock: number }): number {
+    // Guard against a non-finite threshold (NaN/Infinity from an upstream
+    // misconfig): SQLite comparisons against NaN are undefined, so refuse to
+    // run rather than silently quarantine the wrong set.
+    if (!Number.isFinite(opts.aboveBlock)) return 0;
     const where = ["verified = 0", "verify_attempts < ?", "block_number > ?"];
     const params: unknown[] = [config.maxVerifyAttempts, config.maxVerifyAttempts, opts.aboveBlock];
     if (typeof opts.chainId === "number") {
