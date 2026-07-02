@@ -427,8 +427,11 @@ async function main() {
   // Tighter per-IP write cap on the authorize-orders POST (10/min) than the
   // general writeLimiter (30/min).
   //
-  // NOTE: IP-based only (default keyGenerator). A per-*identity* cap CANNOT be
-  // enforced at this layer — the limiter runs before the handler verifies
+  // NOTE: IP-based only (default keyGenerator, which in express-rate-limit v8
+  // already normalizes IPv6 to a /56 subnet via `ipKeyGenerator` — so a client
+  // can't rotate the v6 host suffix for a fresh bucket; no custom keyGenerator
+  // needed). A per-*identity* cap CANNOT be enforced at this layer — the
+  // limiter runs before the handler verifies
   // `pubKeyBind`, so keying on the request's self-declared `pubKeyAx/Ay` gave
   // no real protection: an attacker just rotates random pubkeys for a fresh
   // bucket every request (the pubkey is only proven to match the proof inside
