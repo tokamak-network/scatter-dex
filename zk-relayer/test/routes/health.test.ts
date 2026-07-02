@@ -32,4 +32,24 @@ describe("GET /health", () => {
     expect(res.status).toBe(503);
     expect(res.body.checks.db).toBe("error");
   });
+
+  it("caches the deep check within the TTL — a burst of probes collapses to one RPC + DB write", async () => {
+    let rpcCalls = 0;
+    let dbWrites = 0;
+    const submitter = makeSubmitterStub({
+      getProvider: () => ({ getBlockNumber: async () => { rpcCalls++; return 1; } }),
+    });
+    const db = makeDbStub({ setMeta: () => { dbWrites++; } });
+    const app = mountRouter("/health", createHealthRoutes(submitter, db));
+
+    for (let i = 0; i < 3; i++) {
+      const res = await request(app).get("/health");
+      expect(res.status).toBe(200);
+    }
+
+    // Only the first probe does the real RPC + DB work; the rest are served
+    // from the cache within the TTL window.
+    expect(rpcCalls).toBe(1);
+    expect(dbWrites).toBe(1);
+  });
 });

@@ -495,7 +495,7 @@ async function main() {
   app.use("/api/private-orders", readLimiter, pauseGuard, createPrivateOrderRoutes(writeLimiter));
   app.use("/api/info", readLimiter, createInfoRoutes(submitter, db));
   app.use("/api/private-claim", createPrivateClaimRoutes(submitter, db, writeLimiter));
-  app.use("/api/vault", createVaultRoutes(submitter, writeLimiter));
+  app.use("/api/vault", readLimiter, createVaultRoutes(submitter, writeLimiter));
   app.use("/api/relayer", createRelayerStatsRoutes(db, submitter, readLimiter));
 
   // Half-proof (trustless) order routes — settleAuth path.
