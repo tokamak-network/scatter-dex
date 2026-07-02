@@ -33,6 +33,7 @@ describe("RelayerClient redirect + URL guard", () => {
       recipient: "0x0",
       releaseTime: "0",
     });
+    expect(f).toHaveBeenCalledTimes(1);
     expect((f.mock.calls[0][1] as RequestInit).redirect).toBe("error");
   });
 

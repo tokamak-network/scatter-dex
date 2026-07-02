@@ -69,7 +69,15 @@ export async function loadRelayersWithApiInfo(
   const timeoutMs = opts.probeTimeoutMs ?? 3_000;
   return Promise.all(
     onChain.map(async (r): Promise<RelayerInfo> => {
-      const client = new RelayerClient(r.url, { timeoutMs });
+      // A single relayer with a malformed on-chain URL must not sink the whole
+      // batch: RelayerClient's constructor now throws on a bad URL, so treat
+      // that as just-offline rather than letting Promise.all reject.
+      let client: RelayerClient;
+      try {
+        client = new RelayerClient(r.url, { timeoutMs });
+      } catch {
+        return { ...r, online: false };
+      }
       const [infoResult, statsResult] = await Promise.all([
         client.getInfo().then((api) => ({ ok: true as const, api })).catch(() => ({ ok: false as const })),
         opts.withStats
@@ -154,12 +162,19 @@ export async function loadRelayersWithSharedOrderbookStats(
   const statsByAddr = buildAllStatsFromSharedOb(allSettles);
   return Promise.all(
     onChain.map(async (r): Promise<RelayerInfo> => {
-      const client = new RelayerClient(r.url, { timeoutMs });
+      const stats = finalizeStats(r.address, statsByAddr.get(r.address.toLowerCase()));
+      // A malformed on-chain URL marks just this relayer offline instead of
+      // rejecting the whole batch (the constructor throws on a bad URL).
+      let client: RelayerClient;
+      try {
+        client = new RelayerClient(r.url, { timeoutMs });
+      } catch {
+        return { ...r, online: false, stats };
+      }
       const infoResult = await client
         .getInfo()
         .then((api) => ({ ok: true as const, api }))
         .catch(() => ({ ok: false as const }));
-      const stats = finalizeStats(r.address, statsByAddr.get(r.address.toLowerCase()));
       if (!infoResult.ok) return { ...r, online: false, stats };
       return { ...r, api: infoResult.api, stats, online: true };
     }),
