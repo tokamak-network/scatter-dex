@@ -62,6 +62,9 @@ export class OrderbookDB {
   private stmtUpsertClaimNullifier!: Database.Statement;
   private stmtGetClaimCursor!: Database.Statement;
   private stmtSetClaimCursor!: Database.Statement;
+  /** Lazy cache of the (few) verify UPDATE shapes keyed by SET clause — see
+   *  markSettlementsVerified. Bounded to at most 2³ entries. */
+  private verifyStmtCache = new Map<string, Database.Statement>();
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -957,10 +960,15 @@ export class OrderbookDB {
         if (typeof e.feeMaker === "string") { sets.push("fee_maker = ?"); params.push(e.feeMaker); }
         if (typeof e.feeTaker === "string") { sets.push("fee_taker = ?"); params.push(e.feeTaker); }
         params.push(e.txHash.toLowerCase());
-        // better-sqlite3 caches prepared statements by SQL text, so the small
-        // set of distinct SET-clause shapes here is effectively pre-prepared.
+        // Reuse a prepared statement per distinct SET-clause shape (≤ 2³
+        // shapes total) instead of preparing every iteration.
         const sql = `UPDATE settlements SET ${sets.join(", ")} WHERE tx_hash = ? AND verified = 0`;
-        flipped += this.db.prepare(sql).run(...params).changes;
+        let stmt = this.verifyStmtCache.get(sql);
+        if (!stmt) {
+          stmt = this.db.prepare(sql);
+          this.verifyStmtCache.set(sql, stmt);
+        }
+        flipped += stmt.run(...params).changes;
       }
     });
     txn();
@@ -1095,10 +1103,12 @@ export class OrderbookDB {
    * drift.
    *
    * TRUST NOTE: `verified=1` confirms the settlement *occurred* (nullifier
-   * pair + txHash + relayers matched the on-chain `PrivateSettledAuth` event)
-   * and its fees are canonicalised from the event. But `sell_amount` /
-   * `buy_amount` are NOT emitted on-chain, so they remain relayer-reported
-   * even for verified rows. `volumeByTokenVerified` and the avgFeeBps
+   * pair + txHash + relayers matched the on-chain `PrivateSettledAuth` event).
+   * Fees are canonicalised from the event when the verifier's fetcher projects
+   * `feeTokenMaker`/`feeTokenTaker` (the production fetcher does; a fetcher
+   * that omits them leaves fees as-reported — see markSettlementsVerified).
+   * `sell_amount` / `buy_amount` are NOT emitted on-chain at all, so they
+   * remain relayer-reported even for verified rows. `volumeByTokenVerified` and the avgFeeBps
    * denominator therefore reflect self-reported magnitudes — a participating
    * relayer can still inflate its reported volume. Treat volume as
    * indicative, not authoritative; deriving true volume would require the
