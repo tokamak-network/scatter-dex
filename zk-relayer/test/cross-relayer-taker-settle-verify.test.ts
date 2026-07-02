@@ -29,7 +29,9 @@ const future = () => String(Math.floor(Date.now() / 1000) + 3600);
 
 function makePs(over: Partial<AuthorizePublicSignals>): AuthorizePublicSignals {
   return {
-    pubKeyBind: "0", commitmentRoot: "0", nullifier: "0x2", nonceNullifier: "0",
+    // Public signals are circom-native decimal strings in production
+    // (snarkjs output / AuthorizeOrderFile), so mirror that here.
+    pubKeyBind: "0", commitmentRoot: "0", nullifier: "2", nonceNullifier: "0",
     newCommitment: "0", sellToken: TOKEN_B, buyToken: TOKEN_A,
     sellAmount: "1000", buyAmount: "1000", maxFee: "10000", expiry: future(),
     claimsRoot: "0", totalLocked: "1000", relayer: "0", orderHash: "0",

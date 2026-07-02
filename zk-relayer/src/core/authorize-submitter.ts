@@ -179,7 +179,15 @@ export class AuthorizeSubmitter {
    *  - the calldata decodes to `settleAuth` and one of its two legs carries
    *    `expectedNullifier` (our order's escrow nullifier).
    *
-   * Fails closed: any RPC error, missing receipt, decode failure, or
+   * The maker waited for its own receipt (`sendAndWait`) before replying, so
+   * the tx IS mined — but the taker typically uses a different RPC node that
+   * can lag a few seconds behind on propagation. A `null` lookup is therefore
+   * retried a few times before we conclude the tx doesn't exist, so ordinary
+   * propagation lag doesn't produce a false negative that wrongly restores the
+   * order. A definitively bad tx (mined-but-reverted, wrong target, wrong
+   * nullifier) is rejected immediately without retry.
+   *
+   * Fails closed: any RPC error, missing tx after retries, decode failure, or
    * mismatch returns `false`.
    */
   async verifyPeerSettlement(
@@ -187,12 +195,17 @@ export class AuthorizeSubmitter {
     expectedNullifier: string,
   ): Promise<boolean> {
     try {
-      const receipt = await this.provider.getTransactionReceipt(txHash);
-      if (!receipt || receipt.status !== 1) return false;
+      const receipt = await this.lookupWithPropagationRetry(() =>
+        this.provider.getTransactionReceipt(txHash),
+      );
+      if (!receipt) return false;
+      if (receipt.status !== 1) return false;
       if (!receipt.to || !eqAddr(receipt.to, config.privateSettlementAddress)) {
         return false;
       }
-      const tx = await this.provider.getTransaction(txHash);
+      const tx = await this.lookupWithPropagationRetry(() =>
+        this.provider.getTransaction(txHash),
+      );
       if (!tx) return false;
       const decoded = decodeSettlementCalldata(tx.data);
       if (!decoded || decoded.function !== "settleAuth") return false;
@@ -212,6 +225,27 @@ export class AuthorizeSubmitter {
       });
       return false;
     }
+  }
+
+  /**
+   * Run `fetchFn` and, if it returns `null` (tx/receipt not yet visible on
+   * this RPC node), retry a few times with a short delay before giving up.
+   * A non-null result returns immediately. Only used by
+   * `verifyPeerSettlement` to absorb cross-node propagation lag.
+   */
+  private async lookupWithPropagationRetry<T>(
+    fetchFn: () => Promise<T | null>,
+  ): Promise<T | null> {
+    const ATTEMPTS = 4;
+    const DELAY_MS = 1500;
+    for (let i = 0; i < ATTEMPTS; i++) {
+      const result = await fetchFn();
+      if (result) return result;
+      if (i < ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+      }
+    }
+    return null;
   }
 
   // ─── Cancel event listener ──────────────────────────────────────

@@ -239,7 +239,7 @@ export class AuthorizeCrossRelayerMatchService {
 
         // Rejection path — restore the prior live-queue status so a
         // future remote (or the local SettlementWorker) can retry.
-        if (result.status === "settled") {
+        if (result.status === "settled" && result.txHash) {
           // Peer claimed a settle we couldn't confirm on-chain — the tx is
           // missing, reverted, points elsewhere, or doesn't carry our
           // nullifier. Treat as unsettled and flag the peer for ops.
@@ -247,6 +247,14 @@ export class AuthorizeCrossRelayerMatchService {
             peer: summary.relayer,
             relayerUrl: summary.relayerUrl,
             txHash: result.txHash,
+            taker: nullifier.slice(0, 18) + "...",
+          });
+        } else if (result.status === "settled") {
+          // Anomalous: peer reported settled with no tx hash to verify. Not a
+          // valid settlement; log without an `undefined` tx field.
+          log.warn("Peer reported settled without a txHash", {
+            peer: summary.relayer,
+            relayerUrl: summary.relayerUrl,
             taker: nullifier.slice(0, 18) + "...",
           });
         } else {
