@@ -169,18 +169,24 @@ describe("POST /api/p2p/authorize-trade-offer (concurrency shed guard)", () => {
     // forces supertest to actually dispatch the request now (a bare Test is
     // lazy and only sends once awaited/then'd).
     const aPromise = request(app).post("/api/p2p/authorize-trade-offer").set(headers).send(offer).then((r) => r);
-    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    try {
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
 
-    // B is shed before reaching the (expensive) handler.
-    const bRes = await request(app).post("/api/p2p/authorize-trade-offer").set(headers).send(offer);
-    expect(bRes.status).toBe(503);
-    expect(bRes.body.reason).toMatch(/busy/i);
-    expect(handler).toHaveBeenCalledTimes(1); // B never invoked the handler
+      // B is shed before reaching the (expensive) handler.
+      const bRes = await request(app).post("/api/p2p/authorize-trade-offer").set(headers).send(offer);
+      expect(bRes.status).toBe(503);
+      expect(bRes.body.reason).toMatch(/busy/i);
+      expect(handler).toHaveBeenCalledTimes(1); // B never invoked the handler
+    } finally {
+      // Always release the gate + drain A, even if an assertion above threw —
+      // otherwise the blocked request keeps the test alive until timeout and
+      // masks the real failure.
+      release();
+      await aPromise;
+    }
 
-    // Releasing A frees the slot; A completes normally.
-    release();
-    const aRes = await aPromise;
-    expect(aRes.status).toBe(200);
+    // A completed normally once the slot was freed.
+    expect((await aPromise).status).toBe(200);
 
     // A subsequent offer now goes through again (slot freed via finally).
     const cRes = await request(app).post("/api/p2p/authorize-trade-offer").set(headers).send(offer);
