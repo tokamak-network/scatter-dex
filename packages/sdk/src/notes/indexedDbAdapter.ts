@@ -47,8 +47,12 @@ interface EncryptedRecord {
 }
 
 function isEncryptedRecord(rec: unknown): rec is EncryptedRecord {
-  return typeof rec === "object" && rec !== null
-    && typeof (rec as { enc?: unknown }).enc === "string";
+  if (typeof rec !== "object" || rec === null) return false;
+  const r = rec as { id?: unknown; enc?: unknown; v?: unknown };
+  // Require the full envelope (id + enc + v===1) so an arbitrary object with
+  // an `enc` field isn't misclassified, and the version gate stays meaningful
+  // for forward migration.
+  return typeof r.id === "string" && typeof r.enc === "string" && r.v === 1;
 }
 
 interface WireNote {
@@ -147,15 +151,35 @@ export function createIndexedDbNoteAdapter(
     return { id: note.id, enc: await encrypt(JSON.stringify(wire)), v: 1 };
   }
 
-  /** Recover a WireNote from an on-disk record. Returns null (and warns)
-   *  for an encrypted record when no `decrypt` is configured. */
+  // Separate one-shot flag for the benign "encrypted rows but this adapter
+  // has no decrypt" case — it's expected (a decrypt-less reader), not a
+  // fallback, so it must NOT consume the `warnOnce` budget or claim we fell
+  // back to in-memory state.
+  let warnedNoDecrypt = false;
+  function warnNoDecryptOnce(): void {
+    if (warnedNoDecrypt) return;
+    warnedNoDecrypt = true;
+    // eslint-disable-next-line no-console
+    console.warn("[zkscatter notes] encrypted note(s) present but no decrypt configured — skipping them (not an error)");
+  }
+
+  /** Recover a WireNote from an on-disk record. Returns null (skipping the
+   *  record) when it's encrypted but unreadable/tampered. */
   async function recordToWire(rec: unknown): Promise<WireNote | null> {
     if (isEncryptedRecord(rec)) {
       if (!decrypt) {
-        warnOnce("encrypted note present but no decrypt configured — skipping");
+        warnNoDecryptOnce();
         return null;
       }
-      return JSON.parse(await decrypt(rec.enc)) as WireNote;
+      const wire = JSON.parse(await decrypt(rec.enc)) as WireNote;
+      // Bind the ciphertext to its key path: a decrypted `id` that doesn't
+      // match the record's `id` means a corrupted or swapped/tampered blob —
+      // skip rather than trust it.
+      if (wire.id !== rec.id) {
+        warnOnce(`decrypted note id mismatch (key ${rec.id}) — skipping possibly-tampered record`);
+        return null;
+      }
+      return wire;
     }
     return rec as WireNote;
   }

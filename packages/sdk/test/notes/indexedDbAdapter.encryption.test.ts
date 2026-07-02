@@ -47,6 +47,18 @@ async function rawGetAll(dbName: string): Promise<Record<string, unknown>[]> {
   });
 }
 
+/** Write a raw record straight into the store (to plant a tampered row). */
+async function rawPut(dbName: string, rec: Record<string, unknown>): Promise<void> {
+  const db = await openIDB({ dbName, version: 1, stores: [{ name: "notes", keyPath: "id" }] });
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction("notes", "readwrite");
+    tx.objectStore("notes").put(rec);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
 describe("IndexedDbNoteAdapter encryption-at-rest", () => {
   it("stores only ciphertext at rest and round-trips through decrypt", async () => {
     const a = createIndexedDbNoteAdapter({ dbName: "enc", ...codec });
@@ -98,6 +110,20 @@ describe("IndexedDbNoteAdapter encryption-at-rest", () => {
     const noDecrypt = createIndexedDbNoteAdapter({ dbName: "skip" });
     const all = await noDecrypt.loadAll();
     expect(all).toHaveLength(0);
+  });
+
+  it("skips a record whose decrypted id doesn't match the key path (tamper/corruption)", async () => {
+    // Plant an envelope keyed "note-1" whose ciphertext decrypts to id "evil".
+    const wire = {
+      id: "evil", label: "l", symbol: "S", amount: "1",
+      noteHex: {} as unknown, commitmentHex: "0x0", leafIndex: 0, createdAt: 1,
+    };
+    const enc = await codec.encrypt(JSON.stringify(wire));
+    await rawPut("tamper", { id: "note-1", enc, v: 1 });
+
+    const a = createIndexedDbNoteAdapter({ dbName: "tamper", ...codec });
+    const all = await a.loadAll();
+    expect(all).toHaveLength(0); // id mismatch → skipped, not trusted
   });
 
   it("refuses to encrypt when only encrypt (no decrypt) is configured — avoids write-only records", async () => {
