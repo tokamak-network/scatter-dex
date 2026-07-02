@@ -100,7 +100,9 @@ export const config = {
   // instead of queueing (queueing would be a memory DoS). Legit cross-relayer
   // matches are low-volume and mutex-serialized downstream, so this rarely
   // trips in normal operation.
-  p2pMaxConcurrentOffers: parseEnvInt("P2P_MAX_CONCURRENT_OFFERS", 8, 1),
+  // min 0 so P2P_MAX_CONCURRENT_OFFERS=0 can disable the guard (the route
+  // treats a non-positive cap as "unlimited").
+  p2pMaxConcurrentOffers: parseEnvInt("P2P_MAX_CONCURRENT_OFFERS", 8, 0),
 
   // Optional outbound webhook (Slack/Discord/Telegram/...) for
   // operator alerts. Posts a JSON payload on health transitions
