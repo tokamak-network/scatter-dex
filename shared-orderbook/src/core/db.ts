@@ -939,23 +939,28 @@ export class OrderbookDB {
    * single sqlite transaction so a crash mid-batch doesn't leave the
    * table half-updated. Returns the number of rows actually flipped.
    */
-  markSettlementsVerified(entries: { txHash: string; blockTime?: number }[]): number {
+  markSettlementsVerified(
+    entries: { txHash: string; blockTime?: number; feeMaker?: string; feeTaker?: string }[],
+  ): number {
     if (entries.length === 0) return 0;
-    const stmtBoth = this.db.prepare(
-      `UPDATE settlements SET verified = 1, block_time = ? WHERE tx_hash = ? AND verified = 0`,
-    );
-    const stmtOnly = this.db.prepare(
-      `UPDATE settlements SET verified = 1 WHERE tx_hash = ? AND verified = 0`,
-    );
     let flipped = 0;
     const txn = this.db.transaction(() => {
       for (const e of entries) {
-        const txHash = e.txHash.toLowerCase();
-        const result =
-          typeof e.blockTime === "number"
-            ? stmtBoth.run(e.blockTime, txHash)
-            : stmtOnly.run(txHash);
-        flipped += result.changes;
+        // Build the SET clause from whichever canonical on-chain values the
+        // verifier supplied. `block_time` and `fee_maker`/`fee_taker` are
+        // overwritten with the authoritative on-chain values (the relayer's
+        // self-reported figures are not trusted for verified aggregates);
+        // amounts stay as-reported since the event doesn't carry them.
+        const sets = ["verified = 1"];
+        const params: unknown[] = [];
+        if (typeof e.blockTime === "number") { sets.push("block_time = ?"); params.push(e.blockTime); }
+        if (typeof e.feeMaker === "string") { sets.push("fee_maker = ?"); params.push(e.feeMaker); }
+        if (typeof e.feeTaker === "string") { sets.push("fee_taker = ?"); params.push(e.feeTaker); }
+        params.push(e.txHash.toLowerCase());
+        // better-sqlite3 caches prepared statements by SQL text, so the small
+        // set of distinct SET-clause shapes here is effectively pre-prepared.
+        const sql = `UPDATE settlements SET ${sets.join(", ")} WHERE tx_hash = ? AND verified = 0`;
+        flipped += this.db.prepare(sql).run(...params).changes;
       }
     });
     txn();
@@ -1087,7 +1092,19 @@ export class OrderbookDB {
    * Walks a row set once and accumulates token + pair aggregates plus a
    * couple of running counters. Shared by getRelayerSettlementStats and
    * getNetworkSettlementTotals so the two endpoints' arithmetic can never
-   * drift. BigInt sums are done in Node because sqlite SUM() over TEXT
+   * drift.
+   *
+   * TRUST NOTE: `verified=1` confirms the settlement *occurred* (nullifier
+   * pair + txHash + relayers matched the on-chain `PrivateSettledAuth` event)
+   * and its fees are canonicalised from the event. But `sell_amount` /
+   * `buy_amount` are NOT emitted on-chain, so they remain relayer-reported
+   * even for verified rows. `volumeByTokenVerified` and the avgFeeBps
+   * denominator therefore reflect self-reported magnitudes — a participating
+   * relayer can still inflate its reported volume. Treat volume as
+   * indicative, not authoritative; deriving true volume would require the
+   * settlement contract to emit amounts.
+   *
+   * BigInt sums are done in Node because sqlite SUM() over TEXT
    * columns silently coerces to double — accuracy matters for token
    * amounts that exceed 2^53.
    */

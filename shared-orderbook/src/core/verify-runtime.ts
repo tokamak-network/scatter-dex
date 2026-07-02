@@ -76,6 +76,10 @@ export function makeEventFetcher(opts: MakeFetcherOpts): EventFetcher {
         takerNullifier: String(args.takerNullifier).toLowerCase(),
         makerRelayer: String(args.makerRelayer).toLowerCase(),
         takerRelayer: String(args.takerRelayer).toLowerCase(),
+        // On-chain fee amounts — carried so the verifier can canonicalise the
+        // relayer-reported fees on flip (defeats fee-revenue self-inflation).
+        feeTokenMaker: args.feeTokenMaker != null ? BigInt(args.feeTokenMaker as bigint).toString() : undefined,
+        feeTokenTaker: args.feeTokenTaker != null ? BigInt(args.feeTokenTaker as bigint).toString() : undefined,
       };
     });
   };
