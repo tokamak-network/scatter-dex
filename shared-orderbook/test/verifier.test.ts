@@ -170,12 +170,15 @@ describe("runVerifyPass (DB-integrated)", () => {
     // futureBlockThreshold = head(1000) + buffer; the legit row's event is
     // missing here (async () => []) so it stays pending, the future row is
     // force-quarantined.
-    await runVerifyPass(db, async () => [], {
+    const result = await runVerifyPass(db, async () => [], {
       chainId: 11155111,
       maxBlock: 1000,
       futureBlockThreshold: 1_000_000,
     });
 
+    // Only the legit row entered the scan set — the future row was quarantined
+    // before selection, so it's neither scanned nor counted as pending.
+    expect(result.scanned).toBe(1);
     expect(db.countQuarantinedSettlements()).toBe(1);       // the future row
     expect(db.getSettlement(legit.txHash)?.verified).toBe(false); // legit still pending
     // The future row no longer counts as active/pending backlog.

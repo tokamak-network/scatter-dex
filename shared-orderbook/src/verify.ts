@@ -135,6 +135,12 @@ async function main(): Promise<void> {
   // common provider caps (Infura ~10k, Alchemy response-size bound); tune per
   // RPC. The verifier just makes progress in 10k-block steps.
   const maxBlockRange = envInt("VERIFIER_MAX_BLOCK_RANGE", 10000);
+  // Blocks above head beyond which an unverified row is treated as an
+  // impossible-future (bogus) payload and quarantined. Applied on BOTH the
+  // one-shot and watch paths so neither entrypoint leaves the ceiling
+  // unenforced. A real settlement's block already happened (<= head), so this
+  // only tolerates a momentarily-stale head.
+  const futureBlockBuffer = envInt("VERIFIER_FUTURE_BLOCK_BUFFER", 1000);
   // One DB handle shared by every chain's loop — rows are partitioned by
   // chain_id, so the loops never collide.
   const db = new OrderbookDB(dbPath);
@@ -146,7 +152,7 @@ async function main(): Promise<void> {
       const fetcher = makeEventFetcher({ rpcUrl: c.rpcUrl, contractAddress: c.settlementAddress, provider });
       const latest = await provider.getBlockNumber();
       const maxBlock = Math.max(0, latest - safety);
-      const r = await runVerifyPass(db, fetcher, { chainId: c.chainId, maxBlock, limit, maxBlockRange });
+      const r = await runVerifyPass(db, fetcher, { chainId: c.chainId, maxBlock, limit, maxBlockRange, futureBlockThreshold: latest + futureBlockBuffer });
       console.log(
         `[verifier] one-shot chain=${c.chainId}: scanned=${r.scanned} flipped=${r.flipped} unmatched=${r.report.unmatched.length} maxBlock=${maxBlock}`,
       );
@@ -178,6 +184,7 @@ async function main(): Promise<void> {
       blockSafetyMargin: safety,
       limitPerPass: limit,
       maxBlockRange,
+      futureBlockBuffer,
       provider,
       monitor: new VerifyMonitor(),
       signal: ac.signal,
