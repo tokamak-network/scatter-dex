@@ -95,7 +95,7 @@ export default function AppsPage() {
           <p className="mt-2 max-w-2xl text-[var(--color-text-muted)]">
             All apps share contracts, circuits, the relayer network, and{" "}
             <code className="font-mono text-sm">@zkscatter/sdk</code>. Fix one
-            bug, ship to all four.
+            bug, ship to all.
           </p>
           <SharedCoreDiagram />
         </div>

@@ -112,7 +112,7 @@ function AppsRouter() {
           Same ZK core, different surface. Pick the app shaped to your job.
         </p>
       </div>
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
         {USER_APPS.map((app) => (
           <AppCard key={app.id} app={app} />
         ))}

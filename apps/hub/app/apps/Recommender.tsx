@@ -8,7 +8,7 @@ import { APP_BY_ID, type AppEntry } from "../lib/apps";
 type Goal = "trade" | "pay" | "explore";
 type Platform = "web" | "mobile" | "either";
 
-function recommend(goal: Goal | null, platform: Platform | null): AppEntry {
+function recommend(goal: Goal, platform: Platform): AppEntry {
   if (platform === "mobile") return APP_BY_ID.mobile;
   if (goal === "trade") return APP_BY_ID.pro;
   if (goal === "pay") return APP_BY_ID.pay;
