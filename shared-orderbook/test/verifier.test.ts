@@ -152,6 +152,39 @@ describe("runVerifyPass (DB-integrated)", () => {
     expect(db.getSettlement(row.txHash)?.verified).toBe(false);
   });
 
+  it("quarantines an impossible-future row so it can't pin the pending count, and still scans the legit row", async () => {
+    // A legit row within the scan window + an injected row whose blockNumber is
+    // far beyond head (never inside [.. <= maxBlock], so it'd never accrue
+    // attempts without this guard).
+    const legit = makeRow({ txHash: "0x" + "a1".repeat(32), blockNumber: 100 });
+    const future = makeRow({
+      txHash: "0x" + "ff".repeat(32),
+      blockNumber: 9_007_199_254_740_000,
+      makerNullifier: "0x" + "07".repeat(32),
+      takerNullifier: "0x" + "08".repeat(32),
+    });
+    db.insertSettlement(legit.makerRelayer, legit);
+    db.insertSettlement(future.makerRelayer, future);
+    expect(db.countUnverifiedSettlements()).toBe(2);
+
+    // futureBlockThreshold = head(1000) + buffer; the legit row's event is
+    // missing here (async () => []) so it stays pending, the future row is
+    // force-quarantined.
+    const result = await runVerifyPass(db, async () => [], {
+      chainId: 11155111,
+      maxBlock: 1000,
+      futureBlockThreshold: 1_000_000,
+    });
+
+    // Only the legit row entered the scan set — the future row was quarantined
+    // before selection, so it's neither scanned nor counted as pending.
+    expect(result.scanned).toBe(1);
+    expect(db.countQuarantinedSettlements()).toBe(1);       // the future row
+    expect(db.getSettlement(legit.txHash)?.verified).toBe(false); // legit still pending
+    // The future row no longer counts as active/pending backlog.
+    expect(db.countUnverifiedSettlements()).toBe(1);
+  });
+
   it("short-circuits with empty fetch when no unverified rows exist", async () => {
     let calls = 0;
     const result = await runVerifyPass(

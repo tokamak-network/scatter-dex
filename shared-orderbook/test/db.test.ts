@@ -241,6 +241,33 @@ describe("OrderbookDB", () => {
     expect(db.recordVerifyFailures([makeSettlement(1).txHash])).toBe(1);
   });
 
+  describe("quarantineFutureSettlements (impossible-future blockNumber)", () => {
+    const submitter = "0x" + "11".repeat(20);
+
+    it("quarantines rows far above head so they drop out of the pending count", () => {
+      // Legit row (below head) + an injected row with an absurd block number
+      // that the verifier's scan window (block_number <= head) never reaches.
+      db.insertSettlement(submitter, makeSettlement(1, { blockNumber: 2_000 }));
+      db.insertSettlement(submitter, makeSettlement(2, { blockNumber: 9_007_199_254_740_000 }));
+      expect(db.countUnverifiedSettlements()).toBe(2);
+
+      const quarantined = db.quarantineFutureSettlements({ aboveBlock: 1_000_000 });
+      expect(quarantined).toBe(1);
+
+      // The impossible-future row is now quarantined (no longer pending); the
+      // legit row still counts as active pending work.
+      expect(db.countUnverifiedSettlements()).toBe(1);
+      expect(db.countQuarantinedSettlements()).toBe(1);
+    });
+
+    it("leaves rows at or below the threshold untouched", () => {
+      db.insertSettlement(submitter, makeSettlement(3, { blockNumber: 500 }));
+      expect(db.quarantineFutureSettlements({ aboveBlock: 1_000 })).toBe(0);
+      expect(db.countUnverifiedSettlements()).toBe(1);
+      expect(db.countQuarantinedSettlements()).toBe(0);
+    });
+  });
+
   describe("pruneSettlements (A-3 DoS cap)", () => {
     const submitter = "0x" + "11".repeat(20);
 

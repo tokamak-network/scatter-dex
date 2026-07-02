@@ -134,8 +134,17 @@ export type EventFetcher = (fromBlock: number, toBlock: number) => Promise<Settl
 export async function runVerifyPass(
   db: OrderbookDB,
   fetcher: EventFetcher,
-  opts: { chainId: number; maxBlock?: number; limit?: number; maxBlockRange?: number },
+  opts: { chainId: number; maxBlock?: number; limit?: number; maxBlockRange?: number; futureBlockThreshold?: number },
 ): Promise<{ scanned: number; flipped: number; report: VerifyReport }> {
+  // Quarantine rows pointing at a block implausibly far beyond the chain head
+  // BEFORE selecting the scan set. Such rows sit above `maxBlock`, so they'd
+  // never enter the window below, never accrue attempts, and would pin the
+  // pending-backlog alert forever (an authenticated relayer can inject one by
+  // POSTing a settlement with a huge blockNumber). Forcing them straight to
+  // quarantined keeps the active/pending count honest.
+  if (typeof opts.futureBlockThreshold === "number") {
+    db.quarantineFutureSettlements({ chainId: opts.chainId, aboveBlock: opts.futureBlockThreshold });
+  }
   // Scoped to one chain: this pass's fetcher binds a single network's RPC +
   // settlement contract, so it must only pull that network's unverified rows.
   const rows = db.listUnverifiedSettlements({ chainId: opts.chainId, maxBlock: opts.maxBlock, limit: opts.limit });
