@@ -132,6 +132,11 @@ export interface RunLoopOpts {
    *  toBlock] so a stuck low-block row can't stretch the range past an RPC's
    *  limit and stall the quarantine. Omit for no cap (legacy behaviour). */
   maxBlockRange?: number;
+  /** Blocks above the chain head beyond which an unverified row is treated as
+   *  an impossible-future (bogus) payload and quarantined. A real settlement's
+   *  block already happened (<= head), so the buffer only tolerates a
+   *  momentarily-stale head. Default 1000. */
+  futureBlockBuffer?: number;
   /** Provider used to discover `latestBlock` each pass. */
   provider: Pick<AbstractProvider, "getBlockNumber">;
   monitor?: VerifyMonitor;
@@ -167,7 +172,8 @@ export async function runVerifyLoop(
     try {
       const latest = await opts.provider.getBlockNumber();
       const maxBlock = Math.max(0, latest - opts.blockSafetyMargin);
-      const r = await runVerifyPass(db, fetcher, { chainId: opts.chainId, maxBlock, limit: opts.limitPerPass, maxBlockRange: opts.maxBlockRange });
+      const futureBlockThreshold = latest + (opts.futureBlockBuffer ?? 1000);
+      const r = await runVerifyPass(db, fetcher, { chainId: opts.chainId, maxBlock, limit: opts.limitPerPass, maxBlockRange: opts.maxBlockRange, futureBlockThreshold });
 
       const unmatchedByReason: VerifyPassStats["unmatchedByReason"] = {
         "no-event": 0,

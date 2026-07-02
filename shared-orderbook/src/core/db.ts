@@ -986,6 +986,34 @@ export class OrderbookDB {
   }
 
   /**
+   * Quarantine active unverified rows whose `block_number` is implausibly far
+   * above the chain head. A real settlement's block has already happened
+   * (block_number <= head when the relayer pushes), so a row pointing at a
+   * block far beyond head is a bogus/DoS payload. Critically, such a row is
+   * NEVER inside a verify pass's scan window (which is bounded to
+   * `block_number <= maxBlock = head - safetyMargin`), so it would otherwise
+   * never accrue `verify_attempts`, never quarantine, and pin the
+   * `/api/admin/verify-stats` pending-backlog alert forever. Forcing
+   * `verify_attempts` to the budget drops these rows out of the ACTIVE
+   * (pending) set and surfaces them under `countQuarantinedSettlements`
+   * instead — visible to ops, but no longer masquerading as pending work.
+   *
+   * `aboveBlock` should be the current chain head plus a generous buffer so a
+   * momentarily-stale head can't quarantine a legitimately-recent row.
+   * Returns the number of rows quarantined this call.
+   */
+  quarantineFutureSettlements(opts: { chainId?: number; aboveBlock: number }): number {
+    const where = ["verified = 0", "verify_attempts < ?", "block_number > ?"];
+    const params: unknown[] = [config.maxVerifyAttempts, config.maxVerifyAttempts, opts.aboveBlock];
+    if (typeof opts.chainId === "number") {
+      where.push("chain_id = ?");
+      params.push(opts.chainId);
+    }
+    const sql = `UPDATE settlements SET verify_attempts = ? WHERE ${where.join(" AND ")}`;
+    return this.db.prepare(sql).run(...params).changes;
+  }
+
+  /**
    * Read API used by Phase 2.5c. Filters compose with AND (relayer matches
    * any of submitter/maker/taker; pair matches either direction).
    */
