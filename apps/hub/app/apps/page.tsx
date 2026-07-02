@@ -6,7 +6,7 @@ import { Recommender } from "./Recommender";
 export const metadata: Metadata = {
   title: "Apps · zkScatter",
   description:
-    "Pro, Pay, Drop, Mobile, and Relayer — persona apps on one shared ZK core.",
+    "Pro, Pay, Mobile, and Relayer — persona apps on one shared ZK core.",
 };
 
 export default function AppsPage() {
@@ -15,13 +15,13 @@ export default function AppsPage() {
       <section className="mx-auto max-w-6xl px-6 pt-20 pb-10">
         <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">Apps</h1>
         <p className="mt-3 max-w-2xl text-[var(--color-text-muted)]">
-          Four surfaces, one ZK core. Each app is shaped for a single persona —
+          Three surfaces, one ZK core. Each app is shaped for a single persona —
           same contracts, same circuits, different copy and pricing.
         </p>
       </section>
 
       <section className="mx-auto max-w-6xl px-6 pb-16">
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
           {USER_APPS.map((app) => (
             <AppCard key={app.id} app={app} />
           ))}
@@ -56,17 +56,16 @@ export default function AppsPage() {
                   <Th>Capability</Th>
                   <Th>Pro</Th>
                   <Th>Pay</Th>
-                  <Th>Drop</Th>
                   <Th>Mobile</Th>
                 </tr>
               </thead>
               <tbody>
-                <Row cells={["Best for", "Traders", "Treasury", "Launches", "Everyone"]} />
-                <Row cells={["Order types", "Limit", "Bulk payout", "Claim", "Market"]} />
-                <Row cells={["Identity gate", "Opt-in", "Required", "Required", "Opt-in"]} />
-                <Row cells={["Gasless", "Yes", "Yes", "Yes", "Yes"]} />
-                <Row cells={["Platform", "Web", "Web", "Web", "iOS · Android"]} />
-                <Row cells={["Pricing", "Maker fee", "Per-tx", "% of drop", "Free"]} last />
+                <Row cells={["Best for", "Traders", "Treasury", "Everyone"]} />
+                <Row cells={["Order types", "Limit", "Bulk payout", "Market"]} />
+                <Row cells={["Identity gate", "Opt-in", "Required", "Opt-in"]} />
+                <Row cells={["Gasless", "Yes", "Yes", "Yes"]} />
+                <Row cells={["Platform", "Web", "Web", "iOS · Android"]} />
+                <Row cells={["Pricing", "Maker fee", "Per-tx", "Free"]} last />
               </tbody>
             </table>
           </div>
@@ -94,7 +93,7 @@ export default function AppsPage() {
             One core. Every app.
           </h2>
           <p className="mt-2 max-w-2xl text-[var(--color-text-muted)]">
-            All four apps share contracts, circuits, the relayer network, and{" "}
+            All apps share contracts, circuits, the relayer network, and{" "}
             <code className="font-mono text-sm">@zkscatter/sdk</code>. Fix one
             bug, ship to all four.
           </p>
@@ -131,7 +130,7 @@ function Row({ cells, last = false }: { cells: string[]; last?: boolean }) {
 function SharedCoreDiagram() {
   return (
     <div className="mt-8 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-8">
-      <div className="grid grid-cols-2 gap-3 text-center text-sm font-medium md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 text-center text-sm font-medium md:grid-cols-4">
         {APPS.map((a) => (
           <div
             key={a.id}

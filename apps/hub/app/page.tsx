@@ -37,7 +37,7 @@ function Hero() {
         </h1>
         <p className="mt-6 max-w-2xl text-lg text-[var(--color-text-muted)]">
           Off-chain matching, on-chain ZK settlement, KYC-aware without doxxing
-          your users. Four apps, one shared core.
+          your users. Three apps, one shared core.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
           <Link href="#apps" className={buttonClassName({ size: "lg" })}>

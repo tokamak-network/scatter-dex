@@ -20,7 +20,6 @@ export function Footer() {
           links={[
             { label: "Pro", href: APP_BY_ID.pro.href, comingSoon: APP_BY_ID.pro.comingSoon },
             { label: "Pay", href: APP_BY_ID.pay.href, comingSoon: APP_BY_ID.pay.comingSoon },
-            { label: "Drop", href: APP_BY_ID.drop.href, comingSoon: APP_BY_ID.drop.comingSoon },
             { label: "Mobile", href: "/mobile" },
           ]}
         />
