@@ -147,6 +147,54 @@ describe("DELETE /api/p2p/orders/:id", () => {
   });
 });
 
+describe("POST /api/p2p/authorize-trade-offer (concurrency shed guard)", () => {
+  const offer = { makerNullifier: "0x" + "1".repeat(64), takerOrder: {} };
+
+  it("sheds with 503 when in-flight offers exceed the cap, then recovers", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    // Handler blocks until we release it, so the first request holds the only
+    // slot (cap = 1) while the second arrives.
+    const handler = vi.fn(async () => {
+      await gate;
+      return { status: "rejected" as const, reason: "declined" };
+    });
+    const app = mountRouter(
+      "/api/p2p",
+      createP2PRoutes(vi.fn(), vi.fn(), undefined, handler, () => null, 1),
+    );
+    const headers = await authHeaders("POST", "/api/p2p/authorize-trade-offer", "", offer);
+
+    // A enters the handler and blocks (in-flight = 1). The trailing `.then`
+    // forces supertest to actually dispatch the request now (a bare Test is
+    // lazy and only sends once awaited/then'd).
+    const aPromise = request(app).post("/api/p2p/authorize-trade-offer").set(headers).send(offer).then((r) => r);
+    try {
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+
+      // B is shed before reaching the (expensive) handler.
+      const bRes = await request(app).post("/api/p2p/authorize-trade-offer").set(headers).send(offer);
+      expect(bRes.status).toBe(503);
+      expect(bRes.body.reason).toMatch(/busy/i);
+      expect(handler).toHaveBeenCalledTimes(1); // B never invoked the handler
+    } finally {
+      // Always release the gate + drain A, even if an assertion above threw —
+      // otherwise the blocked request keeps the test alive until timeout and
+      // masks the real failure.
+      release();
+      await aPromise;
+    }
+
+    // A completed normally once the slot was freed.
+    expect((await aPromise).status).toBe(200);
+
+    // A subsequent offer now goes through again (slot freed via finally).
+    const cRes = await request(app).post("/api/p2p/authorize-trade-offer").set(headers).send(offer);
+    expect(cRes.status).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("POST /api/p2p/trade-offer (retired Private flow)", () => {
   it("returns 404 — route deleted with tracker #29 cleanup", async () => {
     const app = mountRouter("/api/p2p", createP2PRoutes(vi.fn(), vi.fn(), undefined));

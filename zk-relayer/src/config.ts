@@ -93,6 +93,17 @@ export const config = {
   // funds, this only stops junk orders entering the store / shared orderbook.
   verifyOrderProofs: process.env.VERIFY_ORDER_PROOFS !== "0",
 
+  // Max concurrent /api/p2p/authorize-trade-offer handlers (each runs a
+  // Groth16 verify). The permissionless p2p endpoint is only IP-rate-limited,
+  // so a multi-IP flood could otherwise run unbounded parallel verifications
+  // and peg the CPU. Beyond this many in-flight, the route sheds with 503
+  // instead of queueing (queueing would be a memory DoS). Legit cross-relayer
+  // matches are low-volume and mutex-serialized downstream, so this rarely
+  // trips in normal operation.
+  // min 0 so P2P_MAX_CONCURRENT_OFFERS=0 can disable the guard (the route
+  // treats a non-positive cap as "unlimited").
+  p2pMaxConcurrentOffers: parseEnvInt("P2P_MAX_CONCURRENT_OFFERS", 8, 0),
+
   // Optional outbound webhook (Slack/Discord/Telegram/...) for
   // operator alerts. Posts a JSON payload on health transitions
   // and other significant events. No retry queue — single POST

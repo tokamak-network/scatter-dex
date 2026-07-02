@@ -534,6 +534,7 @@ async function main() {
       ? (offer, addr) => authorizeCrossRelayerService!.handleTradeOffer(offer, addr)
       : undefined,
     (orderId) => remoteOrderbook?.getRelayer(orderId) ?? null,
+    config.p2pMaxConcurrentOffers,
   ));
 
   // Periodic commitment re-indexing (stay in sync with on-chain state)
