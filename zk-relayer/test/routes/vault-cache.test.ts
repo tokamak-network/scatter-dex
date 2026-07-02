@@ -7,7 +7,7 @@
  * The mock Contract methods increment hoisted counters so we can assert how
  * many on-chain reads a burst of requests actually triggers.
  */
-import { describe, it, expect, vi, beforeAll } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { mountRouter, makeSubmitterStub } from "./helpers.js";
 
@@ -26,10 +26,22 @@ vi.mock("ethers", async () => {
 const TOKEN_ADDR = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 let createVaultRoutes: typeof import("../../src/routes/vault.js").createVaultRoutes;
 
+// Capture the ambient TOKEN_LIST so overriding it here can't clobber a value
+// set by CI / other suites in a shared process.
+const originalTokenList = process.env.TOKEN_LIST;
+
 beforeAll(async () => {
   vi.resetModules();
   process.env.TOKEN_LIST = `${TOKEN_ADDR}:USDT:6`;
   ({ createVaultRoutes } = await import("../../src/routes/vault.js"));
+});
+
+afterAll(() => {
+  if (originalTokenList === undefined) {
+    delete process.env.TOKEN_LIST;
+  } else {
+    process.env.TOKEN_LIST = originalTokenList;
+  }
 });
 
 describe("GET /api/vault caching", () => {
