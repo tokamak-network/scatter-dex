@@ -111,10 +111,12 @@ export function createAdminRoutes(deps: AdminRouteDeps): Router {
     }
   });
 
-  // Authenticated — explicit logout. Idempotent. Mounted before the
-  // global `adminAuth` so it can read the bearer token directly
-  // from the header rather than going through the middleware twice.
-  router.post("/session/revoke", (req: Request, res: Response) => {
+  // Explicit logout. Idempotent. Mounted before the global `adminAuth` so it
+  // can read the bearer token directly from the header rather than going
+  // through the middleware twice. Behind the writeLimiter (like `/session`)
+  // so this one pre-auth route can't be flooded — consistency with the rest
+  // of the fail-closed admin surface.
+  router.post("/session/revoke", ...wl, (req: Request, res: Response) => {
     const token = extractBearerToken(req.headers.authorization);
     if (token) siwe.revokeSession(token);
     res.status(204).end();
@@ -965,7 +967,15 @@ function parseTimestamp(raw: unknown, fallback: number): number {
 
 function csvEscape(value: string | number | null): string {
   if (value === null || value === undefined) return "";
-  const s = String(value);
+  const isString = typeof value === "string";
+  let s = String(value);
+  // Neutralise spreadsheet formula injection: a cell beginning with = + - @
+  // (or a leading tab/CR that Excel trims before evaluating the next char) is
+  // executed as a formula when the CSV is opened in Excel/Sheets. `error_reason`
+  // is attacker-influenceable (upstream RPC revert text), so prefix such cells
+  // with a single quote. Only applied to string cells — numeric columns are our
+  // own data and a leading '-' there is a real value, not an injection.
+  if (isString && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
   if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
 }

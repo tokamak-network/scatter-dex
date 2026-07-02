@@ -421,6 +421,25 @@ describe("/api/admin/history.csv", () => {
     expect(calls[0]).toMatchObject({ since: 0, until: 1_700_000_001_000 });
   });
 
+  it("neutralises spreadsheet formula injection in string cells", async () => {
+    // error_reason is attacker-influenceable (upstream revert text). A cell
+    // starting with = + - @ executes as a formula in Excel/Sheets.
+    const evil = "=cmd|'/c calc'!A1";
+    const db = makeDbStub({
+      iterateSettlementHistoryRange: () => [{ ...sampleRow, error_reason: evil }],
+    });
+    const { app, auth } = await buildAuthedApp({ db });
+    const res = await request(app)
+      .get("/api/admin/history.csv?since=0&until=1700000001000")
+      .set("Authorization", auth);
+    expect(res.status).toBe(200);
+    const dataLine = res.text.split("\n").filter((l) => l.length > 0)[1];
+    // Prefixed with a single quote so the formula isn't evaluated.
+    expect(dataLine).toContain("'=cmd|'/c calc'!A1");
+    // Numeric column (block_number=100) is NOT quote-prefixed — real values.
+    expect(dataLine).toContain(",100,");
+  });
+
   it("forwards type/status filters to the iterator", async () => {
     const calls: Array<{ type?: string; status?: string }> = [];
     const db = makeDbStub({
