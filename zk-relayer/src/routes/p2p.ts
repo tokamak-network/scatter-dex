@@ -38,8 +38,18 @@ export function createP2PRoutes(
    *  retired Private flow's id format. Authorize ids are bytes32(nullifier)
    *  with no relayer prefix. */
   lookupOrderRelayer?: (orderId: string) => string | null,
+  /** Max concurrent authorize-trade-offer handlers (each does a Groth16
+   *  verify). Beyond this the route sheds with 503 instead of running
+   *  unbounded parallel verifications — bounds CPU under a multi-IP flood
+   *  that the per-IP rate limiter can't. Non-positive disables the guard. */
+  maxConcurrentAuthorizeOffers = 8,
 ): Router {
   const router = Router();
+
+  // In-flight counter for the CPU-heavy authorize-trade-offer path. Shed
+  // (reject fast) rather than queue when saturated: a queue would grow
+  // unbounded under flood and become a memory DoS.
+  let inFlightAuthorizeOffers = 0;
 
   // Auth: verify relayer signature with method+path binding (matches client format)
   function verifyRelayerAuth(req: import("express").Request): boolean {
@@ -196,8 +206,21 @@ export function createP2PRoutes(
           return;
         }
 
-        const result = await onAuthorizeTradeOffer(offer, relayerAddress);
-        res.json(result);
+        // Shed before the expensive Groth16 verify inside the handler when too
+        // many offers are already in flight. Cheap validation above still runs
+        // (and rejects) for free; only the CPU-bound work is capped.
+        if (maxConcurrentAuthorizeOffers > 0 && inFlightAuthorizeOffers >= maxConcurrentAuthorizeOffers) {
+          res.status(503).json({ status: "error", reason: "relayer busy, retry" } satisfies AuthorizeTradeOfferResponse);
+          return;
+        }
+
+        inFlightAuthorizeOffers++;
+        try {
+          const result = await onAuthorizeTradeOffer(offer, relayerAddress);
+          res.json(result);
+        } finally {
+          inFlightAuthorizeOffers--;
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : "unknown error";
         // Reserve "rejected" for validated-but-declined offers; use "error"
