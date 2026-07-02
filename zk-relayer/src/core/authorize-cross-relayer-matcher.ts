@@ -138,7 +138,19 @@ export class AuthorizeCrossRelayerMatchService {
 
         const result = await this.sendTradeOffer(local.order, summary);
 
-        if (result.status === "settled" && result.txHash) {
+        // The maker relayer is a permissionless peer, so its `settled`
+        // claim is not trusted on its own — independently confirm on-chain
+        // that `result.txHash` is a real successful settleAuth that settled
+        // THIS order before flipping local state / recording analytics.
+        // Without this a hostile peer could force-mark the user's live order
+        // as settled (silent order loss) and forge our public stats with a
+        // fabricated or unrelated tx hash. Falls through to the rejection
+        // path (restores prior status) when verification fails.
+        if (
+          result.status === "settled" &&
+          result.txHash &&
+          (await this.submitter.verifyPeerSettlement(result.txHash, nullifier))
+        ) {
           local.status = "settled";
           local.settleTxHash = result.txHash;
           local.crossRelayer = true;
@@ -227,7 +239,27 @@ export class AuthorizeCrossRelayerMatchService {
 
         // Rejection path — restore the prior live-queue status so a
         // future remote (or the local SettlementWorker) can retry.
-        log.warn("Trade offer rejected", { reason: result.reason ?? "unknown" });
+        if (result.status === "settled" && result.txHash) {
+          // Peer claimed a settle we couldn't confirm on-chain — the tx is
+          // missing, reverted, points elsewhere, or doesn't carry our
+          // nullifier. Treat as unsettled and flag the peer for ops.
+          log.warn("Peer claimed settled but on-chain verification failed", {
+            peer: summary.relayer,
+            relayerUrl: summary.relayerUrl,
+            txHash: result.txHash,
+            taker: nullifier.slice(0, 18) + "...",
+          });
+        } else if (result.status === "settled") {
+          // Anomalous: peer reported settled with no tx hash to verify. Not a
+          // valid settlement; log without an `undefined` tx field.
+          log.warn("Peer reported settled without a txHash", {
+            peer: summary.relayer,
+            relayerUrl: summary.relayerUrl,
+            taker: nullifier.slice(0, 18) + "...",
+          });
+        } else {
+          log.warn("Trade offer rejected", { reason: result.reason ?? "unknown" });
+        }
         local.status = priorStatus;
         this.db?.updateAuthorizeOrderStatus(nullifier, priorStatus);
       } catch (err) {

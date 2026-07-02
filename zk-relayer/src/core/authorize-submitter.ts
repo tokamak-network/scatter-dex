@@ -15,6 +15,8 @@ import { recordSettlement } from "./metrics.js";
 import { computeSideFee, FEE_BPS_DENOMINATOR } from "./fees.js";
 import type { PrivateOrderDB } from "./db.js";
 import { createLogger } from "./logger.js";
+import { decodeSettlementCalldata } from "./decode-settlement.js";
+import { eqAddr } from "../lib/address.js";
 
 const log = createLogger("authorize-submitter");
 const gasLog = createLogger("gas-guard");
@@ -156,6 +158,94 @@ export class AuthorizeSubmitter {
   /** Get the relayer's Ethereum address (for proof-binding validation). */
   getAddress(): string {
     return this.wallet.address;
+  }
+
+  /**
+   * Confirm on-chain that `txHash` is a real, successful `settleAuth` that
+   * actually settled the order identified by `expectedNullifier`.
+   *
+   * Used by the cross-relayer taker path: when we send a trade offer to a
+   * remote maker relayer, it settles on-chain and returns us the tx hash.
+   * That peer is permissionless (self-declared address, `minBond` may be 0),
+   * so a hostile peer could reply `{status:"settled", txHash:"0x…"}` for a
+   * tx that never settled our order — or never existed — to force-mark our
+   * user's live order as settled (silent order loss) and poison our public
+   * stats. We therefore never trust the peer's word: we independently verify
+   * the receipt before flipping local state.
+   *
+   * Checks, all of which must pass:
+   *  - the receipt exists and `status === 1` (mined, not reverted);
+   *  - the tx target is our configured PrivateSettlement contract;
+   *  - the calldata decodes to `settleAuth` and one of its two legs carries
+   *    `expectedNullifier` (our order's escrow nullifier).
+   *
+   * The maker waited for its own receipt (`sendAndWait`) before replying, so
+   * the tx IS mined — but the taker typically uses a different RPC node that
+   * can lag a few seconds behind on propagation. A `null` lookup is therefore
+   * retried a few times before we conclude the tx doesn't exist, so ordinary
+   * propagation lag doesn't produce a false negative that wrongly restores the
+   * order. A definitively bad tx (mined-but-reverted, wrong target, wrong
+   * nullifier) is rejected immediately without retry.
+   *
+   * Fails closed: any RPC error, missing tx after retries, decode failure, or
+   * mismatch returns `false`.
+   */
+  async verifyPeerSettlement(
+    txHash: string,
+    expectedNullifier: string,
+  ): Promise<boolean> {
+    try {
+      const receipt = await this.lookupWithPropagationRetry(() =>
+        this.provider.getTransactionReceipt(txHash),
+      );
+      if (!receipt) return false;
+      if (receipt.status !== 1) return false;
+      if (!receipt.to || !eqAddr(receipt.to, config.privateSettlementAddress)) {
+        return false;
+      }
+      const tx = await this.lookupWithPropagationRetry(() =>
+        this.provider.getTransaction(txHash),
+      );
+      if (!tx) return false;
+      const decoded = decodeSettlementCalldata(tx.data);
+      if (!decoded || decoded.function !== "settleAuth") return false;
+
+      // Nullifiers decode as 0x-hex; the caller's key is a circom-native
+      // decimal string. Compare as bigints so the representation can't cause
+      // a false negative.
+      const want = BigInt(expectedNullifier);
+      return (
+        BigInt(decoded.maker.nullifier) === want ||
+        BigInt(decoded.taker.nullifier) === want
+      );
+    } catch (err) {
+      log.warn("Peer settlement receipt verification failed", {
+        tx: txHash,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  /**
+   * Run `fetchFn` and, if it returns `null` (tx/receipt not yet visible on
+   * this RPC node), retry a few times with a short delay before giving up.
+   * A non-null result returns immediately. Only used by
+   * `verifyPeerSettlement` to absorb cross-node propagation lag.
+   */
+  private async lookupWithPropagationRetry<T>(
+    fetchFn: () => Promise<T | null>,
+  ): Promise<T | null> {
+    const ATTEMPTS = 4;
+    const DELAY_MS = 1500;
+    for (let i = 0; i < ATTEMPTS; i++) {
+      const result = await fetchFn();
+      if (result) return result;
+      if (i < ATTEMPTS - 1) {
+        await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
+      }
+    }
+    return null;
   }
 
   // ─── Cancel event listener ──────────────────────────────────────
