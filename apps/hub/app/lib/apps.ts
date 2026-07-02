@@ -1,6 +1,6 @@
 export type AppSurface = "web" | "mobile";
 export type AppAudience = "user" | "operator";
-export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
+export type AppId = "pro" | "pay" | "mobile" | "relayer";
 
 /** Per-app URL with env override. `NEXT_PUBLIC_*_URL` lets local
  *  dev (`apps/hub` on :4000) point at the sibling apps running on
@@ -17,11 +17,6 @@ export type AppId = "pro" | "pay" | "drop" | "mobile" | "relayer";
 const APP_URLS: Record<AppId, string> = {
   pro: process.env.NEXT_PUBLIC_PRO_URL ?? "https://zkscatter-pro.web.app",
   pay: process.env.NEXT_PUBLIC_PAY_URL ?? "https://zkscatter-pay.web.app",
-  // Drop isn't deployed yet, but `APP_BY_ID.*.href` is consumed in
-  // non-AppCard contexts (Footer, Recommender) that don't check
-  // `comingSoon`. Use the eventual real URL so those links are
-  // deterministic instead of broken in-app hashes.
-  drop: process.env.NEXT_PUBLIC_DROP_URL ?? "https://zkscatter-drop.web.app",
   relayer: process.env.NEXT_PUBLIC_RELAYER_URL ?? "https://zkscatter-relayer.web.app",
   // Mobile is an in-hub marketing route, not a separate app server.
   mobile: "/mobile",
@@ -85,24 +80,6 @@ export const APPS: AppEntry[] = [
     href: APP_URLS.pay,
     cta: "Open Pay",
     accent: "var(--color-accent-pay)",
-  },
-  {
-    id: "drop",
-    name: "Drop",
-    tagline: "Airdrops to humans, not bots.",
-    persona:
-      "For token launch teams who want sybil-resistant, private distribution.",
-    bullets: [
-      "Identity gating without doxxing",
-      "Anti-sybil via zk-X509 attestations",
-      "Claimers stay private",
-    ],
-    surface: "web",
-    audience: "user",
-    href: APP_URLS.drop,
-    cta: "Open Drop",
-    accent: "var(--color-accent-drop)",
-    comingSoon: true,
   },
   {
     id: "mobile",

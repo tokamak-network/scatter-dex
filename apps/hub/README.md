@@ -2,7 +2,7 @@
 
 Brand home for **zkScatter** — the umbrella site that introduces the
 ZK + compliance stack and routes visitors to the right persona app
-(`pro`, `pay`, `drop`, `mobile`) and the developer docs.
+(`pro`, `pay`, `mobile`) and the developer docs.
 
 This app is not a product surface. No trading, no proofs, no wallet.
 Its job is positioning, navigation, and trust.

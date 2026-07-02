@@ -5,14 +5,13 @@ import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { APP_BY_ID, type AppEntry } from "../lib/apps";
 
-type Goal = "trade" | "pay" | "distribute" | "explore";
+type Goal = "trade" | "pay" | "explore";
 type Platform = "web" | "mobile" | "either";
 
-function recommend(goal: Goal | null, platform: Platform | null): AppEntry {
+function recommend(goal: Goal, platform: Platform): AppEntry {
   if (platform === "mobile") return APP_BY_ID.mobile;
   if (goal === "trade") return APP_BY_ID.pro;
   if (goal === "pay") return APP_BY_ID.pay;
-  if (goal === "distribute") return APP_BY_ID.drop;
   // goal === "explore" — pro is the broadest web entry; mobile-or-either
   // visitors get the all-in-one Mobile app.
   return platform === "web" ? APP_BY_ID.pro : APP_BY_ID.mobile;
@@ -33,7 +32,6 @@ export function Recommender({ className = "" }: { className?: string }) {
         options={[
           { v: "trade", label: "Trade" },
           { v: "pay", label: "Pay people" },
-          { v: "distribute", label: "Distribute tokens" },
           { v: "explore", label: "Just explore" },
         ]}
       />
