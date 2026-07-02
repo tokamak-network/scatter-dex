@@ -141,7 +141,9 @@ export function createIndexedDbNoteAdapter(
    *  `encrypt` is configured, plaintext WireNote otherwise. */
   async function toRecord(note: StoredNote): Promise<WireNote | EncryptedRecord> {
     const wire = serialize(note);
-    if (!encrypt) return wire;
+    // Require BOTH halves to encrypt: writing encrypted with no `decrypt`
+    // configured would create a write-only record that can never be read back.
+    if (!encrypt || !decrypt) return wire;
     return { id: note.id, enc: await encrypt(JSON.stringify(wire)), v: 1 };
   }
 
@@ -202,7 +204,7 @@ export function createIndexedDbNoteAdapter(
     // (the tx auto-commits on the first microtask that yields).
     const records = await getAllRecords(db);
     for (const rec of records) {
-      const id = (rec as { id?: unknown }).id;
+      const id = (rec as { id?: unknown } | null)?.id;
       try {
         const wire = await recordToWire(rec);
         if (!wire) continue; // encrypted record but no decrypt configured

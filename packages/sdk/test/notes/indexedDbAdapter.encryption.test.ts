@@ -88,14 +88,26 @@ describe("IndexedDbNoteAdapter encryption-at-rest", () => {
     expect(Object.keys(rawAfter[0]).sort()).toEqual(["enc", "id", "v"]);
   });
 
-  it("skips encrypted records when no decrypt is configured (no crash)", async () => {
+  it("skips encrypted records when the reader has no decrypt (no crash)", async () => {
+    // Written encrypted by a properly-configured adapter...
     const enc = createIndexedDbNoteAdapter({ dbName: "skip", ...codec });
     await enc.put(makeNote());
+    expect(Object.keys((await rawGetAll("skip"))[0]).sort()).toEqual(["enc", "id", "v"]);
 
-    // decrypt omitted — can't read the envelope, so it's skipped, not thrown.
-    const noDecrypt = createIndexedDbNoteAdapter({ dbName: "skip", encrypt: codec.encrypt });
+    // ...then opened by an adapter with no decrypt — it skips them, no throw.
+    const noDecrypt = createIndexedDbNoteAdapter({ dbName: "skip" });
     const all = await noDecrypt.loadAll();
     expect(all).toHaveLength(0);
+  });
+
+  it("refuses to encrypt when only encrypt (no decrypt) is configured — avoids write-only records", async () => {
+    // encrypt without decrypt would be a footgun (write-only); the adapter
+    // falls back to plaintext so the note stays readable.
+    const encOnly = createIndexedDbNoteAdapter({ dbName: "enc-only", encrypt: codec.encrypt });
+    await encOnly.put(makeNote());
+    const raw = await rawGetAll("enc-only");
+    expect(raw[0].noteHex).toBeDefined();
+    expect(raw[0].enc).toBeUndefined();
   });
 
   it("still writes plaintext when no encrypt is configured (back-compat)", async () => {
