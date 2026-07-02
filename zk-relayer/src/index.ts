@@ -1,6 +1,6 @@
 import express from "express";
 import cors from "cors";
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import rateLimit from "express-rate-limit";
 import { WebSocketServer } from "ws";
 import { config, updateRelayerFee } from "./config.js";
 import { PrivateSubmitter } from "./core/private-submitter.js";
@@ -15,7 +15,7 @@ import { RemoteOrderStore } from "./core/remote-orderbook.js";
 import { createP2PRoutes } from "./routes/p2p.js";
 import { AuthorizeCrossRelayerMatchService } from "./core/authorize-cross-relayer-matcher.js";
 import { AuthorizeSubmitter } from "./core/authorize-submitter.js";
-import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, pubKeyId, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle, applyOnChainAuthorizeCancel } from "./routes/authorize-orders.js";
+import { createAuthorizeOrderRoutes, purgeNonPendingAuthorizeOrders, drainAuthorizeOrders, getAuthorizeOrderStats, authorizeOrders, lookupAuthorizeOrdersByCounterPair, findMatch as findAuthorizeMatch, decPubKeyCount as decAuthorizePubKeyCount, nullifierToOfferHandle, applyOnChainAuthorizeCancel } from "./routes/authorize-orders.js";
 import { publicSignalToAddress } from "./types/authorize-order.js";
 import { SettlementWorker } from "./core/settlement-worker.js";
 import { SettlementPushWorker } from "./core/settlement-push-worker.js";
@@ -424,27 +424,24 @@ async function main() {
     message: { error: "too many requests" },
   });
 
-  // Layer 2: pubKey-based limiter for authorize-orders POST.
-  // Even if the attacker rotates IPs, each ZK identity is limited to
-  // 10 writes/min. The key is extracted from the request body.
+  // Tighter per-IP write cap on the authorize-orders POST (10/min) than the
+  // general writeLimiter (30/min).
+  //
+  // NOTE: IP-based only (default keyGenerator, which in express-rate-limit v8
+  // already normalizes IPv6 to a /56 subnet via `ipKeyGenerator` — so a client
+  // can't rotate the v6 host suffix for a fresh bucket; no custom keyGenerator
+  // needed). A per-*identity* cap CANNOT be enforced at this layer — the
+  // limiter runs before the handler verifies
+  // `pubKeyBind`, so keying on the request's self-declared `pubKeyAx/Ay` gave
+  // no real protection: an attacker just rotates random pubkeys for a fresh
+  // bucket every request (the pubkey is only proven to match the proof inside
+  // the handler). The real per-identity limit is `MAX_ORDERS_PER_PUBKEY`,
+  // enforced in the route on the VALIDATED `pkId` after the `pubKeyBind`
+  // check. Security audit 2026-07-02.
   const authWriteLimiter = rateLimit({
     windowMs: 60_000,
     max: 10,
-    message: { error: "too many requests for this identity" },
-    keyGenerator: (req) => {
-      const body = req.body as Record<string, unknown>;
-      const ax = body.pubKeyAx as string | undefined;
-      const ay = body.pubKeyAy as string | undefined;
-      if (ax && ay) {
-        try { return `pubkey:${pubKeyId(ax, ay)}`; }
-        catch { /* fall through to IP */ }
-      }
-      // IP fallback (no pubkey on the body). Use express-rate-limit's
-      // ipKeyGenerator so IPv6 addresses are normalised to their /64 subnet —
-      // raw req.ip would let an IPv6 client rotate the host suffix to evade the
-      // per-identity cap.
-      return req.ip ? ipKeyGenerator(req.ip) : "unknown";
-    },
+    message: { error: "too many requests" },
   });
 
   // Peer-to-peer surface limiter. /api/p2p/orders is relayer-signed but
