@@ -142,6 +142,43 @@ describe("runVerifyPass (DB-integrated)", () => {
     expect(fetched).toEqual([]); // sanity for the test wrapper
   });
 
+  it("overwrites relayer-reported fees with the on-chain amounts on verify", async () => {
+    // Relayer self-reports inflated fees; the on-chain event carries the real
+    // amounts. After verify the stored fees must be the canonical on-chain
+    // values, so a relayer can't pump its fee-revenue / avgFeeBps aggregates.
+    const row = makeRow({ feeMaker: "999999999", feeTaker: "888888888" });
+    db.insertSettlement(row.makerRelayer, row);
+
+    const result = await runVerifyPass(
+      db,
+      async () => [makeEvent({ feeTokenMaker: "100", feeTokenTaker: "50" })],
+      { chainId: 11155111, maxBlock: 1000 },
+    );
+
+    expect(result.flipped).toBe(1);
+    const stored = db.getSettlement(row.txHash);
+    expect(stored?.verified).toBe(true);
+    expect(stored?.feeMaker).toBe("100");
+    expect(stored?.feeTaker).toBe("50");
+  });
+
+  it("leaves fees as-reported when the event omits fee amounts", async () => {
+    const row = makeRow({ feeMaker: "42", feeTaker: "7" });
+    db.insertSettlement(row.makerRelayer, row);
+
+    // makeEvent() has no feeToken* fields → decision carries no fees → columns
+    // are left untouched (back-compat with fetchers that don't project them).
+    const result = await runVerifyPass(db, async () => [makeEvent()], {
+      chainId: 11155111,
+      maxBlock: 1000,
+    });
+
+    expect(result.flipped).toBe(1);
+    const stored = db.getSettlement(row.txHash);
+    expect(stored?.feeMaker).toBe("42");
+    expect(stored?.feeTaker).toBe("7");
+  });
+
   it("leaves verified=0 and reports the reason when the event is missing", async () => {
     const row = makeRow();
     db.insertSettlement(row.makerRelayer, row);

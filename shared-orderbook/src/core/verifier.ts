@@ -42,11 +42,22 @@ export interface SettledAuthEvent {
    *  projection prevents a fetcher from accidentally dropping it and
    *  weakening the "maker/taker relayer agreement" check below. */
   takerRelayer: string;
+  /** On-chain fee amounts (decimal-wei strings) from the event. These are
+   *  authoritative and OVERWRITE the relayer-reported `fee_maker`/`fee_taker`
+   *  on verify, so a relayer can't inflate its fee-revenue / avgFeeBps
+   *  aggregates by self-reporting a larger fee than it actually took. Omitted
+   *  when a fetcher doesn't project them (fees are then left as-reported). */
+  feeTokenMaker?: string;
+  feeTokenTaker?: string;
 }
 
 export interface VerifyDecision {
   txHash: string;
   blockTime?: number;
+  /** Canonical on-chain fees to write when flipping this row verified.
+   *  Sourced from the matched event; undefined leaves the reported values. */
+  feeMaker?: string;
+  feeTaker?: string;
 }
 
 export interface VerifyReport {
@@ -109,7 +120,12 @@ export function matchSettlements(
       unmatched.push({ txHash: row.txHash, reason: "relayer-mismatch" });
       continue;
     }
-    matched.push({ txHash: row.txHash, blockTime: ev.blockTime });
+    matched.push({
+      txHash: row.txHash,
+      blockTime: ev.blockTime,
+      feeMaker: ev.feeTokenMaker,
+      feeTaker: ev.feeTokenTaker,
+    });
   }
 
   return { matched, unmatched };

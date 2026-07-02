@@ -62,6 +62,9 @@ export class OrderbookDB {
   private stmtUpsertClaimNullifier!: Database.Statement;
   private stmtGetClaimCursor!: Database.Statement;
   private stmtSetClaimCursor!: Database.Statement;
+  /** Lazy cache of the (few) verify UPDATE shapes keyed by SET clause — see
+   *  markSettlementsVerified. Bounded to at most 2³ entries. */
+  private verifyStmtCache = new Map<string, Database.Statement>();
 
   constructor(dbPath?: string) {
     this.db = new Database(dbPath ?? config.dbPath);
@@ -939,23 +942,33 @@ export class OrderbookDB {
    * single sqlite transaction so a crash mid-batch doesn't leave the
    * table half-updated. Returns the number of rows actually flipped.
    */
-  markSettlementsVerified(entries: { txHash: string; blockTime?: number }[]): number {
+  markSettlementsVerified(
+    entries: { txHash: string; blockTime?: number; feeMaker?: string; feeTaker?: string }[],
+  ): number {
     if (entries.length === 0) return 0;
-    const stmtBoth = this.db.prepare(
-      `UPDATE settlements SET verified = 1, block_time = ? WHERE tx_hash = ? AND verified = 0`,
-    );
-    const stmtOnly = this.db.prepare(
-      `UPDATE settlements SET verified = 1 WHERE tx_hash = ? AND verified = 0`,
-    );
     let flipped = 0;
     const txn = this.db.transaction(() => {
       for (const e of entries) {
-        const txHash = e.txHash.toLowerCase();
-        const result =
-          typeof e.blockTime === "number"
-            ? stmtBoth.run(e.blockTime, txHash)
-            : stmtOnly.run(txHash);
-        flipped += result.changes;
+        // Build the SET clause from whichever canonical on-chain values the
+        // verifier supplied. `block_time` and `fee_maker`/`fee_taker` are
+        // overwritten with the authoritative on-chain values (the relayer's
+        // self-reported figures are not trusted for verified aggregates);
+        // amounts stay as-reported since the event doesn't carry them.
+        const sets = ["verified = 1"];
+        const params: unknown[] = [];
+        if (typeof e.blockTime === "number") { sets.push("block_time = ?"); params.push(e.blockTime); }
+        if (typeof e.feeMaker === "string") { sets.push("fee_maker = ?"); params.push(e.feeMaker); }
+        if (typeof e.feeTaker === "string") { sets.push("fee_taker = ?"); params.push(e.feeTaker); }
+        params.push(e.txHash.toLowerCase());
+        // Reuse a prepared statement per distinct SET-clause shape (≤ 2³
+        // shapes total) instead of preparing every iteration.
+        const sql = `UPDATE settlements SET ${sets.join(", ")} WHERE tx_hash = ? AND verified = 0`;
+        let stmt = this.verifyStmtCache.get(sql);
+        if (!stmt) {
+          stmt = this.db.prepare(sql);
+          this.verifyStmtCache.set(sql, stmt);
+        }
+        flipped += stmt.run(...params).changes;
       }
     });
     txn();
@@ -1087,7 +1100,21 @@ export class OrderbookDB {
    * Walks a row set once and accumulates token + pair aggregates plus a
    * couple of running counters. Shared by getRelayerSettlementStats and
    * getNetworkSettlementTotals so the two endpoints' arithmetic can never
-   * drift. BigInt sums are done in Node because sqlite SUM() over TEXT
+   * drift.
+   *
+   * TRUST NOTE: `verified=1` confirms the settlement *occurred* (nullifier
+   * pair + txHash + relayers matched the on-chain `PrivateSettledAuth` event).
+   * Fees are canonicalised from the event when the verifier's fetcher projects
+   * `feeTokenMaker`/`feeTokenTaker` (the production fetcher does; a fetcher
+   * that omits them leaves fees as-reported — see markSettlementsVerified).
+   * `sell_amount` / `buy_amount` are NOT emitted on-chain at all, so they
+   * remain relayer-reported even for verified rows. `volumeByTokenVerified` and the avgFeeBps
+   * denominator therefore reflect self-reported magnitudes — a participating
+   * relayer can still inflate its reported volume. Treat volume as
+   * indicative, not authoritative; deriving true volume would require the
+   * settlement contract to emit amounts.
+   *
+   * BigInt sums are done in Node because sqlite SUM() over TEXT
    * columns silently coerces to double — accuracy matters for token
    * amounts that exceed 2^53.
    */
