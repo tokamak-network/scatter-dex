@@ -41,8 +41,27 @@ export class RelayerClient {
 
   constructor(baseUrl: string, opts: ClientOpts = {}) {
     this.baseUrl = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+    // Reject a baseUrl that isn't a real http(s) URL up front — a
+    // `javascript:`/`data:`/`file:` or malformed relayer URL should never
+    // reach fetch. (https is not forced here: testnet relayers are served
+    // over http; enforce https at the deployment layer.)
+    let parsed: URL;
+    try {
+      parsed = new URL(this.baseUrl);
+    } catch {
+      throw new Error(`RelayerClient: invalid baseUrl ${JSON.stringify(baseUrl)}`);
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error(`RelayerClient: baseUrl must be http(s), got ${parsed.protocol}`);
+    }
     this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.fetchImpl = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    // Force `redirect: "error"` on EVERY request, centrally, so a hostile
+    // relayerUrl can't 30x-redirect a claim/order POST to an attacker origin
+    // and exfiltrate the body (proof, recipient, nullifier, pubkey). Wrapping
+    // the fetch impl here — rather than per call site — means a future method
+    // can't forget it. Mirrors the server-side guard in PR #1082.
+    const rawFetch = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.fetchImpl = (input, init) => rawFetch(input, { ...init, redirect: "error" });
   }
 
   async getInfo(signal?: AbortSignal): Promise<RelayerApiInfo> {
