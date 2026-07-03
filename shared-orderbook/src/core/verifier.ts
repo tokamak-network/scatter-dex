@@ -65,7 +65,15 @@ export interface VerifyReport {
   /** Rows we looked at but didn't match — either no event, or a
    *  mismatched tx hash / relayer address (likely tampering or a
    *  different relayer claiming credit for someone else's tx). */
-  unmatched: { txHash: string; reason: "no-event" | "tx-mismatch" | "relayer-mismatch" }[];
+  unmatched: {
+    txHash: string;
+    reason: "no-event" | "tx-mismatch" | "relayer-mismatch";
+    /** relayer-mismatch only: the event's true attribution. The runner
+     *  persists it (db.recordEventAttribution) so only a submit matching
+     *  it can replace the squatted row from then on. */
+    eventMakerRelayer?: string;
+    eventTakerRelayer?: string;
+  }[];
 }
 
 function normHash(h: string | undefined | null): string {
@@ -112,12 +120,16 @@ export function matchSettlements(
       unmatched.push({ txHash: row.txHash, reason: "tx-mismatch" });
       continue;
     }
-    if (!eqAddr(ev.makerRelayer, row.makerRelayer)) {
-      unmatched.push({ txHash: row.txHash, reason: "relayer-mismatch" });
-      continue;
-    }
-    if (row.takerRelayer && !eqAddr(ev.takerRelayer, row.takerRelayer)) {
-      unmatched.push({ txHash: row.txHash, reason: "relayer-mismatch" });
+    if (
+      !eqAddr(ev.makerRelayer, row.makerRelayer) ||
+      (row.takerRelayer && !eqAddr(ev.takerRelayer, row.takerRelayer))
+    ) {
+      unmatched.push({
+        txHash: row.txHash,
+        reason: "relayer-mismatch",
+        eventMakerRelayer: ev.makerRelayer,
+        eventTakerRelayer: ev.takerRelayer,
+      });
       continue;
     }
     matched.push({
@@ -189,5 +201,14 @@ export async function runVerifyPass(
   // maxVerifyAttempts and quarantine themselves out of the active set, so they
   // stop being re-scanned every pass and stop pinning verify-stats alerts.
   db.recordVerifyFailures(report.unmatched.map((u) => u.txHash));
+  // Persist the event-attested attribution on relayer-mismatch rows — see
+  // db.recordEventAttribution.
+  db.recordEventAttribution(
+    report.unmatched.flatMap((u) =>
+      u.reason === "relayer-mismatch" && u.eventMakerRelayer && u.eventTakerRelayer
+        ? [{ txHash: u.txHash, eventMakerRelayer: u.eventMakerRelayer, eventTakerRelayer: u.eventTakerRelayer }]
+        : [],
+    ),
+  );
   return { scanned: activeRows.length, flipped, report };
 }

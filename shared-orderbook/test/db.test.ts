@@ -241,6 +241,36 @@ describe("OrderbookDB", () => {
     expect(db.recordVerifyFailures([makeSettlement(1).txHash])).toBe(1);
   });
 
+  it("migrates a pre-attestation settlements table (no event_*_relayer) losslessly", () => {
+    // Simulate a deployed DB created before the event-attested-attribution
+    // columns existed: drop them, then reopen. The guarded ALTERs must add
+    // them back without touching existing rows.
+    const submitter = "0x" + "11".repeat(20);
+    db.insertSettlement(submitter, makeSettlement(1));
+    db.markSettlementsVerified([{ txHash: makeSettlement(1).txHash }]);
+    db.insertSettlement(submitter, makeSettlement(2));
+    db.close();
+    const raw = new Database(TEST_DB);
+    raw.exec("ALTER TABLE settlements DROP COLUMN event_maker_relayer");
+    raw.exec("ALTER TABLE settlements DROP COLUMN event_taker_relayer");
+    raw.close();
+
+    // Reopen — must not throw, all pre-existing rows intact (verified state
+    // included), and the attestation write path works on the upgraded table.
+    db = new OrderbookDB(TEST_DB);
+    expect(db.getSettlement(makeSettlement(1).txHash)?.verified).toBe(true);
+    expect(db.getSettlement(makeSettlement(2).txHash)?.verified).toBe(false);
+    expect(
+      db.recordEventAttribution([
+        {
+          txHash: makeSettlement(2).txHash,
+          eventMakerRelayer: "0x" + "33".repeat(20),
+          eventTakerRelayer: "0x" + "44".repeat(20),
+        },
+      ]),
+    ).toBe(1);
+  });
+
   describe("quarantineFutureSettlements (impossible-future blockNumber)", () => {
     const submitter = "0x" + "11".repeat(20);
 

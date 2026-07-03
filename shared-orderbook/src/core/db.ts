@@ -46,6 +46,7 @@ export class OrderbookDB {
   private stmtListMatchesJoin!: Database.Statement;
   private stmtInsertSettlement!: Database.Statement;
   private stmtEvictSquattedSettlement!: Database.Statement;
+  private stmtRecordEventAttribution!: Database.Statement;
   private stmtGetSettlement!: Database.Statement;
   private stmtInsertKyc!: Database.Statement;
   private stmtGetKycById!: Database.Statement;
@@ -166,6 +167,11 @@ export class OrderbookDB {
         -- pin verify-stats alerts or get re-scanned forever. Stays 0 for
         -- verified rows and for rows not yet reached by a pass.
         verify_attempts    INTEGER NOT NULL DEFAULT 0,
+        -- Event-attested attribution: set by a verify pass on
+        -- relayer-mismatch (the event's true maker/taker). Enforcement is
+        -- stmtEvictSquattedSettlement clause (c).
+        event_maker_relayer TEXT,
+        event_taker_relayer TEXT,
         type               TEXT,
         created_at         INTEGER NOT NULL
       );
@@ -318,6 +324,14 @@ export class OrderbookDB {
     if (!columns.some((c) => c.name === "verify_attempts")) {
       this.db.exec("ALTER TABLE settlements ADD COLUMN verify_attempts INTEGER NOT NULL DEFAULT 0");
     }
+    // Same guarded ALTER for the event-attested attribution columns; existing
+    // rows keep NULL = "no attestation yet" (plain eviction rule applies).
+    if (!columns.some((c) => c.name === "event_maker_relayer")) {
+      this.db.exec("ALTER TABLE settlements ADD COLUMN event_maker_relayer TEXT");
+    }
+    if (!columns.some((c) => c.name === "event_taker_relayer")) {
+      this.db.exec("ALTER TABLE settlements ADD COLUMN event_taker_relayer TEXT");
+    }
     // Created here (not in the CREATE TABLE exec block) so it runs only after
     // verify_attempts is guaranteed to exist — on a pre-A-5 DB the column is
     // added by the ALTER just above, and on a fresh DB it's already in the
@@ -425,20 +439,45 @@ export class OrderbookDB {
     // on-chain, so a malicious relayer could front-run a settlement it didn't
     // take part in and squat the tx_hash PK, permanently blocking the genuine
     // participants' insert (the fake never verifies). A squatted row is
-    // evicted only while BOTH hold:
-    //   (a) it is still unverified — `verified = 1` locks attribution; and
+    // evicted only while ALL hold:
+    //   (a) it is still unverified — `verified = 1` locks attribution;
     //   (b) the incoming submit claims DIFFERENT attribution (null-safe
     //       scalar IS NOT; taker_relayer is nullable). This keeps a
     //       byte-identical retry a free no-op and stops re-posts from
-    //       re-arming the A-5 verify_attempts quarantine at will.
+    //       re-arming the A-5 verify_attempts quarantine at will; and
+    //   (c) once a verify pass has recorded the event-attested attribution
+    //       (relayer-mismatch → event_*_relayer set), ONLY a submit matching
+    //       that attestation may replace the row. Without (c) the squatter
+    //       could simply re-post after the honest overwrite, leaving
+    //       attribution to whoever wrote last before the verify tick. The
+    //       taker leg mirrors the verifier's laxness: a submit that omits
+    //       takerRelayer never fails the taker check.
     // The evicted slot is refilled by the plain insert (one canonical column
     // list — no 20-column upsert mirror to keep in sync with the schema);
     // verify_attempts restarts at its column default so corrected data gets
     // a full match budget.
+    // RETURNING hands the evicted row's attestation back to insertSettlement
+    // so the replacement row inherits it — otherwise the fresh honest row
+    // would carry NULL event_* and a squatter could re-evict it under the
+    // plain attribution-differs rule before the next verify pass.
     this.stmtEvictSquattedSettlement = this.db.prepare(`
       DELETE FROM settlements
+      WHERE tx_hash = @tx AND verified = 0
+        AND (submitter IS NOT @submitter OR maker_relayer IS NOT @maker OR taker_relayer IS NOT @taker)
+        AND (event_maker_relayer IS NULL
+             OR (@maker IS event_maker_relayer
+                 AND (@taker IS NULL OR @taker IS event_taker_relayer)))
+      RETURNING event_maker_relayer AS maker, event_taker_relayer AS taker
+    `);
+
+    // Verify-layer half of the anti-squat (see clause (c) above): persists
+    // the event's true attribution onto an unverified relayer-mismatch row.
+    // Also reused by insertSettlement to re-stamp an inherited attestation
+    // (a just-refilled row is always verified=0, so the guard holds).
+    this.stmtRecordEventAttribution = this.db.prepare(`
+      UPDATE settlements
+      SET event_maker_relayer = ?, event_taker_relayer = ?
       WHERE tx_hash = ? AND verified = 0
-        AND (submitter IS NOT ? OR maker_relayer IS NOT ? OR taker_relayer IS NOT ?)
     `);
 
     this.stmtGetSettlement = this.db.prepare(`SELECT * FROM settlements WHERE tx_hash = ?`);
@@ -829,13 +868,16 @@ export class OrderbookDB {
       }
     }
     const txn = this.db.transaction(() => {
-      this.stmtEvictSquattedSettlement.run(
-        payload.txHash,
-        submitter.toLowerCase(),
-        payload.makerRelayer.toLowerCase(),
-        payload.takerRelayer ? payload.takerRelayer.toLowerCase() : null,
-      );
-      return this.stmtInsertSettlement.run(
+      // DELETE … RETURNING: `evicted` is the squatted row's attestation (or
+      // undefined when nothing was evicted), re-stamped on the replacement
+      // below so it survives the evict+reinsert.
+      const evicted = this.stmtEvictSquattedSettlement.get({
+        tx: payload.txHash,
+        submitter: submitter.toLowerCase(),
+        maker: payload.makerRelayer.toLowerCase(),
+        taker: payload.takerRelayer ? payload.takerRelayer.toLowerCase() : null,
+      }) as { maker: string | null; taker: string | null } | undefined;
+      const result = this.stmtInsertSettlement.run(
         payload.txHash,
         payload.chainId ?? DEFAULT_CHAIN_ID,
         payload.blockNumber,
@@ -858,11 +900,41 @@ export class OrderbookDB {
         payload.type ?? null,
         Math.floor(Date.now() / 1000),
       );
+      if (result.changes > 0 && evicted?.maker) {
+        this.stmtRecordEventAttribution.run(evicted.maker, evicted.taker, payload.txHash);
+      }
+      return result;
     });
     // changes>0 = inserted (fresh tx_hash, or the insert refilled a squatted
     // unverified row the eviction removed); changes=0 = a retained row won
-    // (verified, or a same-attribution duplicate/retry) → no-op.
+    // (verified, a same-attribution duplicate/retry, or a row protected by
+    // its event attestation) → no-op.
     return txn().changes > 0;
+  }
+
+  /**
+   * Verify-layer anti-squat: persist the on-chain event's true relayer
+   * attribution onto rows the verifier flagged as `relayer-mismatch` (someone
+   * claimed credit for a settlement that isn't theirs). Enforcement lives in
+   * stmtEvictSquattedSettlement clause (c). Only unverified rows are touched.
+   * Returns the number of rows updated.
+   */
+  recordEventAttribution(
+    rows: { txHash: string; eventMakerRelayer: string; eventTakerRelayer: string }[],
+  ): number {
+    if (rows.length === 0) return 0;
+    const txn = this.db.transaction((items: typeof rows) => {
+      let updated = 0;
+      for (const r of items) {
+        updated += this.stmtRecordEventAttribution.run(
+          r.eventMakerRelayer.toLowerCase(),
+          r.eventTakerRelayer.toLowerCase(),
+          r.txHash.toLowerCase(),
+        ).changes;
+      }
+      return updated;
+    });
+    return txn(rows);
   }
 
   /**
@@ -885,6 +957,11 @@ export class OrderbookDB {
    * above real multi-chain volume, but in principle heavy spam on one chain
    * could age out another chain's oldest history. A per-chain cap is a
    * deliberate follow-up if cross-chain isolation ever matters.
+   *
+   * Pruning an attested unverified row discards its event attestation
+   * (reopening that txHash's squat window) — accepted: it only happens under
+   * cap pressure and self-heals, since a re-squatted row re-enters the verify
+   * scan and gets re-attested on the next pass.
    */
   pruneSettlements(maxRows: number): number {
     // `< 1` (not `<= 0`) also rejects fractional caps, which would otherwise

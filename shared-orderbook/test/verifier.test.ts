@@ -290,6 +290,82 @@ describe("runVerifyPass (DB-integrated)", () => {
   });
 });
 
+describe("event-attested attribution (verify-layer anti-squat)", () => {
+  let db: OrderbookDB;
+
+  beforeEach(() => {
+    if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
+    db = new OrderbookDB(TEST_DB);
+  });
+  afterEach(() => {
+    db.close();
+    if (fs.existsSync(TEST_DB)) fs.unlinkSync(TEST_DB);
+  });
+
+  const squatter = "0x" + "ee".repeat(20);
+  const honestMaker = "0x" + "11".repeat(20);
+  const honestTaker = "0x" + "22".repeat(20);
+
+  it("a verify pass records the event's true attribution on a relayer-mismatch row", async () => {
+    // Squatter claims someone else's settlement as its own.
+    const squat = makeRow({ makerRelayer: squatter, takerRelayer: undefined });
+    db.insertSettlement(squatter, squat);
+
+    const r = await runVerifyPass(db, async () => [makeEvent()], { chainId: 11155111, maxBlock: 1000 });
+    expect(r.flipped).toBe(0);
+    expect(r.report.unmatched[0]).toMatchObject({
+      reason: "relayer-mismatch",
+      eventMakerRelayer: honestMaker,
+      eventTakerRelayer: honestTaker,
+    });
+
+    // Attestation persisted: the squatter's re-post (same attribution) is a
+    // no-op, the honest maker's submit replaces the row.
+    const rePost = db.insertSettlement(squatter, squat);
+    expect(rePost).toBe(false);
+    const honest = db.insertSettlement(honestMaker, makeRow());
+    expect(honest).toBe(true);
+    expect(db.getSettlement(makeRow().txHash)?.makerRelayer).toBe(honestMaker);
+  });
+
+  it("after attestation, a squatter can no longer re-evict the honest row (race closed)", async () => {
+    const squat = makeRow({ makerRelayer: squatter, takerRelayer: undefined });
+    db.insertSettlement(squatter, squat);
+    await runVerifyPass(db, async () => [makeEvent()], { chainId: 11155111, maxBlock: 1000 });
+
+    // Honest replacement inherits the attestation…
+    db.insertSettlement(honestMaker, makeRow());
+    // …so the squatter's differing re-post is rejected even though the fresh
+    // row is still unverified (pre-attestation this would have evicted it).
+    const reSquat = db.insertSettlement(squatter, squat);
+    expect(reSquat).toBe(false);
+    expect(db.getSettlement(makeRow().txHash)?.makerRelayer).toBe(honestMaker);
+
+    // And the honest row verifies on the next pass.
+    const r = await runVerifyPass(db, async () => [makeEvent()], { chainId: 11155111, maxBlock: 1000 });
+    expect(r.flipped).toBe(1);
+    expect(db.getSettlement(makeRow().txHash)?.verified).toBe(true);
+  });
+
+  it("recordEventAttribution never touches a verified row", () => {
+    const row = makeRow();
+    db.insertSettlement(row.makerRelayer, row);
+    db.markSettlementsVerified([{ txHash: row.txHash }]);
+    expect(
+      db.recordEventAttribution([
+        { txHash: row.txHash, eventMakerRelayer: squatter, eventTakerRelayer: squatter },
+      ]),
+    ).toBe(0);
+  });
+
+  it("a no-event row carries no attestation fields", async () => {
+    const row = makeRow();
+    db.insertSettlement(row.makerRelayer, row);
+    const r = await runVerifyPass(db, async () => [], { chainId: 11155111, maxBlock: 1000 });
+    expect(r.report.unmatched[0]).toEqual({ txHash: row.txHash, reason: "no-event" });
+  });
+});
+
 describe("verify-attempt quarantine (A-5)", () => {
   let db: OrderbookDB;
 
