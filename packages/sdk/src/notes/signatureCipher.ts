@@ -21,13 +21,16 @@ const HKDF_SALT = "zkscatter-note-cipher";
 const HKDF_INFO = "zkscatter-note-idb-aes-gcm-v1";
 
 function getSubtle(): SubtleCrypto {
-  const subtle = globalThis.crypto?.subtle;
-  if (!subtle) {
+  // `encrypt()` also needs `getRandomValues` for IVs — validate both up
+  // front so a partial WebCrypto polyfill fails with a clear error
+  // instead of a mid-encrypt TypeError.
+  const c = globalThis.crypto;
+  if (!c?.subtle || typeof c.getRandomValues !== "function") {
     throw new Error(
-      "createSignatureNoteCipher: WebCrypto (globalThis.crypto.subtle) is required",
+      "createSignatureNoteCipher: WebCrypto (globalThis.crypto.subtle + getRandomValues) is required",
     );
   }
-  return subtle;
+  return c.subtle;
 }
 
 /** Derive an AES-GCM-256 note cipher from a wallet ECDSA signature —

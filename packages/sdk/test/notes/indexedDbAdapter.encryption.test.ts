@@ -125,6 +125,9 @@ describe("IndexedDbNoteAdapter encryption-at-rest", () => {
     const a = createIndexedDbNoteAdapter({ dbName: "tamper", ...codec });
     const all = await a.loadAll();
     expect(all).toHaveLength(0); // id mismatch → skipped, not trusted
+    // Tampering is NOT a "locked" state — the key already worked, so a
+    // re-derive can't fix it and it must not raise the unlock banner.
+    expect(a.lockedCount?.()).toBe(0);
   });
 
   it("refuses to encrypt when only encrypt (no decrypt) is configured — avoids write-only records", async () => {

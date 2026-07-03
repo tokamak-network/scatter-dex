@@ -165,27 +165,28 @@ export function createIndexedDbNoteAdapter(
   }
 
   /** Recover a WireNote from an on-disk record. Returns `"locked"` for an
-   *  encrypted record this adapter can't recover — no `decrypt` configured,
-   *  wrong key (GCM auth failure), or a tampered/swapped blob whose
-   *  decrypted `id` doesn't match its key path. All of those are the same
-   *  recoverable "come back with the right key" state, not a malformed
-   *  store. */
-  async function recordToWire(rec: unknown): Promise<WireNote | "locked"> {
+   *  encrypted record the session key can't open — no `decrypt` configured,
+   *  or wrong key (GCM auth failure) — i.e. the recoverable "come back with
+   *  the right key" state. Returns `null` for a record that decrypted fine
+   *  but whose `id` doesn't bind to its key path: that's a swapped/tampered
+   *  blob, and re-deriving the key won't fix it, so it must not feed the
+   *  "unlock" affordance (the banner would never clear). */
+  async function recordToWire(rec: unknown): Promise<WireNote | "locked" | null> {
     if (!isEncryptedRecord(rec)) return rec as WireNote;
     if (!decrypt) {
       warnNoDecryptOnce();
       return "locked";
     }
+    let wire: WireNote | null;
     try {
-      const wire = JSON.parse(await decrypt(rec.enc)) as WireNote;
-      // Bind the ciphertext to its key path — a mismatched decrypted `id`
-      // means a swapped/tampered blob; skip rather than trust it.
-      if (wire.id === rec.id) return wire;
+      wire = JSON.parse(await decrypt(rec.enc)) as WireNote | null;
     } catch {
-      // fall through to locked
+      warnNoDecryptOnce();
+      return "locked";
     }
-    warnNoDecryptOnce();
-    return "locked";
+    if (wire?.id === rec.id) return wire;
+    warnOnce(`decrypted note id mismatch (key ${rec.id}) — skipping possibly-tampered record`);
+    return null;
   }
 
   // Memory tier mirrors IDB so reads after a write don't have to wait
@@ -242,7 +243,10 @@ export function createIndexedDbNoteAdapter(
       records.map(async (rec): Promise<StoredNote | "locked" | null> => {
         try {
           const wire = await recordToWire(rec);
-          return wire === "locked" ? wire : deserialize(wire);
+          // "locked" (key unavailable) counts below; null (tampered,
+          // already warned) is dropped.
+          if (wire === "locked" || wire === null) return wire;
+          return deserialize(wire);
         } catch (e) {
           const id = (rec as { id?: unknown } | null)?.id;
           warnOnce(`skipping malformed note ${typeof id === "string" ? id : "<no id>"}`, e);
