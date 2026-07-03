@@ -11,6 +11,12 @@ import type { RelayerMembership } from "../core/relayer-membership.js";
 const HEX_ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 const MAX_LIMIT = 500;
 
+/** `?verified=` spellings. Trust surfaces (leaderboard, SDK stats
+ *  aggregation) pass `1` so fabricated unverified rows can't inflate a
+ *  ranking (see SettlementListFilter.verified); any other/absent value →
+ *  undefined → the raw observed set. */
+const VERIFIED_QUERY: Record<string, boolean | undefined> = { "1": true, true: true, "0": false, false: false };
+
 function parseLimitOffset(q: Record<string, unknown>): { limit: number; offset: number } {
   const limit = clampLimit(q.limit, MAX_LIMIT, 100);
   const parsedOffset = q.offset === undefined ? 0 : Number(q.offset);
@@ -119,8 +125,8 @@ export function createSettlementRoutes(
       const { limit, offset } = parseLimitOffset(q);
       const chainId = parseChainIdQuery(q.chainId);
       if (chainId instanceof Error) { res.status(400).json({ error: chainId.message }); return; }
-
-      const rows = db.listSettlements({ chainId, relayer, pair, since, limit, offset });
+      const verified = typeof q.verified === "string" ? VERIFIED_QUERY[q.verified] : undefined;
+      const rows = db.listSettlements({ chainId, relayer, pair, since, limit, offset, verified });
       res.json({ settlements: rows, count: rows.length, offset });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : "unknown error" });
@@ -175,7 +181,9 @@ export function createSettlementStatsRoutes(
   // Phase 3a — leaderboard. Ranking computed in SQL so the frontend
   // doesn't N+1 over /api/relayers/:addr/stats.
   router.get("/leaderboard", readLimiter, (req, res) => {
-    const metric: LeaderboardMetric = isLeaderboardMetric(req.query.metric) ? req.query.metric : "count";
+    // Trust surface — default to the verified-only metric; the forgeable
+    // observed-total "count" is explicit opt-in.
+    const metric: LeaderboardMetric = isLeaderboardMetric(req.query.metric) ? req.query.metric : "verifiedCount";
     if (req.query.metric !== undefined && !isLeaderboardMetric(req.query.metric)) {
       res.status(400).json({ error: `metric: must be one of ${LEADERBOARD_METRICS.join("|")}` });
       return;

@@ -161,11 +161,54 @@ describe("/api/settlements", () => {
     expect(r.body.error).toMatch(/type/);
   });
 
-  it("idempotent on duplicate tx_hash — returns 200 with inserted:false", async () => {
+  it("idempotent on duplicate tx_hash — same-attribution retry is a no-op (inserted:false)", async () => {
     await post(basePayload(), makerW);
+    const before = db.getSettlement(basePayload().txHash)!;
     const r = await post(basePayload(), makerW);
     expect(r.status).toBe(200);
     expect(r.body.inserted).toBe(false);
+    // Same attribution → the eviction guard does not fire; the original row
+    // (createdAt included) is untouched, so a re-post can't re-arm the
+    // verify_attempts quarantine budget.
+    expect(db.getSettlement(basePayload().txHash)).toEqual(before);
+  });
+
+  it("an unverified row can be corrected by the genuine participant (anti-squat)", async () => {
+    // tx hashes are public on-chain. outsiderW front-runs a settlement it
+    // didn't take part in, squatting the tx_hash as its own makerRelayer.
+    const txHash = "0x" + "ab".repeat(32);
+    const squat = await post(
+      basePayload({ txHash, makerRelayer: outsiderW.address, takerRelayer: undefined }),
+      outsiderW,
+    );
+    expect(squat.status).toBe(201);
+    expect(db.getSettlement(txHash)!.makerRelayer).toBe(outsiderW.address.toLowerCase());
+
+    // The genuine maker/taker post their correct row for the SAME tx_hash.
+    // Under the old INSERT OR IGNORE this was silently dropped forever; now
+    // it evicts and replaces the still-unverified squatted row.
+    const real = await post(basePayload({ txHash }), makerW);
+    expect(real.status).toBe(201);
+    const stored = db.getSettlement(txHash)!;
+    expect(stored.makerRelayer).toBe(makerW.address.toLowerCase());
+    expect(stored.takerRelayer).toBe(takerW.address.toLowerCase());
+  });
+
+  it("a verified row is protected — a later submit for the same tx_hash is a no-op", async () => {
+    const txHash = "0x" + "ab".repeat(32);
+    await post(basePayload({ txHash }), makerW);
+    // Simulate the verifier confirming this row against the on-chain event.
+    db.markSettlementsVerified([{ txHash }]);
+
+    // outsiderW now tries to overwrite the verified row with its own attribution.
+    const r = await post(
+      basePayload({ txHash, makerRelayer: outsiderW.address, takerRelayer: outsiderW.address }),
+      outsiderW,
+    );
+    expect(r.status).toBe(200);
+    expect(r.body.inserted).toBe(false);
+    // Attribution unchanged — the verified row won.
+    expect(db.getSettlement(txHash)!.makerRelayer).toBe(makerW.address.toLowerCase());
   });
 
   it("403 when submitter is neither maker nor taker (cannot claim others' trades)", async () => {
@@ -264,6 +307,24 @@ describe("/api/settlements", () => {
     expect(filtered.body.count).toBe(2);
   });
 
+  it("GET /api/settlements?verified=1 returns only on-chain-confirmed rows", async () => {
+    await post(basePayload({ txHash: "0x" + "aa".repeat(32) }), makerW);
+    await post(basePayload({ txHash: "0x" + "bb".repeat(32) }), makerW);
+    db.markSettlementsVerified([{ txHash: "0x" + "aa".repeat(32) }]);
+
+    const verified = await get("/api/settlements?verified=1");
+    expect(verified.body.count).toBe(1);
+    expect(verified.body.settlements[0].txHash).toBe("0x" + "aa".repeat(32));
+    expect(verified.body.settlements[0].verified).toBe(true);
+
+    const unverified = await get("/api/settlements?verified=0");
+    expect(unverified.body.count).toBe(1);
+    expect(unverified.body.settlements[0].txHash).toBe("0x" + "bb".repeat(32));
+
+    // Omitted → both.
+    expect((await get("/api/settlements")).body.count).toBe(2);
+  });
+
   it("GET /api/settlements rejects bad relayer / pair / since with 400", async () => {
     expect((await get("/api/settlements?relayer=notanaddress")).status).toBe(400);
     expect((await get("/api/settlements?pair=foo")).status).toBe(400);
@@ -351,7 +412,7 @@ describe("/api/settlements", () => {
 
   // ─── Phase 3a: leaderboard ───────────────────────────────────────
 
-  it("GET /api/leaderboard ranks by count, deduplicates roles, includes both sides", async () => {
+  it("GET /api/leaderboard?metric=count ranks by count, deduplicates roles, includes both sides", async () => {
     // makerW appears as submitter+makerRelayer in 2 rows; takerW appears
     // as takerRelayer in those same 2 rows; outsider posts 1 self-trade.
     await post(basePayload({ txHash: "0x" + "11".repeat(32) }), makerW);
@@ -365,7 +426,8 @@ describe("/api/settlements", () => {
       outsiderW,
     );
 
-    const r = await get("/api/leaderboard");
+    // Explicit ?metric=count — the observed-total (unverified-inclusive) view.
+    const r = await get("/api/leaderboard?metric=count");
     expect(r.status).toBe(200);
     expect(r.body.metric).toBe("count");
     expect(r.body.count).toBe(3);
@@ -376,6 +438,31 @@ describe("/api/settlements", () => {
     const top = r.body.rows.find((x: { address: string }) => x.address === makerW.address.toLowerCase());
     expect(top.txCount).toBe(2);
     // A relayer in two roles on the same tx counts once (DISTINCT tx_hash).
+  });
+
+  it("GET /api/leaderboard defaults to verifiedCount — fabricated unverified rows don't rank", async () => {
+    // A relayer posts rows it fabricated (self as maker). None are verified.
+    await post(basePayload({ txHash: "0x" + "11".repeat(32) }), makerW);
+    await post(basePayload({ txHash: "0x" + "22".repeat(32) }), makerW);
+
+    const r = await get("/api/leaderboard");
+    expect(r.status).toBe(200);
+    // Default metric is verifiedCount — the trust-bearing ranking.
+    expect(r.body.metric).toBe("verifiedCount");
+    // Nothing is verified, so no relayer ranks despite 2 posted rows.
+    expect(r.body.count).toBe(0);
+
+    // Once one row is confirmed on-chain, its participants rank (this row has
+    // both makerW and takerW as parties, so both appear with verified=1).
+    db.markSettlementsVerified([{ txHash: "0x" + "11".repeat(32) }]);
+    const r2 = await get("/api/leaderboard");
+    expect(r2.body.count).toBe(2);
+    const maker = r2.body.rows.find(
+      (x: { address: string }) => x.address === makerW.address.toLowerCase(),
+    );
+    expect(maker.txCountVerified).toBe(1);
+    // The second, still-unverified row (0x22…) did NOT lift anyone's rank.
+    expect(maker.txCount).toBe(2);
   });
 
   it("GET /api/leaderboard ?metric=successRate filters to relayers with at least one verified tx", async () => {
