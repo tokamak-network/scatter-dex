@@ -557,8 +557,12 @@ export class AuthorizeSubmitter {
         this.firePush({
           txHash,
           blockNumber: receipt.blockNumber,
-          makerNullifier: makerPs.nullifier,
-          takerNullifier: takerPs.nullifier,
+          // bytes32 hex, NOT the raw decimal public signal: shared-OB's
+          // A-3 ingest schema rejects non-hex nullifiers with 400, so a
+          // decimal push silently never lands as a row (and the verifier
+          // then has nothing to verify).
+          makerNullifier: toBytes32(makerPs.nullifier),
+          takerNullifier: toBytes32(takerPs.nullifier),
           feeMaker: feeTokenMaker.toString(),
           feeTaker: feeTokenTaker.toString(),
           userMaxFeeMaker: Number(makerPs.maxFee),
@@ -679,8 +683,10 @@ export class AuthorizeSubmitter {
         this.firePush({
           txHash,
           blockNumber: receipt.blockNumber,
-          makerNullifier: ps.nullifier,
-          takerNullifier: ps.nullifier,
+          // bytes32 hex for the same A-3 ingest-schema reason as the
+          // settleAuth push above.
+          makerNullifier: toBytes32(ps.nullifier),
+          takerNullifier: toBytes32(ps.nullifier),
           feeMaker: fee.toString(),
           feeTaker: "0",
           userMaxFeeMaker: Number(ps.maxFee),

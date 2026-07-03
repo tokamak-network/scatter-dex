@@ -255,9 +255,10 @@ export function parseSettlementInsert(input: unknown): SettlementInsert {
     blockNumber: r.blockNumber as number,
     makerRelayer: (r.makerRelayer as string).toLowerCase(),
     // Lowercase like txHash/addresses: maker_nullifier/taker_nullifier are
-    // indexed TEXT columns and the verifier compares against on-chain values
-    // it has already lowercased, so mixed-case here would create duplicate
-    // representations of the same bytes32 and weaken lookups/joins.
+    // indexed TEXT columns, so mixed-case would create duplicate
+    // representations of the same bytes32 and weaken lookups/joins. (The
+    // verifier itself matches via BigInt canonicalisation — normNullifier —
+    // so it also tolerates legacy pre-A-3 rows that stored decimal strings.)
     makerNullifier: (r.makerNullifier as string).toLowerCase(),
     takerNullifier: (r.takerNullifier as string).toLowerCase(),
     feeMaker: r.feeMaker as string,

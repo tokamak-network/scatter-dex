@@ -15,6 +15,8 @@ import { OrderbookDB } from "../src/core/db.js";
 import {
   runVerifyLoop,
   VerifyMonitor,
+  projectPrivateSettledAuth,
+  projectScatterDirectAuth,
   type VerifyPassStats,
 } from "../src/core/verify-runtime.js";
 import type { EventFetcher } from "../src/core/verifier.js";
@@ -249,5 +251,60 @@ describe("runVerifyLoop", () => {
     expect(stats!.flipped).toBe(0);
     expect(stats!.unmatched).toBe(1);
     expect(stats!.unmatchedByReason["tx-mismatch"]).toBe(1);
+  });
+});
+
+describe("event log projections (pure)", () => {
+  it("projects a PrivateSettledAuth log into the matcher shape", () => {
+    const ev = projectPrivateSettledAuth({
+      args: {
+        makerNullifier: "0x" + "AB".repeat(32),
+        takerNullifier: "0x" + "CD".repeat(32),
+        makerRelayer: "0x" + "11".repeat(20).toUpperCase(),
+        takerRelayer: "0x" + "22".repeat(20),
+        feeTokenMaker: 100n,
+        feeTokenTaker: 50n,
+      },
+      txHash: "0x" + "A1".repeat(32),
+      blockNumber: 123,
+      blockTime: 1_750_000_000,
+    });
+    expect(ev).toEqual({
+      txHash: "0x" + "a1".repeat(32),
+      blockNumber: 123,
+      blockTime: 1_750_000_000,
+      makerNullifier: "0x" + "ab".repeat(32),
+      takerNullifier: "0x" + "cd".repeat(32),
+      makerRelayer: "0x" + "11".repeat(20),
+      takerRelayer: "0x" + "22".repeat(20),
+      feeTokenMaker: "100",
+      feeTokenTaker: "50",
+    });
+  });
+
+  it("projects a ScatterDirectAuthSettled log mirroring the single-party push shape", () => {
+    // Expected shape per projectScatterDirectAuth's docblock.
+    const ev = projectScatterDirectAuth({
+      args: {
+        nullifier: "0x" + "07".repeat(32),
+        nonceNullifier: "0x" + "08".repeat(32),
+        relayer: "0x" + "33".repeat(20),
+        fee: 12345n,
+      },
+      txHash: "0x" + "B2".repeat(32),
+      blockNumber: 456,
+      blockTime: undefined,
+    });
+    expect(ev).toEqual({
+      txHash: "0x" + "b2".repeat(32),
+      blockNumber: 456,
+      blockTime: undefined,
+      makerNullifier: "0x" + "07".repeat(32),
+      takerNullifier: "0x" + "07".repeat(32),
+      makerRelayer: "0x" + "33".repeat(20),
+      takerRelayer: "0x" + "00".repeat(20),
+      feeTokenMaker: "12345",
+      feeTokenTaker: "0",
+    });
   });
 });

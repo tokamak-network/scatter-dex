@@ -9,20 +9,76 @@
  *   - `runVerifyLoop(db, fetcher,…)` → periodic pass with stats
  *   - `VerifyMonitor`               → last-pass stats for /api/admin/verify-stats
  */
-import { Contract, JsonRpcProvider, type AbstractProvider } from "ethers";
+import { Contract, JsonRpcProvider, ZeroAddress, type AbstractProvider } from "ethers";
 import type { OrderbookDB } from "./db.js";
 import { runVerifyPass, type EventFetcher, type SettledAuthEvent, type VerifyReport } from "./verifier.js";
 
 /**
- * Minimal ABI fragment for `PrivateSettledAuth(makerNullifier, takerNullifier,
- * claimsRootMaker, claimsRootTaker, makerRelayer, takerRelayer, submitter,
- * feeTokenMaker, feeTokenTaker)`. Hand-written instead of importing the
- * full PrivateSettlement ABI so this package stays self-contained — adding
- * an artifact dep to shared-orderbook would balloon the docker image.
+ * Minimal ABI fragments for the two settlement events. Hand-written instead
+ * of importing the full PrivateSettlement ABI so this package stays
+ * self-contained — adding an artifact dep to shared-orderbook would balloon
+ * the docker image.
+ *
+ *  - `PrivateSettledAuth` — two-party Pro settles (`settleAuth`).
+ *  - `ScatterDirectAuthSettled` — single-party Pay settles
+ *    (`scatterDirectAuth`). Without fetching this one, every Pay row fails
+ *    verification as "no-event", quarantines, and never ranks on the
+ *    verified-gated leaderboard.
  */
-const PRIVATE_SETTLED_AUTH_ABI = [
+const SETTLEMENT_EVENTS_ABI = [
   "event PrivateSettledAuth(bytes32 indexed makerNullifier, bytes32 indexed takerNullifier, bytes32 claimsRootMaker, bytes32 claimsRootTaker, address indexed makerRelayer, address takerRelayer, address submitter, uint96 feeTokenMaker, uint96 feeTokenTaker)",
+  "event ScatterDirectAuthSettled(bytes32 indexed nullifier, bytes32 indexed nonceNullifier, bytes32 claimsRoot, address indexed relayer, uint96 fee)",
 ];
+
+/** Raw pieces of an event log the projections consume — extracted so the
+ *  projections are pure and unit-testable without a mock provider. */
+interface LogEnvelope {
+  args: Record<string, unknown>;
+  txHash: string;
+  blockNumber: number;
+  blockTime?: number;
+}
+
+/** Project a `PrivateSettledAuth` log into the matcher's event shape. */
+export function projectPrivateSettledAuth(log: LogEnvelope): SettledAuthEvent {
+  const { args } = log;
+  return {
+    txHash: log.txHash.toLowerCase(),
+    blockNumber: log.blockNumber,
+    blockTime: log.blockTime,
+    makerNullifier: String(args.makerNullifier).toLowerCase(),
+    takerNullifier: String(args.takerNullifier).toLowerCase(),
+    makerRelayer: String(args.makerRelayer).toLowerCase(),
+    takerRelayer: String(args.takerRelayer).toLowerCase(),
+    // On-chain fee amounts — carried so the verifier can canonicalise the
+    // relayer-reported fees on flip (defeats fee-revenue self-inflation).
+    feeTokenMaker: args.feeTokenMaker != null ? BigInt(args.feeTokenMaker as bigint).toString() : undefined,
+    feeTokenTaker: args.feeTokenTaker != null ? BigInt(args.feeTokenTaker as bigint).toString() : undefined,
+  };
+}
+
+/**
+ * Project a `ScatterDirectAuthSettled` log into the same shape. Mirrors how
+ * the relayer pushes single-party rows (zk-relayer authorize-submitter):
+ * takerNullifier mirrors the maker's, takerRelayer is absent on the row (the
+ * matcher skips the taker check when the row omits it — zero address here is
+ * the "one-sided settle" convention), feeTaker is pushed as "0".
+ */
+export function projectScatterDirectAuth(log: LogEnvelope): SettledAuthEvent {
+  const { args } = log;
+  const nullifier = String(args.nullifier).toLowerCase();
+  return {
+    txHash: log.txHash.toLowerCase(),
+    blockNumber: log.blockNumber,
+    blockTime: log.blockTime,
+    makerNullifier: nullifier,
+    takerNullifier: nullifier,
+    makerRelayer: String(args.relayer).toLowerCase(),
+    takerRelayer: ZeroAddress,
+    feeTokenMaker: BigInt(args.fee as bigint).toString(),
+    feeTokenTaker: "0",
+  };
+}
 
 export interface MakeFetcherOpts {
   rpcUrl: string;
@@ -32,17 +88,24 @@ export interface MakeFetcherOpts {
 }
 
 /**
- * Construct an `EventFetcher` that calls
- * `contract.queryFilter(PrivateSettledAuth, fromBlock, toBlock)` and
- * projects each log into the `SettledAuthEvent` shape the matcher
+ * Construct an `EventFetcher` that queries both settlement events for the
+ * window and projects each log into the `SettledAuthEvent` shape the matcher
  * consumes. `blockTime` is filled from `provider.getBlock`.
  */
 export function makeEventFetcher(opts: MakeFetcherOpts): EventFetcher {
   const provider = opts.provider ?? new JsonRpcProvider(opts.rpcUrl);
-  const contract = new Contract(opts.contractAddress, PRIVATE_SETTLED_AUTH_ABI, provider);
+  const contract = new Contract(opts.contractAddress, SETTLEMENT_EVENTS_ABI, provider);
+
+  // Single getLogs with an OR-match on topic0 — same server-side filtering
+  // and result set as one queryFilter per event, at half the request count
+  // (getLogs is the heaviest-weighted method on free-tier RPC quotas).
+  const topicFilter = [[
+    contract.interface.getEvent("PrivateSettledAuth")!.topicHash,
+    contract.interface.getEvent("ScatterDirectAuthSettled")!.topicHash,
+  ]];
 
   return async (fromBlock: number, toBlock: number): Promise<SettledAuthEvent[]> => {
-    const logs = await contract.queryFilter(contract.filters.PrivateSettledAuth(), fromBlock, toBlock);
+    const logs = await contract.queryFilter(topicFilter, fromBlock, toBlock);
 
     // Look up block timestamps once per unique block (events share blocks).
     // Bounded concurrency — a wide window during backfill could otherwise
@@ -63,24 +126,20 @@ export function makeEventFetcher(opts: MakeFetcherOpts): EventFetcher {
       );
     }
 
+    // ethers v6 typed EventLog exposes .args/.eventName; widen so we don't
+    // need the contract typechain output. We only consume named fields the
+    // ABI fragments above guarantee.
     return logs.map((log) => {
-      // ethers v6 typed EventLog exposes .args; widen to any so we don't
-      // need the contract typechain output. We only consume named fields
-      // that the ABI fragment above guarantees.
-      const args = (log as unknown as { args: Record<string, unknown> }).args;
-      return {
-        txHash: (log.transactionHash ?? "").toLowerCase(),
+      const typed = log as unknown as { args: Record<string, unknown>; eventName?: string };
+      const env: LogEnvelope = {
+        args: typed.args,
+        txHash: log.transactionHash ?? "",
         blockNumber: log.blockNumber,
         blockTime: blockTimes.get(log.blockNumber),
-        makerNullifier: String(args.makerNullifier).toLowerCase(),
-        takerNullifier: String(args.takerNullifier).toLowerCase(),
-        makerRelayer: String(args.makerRelayer).toLowerCase(),
-        takerRelayer: String(args.takerRelayer).toLowerCase(),
-        // On-chain fee amounts — carried so the verifier can canonicalise the
-        // relayer-reported fees on flip (defeats fee-revenue self-inflation).
-        feeTokenMaker: args.feeTokenMaker != null ? BigInt(args.feeTokenMaker as bigint).toString() : undefined,
-        feeTokenTaker: args.feeTokenTaker != null ? BigInt(args.feeTokenTaker as bigint).toString() : undefined,
       };
+      return typed.eventName === "ScatterDirectAuthSettled"
+        ? projectScatterDirectAuth(env)
+        : projectPrivateSettledAuth(env);
     });
   };
 }
