@@ -161,6 +161,15 @@ services:
       - RELAYER_PUBLIC_URL=${RELAYER_PUBLIC_URL:-}
       - FEE_VAULT_ADDRESS=${FEE_VAULT_ADDRESS:-}
       - INDEX_FROM_BLOCK=${INDEX_FROM_BLOCK:-0}
+      # Hosted-RPC tuning. The in-code defaults (3s cancel poll, 0
+      # confirmations) are anvil-dev values; against a public endpoint the
+      # tip-of-head getLogs races replica lag and fails ticks with "beyond
+      # current head" noise. 15s is the relayer docs' hosted-RPC poll value;
+      # 1 confirmation absorbs the common single-block replica lag + adds
+      # reorg safety. NB: INDEX_CONFIRMATIONS also drives the merkle-proof
+      # indexer, so deposit→proof availability lags one extra block (~12s).
+      - CANCEL_POLL_MS=${CANCEL_POLL_MS:-15000}
+      - INDEX_CONFIRMATIONS=${INDEX_CONFIRMATIONS:-1}
       # Admin auth (operator console) needs no config: the relayer
       # authenticates admin actions via the operator's wallet signature
       # (SIWE), bound to the relayer's own signing key (provided here via
