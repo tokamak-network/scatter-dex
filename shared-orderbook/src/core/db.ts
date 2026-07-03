@@ -193,11 +193,14 @@ export class OrderbookDB {
       CREATE INDEX IF NOT EXISTS idx_settle_created ON settlements(created_at);
 
       -- Serves listSettlements' verified filter (trust surfaces fetch
-      -- ?verified=1): equality on verified + the query's exact ORDER BY ride
-      -- one index, instead of a low-selectivity idx_settle_verify probe
-      -- followed by a temp-B-tree sort on every page of every stats refresh.
+      -- ?verified=1): equality on (chain_id, verified) + the query's exact
+      -- ORDER BY ride one index, instead of a low-selectivity
+      -- idx_settle_verify probe followed by a temp-B-tree sort on every page
+      -- of every stats refresh. Leads with chain_id like the other read
+      -- indexes — the HTTP route always resolves ?chainId= to a concrete
+      -- value (absent → DEFAULT_CHAIN_ID), so the query always filters on it.
       CREATE INDEX IF NOT EXISTS idx_settle_verified_block
-        ON settlements(verified, block_number DESC, tx_hash ASC);
+        ON settlements(chain_id, verified, block_number DESC, tx_hash ASC);
 
       -- NB: idx_settle_verify (verified, verify_attempts) is created AFTER the
       -- verify_attempts ALTER below, not here — on a pre-A-5 DB the column
