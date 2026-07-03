@@ -91,6 +91,44 @@ describe("matchSettlements (pure)", () => {
     expect(r.unmatched[0].reason).toBe("relayer-mismatch");
   });
 
+  it("matches a legacy decimal-pushed nullifier against the event's bytes32 hex", () => {
+    // The live no-event bug: pre-A-3 rows hold decimal circuit signals while
+    // events carry bytes32 hex (see normNullifier).
+    const makerHex = "0x" + "01".repeat(32);
+    const takerHex = "0x" + "02".repeat(32);
+    const r = matchSettlements(
+      [
+        makeRow({
+          makerNullifier: BigInt(makerHex).toString(),
+          takerNullifier: BigInt(takerHex).toString(),
+        }),
+      ],
+      [makeEvent({ makerNullifier: makerHex, takerNullifier: takerHex })],
+    );
+    expect(r.matched).toHaveLength(1);
+    expect(r.unmatched).toHaveLength(0);
+  });
+
+  it("verifies a single-party scatterDirectAuth row against its projected event", () => {
+    // Row + event shapes mirror projectScatterDirectAuth's convention.
+    const nullifierHex = "0x" + "07".repeat(32);
+    const row = makeRow({
+      makerNullifier: BigInt(nullifierHex).toString(),
+      takerNullifier: BigInt(nullifierHex).toString(),
+      takerRelayer: undefined,
+    });
+    const ev = makeEvent({
+      makerNullifier: nullifierHex,
+      takerNullifier: nullifierHex,
+      takerRelayer: "0x" + "00".repeat(20),
+      feeTokenMaker: "12345",
+      feeTokenTaker: "0",
+    });
+    const r = matchSettlements([row], [ev]);
+    expect(r.matched).toHaveLength(1);
+    expect(r.matched[0].feeMaker).toBe("12345");
+  });
+
   it("is case-insensitive on hex inputs", () => {
     const r = matchSettlements(
       [

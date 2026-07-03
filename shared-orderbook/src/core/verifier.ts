@@ -25,10 +25,12 @@ import type { OrderbookDB } from "./db.js";
 import type { StoredSettlement } from "../types/settlement.js";
 
 /**
- * Minimal projection of a `PrivateSettledAuth` event log carrying just
- * the fields the verifier needs. `nullifier` values are hex-prefixed
- * lower-case bytes32 strings to match what relayers store in SQLite
- * (the columns are TEXT and the SDK already normalises to lower case).
+ * Minimal projection of a settlement event log (`PrivateSettledAuth`, or
+ * `ScatterDirectAuthSettled` mapped into the same shape) carrying just the
+ * fields the verifier needs. `nullifier` values are hex-prefixed lower-case
+ * bytes32 strings; stored rows may instead hold decimal field-element
+ * strings (pre-A-3 pushes) — matching goes through `normNullifier`, which
+ * canonicalises both spellings.
  */
 export interface SettledAuthEvent {
   txHash: string;
@@ -80,6 +82,26 @@ function normHash(h: string | undefined | null): string {
   return (h ?? "").toLowerCase();
 }
 
+/**
+ * Canonicalise a nullifier for matching. Event logs carry bytes32 hex
+ * ("0x2994…"), but rows inserted before the A-3 schema hardening
+ * (2026-06-25) hold raw DECIMAL circuit public signals (e.g. "18807253…")
+ * that relayers pushed verbatim — a plain lowercase string compare never
+ * matches those, so every legacy row failed as "no-event" and quarantined.
+ * BigInt accepts both spellings and keys them identically. New pushes are
+ * hex-only at ingest (HEX_BYTES32 400s anything else), so this tolerance is
+ * for the legacy rows, not a licence to push decimal. Falls back to the
+ * lowercased string for non-numeric input (defensive only).
+ */
+function normNullifier(v: string | undefined | null): string {
+  if (!v) return "";
+  try {
+    return BigInt(v).toString(16);
+  } catch {
+    return v.toLowerCase();
+  }
+}
+
 function eqAddr(a: string | undefined | null, b: string | undefined | null): boolean {
   if (!a || !b) return false;
   return a.toLowerCase() === b.toLowerCase();
@@ -102,7 +124,7 @@ export function matchSettlements(
   // no per-row RPC fan-out.
   const byPair = new Map<string, SettledAuthEvent>();
   for (const ev of events) {
-    const key = `${normHash(ev.makerNullifier)}|${normHash(ev.takerNullifier)}`;
+    const key = `${normNullifier(ev.makerNullifier)}|${normNullifier(ev.takerNullifier)}`;
     byPair.set(key, ev);
   }
 
@@ -110,7 +132,7 @@ export function matchSettlements(
   const unmatched: VerifyReport["unmatched"] = [];
 
   for (const row of unverified) {
-    const key = `${normHash(row.makerNullifier)}|${normHash(row.takerNullifier)}`;
+    const key = `${normNullifier(row.makerNullifier)}|${normNullifier(row.takerNullifier)}`;
     const ev = byPair.get(key);
     if (!ev) {
       unmatched.push({ txHash: row.txHash, reason: "no-event" });
