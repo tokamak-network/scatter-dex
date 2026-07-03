@@ -70,4 +70,11 @@ export interface NoteStorageAdapter {
   remove(id: string): Promise<void>;
   /** Remove every note. Used for "reset wallet" / "switch account". */
   clear(): Promise<void>;
+  /** Number of records present in the backing store that the last
+   *  load could NOT recover — e.g. encrypted rows read by an adapter
+   *  whose decryption key isn't available yet. Meaningful only after
+   *  `loadAll()` resolves; adapters without a locked concept omit it
+   *  (read as 0). The vault provider surfaces this so apps can raise
+   *  an "unlock" affordance instead of silently under-reporting. */
+  lockedCount?(): number;
 }

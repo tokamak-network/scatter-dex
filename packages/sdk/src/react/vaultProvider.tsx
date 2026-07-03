@@ -24,6 +24,12 @@ export interface VaultState {
    *  surfaces a brief loading state to avoid flashing "vault empty"
    *  on a refresh of a page that actually has notes. */
   loaded: boolean;
+  /** Notes present in the backing store that the last hydrate could
+   *  NOT recover — encrypted rows whose decryption key isn't available
+   *  yet this session (see `NoteStorageAdapter.lockedCount`). Apps
+   *  surface an "unlock with your wallet" affordance when > 0; always
+   *  0 for adapters without a locked concept. */
+  lockedNotes: number;
   add(n: Omit<VaultNote, "id" | "createdAt" | "label" | "chainId" | "leafIndex">): Promise<VaultNote>;
   remove(id: string): Promise<void>;
   /** Patch the leafIndex on a stored note. Used by the reconciler
@@ -131,6 +137,7 @@ export function createVaultProvider(
     const generationRef = useRef(0);
 
     const [loaded, setLoaded] = useState(false);
+    const [lockedNotes, setLockedNotes] = useState(0);
     // Carries over across chain switches: hydration uses
     // `Math.max(current, deriveLabelCounter(loaded))` so labels are
     // monotonic per-provider lifetime.
@@ -142,6 +149,7 @@ export function createVaultProvider(
       if (!isFirstHydrateRef.current) {
         setNotes([]);
         setLoaded(false);
+        setLockedNotes(0);
       }
       isFirstHydrateRef.current = false;
       removedIdsRef.current = new Set();
@@ -150,6 +158,11 @@ export function createVaultProvider(
         try {
           const list = await adapter.loadAll();
           if (cancelled) return;
+          // Post-load so adapters that count unrecoverable (encrypted)
+          // rows during hydration report a settled number. The
+          // `cancelled` guard above already covers the superseded-
+          // adapter race.
+          setLockedNotes(adapter.lockedCount?.() ?? 0);
           // NoteStorageAdapter.loadAll is documented to return rows
           // already ordered oldest → newest. `add()` prepends, so the
           // in-memory invariant is **newest-first** — reverse without
@@ -290,8 +303,8 @@ export function createVaultProvider(
     );
 
     const value = useMemo<VaultState>(
-      () => ({ notes, loaded, add, remove, setLeafIndex, markFailed }),
-      [notes, loaded, add, remove, setLeafIndex, markFailed],
+      () => ({ notes, loaded, lockedNotes, add, remove, setLeafIndex, markFailed }),
+      [notes, loaded, lockedNotes, add, remove, setLeafIndex, markFailed],
     );
 
     return <VaultCtx.Provider value={value}>{children}</VaultCtx.Provider>;

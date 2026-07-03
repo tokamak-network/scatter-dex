@@ -151,43 +151,51 @@ export function createIndexedDbNoteAdapter(
     return { id: note.id, enc: await encrypt(JSON.stringify(wire)), v: 1 };
   }
 
-  // Separate one-shot flag for the benign "encrypted rows but this adapter
-  // has no decrypt" case — it's expected (a decrypt-less reader), not a
-  // fallback, so it must NOT consume the `warnOnce` budget or claim we fell
-  // back to in-memory state.
+  // Separate one-shot flag for the benign "encrypted rows this adapter
+  // can't recover" case (no decrypt configured, or the key doesn't match)
+  // — it's an expected locked state, not a fallback, so it must NOT
+  // consume the `warnOnce` budget or claim we fell back to in-memory
+  // state.
   let warnedNoDecrypt = false;
   function warnNoDecryptOnce(): void {
     if (warnedNoDecrypt) return;
     warnedNoDecrypt = true;
     // eslint-disable-next-line no-console
-    console.warn("[zkscatter notes] encrypted note(s) present but no decrypt configured — skipping them (not an error)");
+    console.warn("[zkscatter notes] encrypted note(s) present that this adapter can't decrypt — skipping them (not an error)");
   }
 
-  /** Recover a WireNote from an on-disk record. Returns null (skipping the
-   *  record) when it's encrypted but unreadable/tampered. */
-  async function recordToWire(rec: unknown): Promise<WireNote | null> {
-    if (isEncryptedRecord(rec)) {
-      if (!decrypt) {
-        warnNoDecryptOnce();
-        return null;
-      }
-      const wire = JSON.parse(await decrypt(rec.enc)) as WireNote;
-      // Bind the ciphertext to its key path: a decrypted `id` that doesn't
-      // match the record's `id` means a corrupted or swapped/tampered blob —
-      // skip rather than trust it.
-      if (wire.id !== rec.id) {
-        warnOnce(`decrypted note id mismatch (key ${rec.id}) — skipping possibly-tampered record`);
-        return null;
-      }
-      return wire;
+  /** Recover a WireNote from an on-disk record. Returns `"locked"` for an
+   *  encrypted record this adapter can't recover — no `decrypt` configured,
+   *  wrong key (GCM auth failure), or a tampered/swapped blob whose
+   *  decrypted `id` doesn't match its key path. All of those are the same
+   *  recoverable "come back with the right key" state, not a malformed
+   *  store. */
+  async function recordToWire(rec: unknown): Promise<WireNote | "locked"> {
+    if (!isEncryptedRecord(rec)) return rec as WireNote;
+    if (!decrypt) {
+      warnNoDecryptOnce();
+      return "locked";
     }
-    return rec as WireNote;
+    try {
+      const wire = JSON.parse(await decrypt(rec.enc)) as WireNote;
+      // Bind the ciphertext to its key path — a mismatched decrypted `id`
+      // means a swapped/tampered blob; skip rather than trust it.
+      if (wire.id === rec.id) return wire;
+    } catch {
+      // fall through to locked
+    }
+    warnNoDecryptOnce();
+    return "locked";
   }
 
   // Memory tier mirrors IDB so reads after a write don't have to wait
   // for the read transaction. On boot we populate from IDB; from then
   // on each `put`/`remove` updates both tiers.
   const mem = new Map<string, StoredNote>();
+  // Encrypted rows the last load couldn't recover (see `recordToWire`).
+  // Exposed via `lockedCount()` so the vault provider can surface an
+  // "unlock with your wallet" affordance.
+  let locked = 0;
   let warnedOnce = false;
   let dbPromise: Promise<IDBDatabase | null> | null = null;
   let readyPromise: Promise<void> | null = null;
@@ -227,16 +235,25 @@ export function createIndexedDbNoteAdapter(
     // per-record `await decrypt(...)` can't run inside an IDB transaction
     // (the tx auto-commits on the first microtask that yields).
     const records = await getAllRecords(db);
-    for (const rec of records) {
-      const id = (rec as { id?: unknown } | null)?.id;
-      try {
-        const wire = await recordToWire(rec);
-        if (!wire) continue; // encrypted record but no decrypt configured
-        const n = deserialize(wire);
-        mem.set(n.id, n);
-      } catch (e) {
-        warnOnce(`skipping malformed note ${typeof id === "string" ? id : "<no id>"}`, e);
-      }
+    // Decrypt/deserialize every record concurrently — `recordToWire` owns
+    // the encrypted/locked classification, this only distinguishes
+    // "note" / "locked" / "malformed" (null).
+    const results = await Promise.all(
+      records.map(async (rec): Promise<StoredNote | "locked" | null> => {
+        try {
+          const wire = await recordToWire(rec);
+          return wire === "locked" ? wire : deserialize(wire);
+        } catch (e) {
+          const id = (rec as { id?: unknown } | null)?.id;
+          warnOnce(`skipping malformed note ${typeof id === "string" ? id : "<no id>"}`, e);
+          return null;
+        }
+      }),
+    );
+    locked = 0;
+    for (const r of results) {
+      if (r === "locked") locked++;
+      else if (r) mem.set(r.id, r);
     }
   }
 
@@ -251,6 +268,8 @@ export function createIndexedDbNoteAdapter(
 
   return {
     ready,
+
+    lockedCount: () => locked,
 
     async loadAll() {
       await ready();
