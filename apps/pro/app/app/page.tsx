@@ -515,7 +515,12 @@ export default function Workbench() {
             <NoteSelect
               sellTokenSymbol={side === "sell" ? pair.base : pair.quote}
               notes={matchingNotes}
-              selectedId={selectedNote?.id ?? null}
+              // The RAW pick, not the resolved note's id: NoteSelect's
+              // auto-reset only fires on a non-null invalid id, so
+              // passing the resolved id (null when the pick went stale)
+              // would leave the stale pick stuck and submit disabled
+              // forever instead of re-selecting the first lot.
+              selectedId={selectedNoteId}
               onSelect={setSelectedNoteId}
               onDeposit={(symbol) => {
                 // Inline "+ Deposit USDC|ETH" — pre-select the

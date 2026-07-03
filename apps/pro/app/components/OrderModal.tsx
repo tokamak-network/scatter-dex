@@ -825,7 +825,11 @@ export function OrderModal({
     }
   }, [
     side, pair, price, size, account, note, noteOwnershipMismatch,
-    activePair, recipients,
+    activePair, recipients, takeMode,
+    // orders + crossApp feed the pre-prove spendability re-check —
+    // omitting them would pin the check to the state at modal mount,
+    // defeating its whole TOCTOU purpose.
+    orders, crossApp,
     deriveEdDSA, addOrder, toast, commitmentTree,
     selectedRelayer, recipientIdentity, activeNetwork, tokens,
   ]);
