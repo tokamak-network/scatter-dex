@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { useWallet } from "@zkscatter/sdk/react";
+import { useEdDSAKey, useWallet } from "@zkscatter/sdk/react";
 import type { VaultNote } from "@zkscatter/sdk/react";
 import { LAUNCH_TOKENS, formatTokenLabel } from "@zkscatter/sdk";
 import { loadCrossAppNoteStates } from "@zkscatter/sdk/storage";
@@ -50,7 +50,7 @@ interface TokenRow {
 
 export function PoolBalanceCard() {
   const { account, chainId } = useWallet();
-  const { notes, loaded } = useVault();
+  const { notes, loaded, lockedNotes } = useVault();
   const tree = useCommitmentTree();
   const [expanded, setExpanded] = useState(false);
   // Cross-product note states derived from other products' order files
@@ -345,6 +345,7 @@ export function PoolBalanceCard() {
           </button>
         </div>
       </div>
+      {lockedNotes > 0 && <LockedNotesBanner count={lockedNotes} />}
       {expanded && (
         <div className="mt-4 overflow-hidden rounded-md border border-[var(--color-border)]">
           <table className="w-full text-sm">
@@ -454,6 +455,37 @@ export function PoolBalanceCard() {
         <WithdrawModal note={withdrawing} onClose={() => setWithdrawing(null)} />
       )}
     </Shell>
+  );
+}
+
+/** "N encrypted notes locked" banner with the unlock (trading-key
+ *  derivation) trigger. Separate component so only it subscribes to
+ *  the EdDSA context — derivations elsewhere in the app (deposits,
+ *  payouts) then don't re-render the whole balance card. Unlock =
+ *  one wallet signature; the vault adapter regenerates with the
+ *  decryption key and the notes flow in through the normal reload. */
+function LockedNotesBanner({ count }: { count: number }) {
+  const eddsa = useEdDSAKey();
+  return (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs">
+      <span title="These notes are stored encrypted in this browser. Deriving your trading key (one wallet signature) decrypts them for this session.">
+        🔐 {count} encrypted note{count === 1 ? "" : "s"} locked — not included
+        in the balance above.
+      </span>
+      <button
+        type="button"
+        // `derive` sets `eddsa.error` (rendered below) and rethrows; the
+        // catch only suppresses the redundant unhandled rejection.
+        onClick={() => void eddsa.derive().catch(() => {})}
+        disabled={eddsa.isDeriving}
+        className="rounded-md border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1 font-medium hover:bg-[var(--color-primary-soft)] disabled:opacity-40"
+      >
+        {eddsa.isDeriving ? "Unlocking…" : "Unlock with wallet"}
+      </button>
+      {eddsa.error && (
+        <span className="w-full text-[var(--color-warning)]">{eddsa.error}</span>
+      )}
+    </div>
   );
 }
 

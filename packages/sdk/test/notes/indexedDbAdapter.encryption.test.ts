@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { createIndexedDbNoteAdapter } from "../../src/notes/indexedDbAdapter";
+import { createSignatureNoteCipher } from "../../src/notes/signatureCipher";
 import { openIDB } from "../../src/util/idb";
 import type { StoredNote } from "../../src/notes/types";
 
@@ -124,6 +125,9 @@ describe("IndexedDbNoteAdapter encryption-at-rest", () => {
     const a = createIndexedDbNoteAdapter({ dbName: "tamper", ...codec });
     const all = await a.loadAll();
     expect(all).toHaveLength(0); // id mismatch → skipped, not trusted
+    // Tampering is NOT a "locked" state — the key already worked, so a
+    // re-derive can't fix it and it must not raise the unlock banner.
+    expect(a.lockedCount?.()).toBe(0);
   });
 
   it("refuses to encrypt when only encrypt (no decrypt) is configured — avoids write-only records", async () => {
@@ -142,5 +146,59 @@ describe("IndexedDbNoteAdapter encryption-at-rest", () => {
     const raw = await rawGetAll("plain");
     expect(raw[0].noteHex).toBeDefined();
     expect(raw[0].enc).toBeUndefined();
+  });
+
+  it("reports locked encrypted records via lockedCount, and 0 once decryptable", async () => {
+    const writer = createIndexedDbNoteAdapter({ dbName: "locked", ...codec });
+    await writer.put(makeNote({ id: "n1" }));
+    await writer.put(makeNote({ id: "n2" }));
+
+    // Decrypt-less reader: both records locked.
+    const lockedReader = createIndexedDbNoteAdapter({ dbName: "locked" });
+    expect(await lockedReader.loadAll()).toHaveLength(0);
+    expect(lockedReader.lockedCount?.()).toBe(2);
+
+    // Decrypt-capable reader: everything loads, count is 0.
+    const unlocked = createIndexedDbNoteAdapter({ dbName: "locked", ...codec });
+    expect(await unlocked.loadAll()).toHaveLength(2);
+    expect(unlocked.lockedCount?.()).toBe(0);
+  });
+
+  it("counts undecryptable (wrong-key) records as locked without warning fallback", async () => {
+    const writer = createIndexedDbNoteAdapter({ dbName: "wrongkey", ...codec });
+    await writer.put(makeNote());
+
+    // Reader whose decrypt throws (wrong key / GCM auth failure).
+    const reader = createIndexedDbNoteAdapter({
+      dbName: "wrongkey",
+      encrypt: codec.encrypt,
+      decrypt: async () => { throw new Error("auth failure"); },
+    });
+    expect(await reader.loadAll()).toHaveLength(0);
+    expect(reader.lockedCount?.()).toBe(1);
+  });
+
+  it("integrates with the signature-derived cipher end to end", async () => {
+    const sig = "0x" + "ab".repeat(65);
+    const a = createIndexedDbNoteAdapter({ dbName: "sigcipher", ...createSignatureNoteCipher(sig) });
+    await a.put(makeNote());
+
+    const raw = await rawGetAll("sigcipher");
+    expect(Object.keys(raw[0]).sort()).toEqual(["enc", "id", "v"]);
+    expect(raw[0].enc as string).toMatch(/^v1:/);
+
+    // Same signature, fresh adapter instance → notes recover.
+    const b = createIndexedDbNoteAdapter({ dbName: "sigcipher", ...createSignatureNoteCipher(sig) });
+    const all = await b.loadAll();
+    expect(all).toHaveLength(1);
+    expect(all[0].note.ownerSecret).toBe(111n);
+
+    // Different signature → locked, counted, no crash.
+    const other = createIndexedDbNoteAdapter({
+      dbName: "sigcipher",
+      ...createSignatureNoteCipher("0x" + "cd".repeat(65)),
+    });
+    expect(await other.loadAll()).toHaveLength(0);
+    expect(other.lockedCount?.()).toBe(1);
   });
 });
