@@ -15,7 +15,7 @@ const MAX_LIMIT = 500;
  *  aggregation) pass `1` so fabricated unverified rows can't inflate a
  *  ranking (see SettlementListFilter.verified); any other/absent value →
  *  undefined → the raw observed set. */
-const VERIFIED_QUERY: Record<string, boolean> = { "1": true, true: true, "0": false, false: false };
+const VERIFIED_QUERY: Record<string, boolean | undefined> = { "1": true, true: true, "0": false, false: false };
 
 function parseLimitOffset(q: Record<string, unknown>): { limit: number; offset: number } {
   const limit = clampLimit(q.limit, MAX_LIMIT, 100);
