@@ -704,6 +704,7 @@ export default function Workbench() {
       <OrderModal
         open={orderOpen}
         onClose={() => setOrderOpen(false)}
+        crossApp={crossApp}
         onSubmitted={(intent) => {
           // Note that funded this order is now spent; the page
           // re-derives `selectedNote` from the vault, which the

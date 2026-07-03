@@ -13,8 +13,7 @@ import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { useIdentityForAddresses, useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
-import { deriveNoteStatus } from "../lib/noteStatus";
-import { useCrossAppNoteStates } from "../lib/useCrossAppNoteStates";
+import { deriveNoteStatus, type CrossAppNoteStates } from "../lib/noteStatus";
 import { downloadOrderClaimsBundle, persistOrderClaimsBundle } from "../lib/claimsBundle";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
@@ -70,6 +69,11 @@ interface OrderModalProps {
    *  empty — the modal still renders but the submit button is
    *  disabled with a clear message. */
   note: VaultNote | null;
+  /** Cross-app locks/discards from the page-level
+   *  `useCrossAppNoteStates()` — passed down (not re-fetched here) so
+   *  the picker filter and the submit-time spendability re-check read
+   *  the SAME snapshot, and the folder scans + 60s refresh run once. */
+  crossApp: CrossAppNoteStates;
 }
 
 /** Format a quote-token-denominated estimated fill (price × size).
@@ -209,11 +213,11 @@ export function OrderModal({
   price,
   size,
   note,
+  crossApp,
 }: OrderModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
   const { add: addOrder, orders } = useOrders();
-  const { states: crossApp } = useCrossAppNoteStates();
   const { add: vaultAdd } = useVault();
   const { account } = useWallet();
   const { derive: deriveEdDSA, keyPair: cachedEdDSAKey, isDeriving } = useEdDSAKey();
