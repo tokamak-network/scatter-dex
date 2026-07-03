@@ -1,20 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { VaultNote } from "../lib/vault";
 import { Button, Field } from "@zkscatter/ui";
 import { useFolder } from "../lib/folder";
 
 interface Props {
-  /** Funding-side token address (sellToken). Notes whose `note.token`
-   *  doesn't match are hidden — submitting with a mismatched note
-   *  would fail at the OrderModal "vault note is in a different
-   *  token" gate, so pre-filter here. */
-  sellTokenAddress: string;
   /** Symbol shown in the empty-state CTA — "Deposit ETH" reads better
    *  than "Deposit on the left to fund this side", and ties the action
    *  to the side the user is actually trying to fund. */
   sellTokenSymbol: string;
+  /** Fundable notes already narrowed to the sell-side token — the
+   *  workbench's `matchingNotes` memo, the same list `selectedNote`
+   *  resolves from, so the dropdown can never show a lot the submit
+   *  path wouldn't use (or vice versa). */
   notes: readonly VaultNote[];
   selectedId: string | null;
   onSelect(id: string | null): void;
@@ -27,13 +26,10 @@ interface Props {
   onDeposit(tokenSymbol: string): void;
 }
 
-/** Workbench's funding-note picker. Filters by sell-side token and
- *  shows balance per note so the user knows which deposit is about
- *  to back the order. Without this the form defaulted to `notes[0]`
- *  regardless of token, which silently failed at submit when the
- *  first note was in the wrong currency. */
+/** Workbench's funding-note picker. Shows balance per note so the
+ *  user knows which deposit is about to back the order. The caller
+ *  passes notes already narrowed to the sell-side token (see Props). */
 export function NoteSelect({
-  sellTokenAddress,
   sellTokenSymbol,
   notes,
   selectedId,
@@ -41,17 +37,6 @@ export function NoteSelect({
   onDeposit,
 }: Props) {
   const { ready: folderReady } = useFolder();
-  // BigInt(address.toLowerCase()) on every render added up — the
-  // hash is hot when notes is large. Memo the parsed key so the
-  // filter is a plain bigint compare per note.
-  const sellTokenKey = useMemo(
-    () => BigInt(sellTokenAddress.toLowerCase()),
-    [sellTokenAddress],
-  );
-  const matching = useMemo(
-    () => notes.filter((n) => n.note.token === sellTokenKey),
-    [notes, sellTokenKey],
-  );
 
   // `Date.now()` would be different between SSR and the first client
   // paint → hydration mismatch. Defer the ticking reference time to
@@ -70,16 +55,16 @@ export function NoteSelect({
   // because the parent's setState during render warns under
   // StrictMode and risks an infinite loop if `onSelect` isn't
   // stabilised with useCallback at the call site.
-  const firstId = matching[0]?.id ?? null;
+  const firstId = notes[0]?.id ?? null;
   const selectedIsValid =
-    selectedId !== null && matching.some((n) => n.id === selectedId);
+    selectedId !== null && notes.some((n) => n.id === selectedId);
   useEffect(() => {
     if (selectedId !== null && !selectedIsValid) {
       onSelect(firstId);
     }
   }, [selectedId, selectedIsValid, firstId, onSelect]);
 
-  if (matching.length === 0) {
+  if (notes.length === 0) {
     return (
       <Field label="Fund with">
         <div className="space-y-2 rounded-md border border-dashed border-[var(--color-border-strong)] bg-[var(--color-bg)] px-3 py-3">
@@ -106,11 +91,11 @@ export function NoteSelect({
   return (
     <Field label="Fund with">
       <select
-        value={selectedId ?? matching[0]!.id}
+        value={selectedId ?? notes[0]!.id}
         onChange={(e) => onSelect(e.target.value)}
         className="w-full rounded-md border border-[var(--color-border-strong)] bg-white px-3 py-2 font-mono text-sm"
       >
-        {matching.map((n) => (
+        {notes.map((n) => (
           <option key={n.id} value={n.id}>
             {n.label} · {n.amount} {n.symbol}
             {now !== null ? ` · ${formatRelativeAge(n.createdAt, now)}` : ""}

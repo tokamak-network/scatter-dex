@@ -211,22 +211,29 @@ export default function Workbench() {
     return t?.address ?? "0x0000000000000000000000000000000000000001";
   }, [side, pair.base, pair.quote, tokens]);
 
-  // Active funding note: explicit pick wins; otherwise the first
-  // note whose token matches the sell side. Falls back to null when
-  // no note matches — submit button disables itself in that case.
-  const selectedNote = useMemo(() => {
-    if (selectedNoteId) {
-      const found = notes.find((n) => n.id === selectedNoteId);
-      if (found && found.note.token === BigInt(sellTokenAddress.toLowerCase())) {
-        return found;
-      }
-    }
-    return (
-      notes.find(
-        (n) => n.note.token === BigInt(sellTokenAddress.toLowerCase()),
-      ) ?? null
-    );
-  }, [notes, selectedNoteId, sellTokenAddress]);
+  // Fundable notes narrowed to the sell-side token — the single list
+  // both the picker (NoteSelect) and `selectedNote` resolve from, so
+  // display and submission can never diverge (the previous raw-vault
+  // fallback could silently select a locked/pending note the dropdown
+  // didn't show).
+  const matchingNotes = useMemo(() => {
+    const sellKey = BigInt(sellTokenAddress.toLowerCase());
+    return fundableNotes.filter((n) => n.note.token === sellKey);
+  }, [fundableNotes, sellTokenAddress]);
+
+  // Active funding note: explicit pick wins; no pick defaults to the
+  // first matching note; null (submit disables) when nothing matches.
+  // An explicit pick that dropped out of `matchingNotes` (e.g. locked
+  // mid-session by another product) resolves to null rather than
+  // silently substituting a lot the user didn't choose — NoteSelect's
+  // auto-reset then visibly re-selects on the next render.
+  const selectedNote = useMemo(
+    () =>
+      selectedNoteId
+        ? matchingNotes.find((n) => n.id === selectedNoteId) ?? null
+        : matchingNotes[0] ?? null,
+    [matchingNotes, selectedNoteId],
+  );
 
   // Seed the Size input to the selected fund-note's full amount each
   // time the note (id) changes. Before this, Size sat on the global
@@ -506,9 +513,8 @@ export default function Workbench() {
           </div>
           <div className="space-y-3 text-sm">
             <NoteSelect
-              sellTokenAddress={sellTokenAddress}
               sellTokenSymbol={side === "sell" ? pair.base : pair.quote}
-              notes={fundableNotes}
+              notes={matchingNotes}
               selectedId={selectedNote?.id ?? null}
               onSelect={setSelectedNoteId}
               onDeposit={(symbol) => {

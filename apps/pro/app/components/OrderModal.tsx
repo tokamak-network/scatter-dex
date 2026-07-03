@@ -13,6 +13,8 @@ import { shortAddr, useWallet } from "@zkscatter/sdk/react";
 import { useIdentityForAddresses, useIdentityGate } from "../lib/identity";
 import { IdentityGateModal } from "./IdentityGateModal";
 import { useOrders } from "../lib/orders";
+import { deriveNoteStatus } from "../lib/noteStatus";
+import { useCrossAppNoteStates } from "../lib/useCrossAppNoteStates";
 import { downloadOrderClaimsBundle, persistOrderClaimsBundle } from "../lib/claimsBundle";
 import { useActiveNetwork } from "../lib/activeNetwork";
 import { useEdDSAKey } from "@zkscatter/sdk/react";
@@ -210,7 +212,8 @@ export function OrderModal({
 }: OrderModalProps) {
   const { state: identityState, blocking: identityBlocking } = useIdentityGate();
 
-  const { add: addOrder } = useOrders();
+  const { add: addOrder, orders } = useOrders();
+  const { states: crossApp } = useCrossAppNoteStates();
   const { add: vaultAdd } = useVault();
   const { account } = useWallet();
   const { derive: deriveEdDSA, keyPair: cachedEdDSAKey, isDeriving } = useEdDSAKey();
@@ -383,6 +386,27 @@ export function OrderModal({
 
     if (noteOwnershipMismatch) {
       setPhase({ kind: "error", message: OWNERSHIP_MISMATCH_PRE_SUBMIT });
+      return;
+    }
+
+    // Defense in depth behind the workbench's `fundableNotes` filter:
+    // the `note` prop is live state, so an order/cross-app lock can land
+    // between the picker render and this click. Funding with a note
+    // bound to a still-matching order shares its escrowNullifier — the
+    // first cancelPrivate would burn both orders' funds (the ord-1/ord-2
+    // zombie class) and the chain does NOT reject it at submit, so
+    // re-classify right before paying the prove cost.
+    const noteInfo = deriveNoteStatus(note, orders, Date.now(), crossApp);
+    if (noteInfo.status !== "available" || noteInfo.recoverableExpired) {
+      setPhase({
+        kind: "error",
+        message:
+          noteInfo.status === "locked"
+            ? "This note now funds an open order (here or in another product). Cancel or settle that order first, or fund with a different note."
+            : noteInfo.recoverableExpired
+              ? "This note backed an order that expired before settling. Withdraw it and re-deposit before funding a new order — reusing it would share the expired order's escrow nullifier."
+              : "This note isn't spendable right now — pick a different note from the funding dropdown.",
+      });
       return;
     }
 
