@@ -281,4 +281,12 @@ docker compose "${files[@]}" "${profiles[@]}" --env-file .env pull
 log "docker compose up -d"
 docker compose "${files[@]}" "${profiles[@]}" --env-file .env up -d
 
+# Every deploy leaves the previous image generation behind (each
+# shared-orderbook+zk-relayer pair is ~1.4 GB) and nothing else reclaims
+# them — a few deploys quietly eat the 26 GB /var disk. Prune AFTER `up`
+# so in-use images survive; a reboot re-pulls whatever the image-tag
+# metadata names, so nothing needed is lost.
+log "docker image prune"
+docker image prune --all --force || true
+
 log "startup complete"
