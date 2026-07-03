@@ -398,6 +398,7 @@ export class AuthorizeSubmitter {
       intervalMs ??
       (Number.isFinite(envMs) && envMs > 0 ? Math.floor(envMs) : 3_000);
     this.cancelPollStopped = false;
+    this.cancelPollLagStreak = 0;
     // Recursive setTimeout instead of setInterval so the next tick is
     // only scheduled after the current scan finishes — no piled-up
     // timers if `indexCancels` ever runs slow. `indexCancels` itself
@@ -416,14 +417,20 @@ export class AuthorizeSubmitter {
         // fresher replica than the one serving getLogs, so the scan range
         // is "beyond current head". Benign by construction — the cursor
         // didn't advance and the next tick retries the same range — so
-        // don't warn per occurrence. A long streak means the RPC is
-        // genuinely stalled (not lagging), which must stay visible.
-        if (/beyond current head/i.test(msg) && ++this.cancelPollLagStreak < 10) {
+        // don't warn per occurrence. A long CONSECUTIVE streak means the
+        // RPC is genuinely stalled (not lagging), which must stay visible;
+        // any other error resets the streak (and warns as before).
+        const isLag = /beyond current head/i.test(msg);
+        this.cancelPollLagStreak = isLag ? this.cancelPollLagStreak + 1 : 0;
+        if (isLag && this.cancelPollLagStreak < 10) {
           log.debug("PrivateCancel poll tick behind replica head; will retry", {
             streak: this.cancelPollLagStreak,
           });
         } else {
-          log.warn("PrivateCancel poll tick failed", { err: msg });
+          log.warn("PrivateCancel poll tick failed", {
+            err: msg,
+            ...(isLag ? { lagStreak: this.cancelPollLagStreak } : {}),
+          });
         }
       }
       if (this.cancelPollStopped) return;
