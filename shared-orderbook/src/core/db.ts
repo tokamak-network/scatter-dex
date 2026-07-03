@@ -45,6 +45,7 @@ export class OrderbookDB {
   private stmtGetMatchJoin!: Database.Statement;
   private stmtListMatchesJoin!: Database.Statement;
   private stmtInsertSettlement!: Database.Statement;
+  private stmtEvictSquattedSettlement!: Database.Statement;
   private stmtGetSettlement!: Database.Statement;
   private stmtInsertKyc!: Database.Statement;
   private stmtGetKycById!: Database.Statement;
@@ -190,6 +191,13 @@ export class OrderbookDB {
       -- table on every prune. SQLite appends the rowid as the implicit
       -- trailing key, so ORDER BY created_at, rowid is fully index-served.
       CREATE INDEX IF NOT EXISTS idx_settle_created ON settlements(created_at);
+
+      -- Serves listSettlements' verified filter (trust surfaces fetch
+      -- ?verified=1): equality on verified + the query's exact ORDER BY ride
+      -- one index, instead of a low-selectivity idx_settle_verify probe
+      -- followed by a temp-B-tree sort on every page of every stats refresh.
+      CREATE INDEX IF NOT EXISTS idx_settle_verified_block
+        ON settlements(verified, block_number DESC, tx_hash ASC);
 
       -- NB: idx_settle_verify (verified, verify_attempts) is created AFTER the
       -- verify_attempts ALTER below, not here — on a pre-A-5 DB the column
@@ -408,6 +416,26 @@ export class OrderbookDB {
         fee_maker, fee_taker, user_maxfee_maker, user_maxfee_taker,
         verified, type, created_at
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)
+    `);
+
+    // Anti-squat (run before the insert above): tx hashes are public
+    // on-chain, so a malicious relayer could front-run a settlement it didn't
+    // take part in and squat the tx_hash PK, permanently blocking the genuine
+    // participants' insert (the fake never verifies). A squatted row is
+    // evicted only while BOTH hold:
+    //   (a) it is still unverified — `verified = 1` locks attribution; and
+    //   (b) the incoming submit claims DIFFERENT attribution (null-safe
+    //       scalar IS NOT; taker_relayer is nullable). This keeps a
+    //       byte-identical retry a free no-op and stops re-posts from
+    //       re-arming the A-5 verify_attempts quarantine at will.
+    // The evicted slot is refilled by the plain insert (one canonical column
+    // list — no 20-column upsert mirror to keep in sync with the schema);
+    // verify_attempts restarts at its column default so corrected data gets
+    // a full match budget.
+    this.stmtEvictSquattedSettlement = this.db.prepare(`
+      DELETE FROM settlements
+      WHERE tx_hash = ? AND verified = 0
+        AND (submitter IS NOT ? OR maker_relayer IS NOT ? OR taker_relayer IS NOT ?)
     `);
 
     this.stmtGetSettlement = this.db.prepare(`SELECT * FROM settlements WHERE tx_hash = ?`);
@@ -797,30 +825,41 @@ export class OrderbookDB {
         buyAmount ??= makerOrder.order.buyAmount;
       }
     }
-    const result = this.stmtInsertSettlement.run(
-      payload.txHash,
-      payload.chainId ?? DEFAULT_CHAIN_ID,
-      payload.blockNumber,
-      payload.blockTime ?? null,
-      submitter.toLowerCase(),
-      payload.makerRelayer.toLowerCase(),
-      payload.takerRelayer ? payload.takerRelayer.toLowerCase() : null,
-      payload.makerOrderId ?? null,
-      payload.takerOrderId ?? null,
-      payload.makerNullifier,
-      payload.takerNullifier,
-      sellToken ? sellToken.toLowerCase() : null,
-      buyToken ? buyToken.toLowerCase() : null,
-      sellAmount ?? null,
-      buyAmount ?? null,
-      payload.feeMaker,
-      payload.feeTaker,
-      payload.userMaxFeeMaker,
-      payload.userMaxFeeTaker,
-      payload.type ?? null,
-      Math.floor(Date.now() / 1000),
-    );
-    return result.changes > 0;
+    const txn = this.db.transaction(() => {
+      this.stmtEvictSquattedSettlement.run(
+        payload.txHash,
+        submitter.toLowerCase(),
+        payload.makerRelayer.toLowerCase(),
+        payload.takerRelayer ? payload.takerRelayer.toLowerCase() : null,
+      );
+      return this.stmtInsertSettlement.run(
+        payload.txHash,
+        payload.chainId ?? DEFAULT_CHAIN_ID,
+        payload.blockNumber,
+        payload.blockTime ?? null,
+        submitter.toLowerCase(),
+        payload.makerRelayer.toLowerCase(),
+        payload.takerRelayer ? payload.takerRelayer.toLowerCase() : null,
+        payload.makerOrderId ?? null,
+        payload.takerOrderId ?? null,
+        payload.makerNullifier,
+        payload.takerNullifier,
+        sellToken ? sellToken.toLowerCase() : null,
+        buyToken ? buyToken.toLowerCase() : null,
+        sellAmount ?? null,
+        buyAmount ?? null,
+        payload.feeMaker,
+        payload.feeTaker,
+        payload.userMaxFeeMaker,
+        payload.userMaxFeeTaker,
+        payload.type ?? null,
+        Math.floor(Date.now() / 1000),
+      );
+    });
+    // changes>0 = inserted (fresh tx_hash, or the insert refilled a squatted
+    // unverified row the eviction removed); changes=0 = a retained row won
+    // (verified, or a same-attribution duplicate/retry) → no-op.
+    return txn().changes > 0;
   }
 
   /**
@@ -1058,6 +1097,10 @@ export class OrderbookDB {
       // created_at (server clock) so they still appear.
       where.push("COALESCE(block_time, created_at) >= ?");
       params.push(filter.since);
+    }
+    if (typeof filter.verified === "boolean") {
+      where.push("verified = ?");
+      params.push(filter.verified ? 1 : 0);
     }
     const limit = Math.min(filter.limit ?? 100, 500);
     const offset = filter.offset ?? 0;
@@ -1345,15 +1388,18 @@ export class OrderbookDB {
    * ORDER BY metric DESC + LIMIT.
    *
    * Available metrics:
-   *   - "count"          → total tx_count (any role; deduped per tx_hash per addr)
-   *   - "verifiedCount"  → subset where verified=1
+   *   - "verifiedCount"  → tx_count where verified=1 (DEFAULT — ranking is a
+   *                        trust surface; see SettlementListFilter.verified
+   *                        for why unverified rows must not feed it)
+   *   - "count"          → total tx_count incl. unverified (any role; deduped
+   *                        per tx_hash per addr) — observed, NOT trust-bearing
    *   - "successRate"    → verifiedCount / txCount; ties broken by txCount
    *                        and only relayers with at least one verified tx
    *                        appear (a relayer with 0 settlements has no rate)
    */
   getLeaderboard(
     chainId: number,
-    metric: LeaderboardMetric = "count",
+    metric: LeaderboardMetric = "verifiedCount",
     sinceSec?: number,
     limit = 50,
   ): LeaderboardRow[] {
@@ -1370,7 +1416,13 @@ export class OrderbookDB {
       : metric === "successRate"
       ? "(CAST(tx_count_verified AS REAL) / tx_count) DESC, tx_count DESC"
       : "tx_count DESC";
-    const havingForRate = metric === "successRate" ? "HAVING tx_count_verified > 0" : "";
+    // Trust-bearing metrics exclude relayers with zero verified settlements
+    // (fabricated-only relayers must not appear at all); "count" keeps every
+    // row — it is the explicit observed-total view.
+    const having =
+      metric === "successRate" || metric === "verifiedCount"
+        ? "HAVING tx_count_verified > 0"
+        : "";
 
     // UNION ALL — per-addr DISTINCT(tx_hash) below makes a relayer in
     // two roles on the same tx still count once. Each branch anchors on
@@ -1395,7 +1447,7 @@ export class OrderbookDB {
         MAX(ts) AS last_settle_at
       FROM appearances
       GROUP BY addr
-      ${havingForRate}
+      ${having}
       ORDER BY ${orderBy}
       LIMIT ?
     `;

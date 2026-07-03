@@ -68,6 +68,11 @@ export interface SettlementListFilter {
   since?: number;          // unix seconds
   limit?: number;
   offset?: number;
+  // Restrict to verified rows. Trust/reputation consumers (leaderboard,
+  // per-relayer stats aggregation) pass `true` so a relayer can't rank
+  // itself with unverified rows it fabricated (self as makerRelayer).
+  // Omitted → both verified and unverified rows (the raw observed view).
+  verified?: boolean;
 }
 
 /** Per-token totals — same shape used by per-relayer + network read APIs. */

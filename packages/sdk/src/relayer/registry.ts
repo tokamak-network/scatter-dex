@@ -114,6 +114,10 @@ interface SharedObSettlement {
    *  aggregator counts those in the all-segment totals but skips
    *  them in byApp so the split doesn't fabricate attribution. */
   type?: "settleAuth" | "scatterDirectAuth" | null;
+  /** On-chain-confirmed against the PrivateSettledAuth event. Unverified
+   *  rows are relayer-self-reported (forgeable) and never feed the
+   *  leaderboard/stats; a missing field (older indexer) = NOT verified. */
+  verified?: boolean;
 }
 
 interface SharedObListResponse {
@@ -223,8 +227,11 @@ async function fetchAllSettlements(
     // the next refresh tick.
     for (let page = 0; page < SHARED_OB_MAX_PAGES; page += 1) {
       const offset = page * SHARED_OB_PAGE_SIZE;
+      // verified=1 — trust surface, so aggregate only on-chain-confirmed
+      // rows; paginating the verified subset also keeps a flood of fake
+      // unverified rows from pushing real ones past the page cap.
       const res = await fetch(
-        `${base}/api/settlements?limit=${SHARED_OB_PAGE_SIZE}&offset=${offset}`,
+        `${base}/api/settlements?limit=${SHARED_OB_PAGE_SIZE}&offset=${offset}&verified=1`,
         { signal: AbortSignal.timeout(timeoutMs) },
       );
       if (!res.ok) break;
@@ -356,6 +363,9 @@ function buildAllStatsFromSharedOb(
     if (sub) addFeeTo(sub.feeByToken, k, v);
   };
   for (const row of rows) {
+    // Fail-closed behind the `verified=1` fetch filter — an older indexer
+    // ignores the param and still returns unverified (forgeable) rows.
+    if (row.verified !== true) continue;
     const maker = row.makerRelayer?.toLowerCase();
     const taker = row.takerRelayer?.toLowerCase();
     // Three shapes to handle:
