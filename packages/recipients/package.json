@@ -1,5 +1,6 @@
 {
   "name": "@zkscatter/recipients",
+  "license": "MIT",
   "version": "0.0.1",
   "private": true,
   "description": "Shared recipient-list editor (rows / CSV / spreadsheet) + CSV/xlsx parser used by Pay and Pro.",

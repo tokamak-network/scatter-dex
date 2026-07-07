@@ -1,5 +1,6 @@
 {
   "name": "@zkscatter/docs",
+  "license": "MIT",
   "version": "0.0.1",
   "private": true,
   "description": "Self-hosted developer docs site for @zkscatter/sdk. Nextra (Next.js) replacement for the Mintlify pipeline so we can serve docs from a private repo.",
