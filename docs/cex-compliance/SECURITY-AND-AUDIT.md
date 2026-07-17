@@ -127,26 +127,6 @@ together mitigate this, but operators publishing a token to the
 whitelist should treat the whitelist as a recurring review item
 rather than a one-time decision.
 
-## Reporting a vulnerability
-
-Use one of:
-
-1. **GitHub Security Advisories** — file a private advisory on
-   the `tokamak-network/scatter-dex` repository. This is the
-   preferred channel for issues that need a coordinated public
-   disclosure; the advisory thread stays private until the
-   project publishes it.
-2. **Email** — security@tokamak.network. A project PGP key for
-   encrypting reports is a follow-on item; until it's published,
-   use the GitHub Security Advisories path for findings whose
-   text shouldn't traverse unencrypted email.
-
-**Do not** open a public issue, file a public PR with a fix, or
-post to the operator chat. A coordinated-disclosure window
-applies: the project commits to acknowledge within 24 hours,
-triage within 72 hours, and publish a fix within 30 days of
-acknowledgement (or sooner if the issue is actively exploited).
-
 ## Bug bounty
 
 A formal bug bounty is **not yet active**. The intent is to

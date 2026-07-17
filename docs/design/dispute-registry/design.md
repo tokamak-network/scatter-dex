@@ -114,7 +114,7 @@ EIP-712 domain separator must match what the [../relayer-protocol/design.md](../
 The entire contract is approximately **150 lines of Solidity**.
 
 ```solidity
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";

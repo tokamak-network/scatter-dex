@@ -7,9 +7,6 @@ body:
     attributes:
       value: |
         Thanks for testing! Please fill in enough that we can reproduce it.
-        **Do not** open a public issue for security-sensitive findings
-        (fund loss, proof bypass, key/seed exposure) — email
-        **security@tokamak.network** privately instead.
   - type: dropdown
     id: app
     attributes:

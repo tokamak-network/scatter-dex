@@ -174,21 +174,3 @@ docs/         Guides, design docs, operations runbooks
 | ZK artifacts on deployed networks | [operations/zk-artifacts.md](docs/operations/zk-artifacts.md) |
 | Security & audit | [security/AUDIT.md](docs/security/AUDIT.md) · [security/HARDENING.md](docs/security/HARDENING.md) |
 
----
-
-## Security
-
-External auditors: start at [`docs/security/AUDIT.md`](docs/security/AUDIT.md) for
-scope, in/out boundaries, and copy-pasteable reproduction commands. The deeper
-*why* behind each safety-net layer lives in
-[`docs/security/HARDENING.md`](docs/security/HARDENING.md).
-
-Found a security-sensitive issue? **Do not open a public issue** — email
-**security@tokamak.network** privately.
-
-## License
-
-zkScatterDEX is provided under the [Business Source License 1.1](LICENSE):
-non-production use (research, auditing, contributions) is permitted; production
-use requires a separate commercial license. For any licensing questions, contact
-**Tokamak Network** (legal@tokamak.network).
